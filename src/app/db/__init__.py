@@ -21,8 +21,6 @@ from . import models as db_models  # noqa: F401
 try:
     from src.app.auth import models as auth_models  # noqa: F401
 except ImportError:
-    # This is expected if auth.models isn't created yet.
-    # Alembic will still pick up db_models.
     pass
 
 # Define what symbols are exported when a client does 'from src.app.db import *'.
