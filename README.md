@@ -1,28 +1,36 @@
 # Secure Coding Platform
 
+**An open-source, AI-powered platform to build and maintain secure software with confidence.**
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-The Secure Coding Platform is an open-source, AI-powered platform designed to assist developers and security teams in building and maintaining secure software by providing proactive security guidance, secure code generation, and vulnerability detection/remediation across multiple programming languages and compliance frameworks.
+The Secure Coding Platform assists developers and security teams by providing proactive security guidance, generating secure code, and detecting/remediating vulnerabilities across multiple programming languages and compliance frameworks. It leverages a hybrid AI approach, integrating Large Language Models, specialized security tools, and dynamic Tree-sitter queries.
 
-## ✨ Core Concepts
-This platform leverages a hybrid approach:
-* **Proactive Security Guidance**: Interactive chat guiding users on development policies for specific scenarios based on selectable security frameworks.
-* **Secure Code Generation**: AI-driven code generation adhering to selected security frameworks by default.
-* **Comprehensive Vulnerability Detection & Remediation**: A multi-path analysis engine (Contextual AI with RAG, SAST/SCA tools, dynamic Tree-sitter queries) for in-depth code scanning.
-* **Multi-Framework Compliance**: Explicit mapping of findings and fixes to controls from numerous standards (OWASP Top 10, ASVS, NIST SSDF/CSF, PCI DSS, HIPAA, GDPR, ISO, etc.).
-* **Large Codebase Management**: Strategies for handling large codebases using "repomap" context and intelligent chunking.
+## 📚 Documentation
 
-## 🚀 Key Features (Full Scope Vision)
-* Interactive Chat Interfaces for guideline provision and secure code generation.
-* Comprehensive Code Analysis Portal for submitting single files, multiple files, or entire projects (upload/Git).
-* Multi-path analysis: Contextual AI (LLM with RAG), integrated security tools (Semgrep, Dependency-Check), and custom Tree-sitter queries.
-* Automated and suggested code remediation.
-* Dynamic conflict resolution between analysis agents.
-* Unit test generation for proposed fixes.
-* GRC-like requirement analysis chat.
-* Rich reporting: Unified detailed reports, SARIF output, side-by-side diffs, agent-inserted comments.
-* Multi-agent system using LangGraph for specialized, framework-aware analysis.
+**For full, detailed documentation, please visit our [Docusaurus Documentation Site](./docs/docs/intro.md).** (TODO: Replace this link with your live documentation site URL once deployed. For now, it links to the intro file in the repository).
 
-## 🛠️ Technology Stack
+## 🌟 Key Features
+
+Our platform is being built with a "full scope from day 1" philosophy and includes:
+
+* **Interactive Chat Interfaces**:
+    * Guideline Provision: Get guidance on development policies for specific scenarios based on selectable security frameworks.
+    * Secure Code Generation: AI-driven code generation adhering to selected security frameworks.
+    * GRC-like Requirement Analysis: Elicit project details to generate reports on applicable security frameworks and compliance needs.
+* **Comprehensive Code Analysis Portal**:
+    * Submit single files, multiple files, or entire projects (via upload or Git).
+    * Multi-path analysis: Contextual AI (LLM with RAG), integrated security tools (Semgrep, Dependency-Check), and custom Tree-sitter queries.
+    * Automated and suggested code remediation with dynamic conflict resolution.
+* **Developer-Focused Tools**:
+    * Unit test generation for proposed fixes.
+    * Management of large codebases via "repomap" context and intelligent chunking.
+* **Rich Reporting & Compliance**:
+    * Unified, detailed reports mapping findings to code.
+    * Explicit mapping of findings to controls from numerous standards (OWASP Top 10, ASVS, NIST SSDF/CSF, PCI DSS, HIPAA, GDPR, ISO, etc.).
+    * SARIF output, side-by-side diffs, and agent-inserted comments.
+
+## 🛠️ Core Technology Stack
+
 * **Backend**: Python, FastAPI (REST & WebSockets)
 * **Frontend**: React with TypeScript, Ant Design (AntD)
 * **Agent Framework**: LangGraph
@@ -32,8 +40,13 @@ This platform leverages a hybrid approach:
 * **Deployment**: Docker, Docker Compose
 * **Documentation**: Docusaurus
 
-## 📈 Current Status & Progress
-This project is being developed with a "full scope from day 1" philosophy for open-source release.
+## 🚀 Getting Started
+
+To get a local instance of the Secure Coding Platform up and running, please follow our detailed **[Installation Guide](./docs/docs/getting-started/installation.md)**.
+
+## 📈 Current Status & Progress (Sprint 1: Largely Complete)
+
+This project is being actively developed. Here's a snapshot of our recent progress:
 
 **Sprint 1: Core Platform & Authentication Backbone - LARGELY COMPLETE**
 * ✅ Project Setup (GitHub, Poetry, Vite, Docusaurus, .gitignore)
@@ -43,17 +56,19 @@ This project is being developed with a "full scope from day 1" philosophy for op
 * ✅ Basic API Endpoints (`/analyze` submission & `/results/{id}` retrieval structure)
 * ✅ Basic API Graph (`api_graph.py` for DB save & RabbitMQ publish)
 * ✅ Basic Worker & Graph (`consumer.py`, `worker_graph.py` for RabbitMQ consume, dummy report generation & DB save - tested end-to-end)
-* 🚧 **Initial Documentation (Docusaurus `sidebars.js`, initial markdown) - IN PROGRESS**
-* 🚧 **Populate README.md - IN PROGRESS**
-* 🔜 Frontend Core (Ant Design basic layout, Login/Register pages)
+* ✅ Initial Documentation (Docusaurus file structure, `sidebars.js`, `intro.md`, `installation.md`, `configuration.md` refined)
+* ✅ `README.md` updated.
+* ✅ Frontend Core (Ant Design basic layout, Login/Register pages - Implemented & Tested)
 
-*(Refer to the project plan document for detailed sprint goals and the full envisioned scope.)*
-
-## 🏃 Getting Started
-Please refer to the [Installation Guide](./docs/docs/getting-started/installation.md) in our documentation for instructions on how to set up and run the platform locally using Docker Compose.
+*(Refer to the project plan document or project board for detailed sprint goals and the full envisioned scope.)*
 
 ## 🤝 Contributing
-We welcome contributions! Please see `CONTRIBUTING.md` (to be created) for guidelines. Our `CODE_OF_CONDUCT.md` (to be created) outlines our community standards.
+
+We welcome contributions from the community! Whether it's reporting bugs, suggesting features, improving documentation, or writing code, your help is appreciated.
+
+Please see our [**CONTRIBUTING.md**](./CONTRIBUTING.md) (to be created/fleshed out) for guidelines on how to contribute.
+We also adhere to a [**CODE_OF_CONDUCT.md**](./CODE_OF_CONDUCT.md) (to be created/fleshed out) to ensure a welcoming and inclusive environment.
 
 ## 📄 License
-This project is licensed under the MIT License - see the [LICENSE](./LICENSE) file for details.
+
+This project is licensed under the MIT License. See the [**LICENSE**](./LICENSE) file for full details.

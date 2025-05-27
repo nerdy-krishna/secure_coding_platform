@@ -4,24 +4,48 @@ slug: /
 title: Introduction
 ---
 
-# Welcome to the Secure Coding Platform
+# Welcome to the Secure Code Platform!
 
-The Secure Coding Platform is an open-source, AI-powered platform designed to assist developers and security teams in building and maintaining secure software. Our mission is to provide proactive security guidance, generate secure code, and detect/remediate vulnerabilities across multiple programming languages.
+The Secure Coding Platform is an open-source, AI-powered platform meticulously designed to empower developers and security teams in the crucial task of building and maintaining secure software. We are driven by the mission to proactively embed security into the software development lifecycle.
 
-## Core Concepts
+## The Challenge We Address
 
-This platform is built upon several core concepts:
-* **Proactive Security Guidance**: Interactive assistance based on leading security frameworks.
-* **Secure Code Generation**: AI-driven code generation adhering to security best practices.
-* **Comprehensive Vulnerability Detection & Remediation**: Multi-path analysis using LLMs, specialized tools, and dynamic queries.
-* **Multi-Framework Compliance**: Explicit mapping of findings and guidance to numerous industry standards (OWASP, NIST, PCI DSS, HIPAA, etc.).
-* **Large Codebase Management**: Intelligent handling of large codebases via "repomap" context and smart chunking.
+In today's fast-paced development environment, ensuring code security from the outset can be challenging. Traditional reactive approaches often identify vulnerabilities late in the cycle, leading to costly rework and increased risk. The Secure Code Platform aims to shift security left, making it an integral and accessible part of development from day one.
 
-## Project Goals
+## What We Offer: Core Capabilities
 
-* To be a comprehensive, "full scope from day 1" open-source tool.
-* To integrate multiple security methodologies and standards.
-* To provide a user-friendly experience through both chat interfaces and a code analysis portal.
-* To foster a community around secure software development.
+Our platform integrates cutting-edge AI with robust security tools to provide a comprehensive solution:
 
-This documentation will guide you through installation, usage, and contribution to the Secure Coding Platform.
+* **Proactive Security Guidance**: Leverage interactive chat interfaces that provide guidance on development policies and security best practices tailored to specific scenarios (e.g., "e-commerce platform," "healthcare app"), drawing from a wide array of selectable security frameworks.
+* **Secure Code Generation**: Interactively generate secure code snippets or entire modules. Our AI adheres to your selected security frameworks by default, utilizing customizable instruction templates for project-specific context.
+* **Comprehensive Code Analysis Portal**:
+    * **Versatile Submission**: Submit single files, multiple files, or entire projects via upload or Git repository integration.
+    * **Multi-Framework Scanning**: Analyze your code against multiple security standards simultaneously (OWASP Top 10, ASVS, NIST SSDF, PCI DSS, HIPAA, GDPR, and more).
+    * **Intelligent Remediation**: Receive detailed explanations, suggested fixes, and even auto-remediation attempts for identified vulnerabilities.
+* **GRC-like Requirement Analysis**: Engage in an advanced chat to elicit project details, generating a comprehensive report on applicable security frameworks, compliance needs, and high-level architectural security advice.
+* **Deep Codebase Understanding**: Benefit from intelligent management of large codebases using "repomap" context and smart chunking for effective analysis.
+
+## Our Vision & Guiding Principles
+
+* **Comprehensive & Open Source**: We are committed to building a "full scope from day 1" platform, released under an open-source license to foster community collaboration and transparency.
+* **Multi-Methodology Integration**: The platform incorporates a hybrid approach using Large Language Models (differentiated for thinking vs. code-writing), specialized security tools (SAST, SCA), dynamic Tree-sitter queries, and comprehensive Retrieval Augmented Generation (RAG) over multiple security frameworks.
+* **User-Centric Design**: We aim for a user-friendly experience through intuitive chat interfaces and a detailed code analysis portal.
+* **Community Driven**: We believe in the power of community to build and enhance tools that benefit everyone. We encourage contributions and feedback.
+
+## Who Is This For?
+
+* **Developers**: Write more secure code efficiently with AI-assisted guidance and generation.
+* **Security Teams**: Streamline code reviews, enforce security standards, and gain deeper insights into application security posture.
+* **DevSecOps Engineers**: Integrate automated security analysis seamlessly into CI/CD pipelines.
+* **Organizations**: Reduce the risk of security breaches and ensure compliance with various standards.
+* **Students & Educators**: Learn and teach secure coding practices with a practical, hands-on tool.
+
+## Dive In!
+
+This documentation will guide you through every aspect of the Secure Code Platform.
+
+* **New to the platform?** Start with our [**Installation Guide**](./getting-started/installation.md) to get your local instance up and running.
+* **Want to see it in action?** Check out the [**User Guide**](./user-guide/) for tutorials on our key features.
+* **Interested in contributing?** Head over to our [**Development Guide**](./development/contributing.md).
+
+We're excited to have you join us on this journey to make software more secure!
