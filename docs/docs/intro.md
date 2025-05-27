@@ -1,47 +1,51 @@
 ---
 sidebar_position: 1
+slug: /
+title: Introduction
 ---
 
-# Tutorial Intro
+# Welcome to the Secure Code Platform!
 
-Let's discover **Docusaurus in less than 5 minutes**.
+The Secure Coding Platform is an open-source, AI-powered platform meticulously designed to empower developers and security teams in the crucial task of building and maintaining secure software. We are driven by the mission to proactively embed security into the software development lifecycle.
 
-## Getting Started
+## The Challenge We Address
 
-Get started by **creating a new site**.
+In today's fast-paced development environment, ensuring code security from the outset can be challenging. Traditional reactive approaches often identify vulnerabilities late in the cycle, leading to costly rework and increased risk. The Secure Code Platform aims to shift security left, making it an integral and accessible part of development from day one.
 
-Or **try Docusaurus immediately** with **[docusaurus.new](https://docusaurus.new)**.
+## What We Offer: Core Capabilities
 
-### What you'll need
+Our platform integrates cutting-edge AI with robust security tools to provide a comprehensive solution:
 
-- [Node.js](https://nodejs.org/en/download/) version 18.0 or above:
-  - When installing Node.js, you are recommended to check all checkboxes related to dependencies.
+* **Proactive Security Guidance**: Leverage interactive chat interfaces that provide guidance on development policies and security best practices tailored to specific scenarios (e.g., "e-commerce platform," "healthcare app"), drawing from a wide array of selectable security frameworks.
+* **Secure Code Generation**: Interactively generate secure code snippets or entire modules. Our AI adheres to your selected security frameworks by default, utilizing customizable instruction templates for project-specific context.
+* **Comprehensive Code Analysis Portal**:
+    * **Versatile Submission**: Submit single files, multiple files, or entire projects via upload or Git repository integration.
+    * **Multi-Framework Scanning**: Analyze your code against multiple security standards simultaneously (OWASP Top 10, ASVS, NIST SSDF, PCI DSS, HIPAA, GDPR, and more).
+    * **Intelligent Remediation**: Receive detailed explanations, suggested fixes, and even auto-remediation attempts for identified vulnerabilities.
+* **GRC-like Requirement Analysis**: Engage in an advanced chat to elicit project details, generating a comprehensive report on applicable security frameworks, compliance needs, and high-level architectural security advice.
+* **Deep Codebase Understanding**: Benefit from intelligent management of large codebases using "repomap" context and smart chunking for effective analysis.
 
-## Generate a new site
+## Our Vision & Guiding Principles
 
-Generate a new Docusaurus site using the **classic template**.
+* **Comprehensive & Open Source**: We are committed to building a "full scope from day 1" platform, released under an open-source license to foster community collaboration and transparency.
+* **Multi-Methodology Integration**: The platform incorporates a hybrid approach using Large Language Models (differentiated for thinking vs. code-writing), specialized security tools (SAST, SCA), dynamic Tree-sitter queries, and comprehensive Retrieval Augmented Generation (RAG) over multiple security frameworks.
+* **User-Centric Design**: We aim for a user-friendly experience through intuitive chat interfaces and a detailed code analysis portal.
+* **Community Driven**: We believe in the power of community to build and enhance tools that benefit everyone. We encourage contributions and feedback.
 
-The classic template will automatically be added to your project after you run the command:
+## Who Is This For?
 
-```bash
-npm init docusaurus@latest my-website classic
-```
+* **Developers**: Write more secure code efficiently with AI-assisted guidance and generation.
+* **Security Teams**: Streamline code reviews, enforce security standards, and gain deeper insights into application security posture.
+* **DevSecOps Engineers**: Integrate automated security analysis seamlessly into CI/CD pipelines.
+* **Organizations**: Reduce the risk of security breaches and ensure compliance with various standards.
+* **Students & Educators**: Learn and teach secure coding practices with a practical, hands-on tool.
 
-You can type this command into Command Prompt, Powershell, Terminal, or any other integrated terminal of your code editor.
+## Dive In!
 
-The command also installs all necessary dependencies you need to run Docusaurus.
+This documentation will guide you through every aspect of the Secure Code Platform.
 
-## Start your site
+* **New to the platform?** Start with our [**Installation Guide**](./getting-started/installation.md) to get your local instance up and running.
+* **Want to see it in action?** Check out the [**User Guide**](./user-guide/) for tutorials on our key features.
+* **Interested in contributing?** Head over to our [**Development Guide**](./development/contributing.md).
 
-Run the development server:
-
-```bash
-cd my-website
-npm run start
-```
-
-The `cd` command changes the directory you're working with. In order to work with your newly created Docusaurus site, you'll need to navigate the terminal there.
-
-The `npm run start` command builds your website locally and serves it through a development server, ready for you to view at http://localhost:3000/.
-
-Open `docs/intro.md` (this page) and edit some lines: the site **reloads automatically** and displays your changes.
+We're excited to have you join us on this journey to make software more secure!
