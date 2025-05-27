@@ -1,0 +1,108 @@
+# docker-compose.yml
+
+services:
+  app:
+    build:
+      context: .
+      # dockerfile: Dockerfile # Optional if your Dockerfile is named 'Dockerfile'
+    container_name: secure_coding_platform_app
+    env_file:
+      - .env
+    volumes:
+      - ./src:/app/src
+    ports:
+      - "${APP_PORT:-8000}:${APP_PORT:-8000}"
+    depends_on:
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      vector_db:
+        condition: service_started
+    # --- Ensure this command line is present and uncommented ---
+    command: ["poetry", "run", "uvicorn", "src.app.main:app", "--host", "0.0.0.0", "--port", "${APP_PORT:-8000}", "--reload"]
+
+  db:
+    image: postgres:16 # As per collated_code.txt [cite: 6]
+    container_name: secure_coding_platform_db
+    env_file:
+      - .env # Loads POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB from .env
+    environment:
+      # These are set from .env, but can be explicitly listed if needed,
+      # though env_file is preferred for secrets.
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data # Persists database data
+    ports:
+      - "${POSTGRES_PORT_HOST:-5432}:5432" # Expose PostgreSQL to host machine on this port
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"] # [cite: 6]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3.12-management # Using a version (collated_code.txt used 4.1 which is newer than my training)
+    container_name: secure_coding_platform_rabbitmq
+    env_file:
+      - .env # Loads RABBITMQ_DEFAULT_USER, RABBITMQ_DEFAULT_PASS
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS}
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672" # AMQP port
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672" # Management UI [cite: 7]
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq/
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  vector_db: # ChromaDB
+    image: chromadb/chroma:0.5.3 # As per collated_code.txt [cite: 8]
+    container_name: secure_coding_platform_vector_db
+    env_file:
+      - .env
+    environment:
+      - IS_PERSISTENT=TRUE
+      - ANONYMIZED_TELEMETRY=FALSE # Optional
+      # Chroma 0.5.x settings from collated_code.txt [cite: 8]
+      - CHROMA_SERVER_HOST=0.0.0.0 
+      - CHROMA_SERVER_HTTP_PORT=${CHROMA_PORT:-8001} # Internal port for Chroma
+      - CHROMA_TENANT=default_tenant
+      - CHROMA_DATABASE=default_database
+    ports:
+      - "${CHROMA_PORT_HOST:-8001}:${CHROMA_PORT:-8001}" # Expose Chroma to host
+    volumes:
+      - chroma_data:/chroma # Persist data path [cite: 9]
+    # ChromaDB 0.5.x doesn't have a standard healthcheck in the image itself easily accessible like pg_isready or rabbitmq-diagnostics ping.
+    # `service_started` is a reasonable depends_on condition.
+
+  worker:
+    build:
+      context: .
+      # We'll define the Dockerfile for app/worker later
+    container_name: secure_coding_platform_worker
+    env_file:
+      - .env
+    volumes:
+      - ./src:/app/src
+    environment:
+        PYTHONPATH: /app # Ensures src modules can be found [cite: 10]
+    depends_on:
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    # Command will be to run the worker consumer.
+    command: ["poetry", "run", "python", "-m", "src.app.workers.consumer"]
+
+
+volumes: # Define named volumes for data persistence [cite: 12]
+  postgres_data:
+  rabbitmq_data:
+  chroma_data:
