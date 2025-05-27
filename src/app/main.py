@@ -33,9 +33,9 @@ async def lifespan(app: FastAPI):
     logger.info("Application shutdown.")
 
 app = FastAPI(
-    title="Secure Code Platform API",
+    title="Secure Coding Platform API",
     version="0.1.0",
-    description="API for the Secure Code Platform, providing analysis, generation, and GRC features.",
+    description="API for the Secure Coding Platform, providing analysis, generation, and GRC features.",
     lifespan=lifespan,
     # You can add docs_url, redoc_url, openapi_url configurations here if needed
 )
@@ -122,4 +122,4 @@ async def get_protected_example(user: User = Depends(current_active_user)):
 # --- Root Endpoint ---
 @app.get("/", tags=["Root"])
 async def read_root():
-    return {"message": "Welcome to the Secure Code Platform API!"}
+    return {"message": "Welcome to the Secure Coding Platform API!"}
