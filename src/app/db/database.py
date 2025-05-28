@@ -6,11 +6,13 @@ from sqlalchemy.orm import declarative_base
 from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
-load_dotenv() # Load environment variables from .env file
+load_dotenv()  # Load environment variables from .env file
 
 DB_USER = os.getenv("POSTGRES_USER")
 DB_PASSWORD = os.getenv("POSTGRES_PASSWORD")
-DB_HOST = os.getenv("POSTGRES_HOST", "db") # Default to 'db' for Docker Compose service name
+DB_HOST = os.getenv(
+    "POSTGRES_HOST", "db"
+)  # Default to 'db' for Docker Compose service name
 DB_PORT = os.getenv("POSTGRES_PORT", "5432")
 DB_NAME = os.getenv("POSTGRES_DB")
 
@@ -33,12 +35,13 @@ engine = create_async_engine(DATABASE_URL, echo=False)
 AsyncSessionLocal = async_sessionmaker(
     bind=engine,
     class_=AsyncSession,
-    expire_on_commit=False # Good default for FastAPI to prevent issues with background tasks
+    expire_on_commit=False,  # Good default for FastAPI to prevent issues with background tasks
 )
 
 # Define the declarative base for ORM models
 # All models in models.py will inherit from this Base.
 Base = declarative_base()
+
 
 async def get_db_session() -> AsyncSession:
     """
@@ -52,6 +55,7 @@ async def get_db_session() -> AsyncSession:
             raise
         finally:
             await session.close()
+
 
 async def init_db():
     """

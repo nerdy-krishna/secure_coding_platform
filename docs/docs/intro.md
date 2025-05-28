@@ -4,13 +4,13 @@ slug: /
 title: Introduction
 ---
 
-# Welcome to the Secure Code Platform!
+# Welcome to the Secure Coding Platform!
 
 The Secure Coding Platform is an open-source, AI-powered platform meticulously designed to empower developers and security teams in the crucial task of building and maintaining secure software. We are driven by the mission to proactively embed security into the software development lifecycle.
 
 ## The Challenge We Address
 
-In today's fast-paced development environment, ensuring code security from the outset can be challenging. Traditional reactive approaches often identify vulnerabilities late in the cycle, leading to costly rework and increased risk. The Secure Code Platform aims to shift security left, making it an integral and accessible part of development from day one.
+In today's fast-paced development environment, ensuring code security from the outset can be challenging. Traditional reactive approaches often identify vulnerabilities late in the cycle, leading to costly rework and increased risk. The Secure Coding Platform aims to shift security left, making it an integral and accessible part of development from day one.
 
 ## What We Offer: Core Capabilities
 
@@ -42,7 +42,7 @@ Our platform integrates cutting-edge AI with robust security tools to provide a 
 
 ## Dive In!
 
-This documentation will guide you through every aspect of the Secure Code Platform.
+This documentation will guide you through every aspect of the Secure Coding Platform.
 
 * **New to the platform?** Start with our [**Installation Guide**](./getting-started/installation.md) to get your local instance up and running.
 * **Want to see it in action?** Check out the [**User Guide**](./user-guide/) for tutorials on our key features.

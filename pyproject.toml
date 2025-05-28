@@ -31,6 +31,8 @@ tree-sitter-languages = ">=1.10.2,<2.0.0"
 chromadb = "==1.0.10" # Vector DB
 itsdangerous = ">=2.2.0,<3.0.0"
 google-genai = "^1.16.1"
+google-api-core = "^2.24.2"
+langchain-google-genai = "^2.1.5"
 
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.11.11"
