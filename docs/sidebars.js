@@ -10,7 +10,7 @@ const sidebars = {
       link: {
         type: 'generated-index',
         title: 'Introduction',
-        description: 'Learn about the Secure Code Platform.',
+        description: 'Learn about the Secure Coding Platform.',
         slug: '/introduction',
       },
       collapsible: true,
@@ -45,7 +45,7 @@ const sidebars = {
       link: {
         type: 'generated-index',
         title: 'User Guide',
-        description: 'How to use the Secure Code Platform features.',
+        description: 'How to use the Secure Coding Platform features.',
         slug: '/user-guide',
       },
       collapsible: true,

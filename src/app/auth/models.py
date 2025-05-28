@@ -4,17 +4,19 @@ from sqlalchemy.orm import Mapped, relationship
 from typing import List, TYPE_CHECKING
 
 # Import Base from your shared db setup
-from src.app.db.database import Base # Corrected import path
+from src.app.db.database import Base  # Corrected import path
 
 if TYPE_CHECKING:
-    from src.app.db.models import CodeSubmission # For type hinting
+    from src.app.db.models import CodeSubmission  # For type hinting
+
 
 class User(SQLAlchemyBaseUserTableUUID, Base):
     """
     Database model for users, inheriting fields from fastapi-users.
     Uses UUID for primary key and inherits from our common Base.
     """
-    __tablename__ = "users" # Standard table name for users
+
+    __tablename__ = "users"  # Standard table name for users
 
     # Add custom fields here if needed in the future, e.g.:
     # full_name: Mapped[str] = mapped_column(String(100), nullable=True)
@@ -22,9 +24,9 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
     # Relationship to CodeSubmission
     # This back-populates the 'user' field in the CodeSubmission model.
     submissions: Mapped[List["CodeSubmission"]] = relationship(
-        "CodeSubmission", # String reference to the model class in db.models
+        "CodeSubmission",  # String reference to the model class in db.models
         back_populates="user",
-        cascade="all, delete-orphan" # Optional: if a user is deleted, delete their submissions
+        cascade="all, delete-orphan",  # Optional: if a user is deleted, delete their submissions
     )
 
     # Inherited fields from SQLAlchemyBaseUserTableUUID:

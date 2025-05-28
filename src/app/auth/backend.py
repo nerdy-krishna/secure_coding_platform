@@ -1,14 +1,14 @@
 # src/app/auth/backend.py
 import os
 import logging
-from typing import Optional, TYPE_CHECKING
+from typing import Optional
 
-from fastapi import Response, Request # Added Request for type hinting
+from fastapi import Response, Request  # Added Request for type hinting
 from fastapi_users.authentication import (
     AuthenticationBackend,
     BearerTransport,
     JWTStrategy,
-    CookieTransport, # We can use CookieTransport for refresh token
+    CookieTransport,  # We can use CookieTransport for refresh token
 )
 from fastapi_users import models as fastapi_users_typing_models
 
@@ -30,7 +30,9 @@ if not SECRET_KEY:
 
 # --- Bearer Transport for Access Tokens ---
 # Access tokens will be expected in the Authorization header, e.g., "Bearer <token>"
-bearer_transport = BearerTransport(tokenUrl="/api/v1/auth/login") # Adjusted tokenUrl to match project structure
+bearer_transport = BearerTransport(
+    tokenUrl="/api/v1/auth/login"
+)  # Adjusted tokenUrl to match project structure
 
 # --- Cookie Transport for Refresh Tokens ---
 # Configure cookie properties based on environment (production vs. development)
@@ -40,15 +42,19 @@ REFRESH_COOKIE_NAME = os.getenv("REFRESH_COOKIE_NAME", "SecureCodePlatformRefres
 # Refresh tokens will be handled by HttpOnly cookies
 cookie_transport_refresh = CookieTransport(
     cookie_name=REFRESH_COOKIE_NAME,
-    cookie_max_age=int(os.getenv("REFRESH_TOKEN_LIFETIME_SECONDS", 60 * 60 * 24 * 7)), # 7 days default
-    cookie_path="/api/v1/auth", # Path for refresh token operations
+    cookie_max_age=int(
+        os.getenv("REFRESH_TOKEN_LIFETIME_SECONDS", 60 * 60 * 24 * 7)
+    ),  # 7 days default
+    cookie_path="/api/v1/auth",  # Path for refresh token operations
     cookie_secure=IS_PRODUCTION,  # True in production (HTTPS only)
     cookie_httponly=True,
-    cookie_samesite="lax", # Or "strict" if appropriate
+    cookie_samesite="lax",  # Or "strict" if appropriate
 )
 
 
-def get_jwt_strategy() -> JWTStrategy[fastapi_users_typing_models.UP, fastapi_users_typing_models.ID]:
+def get_jwt_strategy() -> JWTStrategy[
+    fastapi_users_typing_models.UP, fastapi_users_typing_models.ID
+]:
     """
     Returns the JWT strategy instance.
     Access token lifetime is configured here.
@@ -56,11 +62,14 @@ def get_jwt_strategy() -> JWTStrategy[fastapi_users_typing_models.UP, fastapi_us
     """
     return JWTStrategy(
         secret=SECRET_KEY,
-        lifetime_seconds=int(os.getenv("ACCESS_TOKEN_LIFETIME_SECONDS", 60 * 30)), # 30 minutes default
+        lifetime_seconds=int(
+            os.getenv("ACCESS_TOKEN_LIFETIME_SECONDS", 60 * 30)
+        ),  # 30 minutes default
         # refresh_token_lifetime_seconds is not directly used by JWTStrategy when refresh is via CookieTransport
         # The cookie's max_age handles the refresh token's persistence.
         # token_audience=["fastapi-users:auth"] # Default audience
     )
+
 
 # Authentication backend for access tokens (JWT in Bearer header)
 auth_backend_access = AuthenticationBackend(
@@ -80,18 +89,22 @@ auth_backend_access = AuthenticationBackend(
 # Let's use a single backend and adapt the JWTStrategy to set the cookie,
 # which is more aligned with how FastAPI Users v10+ handles it.
 
-class CustomCookieJWTStrategy(JWTStrategy[fastapi_users_typing_models.UP, fastapi_users_typing_models.ID]):
+
+class CustomCookieJWTStrategy(
+    JWTStrategy[fastapi_users_typing_models.UP, fastapi_users_typing_models.ID]
+):
     """
     Custom JWT Strategy that writes the refresh token to an HttpOnly cookie
     and reads it from there. Access token is still via Bearer header.
     """
+
     def __init__(
         self,
         secret: str,
         lifetime_seconds: int,
-        refresh_token_lifetime_seconds: int, # This will be used for cookie max_age
+        refresh_token_lifetime_seconds: int,  # This will be used for cookie max_age
         cookie_name: str = REFRESH_COOKIE_NAME,
-        cookie_path: str = "/api/v1/auth", # Specific path for auth operations
+        cookie_path: str = "/api/v1/auth",  # Specific path for auth operations
         cookie_secure: bool = IS_PRODUCTION,
         cookie_httponly: bool = True,
         cookie_samesite: str = "lax",
@@ -141,8 +154,8 @@ class CustomCookieJWTStrategy(JWTStrategy[fastapi_users_typing_models.UP, fastap
         # Overwrite the cookie with an expired one to delete it
         response.set_cookie(
             key=self.cookie_name,
-            value="", # Empty value
-            max_age=0, # Expire immediately
+            value="",  # Empty value
+            max_age=0,  # Expire immediately
             path=self.cookie_path,
             secure=self.cookie_secure,
             httponly=self.cookie_httponly,
@@ -154,14 +167,19 @@ class CustomCookieJWTStrategy(JWTStrategy[fastapi_users_typing_models.UP, fastap
 def get_custom_cookie_jwt_strategy() -> CustomCookieJWTStrategy:
     return CustomCookieJWTStrategy(
         secret=SECRET_KEY,
-        lifetime_seconds=int(os.getenv("ACCESS_TOKEN_LIFETIME_SECONDS", 60 * 30)), # 30 min for access token
-        refresh_token_lifetime_seconds=int(os.getenv("REFRESH_TOKEN_LIFETIME_SECONDS", 60 * 60 * 24 * 7)) # 7 days for refresh token cookie
+        lifetime_seconds=int(
+            os.getenv("ACCESS_TOKEN_LIFETIME_SECONDS", 60 * 30)
+        ),  # 30 min for access token
+        refresh_token_lifetime_seconds=int(
+            os.getenv("REFRESH_TOKEN_LIFETIME_SECONDS", 60 * 60 * 24 * 7)
+        ),  # 7 days for refresh token cookie
     )
+
 
 # This will be our main authentication backend.
 # Access tokens are via Bearer header, refresh tokens are managed via HttpOnly cookies by the strategy.
 auth_backend = AuthenticationBackend(
     name="jwt-bearer-cookie-refresh",
-    transport=bearer_transport, # For reading/expecting access tokens
-    get_strategy=get_custom_cookie_jwt_strategy, # Strategy handles JWTs and refresh cookie
+    transport=bearer_transport,  # For reading/expecting access tokens
+    get_strategy=get_custom_cookie_jwt_strategy,  # Strategy handles JWTs and refresh cookie
 )

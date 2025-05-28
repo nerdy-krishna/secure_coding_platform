@@ -1,22 +1,33 @@
-import React, { useState } from 'react';
-import { Layout, Menu, Avatar, Typography, Dropdown, Space, theme as antdTheme } from 'antd';
+// secure-code-ui/src/layouts/DashboardLayout.tsx
 import {
+  BellOutlined,
   DesktopOutlined,
   FileTextOutlined,
-  PieChartOutlined,
-  TeamOutlined,
-  UserOutlined,
   LogoutOutlined,
+  PieChartOutlined,
   SettingOutlined,
-  BellOutlined,
-} from '@ant-design/icons';
-import type { MenuProps } from 'antd';
-import { Link, Outlet, useNavigate } from 'react-router-dom'; // Outlet for nested content
+  UserOutlined,
+} from "@ant-design/icons";
+import type { MenuProps } from "antd";
+import {
+  Avatar,
+  Button, // <-- ADDED Button
+  Dropdown,
+  Layout,
+  Menu,
+  Space,
+  Tooltip, // <-- ADDED Tooltip
+  Typography,
+  theme as antdTheme,
+} from "antd";
+import React, { useState } from "react";
+import { Link } from "react-router-dom"; // useNavigate removed if not used
+import { useAuth } from "../hooks/useAuth"; // <-- CORRECTED PATH
 
 const { Header, Content, Footer, Sider } = Layout;
 const { Text } = Typography;
 
-type MenuItem = Required<MenuProps>['items'][number];
+type MenuItem = Required<MenuProps>["items"][number];
 
 function getItem(
   label: React.ReactNode,
@@ -24,123 +35,183 @@ function getItem(
   icon?: React.ReactNode,
   children?: MenuItem[],
 ): MenuItem {
-  return {
-    key,
-    icon,
-    children,
-    label,
-  } as MenuItem;
+  return { key, icon, children, label } as MenuItem;
 }
 
-const items: MenuItem[] = [
-  getItem(<Link to="/dashboard">Dashboard</Link>, '1', <PieChartOutlined />),
-  getItem(<Link to="/dashboard/submit">Submit Code</Link>, '2', <FileTextOutlined />),
-  getItem(<Link to="/dashboard/history">History</Link>, '3', <DesktopOutlined />),
-  getItem('Team', 'sub1', <TeamOutlined />, [
-    getItem('Team 1', '4'),
-    getItem('Team 2', '5'),
-  ]),
-  getItem(<Link to="/dashboard/profile">User Profile</Link>, '6', <UserOutlined />),
-  getItem(<Link to="/dashboard/settings">Settings</Link>, '7', <SettingOutlined />),
+const siderMenuItems: MenuItem[] = [
+  getItem(
+    <Link to="/dashboard">Dashboard</Link>,
+    "dashboard_overview",
+    <PieChartOutlined />,
+  ),
+  getItem(
+    <Link to="/submit">Submit Code</Link>,
+    "submit_code",
+    <FileTextOutlined />,
+  ),
+  getItem(
+    <Link to="/history">History</Link>,
+    "submission_history",
+    <DesktopOutlined />,
+  ),
+  // getItem("Team", "team_sub", <TeamOutlined />, [ // Example a sub-menu
+  //   getItem("Team 1", "team_1"),
+  //   getItem("Team 2", "team_2"),
+  // ]),
+  getItem(
+    <Link to="/profile">User Profile</Link>,
+    "user_profile_nav",
+    <UserOutlined />,
+  ),
+  getItem(
+    <Link to="/settings">Settings</Link>,
+    "user_settings_nav",
+    <SettingOutlined />,
+  ),
 ];
 
-interface DashboardLayoutProps {
-  children: React.ReactNode; // For pages that don't use Outlet
-}
-
-const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
+const DashboardLayout: React.FC<{ children?: React.ReactNode }> = ({
+  children,
+}) => {
   const [collapsed, setCollapsed] = useState(false);
-  const navigate = useNavigate();
+  // const navigate = useNavigate(); // REMOVE if not used
+  const { logout, user } = useAuth();
   const {
     token: { colorBgContainer, borderRadiusLG },
   } = antdTheme.useToken();
 
-  const handleLogout = () => {
-    // Implement your actual logout logic here
-    // e.g., clear token from localStorage, call API, redirect
-    localStorage.removeItem('authToken'); // Example
-    navigate('/login');
+  const handleLogout = async () => {
+    console.log("DashboardLayout: Logout button clicked.");
+    try {
+      await logout();
+      // Navigation to /login should be handled by App.tsx routing logic
+      // due to accessToken becoming null in AuthContext
+    } catch (error) {
+      console.error("DashboardLayout: Error during logout:", error);
+    }
   };
 
-  const userMenuItems: MenuProps['items'] = [
+  const userAccountMenuItems: MenuProps["items"] = [
     {
-      key: 'profile',
+      key: "profile",
       label: (
-        <Link to="/dashboard/profile">
+        <Link to="/profile">
           <UserOutlined style={{ marginRight: 8 }} />
           Profile
         </Link>
       ),
     },
     {
-      key: 'settings',
+      key: "settings",
       label: (
-        <Link to="/dashboard/settings">
+        <Link to="/settings">
           <SettingOutlined style={{ marginRight: 8 }} />
           Settings
         </Link>
       ),
     },
     {
-      type: 'divider',
+      type: "divider",
     },
     {
-      key: 'logout',
-      label: (
-        <div onClick={handleLogout}>
-          <LogoutOutlined style={{ marginRight: 8 }} />
-          Logout
-        </div>
-      ),
+      key: "logout",
+      icon: <LogoutOutlined style={{ marginRight: 8 }} />,
+      label: "Logout",
+      onClick: handleLogout, // More idiomatic way to handle menu item click
     },
   ];
 
-
   return (
-    <Layout style={{ minHeight: '100vh' }}>
-      <Sider collapsible collapsed={collapsed} onCollapse={(value) => setCollapsed(value)}>
-        <div style={{
-          height: 32,
-          margin: 16,
-          background: 'rgba(255, 255, 255, 0.2)',
-          borderRadius: 6,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          overflow: 'hidden'
-        }}>
-          <Text style={{ color: 'white', display: collapsed ? 'none' : 'block' }}>SCP</Text>
-          <Text style={{ color: 'white', display: collapsed ? 'block' : 'none' }}>S</Text>
+    <Layout style={{ minHeight: "100vh" }}>
+      <Sider
+        collapsible
+        collapsed={collapsed}
+        onCollapse={(value) => setCollapsed(value)}
+      >
+        <div
+          style={{
+            height: 32,
+            margin: 16,
+            background: "rgba(255, 255, 255, 0.2)",
+            borderRadius: 6,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            overflow: "hidden",
+          }}
+        >
+          <Text
+            style={{
+              color: "white",
+              fontSize: collapsed ? "12px" : "16px",
+              fontWeight: "bold",
+            }}
+          >
+            {collapsed ? "S" : "SCP"}
+          </Text>
         </div>
-        <Menu theme="dark" defaultSelectedKeys={['1']} mode="inline" items={items} />
+        <Menu
+          theme="dark"
+          defaultSelectedKeys={["dashboard_overview"]}
+          mode="inline"
+          items={siderMenuItems}
+        />
       </Sider>
-      <Layout>
-        <Header style={{ padding: '0 16px', background: colorBgContainer, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div>{/* Can add breadcrumbs or page titles here */}</div>
-          <Space size="middle">
-            <BellOutlined style={{ fontSize: '18px' }} /> {/* Placeholder for notifications */}
-            <Dropdown menu={{ items: userMenuItems }} trigger={['click']}>
-              <a onClick={(e) => e.preventDefault()} style={{ display: 'flex', alignItems: 'center' }}>
-                <Avatar size="small" icon={<UserOutlined />} style={{ marginRight: 8 }} />
-                <Text>Username</Text> {/* Replace with actual username */}
+      <Layout className="site-layout">
+        {" "}
+        {/* Added className for potential specific styling */}
+        <Header
+          style={{
+            padding: "0 24px",
+            background: colorBgContainer,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          <div>{/* Placeholder for breadcrumbs or page title */}</div>
+          <Space align="center" size="middle">
+            <Tooltip title="Notifications">
+              <Button shape="circle" icon={<BellOutlined />} />
+            </Tooltip>
+            <Dropdown
+              menu={{ items: userAccountMenuItems }}
+              trigger={["click"]}
+            >
+              <a
+                onClick={(e) => e.preventDefault()}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  cursor: "pointer",
+                }}
+              >
+                <Avatar
+                  size="small"
+                  icon={<UserOutlined />}
+                  style={{ marginRight: 8 }}
+                />
+                <Text>{user ? user.email : "User"}</Text>
               </a>
             </Dropdown>
           </Space>
         </Header>
-        <Content style={{ margin: '16px' }}>
+        <Content style={{ margin: "24px 16px 0", overflow: "initial" }}>
           <div
             style={{
               padding: 24,
-              minHeight: 360,
               background: colorBgContainer,
               borderRadius: borderRadiusLG,
+              minHeight: "calc(100vh - 64px - 48px - 69px)", // Example: 100vh - header - content_margin_top_bottom - footer
+              // Adjust these values based on your actual layout heights
             }}
           >
-            {children} {/* This renders the page component passed by the Route */}
+            {children}{" "}
+            {/* This renders the <Outlet /> passed from ProtectedRoutesWithLayout */}
           </div>
         </Content>
-        <Footer style={{ textAlign: 'center' }}>
-          Secure Code Platform ©{new Date().getFullYear()} Created with Ant Design
+        <Footer style={{ textAlign: "center" }}>
+          Secure Code Platform ©{new Date().getFullYear()}
         </Footer>
       </Layout>
     </Layout>

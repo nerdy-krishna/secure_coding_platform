@@ -1,127 +1,207 @@
-// secure-code-ui/src/pages/auth/RegisterPage.tsx
-import React, { useState } from 'react';
-import { Form, Input, Button, Typography, Alert, Card } from 'antd';
-import { MailOutlined, LockOutlined } from '@ant-design/icons';
-import { Link, useNavigate } from 'react-router-dom';
-import { registerUser } from '../../services/authService';
-import type { UserRegisterData } from '../../types/api';
-import AuthLayout from '../../layouts/AuthLayout';
+import { LockOutlined, MailOutlined } from "@ant-design/icons";
+import { Alert, Button, Col, Form, Input, Row, Typography } from "antd";
+import { AxiosError } from "axios";
+import React from "react";
+import { Link } from "react-router-dom";
+import { useAuth } from "../../hooks/useAuth";
+import { type UserRegisterData } from "../../types/api";
 
-const { Title } = Typography;
+const { Title, Paragraph } = Typography;
 
 const RegisterPage: React.FC = () => {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
-  const navigate = useNavigate();
+  const { register } = useAuth();
   const [form] = Form.useForm();
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = React.useState<string | null>(
+    null,
+  );
 
   const onFinish = async (values: UserRegisterData) => {
     setLoading(true);
     setError(null);
-    setSuccess(null);
-
-    const payload: UserRegisterData = {
-      email: values.email,
-      password: values.password,
-      // is_active, is_superuser, is_verified will default on the backend
-    };
-
+    setSuccessMessage(null);
     try {
-      await registerUser(payload);
-      setSuccess('Registration successful! You can now log in.');
-      form.resetFields(); // Reset form fields on success
-      // Optionally, redirect after a short delay or let user click login
-      setTimeout(() => {
-        navigate('/login');
-      }, 3000); // Redirect after 3 seconds
-    } catch (err: any) {
-      if (err.response && err.response.data && err.response.data.detail) {
-        if (typeof err.response.data.detail === 'string') {
-            setError(err.response.data.detail);
-        } else if (Array.isArray(err.response.data.detail) && err.response.data.detail.length > 0) {
-            // Handle FastAPI validation errors (e.g., from Pydantic models)
-             const errorMessages = err.response.data.detail.map((e: any) => {
-                if (e.loc && e.msg) {
-                    return `${e.loc.join('.')} - ${e.msg}`;
-                }
-                return 'An unknown validation error occurred.';
-            }).join('; ');
-            setError(errorMessages);
-        } else {
-            setError('Registration failed. An unexpected error occurred.');
+      await register(values);
+      setSuccessMessage(
+        "Registration successful! Please check your email to verify your account.",
+      );
+    } catch (err) {
+      let errorMessage = "Registration failed. Please try again.";
+      if (err instanceof AxiosError && err.response) {
+        const responseData = err.response.data as {
+          detail?: string | { msg: string; loc: (string | number)[] }[];
+        };
+
+        if (typeof responseData.detail === "string") {
+          switch (responseData.detail) {
+            case "REGISTER_USER_ALREADY_EXISTS":
+              errorMessage =
+                "This email is already registered. Please try logging in.";
+              break;
+            case "REGISTER_INVALID_PASSWORD":
+              errorMessage =
+                "Password does not meet complexity requirements. It should be at least 8 characters long and contain a mix of uppercase, lowercase, digits, and special characters.";
+              break;
+            default:
+              errorMessage = responseData.detail;
+          }
+        } else if (Array.isArray(responseData.detail)) {
+          const pydanticErrors = responseData.detail
+            .map((e) => `${e.loc.join(".")} - ${e.msg}`)
+            .join("; ");
+          errorMessage = `Validation errors: ${pydanticErrors}`;
         }
-      } else {
-        setError('Registration failed. An unexpected error occurred.');
+      } else if (err instanceof Error) {
+        errorMessage = err.message;
       }
-      console.error('Registration error:', err);
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
   };
 
+  interface AntDValidationError {
+    values: UserRegisterData;
+    errorFields: { name: (string | number)[]; errors: string[] }[];
+    outOfDate: boolean;
+  }
+
+  const onFinishFailed = (errorInfo: AntDValidationError) => {
+    console.log("Failed:", errorInfo);
+    setError("Please correct the highlighted errors.");
+  };
+
   return (
-    <AuthLayout>
-      <Card title={<Title level={3} style={{ textAlign: 'center', marginBottom: 0 }}>Create Account</Title>} style={{ boxShadow: '0 4px 8px rgba(0,0,0,0.1)' }}>
-        {error && <Alert message={error} type="error" showIcon closable style={{ marginBottom: 20 }} onClose={() => setError(null)} />}
-        {success && <Alert message={success} type="success" showIcon style={{ marginBottom: 20 }} />}
-        <Form
-          form={form}
-          name="register"
-          onFinish={onFinish}
-          scrollToFirstError
-          size="large"
+    <Row
+      justify="center"
+      align="middle"
+      style={{ minHeight: "100vh", background: "#f0f2f5" }}
+    >
+      <Col xs={22} sm={16} md={12} lg={24} xl={24}>
+        <div
+          style={{
+            background: "#fff",
+            padding: "40px",
+            borderRadius: "8px",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+          }}
         >
-          <Form.Item
-            name="email"
-            rules={[
-              { required: true, message: 'Please input your Email!' },
-              { type: 'email', message: 'The input is not a valid Email!' },
-            ]}
+          <Title
+            level={2}
+            style={{ textAlign: "center", marginBottom: "10px" }}
           >
-            <Input prefix={<MailOutlined />} placeholder="Email" />
-          </Form.Item>
+            Create Account
+          </Title>
+          <Paragraph style={{ textAlign: "center", marginBottom: "30px" }}>
+            Join the Secure Code Platform.
+          </Paragraph>
+          {error && (
+            <Alert
+              message={error}
+              type="error"
+              showIcon
+              style={{ marginBottom: "20px" }}
+            />
+          )}
+          {successMessage && (
+            <Alert
+              message={successMessage}
+              type="success"
+              showIcon
+              style={{ marginBottom: "20px" }}
+            />
+          )}
+          {!successMessage && (
+            <Form
+              form={form}
+              name="register"
+              onFinish={onFinish}
+              onFinishFailed={onFinishFailed}
+              layout="vertical"
+              scrollToFirstError
+            >
+              <Form.Item
+                name="email"
+                label="Email"
+                rules={[
+                  { required: true, message: "Please input your Email!" },
+                  { type: "email", message: "The input is not a valid Email!" },
+                ]}
+              >
+                <Input prefix={<MailOutlined />} placeholder="Email" />
+              </Form.Item>
 
-          <Form.Item
-            name="password"
-            rules={[
-              { required: true, message: 'Please input your Password!' },
-              { min: 8, message: 'Password must be at least 8 characters!' },
-              // You can add more complex regex validation for passwords here if needed
-            ]}
-            hasFeedback
-          >
-            <Input.Password prefix={<LockOutlined />} placeholder="Password" />
-          </Form.Item>
+              <Form.Item
+                name="password"
+                label="Password"
+                rules={[
+                  { required: true, message: "Please input your Password!" },
+                  {
+                    min: 8,
+                    message: "Password must be at least 8 characters long.",
+                  },
+                ]}
+                hasFeedback
+              >
+                <Input.Password
+                  prefix={<LockOutlined />}
+                  placeholder="Password"
+                />
+              </Form.Item>
 
-          <Form.Item
-            name="confirm"
-            dependencies={['password']}
-            hasFeedback
-            rules={[
-              { required: true, message: 'Please confirm your Password!' },
-              ({ getFieldValue }) => ({
-                validator(_, value) {
-                  if (!value || getFieldValue('password') === value) {
-                    return Promise.resolve();
-                  }
-                  return Promise.reject(new Error('The two passwords that you entered do not match!'));
-                },
-              }),
-            ]}
-          >
-            <Input.Password prefix={<LockOutlined />} placeholder="Confirm Password" />
-          </Form.Item>
+              <Form.Item
+                name="confirm"
+                label="Confirm Password"
+                dependencies={["password"]}
+                hasFeedback
+                rules={[
+                  { required: true, message: "Please confirm your Password!" },
+                  ({ getFieldValue }) => ({
+                    validator(_, value) {
+                      if (!value || getFieldValue("password") === value) {
+                        return Promise.resolve();
+                      }
+                      return Promise.reject(
+                        new Error(
+                          "The two passwords that you entered do not match!",
+                        ),
+                      );
+                    },
+                  }),
+                ]}
+              >
+                <Input.Password
+                  prefix={<LockOutlined />}
+                  placeholder="Confirm Password"
+                />
+              </Form.Item>
 
-          <Form.Item>
-            <Button type="primary" htmlType="submit" loading={loading} block>
-              Register
-            </Button>
-          </Form.Item>
-          Already have an account? <Link to="/login">Log in here!</Link>
-        </Form>
-      </Card>
-    </AuthLayout>
+              <Form.Item>
+                <Button
+                  type="primary"
+                  htmlType="submit"
+                  loading={loading}
+                  style={{ width: "100%" }}
+                >
+                  Register
+                </Button>
+              </Form.Item>
+              <div style={{ textAlign: "center" }}>
+                Already have an account? <Link to="/login">Log in</Link>
+              </div>
+            </Form>
+          )}
+          {successMessage && (
+            <div style={{ textAlign: "center", marginTop: "20px" }}>
+              <Link to="/login">
+                <Button type="primary">Proceed to Login</Button>
+              </Link>
+            </div>
+          )}
+        </div>
+      </Col>
+    </Row>
   );
 };
 

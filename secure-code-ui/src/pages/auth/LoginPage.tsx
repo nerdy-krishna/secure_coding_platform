@@ -1,96 +1,152 @@
 // secure-code-ui/src/pages/auth/LoginPage.tsx
-import React, { useState } from 'react';
-import { Form, Input, Button, Checkbox, Typography, Alert, Card } from 'antd';
-import { UserOutlined, LockOutlined } from '@ant-design/icons';
-import { Link, useNavigate } from 'react-router-dom';
-import { loginUser } from '../../services/authService';
-import type { UserLoginData } from '../../types/api';
-import AuthLayout from '../../layouts/AuthLayout'; // Import the layout
+import { LockOutlined, UserOutlined } from "@ant-design/icons";
+import {
+  Alert,
+  Button,
+  Checkbox,
+  Col,
+  Form,
+  Input,
+  Row,
+  Typography,
+} from "antd";
+import React from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { useAuth } from "../../hooks/useAuth";
+import { type UserLoginData } from "../../types/api";
 
 const { Title } = Typography;
 
 const LoginPage: React.FC = () => {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const {
+    login,
+    error: authError,
+    clearError,
+    isLoading: authLoading,
+  } = useAuth();
   const navigate = useNavigate();
+  const [form] = Form.useForm();
 
-  const onFinish = async (values: UserLoginData /* Antd Form values match UserLoginData */) => {
-    setLoading(true);
-    setError(null);
+  React.useEffect(() => {
+    clearError();
+  }, [clearError]);
+
+  const onFinish = async (values: UserLoginData) => {
     try {
-      // 'username' in UserLoginData is used for email for FastAPI Users
-      const loginPayload: UserLoginData = {
-        username: values.username, // This should be the email input
-        password: values.password,
-        // grant_type: 'password' // FastAPI Users /jwt/login endpoint implies this for form data
-      };
-      const data = await loginUser(loginPayload);
-      localStorage.setItem('authToken', data.access_token); // Store access token
-      // The refresh token is handled as an HttpOnly cookie by the backend
-
-      // Optional: Fetch user details after login to confirm or store in context
-      // const user = await getCurrentUser();
-      // console.log('Logged in user:', user);
-
-      navigate('/dashboard');
-    } catch (err: any) {
-      if (err.response && err.response.data && err.response.data.detail) {
-        if (typeof err.response.data.detail === 'string') {
-            setError(err.response.data.detail);
-        } else if (Array.isArray(err.response.data.detail) && err.response.data.detail.length > 0) {
-            // Handle cases like validation errors from FastAPI Users
-            setError(err.response.data.detail.map((e: any) => `${e.loc.join('.')} - ${e.msg}`).join(', '));
-        } else {
-            setError('Login failed. Please check your credentials.');
-        }
-      } else {
-        setError('Login failed. An unexpected error occurred.');
-      }
-      console.error('Login error:', err);
-    } finally {
-      setLoading(false);
+      await login(values);
+      navigate("/dashboard");
+    } catch (err) {
+      console.error(
+        "LoginPage: Login attempt failed in component's onFinish:",
+        err,
+      );
     }
   };
 
+  interface AntDValidationError {
+    values: UserLoginData;
+    errorFields: { name: (string | number)[]; errors: string[] }[];
+    outOfDate: boolean;
+  }
+
+  const onFinishFailed = (errorInfo: AntDValidationError) => {
+    console.log("LoginPage: Form validation failed:", errorInfo);
+  };
+
   return (
-    <AuthLayout>
-      <Card title={<Title level={3} style={{ textAlign: 'center', marginBottom: 0 }}>Secure Code Platform Login</Title>} style={{ boxShadow: '0 4px 8px rgba(0,0,0,0.1)' }}>
-        {error && <Alert message={error} type="error" showIcon closable style={{ marginBottom: 20 }} onClose={() => setError(null)} />}
-        <Form
-          name="login"
-          initialValues={{ remember: true }}
-          onFinish={onFinish}
-          size="large"
+    <Row
+      justify="center"
+      align="middle"
+      style={{ minHeight: "100vh", background: "#f0f2f5" }}
+    >
+      {/* Updated Col props for width adjustment */}
+      <Col xs={22} sm={16} md={12} lg={24} xl={24}>
+        {" "}
+        {/* <-- UPDATED HERE */}
+        <div
+          style={{
+            background: "#fff",
+            padding: "40px", // You can adjust padding if needed too
+            borderRadius: "8px",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+          }}
         >
-          <Form.Item
-            name="username" // This will be the email
-            rules={[{ required: true, message: 'Please input your Email!' }, { type: 'email', message: 'Please enter a valid email!' }]}
+          <Title
+            level={2}
+            style={{ textAlign: "center", marginBottom: "30px" }}
           >
-            <Input prefix={<UserOutlined />} placeholder="Email" />
-          </Form.Item>
-          <Form.Item
-            name="password"
-            rules={[{ required: true, message: 'Please input your Password!' }]}
+            Login
+          </Title>
+          {authError && (
+            <Alert
+              message={authError}
+              type="error"
+              showIcon
+              closable
+              onClose={clearError}
+              style={{ marginBottom: "20px" }}
+            />
+          )}
+          <Form
+            form={form}
+            name="login"
+            initialValues={{ remember: true }}
+            onFinish={onFinish}
+            onFinishFailed={onFinishFailed}
+            layout="vertical"
           >
-            <Input.Password prefix={<LockOutlined />} placeholder="Password" />
-          </Form.Item>
-          <Form.Item>
-            <Form.Item name="remember" valuePropName="checked" noStyle>
+            <Form.Item
+              name="username"
+              label="Username or Email"
+              rules={[
+                {
+                  required: true,
+                  message: "Please input your Username or Email!",
+                },
+              ]}
+            >
+              <Input
+                prefix={<UserOutlined />}
+                placeholder="Username or Email"
+              />
+            </Form.Item>
+
+            <Form.Item
+              name="password"
+              label="Password"
+              rules={[
+                { required: true, message: "Please input your Password!" },
+              ]}
+            >
+              <Input.Password
+                prefix={<LockOutlined />}
+                placeholder="Password"
+              />
+            </Form.Item>
+
+            <Form.Item name="remember" valuePropName="checked">
               <Checkbox>Remember me</Checkbox>
             </Form.Item>
-            <a style={{ float: 'right' }} href="/forgot-password"> {/* Placeholder */}
-              Forgot password?
-            </a>
-          </Form.Item>
-          <Form.Item>
-            <Button type="primary" htmlType="submit" loading={loading} block>
-              Log in
-            </Button>
-          </Form.Item>
-          Or <Link to="/register">register now!</Link>
-        </Form>
-      </Card>
-    </AuthLayout>
+
+            <Form.Item>
+              <Button
+                type="primary"
+                htmlType="submit"
+                loading={authLoading}
+                style={{ width: "100%" }}
+              >
+                Log in
+              </Button>
+            </Form.Item>
+            <div style={{ textAlign: "center" }}>
+              Or <Link to="/register">register now!</Link>
+              {/* <br />
+              <Link to="/forgot-password">Forgot password?</Link> */}
+            </div>
+          </Form>
+        </div>
+      </Col>
+    </Row>
   );
 };
 

@@ -3,14 +3,39 @@
   line-height: 1.5;
   font-weight: 400;
 
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
+  /* Default to dark theme variables, can be overridden by @media query */
+  --text-color: rgba(255, 255, 255, 0.87);
+  --background-color: #242424;
+
+  color-scheme: light dark; /* Allows browser to adapt scrollbars etc. */
+  color: var(--text-color);
+  background-color: var(--background-color);
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* Ensure html, body, and #root take full height and have no default margins/paddings */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  /* REMOVED: display: flex; */
+  /* REMOVED: place-items: center; */
+  /* min-width: 320px; */ /* This is fine but less critical if #root is 100% width */
+  min-height: 100vh; /* Ensures body is at least full viewport height */
+}
+
+/* Ensure #root takes full width of its parent (body) */
+#root {
+  width: 100%;
 }
 
 a {
@@ -20,14 +45,6 @@ a {
 }
 a:hover {
   color: #535bf2;
-}
-
-body {
-  margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
 }
 
 h1 {
@@ -56,9 +73,12 @@ button:focus-visible {
 
 @media (prefers-color-scheme: light) {
   :root {
-    color: #213547;
-    background-color: #ffffff;
+    /* Update CSS variables for light mode */
+    --text-color: #213547;
+    --background-color: #ffffff;
   }
+  /* body will automatically pick up these new variable values */
+
   a:hover {
     color: #747bff;
   }

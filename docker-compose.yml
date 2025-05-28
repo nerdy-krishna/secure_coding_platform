@@ -23,7 +23,7 @@ services:
     command: ["poetry", "run", "uvicorn", "src.app.main:app", "--host", "0.0.0.0", "--port", "${APP_PORT:-8000}", "--reload"]
 
   db:
-    image: postgres:16 # As per collated_code.txt [cite: 6]
+    image: postgres:16 # As per collated_code.txt 
     container_name: secure_coding_platform_db
     env_file:
       - .env # Loads POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB from .env
@@ -38,7 +38,7 @@ services:
     ports:
       - "${POSTGRES_PORT_HOST:-5432}:5432" # Expose PostgreSQL to host machine on this port
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"] # [cite: 6]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"] # 
       interval: 10s
       timeout: 5s
       retries: 5
@@ -53,7 +53,7 @@ services:
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS}
     ports:
       - "${RABBITMQ_PORT:-5672}:5672" # AMQP port
-      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672" # Management UI [cite: 7]
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672" # Management UI 
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq/
     healthcheck:
@@ -63,14 +63,14 @@ services:
       retries: 5
 
   vector_db: # ChromaDB
-    image: chromadb/chroma:0.5.3 # As per collated_code.txt [cite: 8]
+    image: chromadb/chroma:0.5.3 # As per collated_code.txt 
     container_name: secure_coding_platform_vector_db
     env_file:
       - .env
     environment:
       - IS_PERSISTENT=TRUE
       - ANONYMIZED_TELEMETRY=FALSE # Optional
-      # Chroma 0.5.x settings from collated_code.txt [cite: 8]
+      # Chroma 0.5.x settings from collated_code.txt 
       - CHROMA_SERVER_HOST=0.0.0.0 
       - CHROMA_SERVER_HTTP_PORT=${CHROMA_PORT:-8001} # Internal port for Chroma
       - CHROMA_TENANT=default_tenant
@@ -78,7 +78,7 @@ services:
     ports:
       - "${CHROMA_PORT_HOST:-8001}:${CHROMA_PORT:-8001}" # Expose Chroma to host
     volumes:
-      - chroma_data:/chroma # Persist data path [cite: 9]
+      - chroma_data:/chroma # Persist data path 
     # ChromaDB 0.5.x doesn't have a standard healthcheck in the image itself easily accessible like pg_isready or rabbitmq-diagnostics ping.
     # `service_started` is a reasonable depends_on condition.
 
@@ -92,7 +92,7 @@ services:
     volumes:
       - ./src:/app/src
     environment:
-        PYTHONPATH: /app # Ensures src modules can be found [cite: 10]
+        PYTHONPATH: /app # Ensures src modules can be found 
     depends_on:
       db:
         condition: service_healthy
@@ -102,7 +102,7 @@ services:
     command: ["poetry", "run", "python", "-m", "src.app.workers.consumer"]
 
 
-volumes: # Define named volumes for data persistence [cite: 12]
+volumes: # Define named volumes for data persistence 
   postgres_data:
   rabbitmq_data:
   chroma_data:
