@@ -54,7 +54,7 @@ const LoginPage: React.FC = () => {
 
   return (
     <AuthLayout>
-      <Card title={<Title level={3} style={{ textAlign: 'center', marginBottom: 0 }}>Secure Code Platform Login</Title>} style={{ boxShadow: '0 4px 8px rgba(0,0,0,0.1)' }}>
+      <Card title={<Title level={3} style={{ textAlign: 'center', marginBottom: 0 }}>Secure Coding Platform Login</Title>} style={{ boxShadow: '0 4px 8px rgba(0,0,0,0.1)' }}>
         {error && <Alert message={error} type="error" showIcon closable style={{ marginBottom: 20 }} onClose={() => setError(null)} />}
         <Form
           name="login"

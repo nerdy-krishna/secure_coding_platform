@@ -140,7 +140,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
           </div>
         </Content>
         <Footer style={{ textAlign: 'center' }}>
-          Secure Code Platform ©{new Date().getFullYear()} Created with Ant Design
+          Secure Coding Platform ©{new Date().getFullYear()} Created with Ant Design
         </Footer>
       </Layout>
     </Layout>
