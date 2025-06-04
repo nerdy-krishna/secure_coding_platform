@@ -6,7 +6,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 # Import your User model and the AsyncSessionLocal from your main database setup
 from .models import User
-from src.app.db.database import AsyncSessionLocal # Corrected import path from ..db.database
+from src.app.db.database import (
+    AsyncSessionLocal,
+)  # Corrected import path from ..db.database
+
 
 async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
     """
@@ -15,6 +18,7 @@ async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
     """
     async with AsyncSessionLocal() as session:
         yield session
+
 
 async def get_user_db(session: AsyncSession = Depends(get_async_session)):
     """
