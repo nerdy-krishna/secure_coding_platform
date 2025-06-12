@@ -1,314 +1,126 @@
+# src/app/agents/context_analysis_agent.py
 import logging
-import json
-import re
-from typing import TypedDict, List, Optional, Dict, Any
+from typing import Dict, Any, TypedDict, Optional, List
 
 from langgraph.graph import StateGraph, END
+from pydantic import BaseModel, Field
+
 from ..llm.llm_client import get_llm_client
-from ..llm.providers import LLMResult
-from ..db.crud import save_llm_interaction  # For logging LLM calls
-from ..utils.cost_estimation import estimate_openai_cost  # For estimating cost
-from src.app.llm.llm_client import get_llm_client
-from src.app.db.crud import save_llm_interaction
-from src.app.utils.cost_estimation import estimate_cost
-from src.app.llm.providers import LLMResult
 
+# Configure logging
 logger = logging.getLogger(__name__)
+AGENT_NAME = "ContextAnalysisAgent"
 
-# Placeholder for ASVS categories - in a real scenario, this might be more dynamic
-# or part of the RAG retrieval.
-ASVS_CATEGORIES = [
-    "V1_Architecture",
-    "V2_Authentication",
-    "V3_SessionManagement",
-    "V4_AccessControl",
-    "V5_Validation",
-    "V6_Cryptography",
-    "V7_ErrorHandling",
-    "V8_DataProtection",
-    "V9_Communication",
-    "V10_MaliciousCode",
-    "V11_BusinessLogic",
-    "V12_FileHandling",
-    "V13_APISecurity",
-    "V14_Configuration",
-]
+AGENT_DESCRIPTIONS = {
+    "AccessControlAgent": "Analyzes for vulnerabilities related to user permissions, authorization, and insecure direct object references.",
+    "ApiSecurityAgent": "Focuses on the security of API endpoints, including REST, GraphQL, and other web services.",
+    "ArchitectureAgent": "Assesses the overall security architecture, design patterns, and data flow.",
+    "AuthenticationAgent": "Scrutinizes login mechanisms, password policies, multi-factor authentication, and credential management.",
+    "BusinessLogicAgent": "Looks for flaws in the application's business logic that could be exploited.",
+    "CodeIntegrityAgent": "Verifies the integrity of code and dependencies to prevent tampering.",
+    "CommunicationAgent": "Checks for secure data transmission, use of TLS, and protection against network-level attacks.",
+    "ConfigurationAgent": "Inspects for misconfigurations in the application, server, or third-party services.",
+    "CryptographyAgent": "Evaluates the use of encryption, hashing algorithms, and key management.",
+    "DataProtectionAgent": "Focuses on the protection of sensitive data at rest and in transit, including PII.",
+    "ErrorHandlingAgent": "Analyzes error handling routines to prevent information leakage.",
+    "FileHandlingAgent": "Scrutinizes file upload, download, and processing functionality for vulnerabilities.",
+    "SessionManagementAgent": "Checks for secure session handling, token management, and protection against session hijacking.",
+    "ValidationAgent": "Focuses on input validation, output encoding, and prevention of injection attacks like SQLi and XSS.",
+}
 
 
-# --- State Definition for ContextAnalysisAgent ---
+class AgentRelevance(BaseModel):
+    is_relevant: bool = Field(..., description="True if the agent's security domain is relevant to the code, otherwise False.")
+    reasoning: str = Field(..., description="A brief explanation for why the agent is or is not relevant.")
+
+class TaskBreakdown(BaseModel):
+    AccessControlAgent: AgentRelevance
+    ApiSecurityAgent: AgentRelevance
+    ArchitectureAgent: AgentRelevance
+    AuthenticationAgent: AgentRelevance
+    BusinessLogicAgent: AgentRelevance
+    CodeIntegrityAgent: AgentRelevance
+    CommunicationAgent: AgentRelevance
+    ConfigurationAgent: AgentRelevance
+    CryptographyAgent: AgentRelevance
+    DataProtectionAgent: AgentRelevance
+    ErrorHandlingAgent: AgentRelevance
+    FileHandlingAgent: AgentRelevance
+    SessionManagementAgent: AgentRelevance
+    ValidationAgent: AgentRelevance
+
+class FullContextAnalysis(BaseModel):
+    """The complete structured output for the context analysis agent."""
+    analysis_summary: str = Field(description="A brief, one-paragraph summary of the code's functionality.")
+    identified_components: List[str] = Field(description="A list of key components, frameworks, or libraries used (e.g., 'FastAPI', 'SQLAlchemy').")
+    asvs_analysis: TaskBreakdown = Field(description="The relevance analysis for each security agent based on the code.")
+
+
 class ContextAnalysisAgentState(TypedDict):
+    """
+    Defines the state for the Context Analysis Agent's workflow.
+    This is the state that will be passed between the nodes of its graph.
+    """
     submission_id: int
     filename: str
     code_snippet: str
     language: str
-    # For Sprint 2, we assume "asvs_v5.0" is implicitly selected or passed.
-    # selected_frameworks: List[str] # e.g., ["asvs_v5.0"]
-
-    # Output of this agent for a single file
     analysis_summary: Optional[str]
     identified_components: Optional[List[str]]
-    # RAG-informed likelihood mapping for ASVS
-    # Structure: {"V1_Architecture": {"likelihood": "High", "evidence": "...", "relevant_asvs_controls": ["1.1.1"]}}
     asvs_analysis: Optional[Dict[str, Any]]
     error_message: Optional[str]
 
 
-# --- Helper Functions ---
-def _extract_json_from_llm_response(response_text: str) -> Optional[Dict[str, Any]]:
+async def analyze_code_context_node(state: ContextAnalysisAgentState) -> Dict[str, Any]:
     """
-    Extracts a JSON object from the LLM response.
-    Handles cases where JSON might be embedded in markdown or have surrounding text.
+    Analyzes the code snippet to provide a summary, identify components, and determine
+    which specialized security agents are relevant for a deeper scan.
     """
-    if not response_text:
-        return None
-
-    # Try direct parsing first
-    try:
-        return json.loads(response_text)
-    except json.JSONDecodeError:
-        pass  # Continue to other methods
-
-    # Handle markdown code blocks (```json ... ``` or ``` ... ```)
-    match = re.search(
-        r"```(?:json)?\s*(\{.*?\})\s*```", response_text, re.DOTALL | re.IGNORECASE
-    )
-    if match:
-        try:
-            return json.loads(match.group(1))
-        except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse JSON from markdown block: {e}")
-            pass  # Continue
-
-    # Fallback: find the first '{' and last '}'
-    try:
-        json_start = response_text.find("{")
-        json_end = response_text.rfind("}") + 1
-        if 0 <= json_start < json_end:
-            potential_json_str = response_text[json_start:json_end]
-            return json.loads(potential_json_str)
-    except json.JSONDecodeError as e:
-        logger.warning(f"Failed to parse JSON using fallback search: {e}")
-
-    logger.error("Could not extract valid JSON from LLM response.")
-    return None
-
-
-def _validate_asvs_analysis_structure(
-    analysis_data: Dict[str, Any], filename: str
-) -> bool:
-    """
-    Validates the structure of the ASVS analysis data from the LLM.
-    Ensures all ASVS categories are present with likelihood.
-    """
-    if not isinstance(analysis_data, dict):
-        return False
-    if analysis_data.get("filename") != filename:
-        logger.warning(
-            f"Filename mismatch in LLM response. Expected {filename}, got {analysis_data.get('filename')}"
-        )
-        analysis_data["filename"] = filename  # Correct it
-
-    if "summary" not in analysis_data or not isinstance(analysis_data["summary"], str):
-        analysis_data["summary"] = "Summary not provided or invalid."
-    if "components" not in analysis_data or not isinstance(
-        analysis_data["components"], list
-    ):
-        analysis_data["components"] = []
-
-    security_areas = analysis_data.get("security_areas")
-    if not isinstance(security_areas, dict):
-        analysis_data["security_areas"] = {}  # Initialize if missing or wrong type
-        security_areas = analysis_data["security_areas"]
-
-    for category in ASVS_CATEGORIES:
-        if category not in security_areas:
-            security_areas[category] = {
-                "likelihood": "None",
-                "evidence": "",
-                "key_elements": [],
-                "relevant_asvs_controls": [],
-            }
-        else:
-            area_detail = security_areas[category]
-            if not isinstance(area_detail, dict):  # Ensure it's a dict
-                security_areas[category] = {
-                    "likelihood": "None",
-                    "evidence": "",
-                    "key_elements": [],
-                    "relevant_asvs_controls": [],
-                }
-                area_detail = security_areas[category]
-
-            # Normalize likelihood
-            likelihood_val = (
-                str(area_detail.get("likelihood", "None")).strip().capitalize()
-            )
-            if likelihood_val not in ["High", "Medium", "Low", "None"]:
-                likelihood_val = "None"
-            area_detail["likelihood"] = likelihood_val
-
-            if "evidence" not in area_detail:
-                area_detail["evidence"] = ""
-            if "key_elements" not in area_detail or not isinstance(
-                area_detail["key_elements"], list
-            ):
-                area_detail["key_elements"] = []
-            if "relevant_asvs_controls" not in area_detail or not isinstance(
-                area_detail["relevant_asvs_controls"], list
-            ):
-                area_detail["relevant_asvs_controls"] = []
-    return True
-
-
-# --- Node Functions ---
-
-
-async def perform_rag_enhanced_analysis_node(state: ContextAnalysisAgentState) -> Dict[str, Any]:
-    """
-    Node for performing context analysis on a single file using RAG-enhanced prompts.
-    This version is designed to be called concurrently for multiple files.
-    """
-    submission_id = state["submission_id"]
-    filename = state["filename"]
-    language = state["language"]
-    file_content = state["file_content"]
-    selected_frameworks = state["selected_frameworks"]
+    logger.info(f"[{AGENT_NAME}] Starting context analysis for submission ID: {state['submission_id']}, file: {state['filename']}")
+    code_snippet = state["code_snippet"]
     
-    logger.info(f"Node: perform_rag_enhanced_analysis_node for file '{filename}' (Submission ID: {submission_id})")
+    llm_client = get_llm_client()
 
-    max_chars = 4000  # Example character limit for the snippet
-    code_snippet = (
-        file_content[:max_chars]
-        if len(file_content) > max_chars
-        else file_content
-    )
-    if len(file_content) > max_chars:
-        logger.warning(
-            f"Code snippet for '{filename}' was truncated for LLM analysis due to length."
-        )
+    prompt = f"""
+    You are an expert security architect. Your task is to analyze the provided code snippet.
+    
+    First, provide a brief, one-paragraph summary of the code's functionality in `analysis_summary`.
+    Second, identify key components, frameworks, or libraries and list them in `identified_components`.
+    Third, for each security agent in the `asvs_analysis` object, determine if its security domain is relevant for a detailed vulnerability scan of the given code, and provide your reasoning.
 
-    # Simplified prompt for initial analysis
-    prompt_template = """
-    Analyze the following code snippet from the file '{filename}' written in {language}.
-    Based on the code's content, determine its primary purpose and identify which of the following security domains are most relevant for a detailed security assessment. The security domains are derived from OWASP ASVS:
-    - V1: Architecture, Design and Threat Modeling
-    - V2: Authentication
-    - V3: Session Management
-    - V4: Access Control
-    - V5: Validation, Sanitization and Encoding
-    - V6: Stored Cryptography
-    - V7: Error Handling and Logging
-    - V8: Data Protection
-    - V9: Communications
-    - V10: Malicious Code
-    - V11: Business Logic
-    - V12: Files and Resources
-    - V13: API and Web Service
-    - V14: Configuration
+    AGENT DESCRIPTIONS:
+    {AGENT_DESCRIPTIONS}
 
-    Code Snippet:
+    CODE SNIPPET:
     ```
     {code_snippet}
     ```
 
-    Respond with a JSON object containing two keys:
-    1. "purpose": A brief, one-sentence description of the code's primary purpose.
-    2. "relevant_domains": A list of the most relevant domain identifiers (e.g., ["V2", "V4", "V5"]).
-
-    Example Response:
-    {{
-      "purpose": "This code defines API endpoints for user authentication, including login and registration.",
-      "relevant_domains": ["V2", "V4", "V13"]
-    }}
+    Respond with a single, valid JSON object that strictly adheres to the provided schema.
     """
-    prompt = prompt_template.format(
-        filename=filename,
-        language=language,
-        code_snippet=code_snippet,
-    )
 
-    llm_result = None  # Initialize to ensure it's always defined
-    try:
-        llm = get_llm_client()
-        generation_config_override = {"temperature": 0.1} # Lower temp for more deterministic analysis
-        
-        llm_result = await llm.generate(
-            prompt=prompt, generation_config_override=generation_config_override
-        )
-        
-        analysis_content = {}
-        # --- FIX 1: Use .output_text instead of .content ---
-        if llm_result.status == "success" and llm_result.output_text:
-            try:
-                # Clean the response to extract only the JSON part
-                json_str = llm_result.output_text.strip().lstrip("```json").lstrip("```").rstrip("```")
-                analysis_content = json.loads(json_str)
-                analysis_content["status"] = "success"
-                logger.info(f"Successfully parsed LLM analysis for '{filename}'.")
-            except json.JSONDecodeError as e:
-                logger.error(
-                    f"Failed to decode JSON from LLM response for '{filename}': {e}. Response: {llm_result.output_text}"
-                )
-                analysis_content = {
-                    "status": "failed",
-                    "error": f"JSONDecodeError: {e}",
-                    "raw_response": llm_result.output_text,
-                }
-        else:
-             analysis_content = {
-                "status": "failed",
-                "error": llm_result.error or "LLM generation failed to produce content.",
-            }
-        
-        return {"analysis_results": analysis_content}
+    llm_response = await llm_client.generate_structured_output(prompt, FullContextAnalysis)
 
-    except Exception as e:
-        logger.error(
-            f"Unhandled exception during RAG analysis for '{filename}': {e}",
-            exc_info=True,
-        )
-        return {
-            "analysis_results": {"status": "failed", "error": str(e)},
-        }
-    finally:
-        # --- FIX 2: Use .prompt_tokens instead of .input_tokens ---
-        if llm_result:
-            estimated_cost = estimate_cost(
-                llm_result.prompt_tokens,
-                llm_result.completion_tokens,
-                llm_result.model_name,
-            )
-            # Use a separate async function to save to not block the return
-            await save_llm_interaction(
-                submission_id=submission_id,
-                agent_name="ContextAnalysisAgent",
-                prompt=prompt,
-                response=llm_result.output_text,
-                prompt_tokens=llm_result.prompt_tokens,
-                completion_tokens=llm_result.completion_tokens,
-                total_tokens=llm_result.total_tokens,
-                latency_ms=llm_result.latency_ms,
-                model_name=llm_result.model_name,
-                status=llm_result.status,
-                error_message=llm_result.error,
-                estimated_cost=estimated_cost,
-                # Add filename to context for better logging
-                context={"filename": filename}
-            )
-
-# --- Graph Construction ---
-def build_context_analysis_agent_graph() -> Any:
-    """Builds and returns the compiled LangGraph for context analysis."""
-    graph = StateGraph(ContextAnalysisAgentState)
-
-    graph.add_node("perform_rag_enhanced_analysis", perform_rag_enhanced_analysis_node)
-    graph.set_entry_point("perform_rag_enhanced_analysis")
-    graph.add_edge("perform_rag_enhanced_analysis", END)
-
-    compiled_graph = graph.compile()
-    logger.info("ContextAnalysisAgent graph compiled successfully.")
-    return compiled_graph
+    if llm_response.error or not llm_response.parsed_output:
+        error_msg = llm_response.error or "Failed to get a valid structured response from the LLM."
+        logger.error(f"[{AGENT_NAME}] Failed to get full context analysis from LLM for file {state['filename']}: {error_msg}")
+        return {"error_message": error_msg}
+    
+    parsed_output = llm_response.parsed_output
+    logger.info(f"[{AGENT_NAME}] Context analysis complete for file {state['filename']}.")
+    
+    return {
+        "analysis_summary": parsed_output.analysis_summary,
+        "identified_components": parsed_output.identified_components,
+        "asvs_analysis": parsed_output.asvs_analysis.dict(), # Convert Pydantic model to dict
+        "error_message": None,
+    }
 
 
-# To make it callable, similar to other agents
-# context_analysis_agent_workflow = build_context_analysis_agent_graph()
+def build_context_analysis_agent_graph():
+    """Builds the graph for the context analysis agent."""
+    workflow = StateGraph(ContextAnalysisAgentState)
+    workflow.add_node("analyze_code_context", analyze_code_context_node)
+    workflow.set_entry_point("analyze_code_context")
+    workflow.add_edge("analyze_code_context", END)
+    return workflow.compile()

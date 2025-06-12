@@ -1,349 +1,231 @@
+# src/app/agents/reporting_agent.py
+import json
 import logging
-import datetime
-from typing import TypedDict, List, Optional, Dict, Any
+from typing import TypedDict, List, Dict, Any, Optional
 
-from langgraph.graph import StateGraph, END
-# No LLM calls are typically made by the ReportingAgent itself; it processes existing data.
+from langgraph.graph import StateGraph, END, Pregel
+from pydantic import BaseModel
 
+from src.app.db import crud
+from src.app.db.database import get_db_session, AsyncSessionLocal
+from src.app.llm.llm_client import get_llm_client, AgentLLMResult
+from src.app.db.models import CodeSubmission, SubmittedFile
+
+# Configure logging
 logger = logging.getLogger(__name__)
+AGENT_NAME = "ReportingAgent"
 
+# --- Pydantic Models ---
 
-# --- State Definition for ReportingAgent ---
+class ReportSummary(BaseModel):
+    """Pydantic model for the structured output of the summary generation LLM call."""
+    summary_text: str
+
+# --- Agent State ---
+
 class ReportingAgentState(TypedDict):
     submission_id: int
-    collated_findings: List[Dict[str, Any]]  # Output from assemble_and_collate_node
-    # For context, like original code for snippets or file paths
-    files_data: List[
-        Dict[str, Any]
-    ]  # Each: {"filename": str, "content": str, "detected_language": str}
-    primary_language: Optional[str]
-    # Suggested fixes (filename -> fixed_code_string) from assemble_and_collate_node
-    final_fixed_code_map: Optional[Dict[str, str]]
+    submission_data: Optional[CodeSubmission]
+    original_code: Dict[str, str]
+    summary_text: Optional[str]
+    sarif_report: Optional[Dict[str, Any]]
+    final_report: Optional[Dict[str, Any]]
+    error: Optional[str]
 
-    # Outputs produced by this agent
-    json_report_data: Optional[Dict[str, Any]]
-    sarif_report_data: Optional[Dict[str, Any]]  # SARIF is JSON structure
-    text_summary_data: Optional[str]  # A simple text summary
+# --- Agent Utility Functions ---
 
-    # This will be the final output packaged for the database
-    # It can contain the structured json_report_data and references or summaries of others.
-    final_structured_report: Optional[Dict[str, Any]]
-    error_message: Optional[str]
-
-
-# --- Node Functions ---
-
-
-def generate_json_report_node(state: ReportingAgentState) -> Dict[str, Any]:
-    submission_id = state["submission_id"]
-    collated_findings = state.get("collated_findings", [])
-    files_data = state.get("files_data", [])
-    final_fixed_code_map = state.get("final_fixed_code_map", {})
-    logger.info(
-        f"ReportingAgent Node: generate_json_report_node for Submission ID: {submission_id}"
-    )
-
-    original_code_map = {f["filename"]: f["content"] for f in files_data}
-
-    # Basic summary
-    num_findings = 0
-    num_errors = 0
-    critical_issues_count = 0
-    high_issues_count = 0
-    medium_issues_count = 0
-    low_issues_count = 0
-
-    for finding_item in collated_findings:
-        if finding_item.get("is_error"):
-            num_errors += 1
-        else:
-            num_findings += 1
-            severity = (
-                finding_item.get("details", {}).get("severity", "Unknown").lower()
-            )
-            if severity == "critical":  # Assuming critical might be used
-                critical_issues_count += 1
-            elif severity == "high":
-                high_issues_count += 1
-            elif severity == "medium":
-                medium_issues_count += 1
-            elif severity == "low":
-                low_issues_count += 1
-
-    report_summary = (
-        f"Analysis for submission {submission_id} completed. "
-        f"Found {num_findings} potential vulnerabilities/issues and {num_errors} processing errors. "
-        f"Severity Summary: Critical-{critical_issues_count}, High-{high_issues_count}, "
-        f"Medium-{medium_issues_count}, Low-{low_issues_count}."
-    )
-
-    json_report = {
-        "report_schema_version": "1.0.0",
-        "submission_id": submission_id,
-        "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "summary": report_summary,
-        "statistics": {
-            "total_findings_issues": len(collated_findings),
-            "vulnerability_findings": num_findings,
-            "processing_errors": num_errors,
-            "severity_counts": {
-                "critical": critical_issues_count,
-                "high": high_issues_count,
-                "medium": medium_issues_count,
-                "low": low_issues_count,
-            },
-        },
-        "detailed_findings": collated_findings,  # Contains all details, source, context
-        "original_code_snippets": original_code_map,  # May need to be selective for large projects
-        "suggested_fixes": final_fixed_code_map,
-    }
-    logger.debug(f"JSON report generated for Submission ID: {submission_id}")
-    return {"json_report_data": json_report}
-
-
-async def generate_basic_sarif_report_node(
-    state: ReportingAgentState,
-) -> Dict[str, Any]:  # Made async
-    submission_id = state["submission_id"]
-    collated_findings = state.get("collated_findings", [])
-    # files_data is available in 'state' if needed for more complex URI generation, but not directly used in this basic version.
-    primary_language_from_state = state.get("primary_language", "unknown")
-    logger.info(
-        f"ReportingAgent Node: generate_basic_sarif_report_node for Submission ID: {submission_id}"
-    )
-
-    rules = []
+def _create_sarif_report(
+    findings: List[Dict[str, Any]], original_code: Dict[str, str]
+) -> Dict[str, Any]:
+    """Creates a SARIF-compliant report from the findings."""
     results = []
+    rules = {}
 
-    rule_id_map = {}
-    rule_idx_counter = 0
+    for finding in findings:
+        rule_id = finding.get("cwe", "CWE-Unknown")
+        if rule_id not in rules:
+            rules[rule_id] = {
+                "id": rule_id,
+                "shortDescription": {"text": f"Vulnerability Type: {rule_id}"},
+            }
 
-    for idx, item in enumerate(collated_findings):
-        if item.get("is_error"):
-            continue
-
-        details = item.get("details", {})
-        description = details.get("description", "Unknown issue")
-        recommendation = details.get("recommendation", "No specific recommendation.")
-        severity = details.get("severity", "Medium").lower()
-        asvs_id = details.get("asvs_id", "")
-
-        cwe_ids_from_finding = []
-        # Assuming 'cwe_mapping' is a list of dicts like [{"description": "...", "cwe_id": "CWE-XXX"}]
-        # This comes from the map_to_standards_node of specialized agents.
-        raw_cwe_info = details.get("cwe_mapping")
-        if isinstance(raw_cwe_info, list):
-            for cwe_entry in raw_cwe_info:
-                if isinstance(cwe_entry, dict) and cwe_entry.get("cwe_id"):
-                    cwe_ids_from_finding.append(str(cwe_entry.get("cwe_id")))
-
-        rule_key = f"{asvs_id}_{description[:50]}"  # Create a more stable rule key
-        if not asvs_id:  # Fallback if asvs_id is missing
-            rule_key = description[:50]
-
-        if rule_key not in rule_id_map:
-            rule_id_map[rule_key] = (
-                f"SCP-{rule_idx_counter:03d}"  # Use a simpler prefix
-            )
-            rules.append(
-                {
-                    "id": rule_id_map[rule_key],
-                    "shortDescription": {"text": description[:120]},
-                    "fullDescription": {"text": description},
-                    "helpUri": f"https://example.com/docs/rules/{rule_id_map[rule_key]}",  # Placeholder
-                    "help": {
-                        "text": recommendation,
-                        "markdown": f"**Recommendation:**\n{recommendation}",
-                    },
-                    "defaultConfiguration": {
-                        "level": "warning"
-                        if severity in ["medium", "low", "informational", "info"]
-                        else "error"
-                    },
-                    "properties": {
-                        "tags": ["security", primary_language_from_state, asvs_id]
-                        if asvs_id
-                        else ["security", primary_language_from_state],
-                        "precision": "medium",
-                        "asvs_id": asvs_id,
-                        "cwe": cwe_ids_from_finding,  # List of CWE IDs (e.g., ["CWE-79", "CWE-89"])
-                    },
-                }
-            )
-            rule_idx_counter += 1
-
-        file_path_str = item.get("filename", "unknown_file")
-        # For SARIF, URIs are often relative to a checkout root, or fully qualified.
-        # Using filename directly for now.
-        file_uri = file_path_str
-
-        line_start = details.get("line_start")
-        line_end = details.get("line_end", line_start)
-        try:
-            line_start = int(line_start) if line_start is not None else 1
-            line_end = int(line_end) if line_end is not None else line_start
-        except (ValueError, TypeError):
-            line_start = 1
-            line_end = 1
-
-        result_item = {
-            "ruleId": rule_id_map[rule_key],
-            "level": "warning"
-            if severity in ["medium", "low", "informational", "info"]
-            else "error",
-            "message": {"text": description},
+        file_path = finding.get("file_path", "N/A")
+        # Ensure the snippet comes from the correct file's content
+        snippet_text = original_code.get(file_path, "Code not available.")
+        
+        result = {
+            "ruleId": rule_id,
+            "message": {"text": finding.get("description", "No description provided.")},
             "locations": [
                 {
                     "physicalLocation": {
-                        "artifactLocation": {"uri": file_uri},
+                        "artifactLocation": {"uri": file_path},
                         "region": {
-                            "startLine": line_start,
-                            "endLine": line_end,
+                            "startLine": finding.get("line_number", 1),
+                            "snippet": {"text": snippet_text},
                         },
                     }
                 }
             ],
+            "properties": {
+                "severity": finding.get("severity", "Medium"),
+                "confidence": finding.get("confidence", "Medium"),
+                "remediation": finding.get("remediation", "N/A"),
+            },
         }
-        results.append(result_item)
+        results.append(result)
 
-    sarif_log = {
-        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+    return {
+        "$schema": "https://schemastore.azurewebsites.net/schemas/json/sarif-2.1.0-rtm.5.json",
         "version": "2.1.0",
         "runs": [
             {
                 "tool": {
                     "driver": {
-                        "name": "SecureCodePlatform Agent Analysis",
-                        "version": "0.2.0",
-                        "informationUri": "https://example.com/your-project-docs",  # Replace with actual URI
-                        "language": primary_language_from_state
-                        if primary_language_from_state != "unknown"
-                        else "en-US",
-                        "rules": rules,
+                        "name": "4th Secure Coding Platform AI Analyzer",
+                        "rules": list(rules.values()),
                     }
                 },
-                "invocations": [
-                    {
-                        "executionSuccessful": True,
-                        "endTimeUtc": datetime.datetime.now(
-                            datetime.timezone.utc
-                        ).isoformat(),
-                    }
-                ],
                 "results": results,
             }
         ],
     }
-    logger.debug(
-        f"Enhanced Basic SARIF report generated for Submission ID: {submission_id}"
-    )
-    return {"sarif_report_data": sarif_log, "error_message": state.get("error_message")}
 
+# --- Agent Nodes ---
 
-def generate_text_summary_node(state: ReportingAgentState) -> Dict[str, Any]:
+async def fetch_submission_data_node(state: ReportingAgentState) -> Dict[str, Any]:
+    """Fetches all necessary data for the report from the database."""
     submission_id = state["submission_id"]
-    collated_findings = state.get("collated_findings", [])
-    logger.info(
-        f"ReportingAgent Node: generate_text_summary_node for Submission ID: {submission_id}"
-    )
+    logger.info(f"[{AGENT_NAME}] Fetching data for submission ID: {submission_id}")
+    
+    async with get_db_session() as db:
+        submission = await crud.get_submission(db, submission_id)
+        if not submission:
+            return {"error": f"Submission {submission_id} not found."}
 
-    if not collated_findings:
-        return {"text_summary_data": "No findings or errors to summarize."}
+        files = await crud.get_submission_files(db, submission_id)
+        original_code = {file.file_path: file.content for file in files}
 
-    summary_lines = [f"Text Summary for Submission ID: {submission_id}\n" + "=" * 40]
+    return {"submission_data": submission, "original_code": original_code}
 
-    for i, finding_item in enumerate(collated_findings):
-        source = finding_item.get("source", "Unknown Source")
-        filename = finding_item.get("filename", "N/A")
-        details = finding_item.get("details", {})
+async def generate_summary_node(state: ReportingAgentState) -> Dict[str, Any]:
+    """Generates a high-level summary of the findings using an LLM."""
+    submission = state.get("submission_data")
+    if not submission or not submission.findings:
+        return {"summary_text": "No findings were identified in the submission."}
 
-        summary_lines.append(f"\nFinding {i + 1}:")
-        summary_lines.append(f"  Source: {source}")
-        summary_lines.append(f"  File: {filename}")
+    logger.info(f"[{AGENT_NAME}] Generating summary for submission {submission.id}")
+    
+    # Create a simplified list of findings for the prompt
+    findings_for_prompt = [
+        {
+            "severity": f.severity,
+            "description": f.description,
+            "cwe": f.cwe,
+        }
+        for f in submission.findings
+    ]
+    
+    llm_client = get_llm_client()
+    prompt = f"""
+    You are a principal security analyst delivering a report to a development team.
+    Based on the following JSON list of findings, write a concise, high-level summary.
+    - Start with an executive summary of the security posture.
+    - Mention the total number of vulnerabilities found.
+    - Group findings by severity and mention the count for each.
+    - Highlight the most critical type of vulnerability found and briefly explain its potential impact.
+    - Conclude with a positive, encouraging statement about the value of this analysis.
 
-        if finding_item.get("is_error"):
-            summary_lines.append(
-                f"  Error: {details.get('error_message', 'Unknown error')}"
-            )
-        else:
-            description = details.get("description", "N/A")
-            severity = details.get("severity", "N/A")
-            line_start = details.get("line_start", "N/A")
-            recommendation = details.get("recommendation", "N/A")
-            asvs_id = details.get("asvs_id", "N/A")
-
-            summary_lines.append(f"  Description: {description}")
-            summary_lines.append(f"  Severity: {severity}")
-            summary_lines.append(f"  Line: {line_start}")
-            summary_lines.append(f"  ASVS ID: {asvs_id}")
-            summary_lines.append(f"  Recommendation: {recommendation}")
-
-        trigger_context = finding_item.get("trigger_context")
-        if trigger_context and isinstance(trigger_context, dict):
-            summary_lines.append(
-                f"  Trigger Context: "
-                f"Area: {trigger_context.get('triggering_area', 'N/A')}, "
-                f"Likelihood: {trigger_context.get('likelihood_from_context_analysis', 'N/A')}"
-            )
-
-    text_summary = "\n".join(summary_lines)
-    logger.debug(f"Text summary generated for Submission ID: {submission_id}")
-    return {"text_summary_data": text_summary}
-
-
-def compile_final_report_node(state: ReportingAgentState) -> Dict[str, Any]:
+    Findings:
+    ```json
+    {json.dumps(findings_for_prompt, indent=2)}
+    ```
+    Provide only the summary text in a `summary_text` field.
     """
-    Compiles all generated report data into a single dictionary
-    that will be stored in the database.
-    """
-    submission_id = state["submission_id"]
-    logger.info(
-        f"ReportingAgent Node: compile_final_report_node for Submission ID: {submission_id}"
-    )
+    
+    llm_response: AgentLLMResult = await llm_client.generate_structured_output(prompt, ReportSummary)
 
-    # The main JSON report already contains most of the necessary information.
-    # We will use it as the base and can add references or summaries of other formats if needed.
-    # For now, the json_report_data will be the primary structured report.
-    # SARIF and Text can be stored separately if the DB schema allows, or embedded/referenced.
-    # The `AnalysisResult.report_content` in DB is JSON, so `json_report_data` fits well.
-    # We can add SARIF and Text into this main JSON blob.
+    async with AsyncSessionLocal() as db:
+        await crud.save_llm_interaction(
+            db, submission_id=submission.id, agent_name=AGENT_NAME, prompt=prompt,
+            raw_response=llm_response.raw_output, parsed_output=llm_response.parsed_output.dict() if llm_response.parsed_output else None,
+            error=llm_response.error, file_path="N/A (Report Summary)", cost=llm_response.cost
+        )
 
-    final_structured_report = state.get("json_report_data", {})
+    if llm_response.error or not llm_response.parsed_output:
+        return {"summary_text": "Failed to generate AI summary."}
+        
+    return {"summary_text": llm_response.parsed_output.summary_text}
 
-    # Embed or reference other formats
-    if state.get("sarif_report_data"):
-        final_structured_report["sarif_report"] = state.get("sarif_report_data")
-    if state.get("text_summary_data"):
-        final_structured_report["text_summary"] = state.get("text_summary_data")
+async def generate_sarif_node(state: ReportingAgentState) -> Dict[str, Any]:
+    """Generates a SARIF report from the findings."""
+    submission = state.get("submission_data")
+    original_code = state.get("original_code", {})
+    if not submission:
+        return {"error": "Submission data not available for SARIF report."}
 
-    if not final_structured_report:
-        return {"error_message": "No report data was generated."}
+    logger.info(f"[{AGENT_NAME}] Generating SARIF report for submission {submission.id}")
+    # Convert SQLAlchemy models to dicts for JSON serialization
+    findings_list = [
+        {
+            "cwe": f.cwe, "description": f.description, "file_path": f.file_path,
+            "line_number": f.line_number, "severity": f.severity, "confidence": f.confidence,
+            "remediation": f.remediation
+        }
+        for f in submission.findings
+    ]
+    sarif_report = _create_sarif_report(findings_list, original_code)
+    return {"sarif_report": sarif_report}
 
-    return {
-        "final_structured_report": final_structured_report,
-        "error_message": state.get("error_message"),
+async def assemble_final_report_node(state: ReportingAgentState) -> Dict[str, Any]:
+    """Assembles the final report from all generated components."""
+    submission = state.get("submission_data")
+    if not submission:
+        return {"error": "Cannot assemble report, submission data is missing."}
+
+    logger.info(f"[{AGENT_NAME}] Assembling final report for submission {submission.id}")
+    
+    # Convert findings to a list of dicts for the final JSON report
+    findings_list = [
+        json.loads(VulnerabilityFindingResponse.from_orm(f).json())
+        for f in submission.findings
+    ]
+    
+    final_report = {
+        "summary": state.get("summary_text", "Summary not available."),
+        "statistics": {
+            "total_findings": len(findings_list),
+            "by_severity": {
+                sev: len([f for f in findings_list if f.get("severity") == sev])
+                for sev in ["Critical", "High", "Medium", "Low", "Info"]
+            },
+        },
+        "findings": findings_list,
+        "sarif_report": state.get("sarif_report", {"error": "SARIF report not generated."}),
     }
+    return {"final_report": final_report}
 
+# --- Graph Builder ---
 
-# --- Graph Construction ---
-def build_reporting_agent_graph() -> Any:
-    """Builds and returns the compiled LangGraph for the ReportingAgent."""
-    graph = StateGraph(ReportingAgentState)
+def build_reporting_agent_graph() -> Pregel:
+    """Builds the LangGraph workflow for the Reporting Agent."""
+    workflow = StateGraph(ReportingAgentState)
+    
+    workflow.add_node("fetch_data", fetch_submission_data_node)
+    
+    # These two nodes can run in parallel after fetching the data
+    workflow.add_node("generate_summary", generate_summary_node)
+    workflow.add_node("generate_sarif", generate_sarif_node)
+    
+    workflow.add_node("assemble_report", assemble_final_report_node)
 
-    graph.add_node("generate_json_report", generate_json_report_node)
-    graph.add_node("generate_basic_sarif_report", generate_basic_sarif_report_node)
-    graph.add_node("generate_text_summary", generate_text_summary_node)
-    graph.add_node("compile_final_report", compile_final_report_node)
+    workflow.set_entry_point("fetch_data")
+    workflow.add_edge("fetch_data", "generate_summary")
+    workflow.add_edge("fetch_data", "generate_sarif")
+    
+    # We need a joiner node to wait for both parallel branches to complete
+    workflow.add_edge(["generate_summary", "generate_sarif"], "assemble_report")
+    
+    workflow.add_edge("assemble_report", END)
 
-    # Define the workflow: Generate all reports in parallel (conceptually) then compile.
-    # For LangGraph, we can run them sequentially or use a parallel construct if needed.
-    # For simplicity, running sequentially here.
-    graph.set_entry_point("generate_json_report")
-    graph.add_edge("generate_json_report", "generate_basic_sarif_report")
-    graph.add_edge("generate_basic_sarif_report", "generate_text_summary")
-    graph.add_edge("generate_text_summary", "compile_final_report")
-    graph.add_edge("compile_final_report", END)
-
-    compiled_graph = graph.compile()
-    logger.info("ReportingAgent graph compiled successfully.")
-    return compiled_graph
+    return workflow.compile()

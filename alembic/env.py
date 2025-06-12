@@ -112,7 +112,8 @@ def get_db_url_from_env():
         raise ValueError(msg)
 
     url = f"postgresql://{user}:{password}@{db_host}:{port}/{db_name}"
-    log.info(f"[ENV.PY] Constructed database URL: {url.replace(password, '******')}")
+    redacted_url = f"postgresql://{user}:******@{db_host}:{port}/{db_name}"
+    log.info(f"[ENV.PY] Constructed database URL: {redacted_url}")
     return url
 
 

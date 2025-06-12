@@ -76,7 +76,7 @@ services:
       - CHROMA_TENANT=default_tenant
       - CHROMA_DATABASE=default_database
     ports:
-      - "${CHROMA_PORT_HOST:-8001}:${CHROMA_PORT:-8001}" # Expose Chroma to host
+      - "${CHROMA_PORT_HOST:-8001}:8000"
     volumes:
       - chroma_data:/chroma # Persist data path 
     # ChromaDB 0.5.x doesn't have a standard healthcheck in the image itself easily accessible like pg_isready or rabbitmq-diagnostics ping.
