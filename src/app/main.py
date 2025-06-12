@@ -1,7 +1,7 @@
 # src/app/main.py
 import logging
 import os
-import json # <-- ADD THIS IMPORT
+import json  # <-- ADD THIS IMPORT
 from fastapi import FastAPI, Depends, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.encoders import jsonable_encoder
@@ -79,6 +79,7 @@ app.add_middleware(
 )
 logger.info(f"CORS middleware configured for origins: {origins}")
 
+
 # --- Temporary Debugging Exception Handler for 422 Errors ---
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
@@ -95,15 +96,19 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         print(f"REQUEST BODY:\n{json.dumps(request_body, indent=2)}")
     except Exception:
         print("REQUEST BODY: Could not parse request body as JSON.")
-    
+
     print(f"VALIDATION DETAIL:\n{json.dumps(exc.errors(), indent=2)}")
     print("======================================\n")
 
     # For development, it's helpful to return the detailed error to the frontend.
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content=jsonable_encoder({"detail": exc.errors()}), # Return the full error detail
+        content=jsonable_encoder(
+            {"detail": exc.errors()}
+        ),  # Return the full error detail
     )
+
+
 # --- End of Debugging Exception Handler ---
 
 # --- Include API v1 Router (Your application-specific endpoints) ---

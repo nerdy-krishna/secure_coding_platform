@@ -1,25 +1,40 @@
 # src/app/auth/core.py
-import uuid
+from fastapi import Depends
 from fastapi_users import FastAPIUsers
-
-# Import your User model, the auth_backend, and the user manager dependency
-from .models import User
-from .backend import auth_backend  # The backend we just defined
-from .manager import get_user_manager  # The user manager dependency
-
-# Create the main FastAPIUsers instance
-# It's generic, typed with your User model and its ID type (uuid.UUID)
-fastapi_users = FastAPIUsers[User, uuid.UUID](
-    get_user_manager,  # Dependency function for the user manager
-    [auth_backend],  # List of authentication backends (we have one)
+from fastapi_users.authentication import (
+    AuthenticationBackend,
+    CookieTransport,
+    JWTStrategy,
 )
 
-# Dependency for getting the current active and verified user
-# You can also have current_user = fastapi_users.current_user(active=True, verified=False)
-# or current_superuser = fastapi_users.current_user(active=True, superuser=True)
-# For most protected routes, requiring an active user is standard.
-# Requiring verified=True is good practice for many actions after implementing email verification.
+from .backend import auth_backend
+from .manager import get_user_manager
+from .models import User
+
+# Define the cookie transport mechanism
+cookie_transport = CookieTransport(cookie_name="scpc", cookie_max_age=3600)
+
+# Define the JWT strategy
+def get_jwt_strategy() -> JWTStrategy:
+    # In a real app, this MUST be a strong, randomly-generated secret
+    # loaded from a secure configuration (e.g., environment variable).
+    return JWTStrategy(secret="MY_SUPER_SECRET_SECRET", lifetime_seconds=3600)
+
+# The primary authentication backend
+auth_backend = AuthenticationBackend(
+    name="jwt",
+    transport=cookie_transport,
+    get_strategy=get_jwt_strategy,
+)
+
+# FastAPI Users core object
+fastapi_users = FastAPIUsers[User, int](
+    get_user_manager,
+    [auth_backend],
+)
+
+# Dependency for getting the current active user
 current_active_user = fastapi_users.current_user(active=True)
 
-# Optional: If you want a dependency for an active *and* verified user later
-# current_active_verified_user = fastapi_users.current_user(active=True, verified=True)
+# Dependency for getting the current active superuser
+current_superuser = fastapi_users.current_user(active=True, superuser=True)

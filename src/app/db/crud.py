@@ -1,257 +1,209 @@
+# src/app/db/crud.py
 import logging
-import datetime
-from typing import Optional, Any, Dict, List  # Added Dict, List can also be useful
-from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.future import select
+from typing import List, Dict, Any, Optional
 
-from .database import AsyncSessionLocal
-from .models import (
-    LLMInteraction,
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from src.app.db.models import (
     CodeSubmission,
-    AnalysisResult,
     SubmittedFile,
+    LLMInteraction,
+    VulnerabilityFinding,
+    FixSuggestion,
 )
-from ..llm.providers import LLMResult
+from src.app.auth.models import User
+
+# Corrected import to point to the new schemas file, breaking the circular dependency
+from src.app.agents.schemas import (
+    VulnerabilityFinding as VulnerabilityFindingModel,
+    FixSuggestion as FixSuggestionModel,
+)
 
 logger = logging.getLogger(__name__)
 
+# ... (the rest of the file remains exactly the same) ...
+
+async def get_user_by_email(db: AsyncSession, email: str) -> Optional[User]:
+    """Retrieves a user by their email address."""
+    result = await db.execute(select(User).filter(User.email == email))
+    return result.scalars().first()
+
+
+async def create_submission(
+    db: AsyncSession, user_id: int, repo_url: Optional[str] = None
+) -> CodeSubmission:
+    """Creates a new code submission record."""
+    submission = CodeSubmission(user_id=user_id, repo_url=repo_url, status="Pending")
+    db.add(submission)
+    await db.commit()
+    await db.refresh(submission)
+    return submission
+
+
+async def add_files_to_submission(
+    db: AsyncSession, submission_id: int, files: List[Dict[str, str]]
+):
+    """Adds multiple files to an existing submission."""
+    db_files = [
+        SubmittedFile(
+            submission_id=submission_id,
+            file_path=file["path"],
+            content=file["content"],
+            language=file.get("language", "unknown"),
+        )
+        for file in files
+    ]
+    db.add_all(db_files)
+    await db.commit()
+
+
+async def get_submission(
+    db: AsyncSession, submission_id: int
+) -> Optional[CodeSubmission]:
+    """Retrieves a submission by its ID, including related files and findings."""
+    result = await db.execute(
+        select(CodeSubmission)
+        .options(
+            selectinload(CodeSubmission.files),
+            selectinload(CodeSubmission.findings).selectinload(VulnerabilityFinding.fixes),
+        )
+        .filter(CodeSubmission.id == submission_id)
+    )
+    return result.scalars().first()
+
+
+async def get_submission_files(
+    db: AsyncSession, submission_id: int
+) -> List[SubmittedFile]:
+    """Retrieves all files associated with a submission."""
+    result = await db.execute(
+        select(SubmittedFile).filter(SubmittedFile.submission_id == submission_id)
+    )
+    return result.scalars().all()
+
+
+async def update_submission_status(db: AsyncSession, submission_id: int, status: str):
+    """Updates the status of a submission."""
+    await db.execute(
+        update(CodeSubmission).where(CodeSubmission.id == submission_id).values(status=status)
+    )
+    await db.commit()
+
+
+async def update_submission_file_context(
+    db: AsyncSession,
+    submission_id: int,
+    file_path: str,
+    analysis_summary: Optional[str],
+    identified_components: Optional[List[str]],
+    asvs_analysis: Optional[Dict[str, Any]],
+):
+    """Updates a submission file with context analysis results."""
+    await db.execute(
+        update(SubmittedFile)
+        .where(
+            SubmittedFile.submission_id == submission_id,
+            SubmittedFile.file_path == file_path,
+        )
+        .values(
+            analysis_summary=analysis_summary,
+            identified_components=identified_components,
+            asvs_analysis=asvs_analysis,
+        )
+    )
+    await db.commit()
+
 
 async def save_llm_interaction(
+    db: AsyncSession,
     submission_id: int,
     agent_name: str,
     prompt: str,
-    result: LLMResult,
-    estimated_cost: Optional[float],
-    status: str,
-    prompt_title: Optional[str] = None,
-    interaction_context: Optional[Dict[str, Any]] = None,
-    error_message: Optional[str] = None,
-) -> Optional[LLMInteraction]:
-    """
-    Saves the details of an LLM interaction to the database.
-    """
-    interaction_data = LLMInteraction(
+    raw_response: str,
+    parsed_output: Optional[Dict],
+    error: Optional[str] = None,
+    file_path: Optional[str] = None,
+    cost: Optional[float] = None,
+):
+    """Saves a record of an interaction with the LLM."""
+    interaction = LLMInteraction(
         submission_id=submission_id,
+        file_path=file_path,
         agent_name=agent_name,
-        prompt_title=prompt_title,
-        input_prompt=prompt,
-        output_response=result.content,
-        input_tokens=result.input_tokens,
-        output_tokens=result.output_tokens,
-        total_tokens=result.total_tokens,
-        model_name=result.model_name,
-        latency_ms=result.latency_ms,
-        estimated_cost=estimated_cost,
-        status=status,
-        interaction_context=interaction_context,
-        error_message=error_message or result.error,
+        prompt=prompt,
+        raw_response=raw_response,
+        parsed_output=parsed_output,
+        error=error,
+        cost=cost,
     )
-    try:
-        async with AsyncSessionLocal() as session:
-            async with session.begin():
-                session.add(interaction_data)
-            # Refresh to get ID and other database-generated defaults like timestamp
-            await session.refresh(interaction_data)
-            logger.info(
-                f"Saved LLM interaction for sub_id={submission_id}, agent={agent_name}, interaction_id={interaction_data.id}"
-            )
-            return interaction_data
-    except SQLAlchemyError as db_exc:
-        logger.error(
-            f"Database error saving LLM interaction for sub_id={submission_id}, agent={agent_name}: {db_exc}",
-            exc_info=True,
+    db.add(interaction)
+    await db.commit()
+
+
+async def save_findings(
+    db: AsyncSession, submission_id: int, findings: List[VulnerabilityFindingModel]
+) -> List[VulnerabilityFinding]:
+    """Saves a list of vulnerability findings and returns the persisted objects with their IDs."""
+    if not findings:
+        return []
+
+    db_findings = [
+        VulnerabilityFinding(
+            submission_id=submission_id,
+            file_path=finding.file_path,
+            cwe=finding.cwe,
+            description=finding.description,
+            severity=finding.severity,
+            line_number=finding.line_number,
+            remediation=finding.remediation,
+            confidence=finding.confidence,
+            references=finding.references,
         )
-        return None
-    except Exception as e:
-        logger.error(
-            f"Unexpected error saving LLM interaction for sub_id={submission_id}, agent={agent_name}: {e}",
-            exc_info=True,
-        )
-        return None
+        for finding in findings
+    ]
+    db.add_all(db_findings)
+    await db.flush()
+    for finding in db_findings:
+        await db.refresh(finding)
+    await db.commit()
+    logger.info(
+        f"Successfully saved {len(db_findings)} findings for submission {submission_id}."
+    )
+    return db_findings
 
 
-async def get_submission_by_id(submission_id: int) -> Optional[CodeSubmission]:
-    """
-    Retrieves a CodeSubmission by its ID along with its related files.
-    """
-    try:
-        async with AsyncSessionLocal() as session:
-            # Using selectinload to eager load related files to avoid separate queries
-            # This requires defining the relationship in CodeSubmission model correctly.
-            # For now, a simple select. If 'files' relationship is properly configured:
-            # from sqlalchemy.orm import selectinload
-            # stmt = select(CodeSubmission).options(selectinload(CodeSubmission.files)).filter(CodeSubmission.id == submission_id)
-
-            stmt = select(CodeSubmission).filter(CodeSubmission.id == submission_id)
-            result = await session.execute(stmt)
-            submission = result.scalar_one_or_none()
-            if submission:
-                logger.debug(f"Retrieved submission {submission_id} from database.")
-            else:
-                logger.debug(f"Submission {submission_id} not found in database.")
-            return submission
-    except SQLAlchemyError as e:
-        logger.error(
-            f"Database error getting submission by ID {submission_id}: {e}",
-            exc_info=True,
-        )
-        return None
-    except Exception as e:  # Catch any other unexpected errors
-        logger.error(
-            f"Unexpected error getting submission by ID {submission_id}: {e}",
-            exc_info=True,
-        )
-        return None
+async def save_fix_suggestion(
+    db: AsyncSession, finding_id: int, suggestion: FixSuggestionModel
+):
+    """Saves a code fix suggestion for a specific vulnerability finding."""
+    fix = FixSuggestion(
+        finding_id=finding_id,
+        description=suggestion.description,
+        suggested_fix=suggestion.code,
+    )
+    db.add(fix)
+    await db.commit()
 
 
-async def get_files_for_submission(submission_id: int) -> List[Dict[str, Any]]:
-    """
-    Retrieves all files associated with a given submission_id.
-    Returns a list of dictionaries, each containing filename, content, and detected_language.
-    """
-    files_data: List[Dict[str, Any]] = []
-    try:
-        async with AsyncSessionLocal() as session:
-            stmt = select(SubmittedFile).filter(
-                SubmittedFile.submission_id == submission_id
-            )
-            result = await session.execute(stmt)
-            submitted_files = result.scalars().all()
-
-            for file_obj in submitted_files:
-                files_data.append(
-                    {
-                        "filename": file_obj.filename,
-                        "content": file_obj.content,
-                        "detected_language": file_obj.detected_language,
-                    }
-                )
-            logger.debug(
-                f"Retrieved {len(files_data)} files for submission_id {submission_id}."
-            )
-    except SQLAlchemyError as e:
-        logger.error(
-            f"Database error getting files for submission {submission_id}: {e}",
-            exc_info=True,
-        )
-        # Depending on desired behavior, you might re-raise or return empty list with error state
-    except Exception as e:
-        logger.error(
-            f"Unexpected error getting files for submission {submission_id}: {e}",
-            exc_info=True,
-        )
-    return files_data
+async def get_findings_for_submission(
+    db: AsyncSession, submission_id: int
+) -> List[VulnerabilityFinding]:
+    """Retrieves all vulnerability findings for a given submission, for API/frontend use."""
+    result = await db.execute(
+        select(VulnerabilityFinding)
+        .filter(VulnerabilityFinding.submission_id == submission_id)
+        .order_by(VulnerabilityFinding.file_path, VulnerabilityFinding.line_number)
+    )
+    return result.scalars().all()
 
 
-async def get_analysis_result_by_submission_id(
-    submission_id: int,
-) -> Optional[AnalysisResult]:
-    """
-    Retrieves an AnalysisResult by its submission_id.
-    """
-    try:
-        async with AsyncSessionLocal() as session:
-            stmt = select(AnalysisResult).filter(
-                AnalysisResult.submission_id == submission_id
-            )
-            result = await session.execute(stmt)
-            analysis_result = result.scalar_one_or_none()
-            if analysis_result:
-                logger.debug(
-                    f"Retrieved analysis result for submission_id {submission_id}."
-                )
-            else:
-                logger.debug(
-                    f"Analysis result for submission_id {submission_id} not found."
-                )
-            return analysis_result
-    except SQLAlchemyError as e:
-        logger.error(
-            f"Database error getting analysis result for submission_id {submission_id}: {e}",
-            exc_info=True,
-        )
-        return None
-    except Exception as e:
-        logger.error(
-            f"Unexpected error getting analysis result for submission_id {submission_id}: {e}",
-            exc_info=True,
-        )
-        return None
-
-
-async def create_or_update_analysis_result(
-    submission_id: int,
-    report_content: Optional[Dict[str, Any]],
-    original_code_snapshot_json: Optional[str],  # Expecting JSON string
-    fixed_code_snapshot_json: Optional[str],  # Expecting JSON string
-    sarif_report_json: Optional[Dict[str, Any]],  # Expecting dict for JSONB
-    status: str,
-    error_message: Optional[str] = None,
-) -> Optional[AnalysisResult]:
-    """
-    Creates a new AnalysisResult or updates an existing one for a given submission_id.
-    """
-    try:
-        async with AsyncSessionLocal() as session:
-            async with session.begin():
-                stmt = select(AnalysisResult).filter(
-                    AnalysisResult.submission_id == submission_id
-                )
-                result = await session.execute(stmt)
-                db_result = result.scalar_one_or_none()
-
-                if db_result:
-                    logger.info(
-                        f"Updating existing AnalysisResult for submission_id {submission_id}"
-                    )
-                    db_result.report_content = report_content
-                    db_result.original_code_snapshot = original_code_snapshot_json
-                    db_result.fixed_code_snapshot = fixed_code_snapshot_json
-                    db_result.sarif_report = sarif_report_json
-                    db_result.status = status
-                    db_result.error_message = error_message
-                    db_result.completed_at = datetime.datetime.now(
-                        datetime.timezone.utc
-                    )
-                else:
-                    logger.info(
-                        f"Creating new AnalysisResult for submission_id {submission_id}"
-                    )
-                    db_result = AnalysisResult(
-                        submission_id=submission_id,
-                        report_content=report_content,
-                        original_code_snapshot=original_code_snapshot_json,
-                        fixed_code_snapshot=fixed_code_snapshot_json,
-                        sarif_report=sarif_report_json,
-                        status=status,
-                        error_message=error_message,
-                        completed_at=datetime.datetime.now(
-                            datetime.timezone.utc
-                        ),  # Ensure completed_at is set
-                    )
-                    session.add(db_result)
-            await session.refresh(db_result)
-            logger.info(
-                f"Successfully saved AnalysisResult for submission_id {submission_id} with status '{status}'."
-            )
-            return db_result
-    except SQLAlchemyError as db_exc:
-        logger.error(
-            f"Database error saving AnalysisResult for submission_id {submission_id}: {db_exc}",
-            exc_info=True,
-        )
-        return None
-    except Exception as e:
-        logger.error(
-            f"Unexpected error saving AnalysisResult for submission_id {submission_id}: {e}",
-            exc_info=True,
-        )
-        return None
-
-
-# Note: The `get_submission_by_id` function had `db: AsyncSessionLocal` as a parameter.
-# This is unusual for CRUD functions that manage their own sessions internally using `async with AsyncSessionLocal() as session:`.
-# I've removed it from `get_submission_by_id` and made it consistent with `save_llm_interaction`.
-# If you intend to pass an active session for transaction control, the pattern would be different.
-# For now, all functions manage their own session from AsyncSessionLocal.
-# I've also added a few more CRUD function placeholders/examples based on your models.
+async def get_fixes_for_finding(
+    db: AsyncSession, finding_id: int
+) -> List[FixSuggestion]:
+    """Retrieves all fix suggestions for a given finding, for API/frontend use."""
+    result = await db.execute(
+        select(FixSuggestion).filter(FixSuggestion.finding_id == finding_id)
+    )
+    return result.scalars().all()
