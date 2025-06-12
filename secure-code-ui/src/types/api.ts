@@ -35,7 +35,7 @@ export interface UserRead {
 
 // For Code Submission
 export interface FileForSubmission {
-  file_name: string;
+  filename: string;
   content: string; // File content as a string
 }
 

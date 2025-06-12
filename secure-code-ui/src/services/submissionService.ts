@@ -14,7 +14,7 @@ export const submissionService = {
     payload: CodeSubmissionRequest,
   ): Promise<CodeSubmissionResponse> => {
     const response = await apiClient.post<CodeSubmissionResponse>(
-      "/analyze/", // Path relative to apiClient.baseURL
+      "/analyze", // Path relative to apiClient.baseURL
       payload,
     );
     return response.data;

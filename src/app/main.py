@@ -1,7 +1,12 @@
 # src/app/main.py
 import logging
 import os
-from fastapi import FastAPI, Depends  # Added Request for context in some cases
+import json # <-- ADD THIS IMPORT
+from fastapi import FastAPI, Depends, Request, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.encoders import jsonable_encoder
+from starlette.responses import JSONResponse
+from fastapi import FastAPI, Depends
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -74,6 +79,32 @@ app.add_middleware(
 )
 logger.info(f"CORS middleware configured for origins: {origins}")
 
+# --- Temporary Debugging Exception Handler for 422 Errors ---
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """
+    Catches Pydantic validation errors and provides detailed logging for debugging.
+    """
+    # Print the detailed errors directly to the console for maximum visibility.
+    print("\n====== PYDANTIC VALIDATION ERROR ======")
+    print(f"URL: {request.method} {request.url}")
+    # exc.errors() gives a list of dictionaries with all details
+    try:
+        # Try to pretty-print the JSON body of the original request
+        request_body = await request.json()
+        print(f"REQUEST BODY:\n{json.dumps(request_body, indent=2)}")
+    except Exception:
+        print("REQUEST BODY: Could not parse request body as JSON.")
+    
+    print(f"VALIDATION DETAIL:\n{json.dumps(exc.errors(), indent=2)}")
+    print("======================================\n")
+
+    # For development, it's helpful to return the detailed error to the frontend.
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content=jsonable_encoder({"detail": exc.errors()}), # Return the full error detail
+    )
+# --- End of Debugging Exception Handler ---
 
 # --- Include API v1 Router (Your application-specific endpoints) ---
 app.include_router(api_v1_endpoints.router, prefix="/api/v1", tags=["API Endpoints"])

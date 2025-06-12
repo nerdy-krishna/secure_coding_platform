@@ -8,6 +8,10 @@ from ..llm.llm_client import get_llm_client
 from ..llm.providers import LLMResult
 from ..db.crud import save_llm_interaction  # For logging LLM calls
 from ..utils.cost_estimation import estimate_openai_cost  # For estimating cost
+from src.app.llm.llm_client import get_llm_client
+from src.app.db.crud import save_llm_interaction
+from src.app.utils.cost_estimation import estimate_cost
+from src.app.llm.providers import LLMResult
 
 logger = logging.getLogger(__name__)
 
@@ -159,177 +163,138 @@ def _validate_asvs_analysis_structure(
 # --- Node Functions ---
 
 
-async def perform_rag_enhanced_analysis_node(
-    state: ContextAnalysisAgentState,
-) -> Dict[str, Any]:
+async def perform_rag_enhanced_analysis_node(state: ContextAnalysisAgentState) -> Dict[str, Any]:
     """
-    Performs RAG-enhanced analysis using an LLM.
-    For Sprint 2, RAG is simulated by including placeholder ASVS controls in the prompt.
+    Node for performing context analysis on a single file using RAG-enhanced prompts.
+    This version is designed to be called concurrently for multiple files.
     """
     submission_id = state["submission_id"]
     filename = state["filename"]
-    code_snippet = state["code_snippet"]
     language = state["language"]
-    agent_name = "ContextAnalysisAgent_RAGAnalysis"  # More specific for logging
+    file_content = state["file_content"]
+    selected_frameworks = state["selected_frameworks"]
+    
+    logger.info(f"Node: perform_rag_enhanced_analysis_node for file '{filename}' (Submission ID: {submission_id})")
 
-    logger.info(
-        f"Node: perform_rag_enhanced_analysis_node for file '{filename}' (Submission ID: {submission_id})"
+    max_chars = 4000  # Example character limit for the snippet
+    code_snippet = (
+        file_content[:max_chars]
+        if len(file_content) > max_chars
+        else file_content
     )
-
-    simulated_retrieved_asvs_controls = """
-    Relevant ASVS Controls (Simulated RAG Output):
-    - ASVS V5.1.1: Verify that all input is validated using positive validation (allow-lists).
-    - ASVS V5.2.1: Verify that output encoding is contextual and relevant for the output interpreter.
-    - ASVS V2.1.1: Verify that passwords are at least 12 characters in length.
-    - ASVS V4.1.1: Verify that access control enforces "deny by default".
-    (This is a placeholder. A real system would fetch specific, relevant controls based on code content.)
-    """
-
-    max_content_length = 10000
-    content_to_analyze = code_snippet
-    if len(code_snippet) > max_content_length:
-        trunc_point = code_snippet[:max_content_length].rfind("\n")
-        trunc_point = trunc_point if trunc_point != -1 else max_content_length
-        content_to_analyze = (
-            code_snippet[:trunc_point] + "\n... [TRUNCATED FOR ANALYSIS]"
-        )
+    if len(file_content) > max_chars:
         logger.warning(
             f"Code snippet for '{filename}' was truncated for LLM analysis due to length."
         )
 
-    prompt = f"""
-    Analyze the following code snippet from the file '{filename}' (language: {language}).
-    Your task is to identify its purpose, key components, and map its relevance to OWASP ASVS security categories.
-    This analysis should be informed by the conceptually relevant ASVS controls provided below.
+    # Simplified prompt for initial analysis
+    prompt_template = """
+    Analyze the following code snippet from the file '{filename}' written in {language}.
+    Based on the code's content, determine its primary purpose and identify which of the following security domains are most relevant for a detailed security assessment. The security domains are derived from OWASP ASVS:
+    - V1: Architecture, Design and Threat Modeling
+    - V2: Authentication
+    - V3: Session Management
+    - V4: Access Control
+    - V5: Validation, Sanitization and Encoding
+    - V6: Stored Cryptography
+    - V7: Error Handling and Logging
+    - V8: Data Protection
+    - V9: Communications
+    - V10: Malicious Code
+    - V11: Business Logic
+    - V12: Files and Resources
+    - V13: API and Web Service
+    - V14: Configuration
 
     Code Snippet:
-    ```{language}
-    {content_to_analyze}
+    ```
+    {code_snippet}
     ```
 
-    Conceptually Relevant OWASP ASVS Controls (imagine these were retrieved from a knowledge base based on the code):
-    {simulated_retrieved_asvs_controls}
+    Respond with a JSON object containing two keys:
+    1. "purpose": A brief, one-sentence description of the code's primary purpose.
+    2. "relevant_domains": A list of the most relevant domain identifiers (e.g., ["V2", "V4", "V5"]).
 
-    Instructions:
-    1.  Based on the code AND the provided ASVS controls, provide a brief overall summary of the code's purpose.
-    2.  List key components (e.g., functions, classes, main logic blocks).
-    3.  For EACH of the following ASVS categories, assess its likelihood of being relevant to the provided code snippet: {", ".join(ASVS_CATEGORIES)}.
-        Rate likelihood as "High", "Medium", "Low", or "None".
-    4.  For categories with likelihood "High", "Medium", or "Low", provide:
-        a.  Brief "evidence" from the code that supports this likelihood (e.g., specific function names, patterns, or line number hints).
-        b.  A list of "key_elements" from the code related to this category.
-        c.  A list of "relevant_asvs_controls" by listing specific ASVS IDs (e.g., "V5.1.1", "V2.3.4") from the conceptual list above that seem most pertinent to the code in relation to this category. If none from the list seem directly relevant despite the category's likelihood, provide an empty list.
-    5.  Return ONLY a single, valid JSON object with the following structure:
-        {{
-          "filename": "{filename}",
-          "summary": "Brief purpose description of the code snippet.",
-          "components": ["component1_name", "component2_name", ...],
-          "security_areas": {{
-            "V1_Architecture": {{ "likelihood": "...", "evidence": "...", "key_elements": [...], "relevant_asvs_controls": [...] }},
-            "V2_Authentication": {{ "likelihood": "...", "evidence": "...", "key_elements": [...], "relevant_asvs_controls": [...] }},
-            // ... include ALL ASVS_CATEGORIES listed above in this section ...
-            "V14_Configuration": {{ "likelihood": "...", "evidence": "...", "key_elements": [...], "relevant_asvs_controls": [...] }}
-          }}
-        }}
-    Ensure all ASVS categories are present in the "security_areas" object. If a category is not relevant, set its likelihood to "None" and other fields can be empty or brief.
-    The "relevant_asvs_controls" should only contain IDs like "V5.1.1", "V2.1.1" etc.
+    Example Response:
+    {{
+      "purpose": "This code defines API endpoints for user authentication, including login and registration.",
+      "relevant_domains": ["V2", "V4", "V13"]
+    }}
     """
+    prompt = prompt_template.format(
+        filename=filename,
+        language=language,
+        code_snippet=code_snippet,
+    )
 
-    llm = get_llm_client()
-    llm_result: Optional[LLMResult] = None
-    parsed_analysis: Optional[Dict[str, Any]] = None
-    # Initialize status and error for logging block
-    llm_response_status = "failed"
-    llm_response_error: Optional[str] = "Initialization error before LLM call."
-
+    llm_result = None  # Initialize to ensure it's always defined
     try:
-        llm_result = await llm.generate(prompt)
-
-        if llm_result.status == "success" and llm_result.content:
-            parsed_analysis = _extract_json_from_llm_response(llm_result.content)
-            if parsed_analysis and _validate_asvs_analysis_structure(
-                parsed_analysis, filename
-            ):
-                llm_response_status = "success"
-                llm_response_error = None  # Clear previous error if successful
-                logger.info(
-                    f"Successfully parsed RAG-enhanced analysis for '{filename}'."
-                )
-            else:
-                llm_response_status = "failed"
-                llm_response_error = "Failed to parse valid JSON or structure mismatch from LLM response."
+        llm = get_llm_client()
+        generation_config_override = {"temperature": 0.1} # Lower temp for more deterministic analysis
+        
+        llm_result = await llm.generate(
+            prompt=prompt, generation_config_override=generation_config_override
+        )
+        
+        analysis_content = {}
+        # --- FIX 1: Use .output_text instead of .content ---
+        if llm_result.status == "success" and llm_result.output_text:
+            try:
+                # Clean the response to extract only the JSON part
+                json_str = llm_result.output_text.strip().lstrip("```json").lstrip("```").rstrip("```")
+                analysis_content = json.loads(json_str)
+                analysis_content["status"] = "success"
+                logger.info(f"Successfully parsed LLM analysis for '{filename}'.")
+            except json.JSONDecodeError as e:
                 logger.error(
-                    f"{llm_response_error} for file '{filename}'. Response: {llm_result.content[:500]}"
+                    f"Failed to decode JSON from LLM response for '{filename}': {e}. Response: {llm_result.output_text}"
                 )
+                analysis_content = {
+                    "status": "failed",
+                    "error": f"JSONDecodeError: {e}",
+                    "raw_response": llm_result.output_text,
+                }
         else:
-            llm_response_status = "failed"
-            llm_response_error = (
-                llm_result.error or "LLM call failed or returned no content."
-            )
-            logger.error(f"LLM analysis failed for '{filename}': {llm_response_error}")
+             analysis_content = {
+                "status": "failed",
+                "error": llm_result.error or "LLM generation failed to produce content.",
+            }
+        
+        return {"analysis_results": analysis_content}
 
     except Exception as e:
-        logger.exception(
-            f"Unhandled exception during RAG analysis for '{filename}': {e}"
+        logger.error(
+            f"Unhandled exception during RAG analysis for '{filename}': {e}",
+            exc_info=True,
         )
-        llm_response_status = "failed"
-        llm_response_error = f"Unhandled exception: {str(e)}"
-        if llm_result is None:
-            llm_result = LLMResult(status="failed", error=llm_response_error)
-        elif (
-            llm_result.status != "failed"
-        ):  # If llm_result existed but wasn't marked failed
-            llm_result.status = "failed"
-            llm_result.error = llm_response_error
-
-    # Log the LLM interaction
-    cost = None
-    # Ensure llm_result is used for logging if it exists from the try block
-    loggable_llm_result = (
-        llm_result
-        if llm_result is not None
-        else LLMResult(
-            status=llm_response_status, error=llm_response_error, content=None
-        )
-    )
-
-    cost = estimate_openai_cost(
-        model_name=loggable_llm_result.model_name,
-        input_tokens=loggable_llm_result.input_tokens,
-        output_tokens=loggable_llm_result.output_tokens,
-    )
-
-    # Use the determined status and error for logging
-    # final_log_status was what the traceback pointed to. It's now llm_response_status
-    # final_log_error was llm_response_error if llm_response_status == "failed" else None
-
-    await save_llm_interaction(
-        submission_id=submission_id,
-        agent_name=agent_name,
-        prompt=prompt,
-        result=loggable_llm_result,
-        estimated_cost=cost,
-        status=llm_response_status,  # Use the status determined from processing
-        error_message=llm_response_error if llm_response_status == "failed" else None,
-    )
-
-    if llm_response_status == "success" and parsed_analysis:
         return {
-            "analysis_summary": parsed_analysis.get("summary"),
-            "identified_components": parsed_analysis.get("components"),
-            "asvs_analysis": parsed_analysis.get("security_areas"),
-            "error_message": None,  # Cleared because overall operation for this node was success
+            "analysis_results": {"status": "failed", "error": str(e)},
         }
-    else:
-        # If llm_response_status is "failed", llm_response_error will contain the reason.
-        return {
-            "analysis_summary": None,
-            "identified_components": None,
-            "asvs_analysis": None,
-            "error_message": llm_response_error
-            or "RAG analysis failed to produce valid output.",
-        }
-
+    finally:
+        # --- FIX 2: Use .prompt_tokens instead of .input_tokens ---
+        if llm_result:
+            estimated_cost = estimate_cost(
+                llm_result.prompt_tokens,
+                llm_result.completion_tokens,
+                llm_result.model_name,
+            )
+            # Use a separate async function to save to not block the return
+            await save_llm_interaction(
+                submission_id=submission_id,
+                agent_name="ContextAnalysisAgent",
+                prompt=prompt,
+                response=llm_result.output_text,
+                prompt_tokens=llm_result.prompt_tokens,
+                completion_tokens=llm_result.completion_tokens,
+                total_tokens=llm_result.total_tokens,
+                latency_ms=llm_result.latency_ms,
+                model_name=llm_result.model_name,
+                status=llm_result.status,
+                error_message=llm_result.error,
+                estimated_cost=estimated_cost,
+                # Add filename to context for better logging
+                context={"filename": filename}
+            )
 
 # --- Graph Construction ---
 def build_context_analysis_agent_graph() -> Any:

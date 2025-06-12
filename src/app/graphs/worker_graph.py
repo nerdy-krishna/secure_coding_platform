@@ -14,12 +14,10 @@ from langgraph.errors import GraphRecursionError
 # --- Database Imports ---
 from sqlalchemy.future import select
 from sqlalchemy.exc import SQLAlchemyError
-from ..db.database import AsyncSessionLocal
-from ..db.models import (
-    CodeSubmission,
-    SubmittedFile,
-    AnalysisResult,
-)
+from src.app.db.database import AsyncSessionLocal
+from src.app.db.models import AnalysisResult
+from src.app.db.models import CodeSubmission, SubmittedFile
+
 
 # --- LLM Client and Agent State Import ---
 # LLMResult is already imported by context_analysis_agent if needed there.
@@ -932,8 +930,9 @@ async def save_results_node(state: WorkerGraphState) -> Dict[str, Any]:
         except TypeError as json_err:
             logger.error(f"Failed to serialize original_code_map to JSON: {json_err}")
             error_message = (
-                error_message + "; " if error_message else ""
-            ) + f"Failed to serialize original code: {json_err}"
+                (error_message + "; " if error_message else "")
+                + f"Failed to serialize original code: {json_err}"
+            )
             status = "failed"
 
     # Serialize the final_fixed_code_map to JSON string for TEXT column
@@ -948,8 +947,9 @@ async def save_results_node(state: WorkerGraphState) -> Dict[str, Any]:
                 f"Failed to serialize final_fixed_code_map to JSON: {json_err}"
             )
             error_message = (
-                error_message + "; " if error_message else ""
-            ) + f"Failed to serialize fixed code: {json_err}"
+                (error_message + "; " if error_message else "")
+                + f"Failed to serialize fixed code: {json_err}"
+            )
             status = "failed"
             fixed_code_to_save_json = None
 
@@ -966,15 +966,17 @@ async def save_results_node(state: WorkerGraphState) -> Dict[str, Any]:
                 if existing_result:
                     logger.info(f"Updating existing AnalysisResult for {submission_id}")
                     existing_result.report_content = final_report
-                    existing_result.original_code = (
-                        original_code_to_save_json  # Store as JSON string
+                    # --- CORRECTED ATTRIBUTE NAMES BELOW ---
+                    existing_result.original_code_snapshot = (
+                        original_code_to_save_json
                     )
-                    existing_result.fixed_code = (
-                        fixed_code_to_save_json  # Store as JSON string
+                    existing_result.fixed_code_snapshot = (
+                        fixed_code_to_save_json
                     )
+                    # --- END OF CORRECTION ---
                     existing_result.completed_at = datetime.datetime.now(
                         datetime.timezone.utc
-                    )  # Ensure timezone aware
+                    )
                     existing_result.status = status
                     existing_result.error_message = error_message
                     session.add(existing_result)
@@ -983,19 +985,18 @@ async def save_results_node(state: WorkerGraphState) -> Dict[str, Any]:
                     db_result = AnalysisResult(
                         submission_id=submission_id,
                         report_content=final_report,
-                        original_code=original_code_to_save_json,  # Store as JSON string
-                        fixed_code=fixed_code_to_save_json,  # Store as JSON string
+                        original_code_snapshot=original_code_to_save_json,
+                        fixed_code_snapshot=fixed_code_to_save_json,
                         status=status,
                         error_message=error_message,
                         completed_at=datetime.datetime.now(
                             datetime.timezone.utc
-                        ),  # Add completed_at for new records
+                        ),
                     )
                     session.add(db_result)
         logger.info(
             f"Successfully saved results to DB for {submission_id} (Status: '{status}')"
         )
-        # Return the error_message as determined by this node's logic
         return {
             "db_save_status": "Success",
             "error_message": error_message if status == "failed" else None,
@@ -1007,8 +1008,8 @@ async def save_results_node(state: WorkerGraphState) -> Dict[str, Any]:
             exc_info=True,
         )
         final_error_msg = (
-            error_message + "; " if error_message else ""
-        ) + f"DB save failed: {db_exc}"
+            (error_message + "; " if error_message else "") + f"DB save failed: {db_exc}"
+        )
         return {"db_save_status": "Failed", "error_message": final_error_msg}
     except Exception as e:
         logger.error(
@@ -1016,8 +1017,8 @@ async def save_results_node(state: WorkerGraphState) -> Dict[str, Any]:
             exc_info=True,
         )
         final_error_msg = (
-            error_message + "; " if error_message else ""
-        ) + f"Unexpected error during DB save: {e}"
+            (error_message + "; " if error_message else "") + f"Unexpected error during DB save: {e}"
+        )
         return {"db_save_status": "Failed", "error_message": final_error_msg}
 
 

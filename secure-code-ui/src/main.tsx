@@ -1,15 +1,14 @@
+// secure-code-ui/src/main.tsx
+import { App as AntdApp, ConfigProvider } from "antd"; // Import Ant Design's App component and alias it
+import "antd/dist/reset.css";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
-import { ConfigProvider } from "antd";
-import "antd/dist/reset.css"; // Ant Design's global reset style
-import "./index.css"; // Your project's global styles (if any)
+import "./index.css";
 
-// Optional: Configure a default theme for Ant Design
-// You can customize this later in a separate theme file
 const antdTheme = {
   token: {
-    // Example: Change primary color
+    // You can customize your theme tokens here
     // colorPrimary: '#00b96b',
   },
 };
@@ -17,7 +16,9 @@ const antdTheme = {
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ConfigProvider theme={antdTheme}>
-      <App />
+      <AntdApp>
+        <App />
+      </AntdApp>
     </ConfigProvider>
   </React.StrictMode>,
 );
