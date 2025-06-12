@@ -1,205 +1,149 @@
 import logging
-from typing import TypedDict, List, Optional, Dict, Any
+from typing import TypedDict, List, Dict, Any, Optional
+from uuid import UUID
 
+from langchain_core.pydantic_v1 import BaseModel, Field
 from langgraph.graph import StateGraph, END
-# No LLM calls are expected for the CoordinatorAgent in Sprint 2 (basic dispatch)
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.db.crud import save_llm_interaction
+from src.app.db.database import get_session
+from src.app.llm.llm_client import get_llm_client
+from src.app.llm.providers import LLMResult
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Mapping from ASVS categories (or other analysis dimensions) to Specialized Agent names
-# This should align with the output structure of ContextAnalysisAgent's 'security_areas'
-# and the names of your specialized agent modules.
-AREA_TO_SPECIALIZED_AGENT = {
-    "V1_Architecture": "ArchitectureAgent",
-    "V2_Authentication": "AuthenticationAgent",
-    "V3_SessionManagement": "SessionManagementAgent",
-    "V4_AccessControl": "AccessControlAgent",
-    "V5_Validation": "ValidationAgent",
-    "V6_Cryptography": "CryptographyAgent",
-    "V7_ErrorHandling": "ErrorHandlingAgent",
-    "V8_DataProtection": "DataProtectionAgent",
-    "V9_Communication": "CommunicationAgent",
-    "V10_MaliciousCode": "CodeIntegrityAgent",  # Assuming CodeIntegrityAgent handles V10
-    "V11_BusinessLogic": "BusinessLogicAgent",
-    "V12_FileHandling": "FileHandlingAgent",
-    "V13_APISecurity": "APISecurityAgent",
-    "V14_Configuration": "ConfigurationAgent",
-}
+# --- Pydantic Models for Structured Output ---
 
-# Likelihoods that trigger dispatch to a specialized agent
-DISPATCH_LIKELIHOODS = ["Low", "Medium", "High"]
+class DispatchTask(BaseModel):
+    file_path: str = Field(description="The path to the file to be analyzed.")
+    relevant_code_snippet: str = Field(description="The specific snippet of code that needs analysis. Can be the entire file content if necessary.")
+    target_agent: str = Field(description="The specialized agent to which this task should be dispatched (e.g., 'AuthenticationAgent', 'AccessControlAgent').")
+    task_context: str = Field(description="The reason or context for dispatching to this agent, based on the initial analysis.")
 
+class DispatchPlan(BaseModel):
+    tasks: List[DispatchTask] = Field(description="A list of dispatch tasks for specialized security agents.")
 
-# --- State Definition for CoordinatorAgent ---
+# --- Agent State ---
+
 class CoordinatorAgentState(TypedDict):
-    submission_id: int  # For context and logging
-    # Input: Analysis from ContextAnalysisAgent (filename -> analysis_dict)
-    contextual_analysis: Dict[str, Any]
-    # Input: Original file data
-    files_data: List[
-        Dict[str, Any]
-    ]  # Each dict: {"filename": str, "content": str, "detected_language": str}
-    primary_language: Optional[str]
-    # Input: Frameworks selected by the user (for future RAG by coordinator/specialized agents)
-    # For Sprint 2, this might be implicitly "asvs_v5.0" or passed if available
-    selected_frameworks: Optional[List[str]]
+    submission_id: UUID
+    initial_analysis_results: List[Dict[str, Any]]
+    files_data: Dict[str, str]
+    dispatch_tasks: Optional[List[Dict[str, Any]]]
+    error: Optional[str]
 
-    # Output of this agent
-    dispatch_tasks: List[Dict[str, Any]]  # List of tasks for specialized agents
-    error_message: Optional[str]
+# --- Agent Nodes ---
 
-
-# --- Node Functions ---
-
-
-def generate_dispatch_tasks_node(state: CoordinatorAgentState) -> Dict[str, Any]:
+async def create_dispatch_plan(state: CoordinatorAgentState) -> CoordinatorAgentState:
     """
-    Generates dispatch tasks for specialized security agents based on contextual analysis.
-    This logic is moved from the worker_graph.py's original coordinator_dispatch_node.
+    Creates a dispatch plan based on the initial analysis results from the ContextAnalysisAgent.
     """
-    submission_id = state["submission_id"]
-    per_file_contextual_analysis = state.get("contextual_analysis", {})
-    files_data = state.get("files_data", [])
-    primary_language = state.get("primary_language")  # Overall primary language
-    # selected_frameworks = state.get("selected_frameworks", ["asvs_v5.0"]) # Default or pass from state
+    logger.info("CoordinatorAgent: Creating dispatch plan.")
+    llm_client = get_llm_client()
+    
+    # Consolidate context from all files for the LLM
+    consolidated_context = ""
+    for result in state["initial_analysis_results"]:
+        file_path = result.get('file_path')
+        analysis = result.get('analysis_result', {})
+        summary = analysis.get('summary', 'No summary available.')
+        domains = [d.get('domain') for d in analysis.get('security_domains', [])]
+        consolidated_context += f"File: {file_path}\nSummary: {summary}\nIdentified Security Domains: {', '.join(domains)}\n\n"
 
-    dispatch_tasks: List[Dict[str, Any]] = []
-    any_input_errors = False
-    collective_error_message = ""
+    prompt_template = """
+    You are an expert security project manager. Your role is to create a detailed dispatch plan for a team of specialized security agents.
+    Based on the provided initial analysis, which includes summaries and relevant security domains for multiple code files, create a list of specific tasks.
+    For each identified security domain in each file, create a task for the corresponding specialized agent.
 
-    logger.info(
-        f"CoordinatorAgent Node: generate_dispatch_tasks_node for Submission ID: {submission_id}"
-    )
+    **Specialized Agents Available:**
+    - ArchitectureAgent (V1)
+    - AuthenticationAgent (V2)
+    - SessionManagementAgent (V3)
+    - AccessControlAgent (V4)
+    - ValidationAgent (V5)
+    - CryptographyAgent (V6)
+    - ErrorHandlingAgent (V7)
+    - DataProtectionAgent (V8)
+    - CommunicationAgent (V9)
+    - CodeIntegrityAgent (V10)
+    - BusinessLogicAgent (V11)
+    - FileHandlingAgent (V12)
+    - APISecurityAgent (V13)
+    - ConfigurationAgent (V14)
 
-    if not files_data:
-        logger.warning(
-            f"CoordinatorAgent: No files data found for dispatch (Submission ID: {submission_id})."
+    **Initial Analysis Context:**
+    ---
+    {consolidated_context}
+    ---
+
+    **Instructions:**
+    - For each file and each of its identified security domains, create one dispatch task.
+    - The `target_agent` must be one of the agents from the list above (e.g., if domain is 'Authentication', use 'AuthenticationAgent').
+    - The `relevant_code_snippet` should be the full content of the file.
+    - The `task_context` should explain why the task is being assigned (e.g., "Initial analysis identified potential authentication logic.").
+    - If no relevant domains are identified for a file, do not create tasks for it.
+
+    Respond with a JSON object that strictly adheres to the provided schema for the dispatch plan.
+    """
+    
+    prompt = prompt_template.format(consolidated_context=consolidated_context)
+    
+    db: AsyncSession = await get_session().__anext__()
+    try:
+        # Pass the full content of each file to the prompt
+        all_file_contents = "\n--- FILE START ---\n".join(
+            f"// File: {path}\n\n{content}" for path, content in state["files_data"].items()
         )
-        return {
-            "dispatch_tasks": [],
-            "error_message": "No files data provided to CoordinatorAgent.",
-        }
 
-    if not per_file_contextual_analysis:
-        logger.warning(
-            f"CoordinatorAgent: Contextual analysis missing for dispatch (Submission ID: {submission_id})."
-        )
-        # This might indicate an upstream issue, but the coordinator itself can't proceed.
-        return {
-            "dispatch_tasks": [],
-            "error_message": "Contextual analysis missing for CoordinatorAgent.",
-        }
+        llm_result: LLMResult = await llm_client.generate_structured_output(prompt, DispatchPlan)
 
-    for file_info in files_data:
-        filename = file_info["filename"]
-        file_content = file_info["content"]
-        file_language = file_info.get(
-            "detected_language", primary_language or "unknown"
+        # Correctly save the full LLM interaction result
+        interaction_context = {"operation": "Create Dispatch Plan"}
+        await save_llm_interaction(
+            db=db,
+            result=llm_result,
+            submission_id=state["submission_id"],
+            agent_name="CoordinatorAgent",
+            interaction_context=interaction_context
         )
 
-        file_level_analysis_output = per_file_contextual_analysis.get(filename, {})
+        if llm_result.error:
+            logger.error(f"CoordinatorAgent LLM call failed: {llm_result.error}")
+            return {**state, "error": llm_result.error}
 
-        if file_level_analysis_output.get("agent_error"):
-            error_detail = f"Error in contextual analysis for '{filename}': {file_level_analysis_output['agent_error']}"
-            logger.warning(
-                f"CoordinatorAgent: {error_detail} (Submission ID: {submission_id}). Skipping dispatch for this file."
-            )
-            any_input_errors = True
-            collective_error_message = (
-                collective_error_message + "; " if collective_error_message else ""
-            ) + error_detail
-            continue
+        parsed_output = llm_result.parsed_output
+        if not parsed_output:
+            logger.error("CoordinatorAgent failed to parse LLM output.")
+            return {**state, "error": "Failed to parse LLM output."}
 
-        # 'security_areas' is the key holding the ASVS analysis from ContextAnalysisAgent
-        # Example: {"V1_Architecture": {"likelihood": "High", "evidence": "...", ...}}
-        security_areas_analysis = file_level_analysis_output.get("security_areas", {})
-        if not security_areas_analysis:
-            logger.warning(
-                f"CoordinatorAgent: No security_areas analysis found for '{filename}' (Submission ID: {submission_id}). Skipping dispatch for this file."
-            )
-            continue
+        # Replace code snippet placeholder with actual file content for each task
+        tasks = parsed_output.dict().get("tasks", [])
+        for task in tasks:
+            file_path = task.get("file_path")
+            if file_path and file_path in state["files_data"]:
+                task["relevant_code_snippet"] = state["files_data"][file_path]
 
-        for area_category, details in security_areas_analysis.items():
-            if not isinstance(details, dict):
-                logger.warning(
-                    f"CoordinatorAgent: Skipping area '{area_category}' for file '{filename}' due to unexpected details format: {type(details)} (Submission ID: {submission_id})"
-                )
-                continue
+        logger.info(f"CoordinatorAgent created a dispatch plan with {len(tasks)} tasks.")
+        return {**state, "dispatch_tasks": tasks}
 
-            likelihood = details.get("likelihood", "None")
+    except Exception as e:
+        logger.exception(f"An unexpected error occurred in CoordinatorAgent: {e}")
+        return {**state, "error": str(e)}
+    finally:
+        await db.close()
 
-            if likelihood in DISPATCH_LIKELIHOODS:
-                specialized_agent_name = AREA_TO_SPECIALIZED_AGENT.get(area_category)
-                if specialized_agent_name:
-                    logger.debug(
-                        f"CoordinatorAgent: Creating dispatch task for {specialized_agent_name} on file '{filename}' (Likelihood: {likelihood}, Area: {area_category}, Submission ID: {submission_id})"
-                    )
-                    # Prepare context for the specialized agent
-                    # This context can be enriched by the CoordinatorAgent in later sprints
-                    # (e.g., by adding specific RAG-retrieved framework controls for the specialized agent)
-                    task_context_for_specialized_agent = {
-                        "triggering_area": area_category,
-                        "likelihood_from_context_analysis": likelihood,
-                        "evidence_from_context_analysis": details.get("evidence", ""),
-                        "key_elements_from_context_analysis": details.get(
-                            "key_elements", []
-                        ),
-                        "relevant_asvs_controls_from_context_analysis": details.get(
-                            "relevant_asvs_controls", []
-                        ),
-                        "file_summary_from_context_analysis": file_level_analysis_output.get(
-                            "summary"
-                        ),
-                        "file_components_from_context_analysis": file_level_analysis_output.get(
-                            "components"
-                        ),
-                        # "selected_frameworks": selected_frameworks # Pass this along
-                    }
+# --- Graph Builder ---
 
-                    dispatch_tasks.append(
-                        {
-                            "agent_name": specialized_agent_name,
-                            "filename": filename,
-                            "snippet": file_content,  # Pass the actual code snippet
-                            "language": file_language,
-                            "framework": None,  # Placeholder for overall project framework if any; specialized agents might infer or be told
-                            "context": task_context_for_specialized_agent,
-                        }
-                    )
-                else:
-                    logger.warning(
-                        f"CoordinatorAgent: Contextual analysis identified relevant area '{area_category}' (Likelihood: {likelihood}) in '{filename}', but no specialized agent mapping exists. (Submission ID: {submission_id})"
-                    )
+def build_coordinator_agent_graph():
+    """
+    Builds the LangGraph workflow for the Coordinator Agent.
+    """
+    workflow = StateGraph(CoordinatorAgentState)
+    workflow.add_node("create_dispatch_plan", create_dispatch_plan)
+    workflow.set_entry_point("create_dispatch_plan")
+    workflow.add_edge("create_dispatch_plan", END)
 
-    if any_input_errors:
-        logger.warning(
-            f"CoordinatorAgent: Encountered errors in contextual analysis for some files. Dispatch list may be incomplete. Error summary: {collective_error_message} (Submission ID: {submission_id})"
-        )
-        # Return current dispatch_tasks along with the error message
-        return {
-            "dispatch_tasks": dispatch_tasks,
-            "error_message": collective_error_message,
-        }
-
-    logger.info(
-        f"CoordinatorAgent: Created {len(dispatch_tasks)} dispatch tasks for Submission ID: {submission_id}."
-    )
-    return {"dispatch_tasks": dispatch_tasks, "error_message": None}
-
-
-# --- Graph Construction ---
-def build_coordinator_agent_graph() -> Any:
-    """Builds and returns the compiled LangGraph for the CoordinatorAgent."""
-    graph = StateGraph(CoordinatorAgentState)
-
-    graph.add_node("generate_dispatch_tasks", generate_dispatch_tasks_node)
-    graph.set_entry_point("generate_dispatch_tasks")
-    graph.add_edge("generate_dispatch_tasks", END)
-
-    compiled_graph = graph.compile()
-    logger.info("CoordinatorAgent graph compiled successfully.")
-    return compiled_graph
-
-
-# Optional: If you want to pre-compile it for direct import, though dynamic loading in worker_graph is also fine.
-# coordinator_agent_workflow = build_coordinator_agent_graph()
+    return workflow.compile()
