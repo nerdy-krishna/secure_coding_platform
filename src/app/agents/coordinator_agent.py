@@ -17,16 +17,28 @@ logger = logging.getLogger(__name__)
 
 # --- Pydantic Models for Structured Output ---
 
+
 class DispatchTask(BaseModel):
     file_path: str = Field(description="The path to the file to be analyzed.")
-    relevant_code_snippet: str = Field(description="The specific snippet of code that needs analysis. Can be the entire file content if necessary.")
-    target_agent: str = Field(description="The specialized agent to which this task should be dispatched (e.g., 'AuthenticationAgent', 'AccessControlAgent').")
-    task_context: str = Field(description="The reason or context for dispatching to this agent, based on the initial analysis.")
+    relevant_code_snippet: str = Field(
+        description="The specific snippet of code that needs analysis. Can be the entire file content if necessary."
+    )
+    target_agent: str = Field(
+        description="The specialized agent to which this task should be dispatched (e.g., 'AuthenticationAgent', 'AccessControlAgent')."
+    )
+    task_context: str = Field(
+        description="The reason or context for dispatching to this agent, based on the initial analysis."
+    )
+
 
 class DispatchPlan(BaseModel):
-    tasks: List[DispatchTask] = Field(description="A list of dispatch tasks for specialized security agents.")
+    tasks: List[DispatchTask] = Field(
+        description="A list of dispatch tasks for specialized security agents."
+    )
+
 
 # --- Agent State ---
+
 
 class CoordinatorAgentState(TypedDict):
     submission_id: UUID
@@ -35,7 +47,9 @@ class CoordinatorAgentState(TypedDict):
     dispatch_tasks: Optional[List[Dict[str, Any]]]
     error: Optional[str]
 
+
 # --- Agent Nodes ---
+
 
 async def create_dispatch_plan(state: CoordinatorAgentState) -> CoordinatorAgentState:
     """
@@ -43,14 +57,14 @@ async def create_dispatch_plan(state: CoordinatorAgentState) -> CoordinatorAgent
     """
     logger.info("CoordinatorAgent: Creating dispatch plan.")
     llm_client = get_llm_client()
-    
+
     # Consolidate context from all files for the LLM
     consolidated_context = ""
     for result in state["initial_analysis_results"]:
-        file_path = result.get('file_path')
-        analysis = result.get('analysis_result', {})
-        summary = analysis.get('summary', 'No summary available.')
-        domains = [d.get('domain') for d in analysis.get('security_domains', [])]
+        file_path = result.get("file_path")
+        analysis = result.get("analysis_result", {})
+        summary = analysis.get("summary", "No summary available.")
+        domains = [d.get("domain") for d in analysis.get("security_domains", [])]
         consolidated_context += f"File: {file_path}\nSummary: {summary}\nIdentified Security Domains: {', '.join(domains)}\n\n"
 
     prompt_template = """
@@ -88,17 +102,20 @@ async def create_dispatch_plan(state: CoordinatorAgentState) -> CoordinatorAgent
 
     Respond with a JSON object that strictly adheres to the provided schema for the dispatch plan.
     """
-    
+
     prompt = prompt_template.format(consolidated_context=consolidated_context)
-    
+
     db: AsyncSession = await get_session().__anext__()
     try:
         # Pass the full content of each file to the prompt
         all_file_contents = "\n--- FILE START ---\n".join(
-            f"// File: {path}\n\n{content}" for path, content in state["files_data"].items()
+            f"// File: {path}\n\n{content}"
+            for path, content in state["files_data"].items()
         )
 
-        llm_result: LLMResult = await llm_client.generate_structured_output(prompt, DispatchPlan)
+        llm_result: LLMResult = await llm_client.generate_structured_output(
+            prompt, DispatchPlan
+        )
 
         # Correctly save the full LLM interaction result
         interaction_context = {"operation": "Create Dispatch Plan"}
@@ -107,7 +124,7 @@ async def create_dispatch_plan(state: CoordinatorAgentState) -> CoordinatorAgent
             result=llm_result,
             submission_id=state["submission_id"],
             agent_name="CoordinatorAgent",
-            interaction_context=interaction_context
+            interaction_context=interaction_context,
         )
 
         if llm_result.error:
@@ -126,7 +143,9 @@ async def create_dispatch_plan(state: CoordinatorAgentState) -> CoordinatorAgent
             if file_path and file_path in state["files_data"]:
                 task["relevant_code_snippet"] = state["files_data"][file_path]
 
-        logger.info(f"CoordinatorAgent created a dispatch plan with {len(tasks)} tasks.")
+        logger.info(
+            f"CoordinatorAgent created a dispatch plan with {len(tasks)} tasks."
+        )
         return {**state, "dispatch_tasks": tasks}
 
     except Exception as e:
@@ -135,7 +154,9 @@ async def create_dispatch_plan(state: CoordinatorAgentState) -> CoordinatorAgent
     finally:
         await db.close()
 
+
 # --- Graph Builder ---
+
 
 def build_coordinator_agent_graph():
     """

@@ -930,9 +930,8 @@ async def save_results_node(state: WorkerGraphState) -> Dict[str, Any]:
         except TypeError as json_err:
             logger.error(f"Failed to serialize original_code_map to JSON: {json_err}")
             error_message = (
-                (error_message + "; " if error_message else "")
-                + f"Failed to serialize original code: {json_err}"
-            )
+                error_message + "; " if error_message else ""
+            ) + f"Failed to serialize original code: {json_err}"
             status = "failed"
 
     # Serialize the final_fixed_code_map to JSON string for TEXT column
@@ -947,9 +946,8 @@ async def save_results_node(state: WorkerGraphState) -> Dict[str, Any]:
                 f"Failed to serialize final_fixed_code_map to JSON: {json_err}"
             )
             error_message = (
-                (error_message + "; " if error_message else "")
-                + f"Failed to serialize fixed code: {json_err}"
-            )
+                error_message + "; " if error_message else ""
+            ) + f"Failed to serialize fixed code: {json_err}"
             status = "failed"
             fixed_code_to_save_json = None
 
@@ -967,12 +965,8 @@ async def save_results_node(state: WorkerGraphState) -> Dict[str, Any]:
                     logger.info(f"Updating existing AnalysisResult for {submission_id}")
                     existing_result.report_content = final_report
                     # --- CORRECTED ATTRIBUTE NAMES BELOW ---
-                    existing_result.original_code_snapshot = (
-                        original_code_to_save_json
-                    )
-                    existing_result.fixed_code_snapshot = (
-                        fixed_code_to_save_json
-                    )
+                    existing_result.original_code_snapshot = original_code_to_save_json
+                    existing_result.fixed_code_snapshot = fixed_code_to_save_json
                     # --- END OF CORRECTION ---
                     existing_result.completed_at = datetime.datetime.now(
                         datetime.timezone.utc
@@ -989,9 +983,7 @@ async def save_results_node(state: WorkerGraphState) -> Dict[str, Any]:
                         fixed_code_snapshot=fixed_code_to_save_json,
                         status=status,
                         error_message=error_message,
-                        completed_at=datetime.datetime.now(
-                            datetime.timezone.utc
-                        ),
+                        completed_at=datetime.datetime.now(datetime.timezone.utc),
                     )
                     session.add(db_result)
         logger.info(
@@ -1008,8 +1000,8 @@ async def save_results_node(state: WorkerGraphState) -> Dict[str, Any]:
             exc_info=True,
         )
         final_error_msg = (
-            (error_message + "; " if error_message else "") + f"DB save failed: {db_exc}"
-        )
+            error_message + "; " if error_message else ""
+        ) + f"DB save failed: {db_exc}"
         return {"db_save_status": "Failed", "error_message": final_error_msg}
     except Exception as e:
         logger.error(
@@ -1017,8 +1009,8 @@ async def save_results_node(state: WorkerGraphState) -> Dict[str, Any]:
             exc_info=True,
         )
         final_error_msg = (
-            (error_message + "; " if error_message else "") + f"Unexpected error during DB save: {e}"
-        )
+            error_message + "; " if error_message else ""
+        ) + f"Unexpected error during DB save: {e}"
         return {"db_save_status": "Failed", "error_message": final_error_msg}
 
 

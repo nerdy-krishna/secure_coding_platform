@@ -1,145 +1,85 @@
-import json
+# src/app/agents/context_analysis_agent.py
 import logging
-from typing import TypedDict, List, Optional, Dict, Any
-from uuid import UUID
+from typing import Dict, Any
+from pydantic import BaseModel, Field
 
-from langchain_core.pydantic_v1 import BaseModel, Field
-from langgraph.graph import StateGraph, END
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from src.app.db.crud import save_llm_interaction
-from src.app.db.database import get_session
-from src.app.llm.llm_client import get_llm_client
-from src.app.llm.providers import LLMResult
+# FIX: Import the factory function 'get_llm_client' instead of the non-existent 'LLMClient' class
+from ..llm.llm_client import get_llm_client
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+AGENT_NAME = "ContextAnalysisAgent"
 
-# --- Pydantic Models for Structured Output ---
+AGENT_DESCRIPTIONS = {
+    "AccessControlAgent": "Analyzes for vulnerabilities related to user permissions, authorization, and insecure direct object references.",
+    "ApiSecurityAgent": "Focuses on the security of API endpoints, including REST, GraphQL, and other web services.",
+    "ArchitectureAgent": "Assesses the overall security architecture, design patterns, and data flow.",
+    "AuthenticationAgent": "Scrutinizes login mechanisms, password policies, multi-factor authentication, and credential management.",
+    "BusinessLogicAgent": "Looks for flaws in the application's business logic that could be exploited.",
+    "CodeIntegrityAgent": "Verifies the integrity of code and dependencies to prevent tampering.",
+    "CommunicationAgent": "Checks for secure data transmission, use of TLS, and protection against network-level attacks.",
+    "ConfigurationAgent": "Inspects for misconfigurations in the application, server, or third-party services.",
+    "CryptographyAgent": "Evaluates the use of encryption, hashing algorithms, and key management.",
+    "DataProtectionAgent": "Focuses on the protection of sensitive data at rest and in transit, including PII.",
+    "ErrorHandlingAgent": "Analyzes error handling routines to prevent information leakage.",
+    "FileHandlingAgent": "Scrutinizes file upload, download, and processing functionality for vulnerabilities.",
+    "SessionManagementAgent": "Checks for secure session handling, token management, and protection against session hijacking.",
+    "ValidationAgent": "Focuses on input validation, output encoding, and prevention of injection attacks like SQLi and XSS.",
+}
 
-class SecurityDomain(BaseModel):
-    domain: str = Field(description="The specific security domain identified (e.g., 'Authentication', 'Access Control', 'Cryptography').")
-    reason: str = Field(description="A brief justification for why this domain is relevant to the code snippet.")
+class AgentRelevance(BaseModel):
+    is_relevant: bool = Field(..., description="True if the agent's security domain is relevant to the code, otherwise False.")
+    reasoning: str = Field(..., description="A brief explanation for why the agent is or is not relevant.")
 
-class CodeContext(BaseModel):
-    summary: str = Field(description="A concise summary of the code's functionality.")
-    security_domains: List[SecurityDomain] = Field(description="A list of relevant security domains for the code.")
+class TaskBreakdown(BaseModel):
+    AccessControlAgent: AgentRelevance
+    ApiSecurityAgent: AgentRelevance
+    ArchitectureAgent: AgentRelevance
+    AuthenticationAgent: AgentRelevance
+    BusinessLogicAgent: AgentRelevance
+    CodeIntegrityAgent: AgentRelevance
+    CommunicationAgent: AgentRelevance
+    ConfigurationAgent: AgentRelevance
+    CryptographyAgent: AgentRelevance
+    DataProtectionAgent: AgentRelevance
+    ErrorHandlingAgent: AgentRelevance
+    FileHandlingAgent: AgentRelevance
+    SessionManagementAgent: AgentRelevance
+    ValidationAgent: AgentRelevance
 
-# --- Agent State ---
-
-class ContextAnalysisAgentState(TypedDict):
-    submission_id: UUID
-    file_path: str
-    file_content: str
-    project_context: Optional[str]
-    analysis_result: Optional[Dict[str, Any]]
-    error: Optional[str]
-
-# --- Agent Nodes ---
-
-async def analyze_code_context(state: ContextAnalysisAgentState) -> ContextAnalysisAgentState:
+async def analyze_code_context(state: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Analyzes the code to identify its purpose and relevant security domains using an LLM.
+    Analyzes the code snippet to determine which specialized security agents are relevant.
     """
-    logger.info(f"Analyzing code context for file: {state['file_path']}")
+    logger.info(f"[{AGENT_NAME}] Starting context analysis for submission ID: {state['submission_id']}")
+    code_snippet = state["code_snippet"]
+    
+    # FIX: Call the factory function to get the LLM provider instance
     llm_client = get_llm_client()
 
-    prompt_template = """
-    You are an expert security analyst. Your task is to analyze the provided code snippet and identify its primary purpose and all relevant security domains based on OWASP ASVS categories.
+    prompt = f"""
+    You are an expert security architect. Your task is to analyze the provided code snippet
+    and determine which of the following security domains are relevant for a detailed vulnerability analysis.
+    For each domain, you must decide if it is relevant and provide a brief reasoning.
 
-    Code Snippet:
+    AGENT DESCRIPTIONS:
+    {AGENT_DESCRIPTIONS}
+
+    CODE SNIPPET:
     ```
-    {file_content}
+    {code_snippet}
     ```
 
-    Project Context:
-    {project_context}
-
-    Based on the code and its context, provide:
-    1. A brief summary of what the code does.
-    2. A list of all applicable security domains from the following list that should be scrutinized for vulnerabilities:
-       - V1: Architecture, Design and Threat Modeling
-       - V2: Authentication
-       - V3: Session Management
-       - V4: Access Control
-       - V5: Validation, Sanitization and Encoding
-       - V6: Stored Cryptography
-       - V7: Error Handling and Logging
-       - V8: Data Protection
-       - V9: Communications
-       - V10: Malicious Code
-       - V11: Business Logic
-       - V12: File and Resources
-       - V13: API and Web Service
-       - V14: Configuration
-    
-    Respond with a JSON object that strictly adheres to the provided schema.
+    Based on the code, evaluate each agent's relevance.
     """
-    prompt = prompt_template.format(
-        file_content=state["file_content"],
-        project_context=state.get("project_context", "No additional project context provided.")
-    )
 
-    db: AsyncSession = await get_session().__anext__()
-    try:
-        llm_result: LLMResult = await llm_client.generate_structured_output(prompt, CodeContext)
+    # This method call is still correct, as the provider returned by the factory has this method.
+    llm_response = await llm_client.generate_structured_output(prompt, TaskBreakdown)
 
-        # Correctly save the full LLM interaction result
-        interaction_context = {
-            "file_name": state["file_path"],
-            "operation": "Initial Context Analysis"
-        }
-        await save_llm_interaction(
-            db=db,
-            result=llm_result,
-            submission_id=state["submission_id"],
-            agent_name="ContextAnalysisAgent",
-            interaction_context=interaction_context
-        )
+    if llm_response.error or not llm_response.parsed_output:
+        logger.error(f"[{AGENT_NAME}] Failed to get valid task breakdown from LLM.")
+        return {"task_breakdown": {}}
 
-        if llm_result.error:
-            logger.error(f"LLM call failed for {state['file_path']}: {llm_result.error}")
-            return {**state, "error": llm_result.error}
-
-        parsed_output = llm_result.parsed_output
-        if not parsed_output:
-            logger.error(f"Failed to parse LLM output for {state['file_path']}.")
-            return {**state, "error": "Failed to parse LLM output."}
-        
-        analysis_data = parsed_output.dict()
-        logger.info(f"Successfully analyzed context for {state['file_path']}. Domains: {[d['domain'] for d in analysis_data.get('security_domains', [])]}")
-        
-        return {**state, "analysis_result": analysis_data}
-
-    except Exception as e:
-        logger.exception(f"An unexpected error occurred during context analysis for {state['file_path']}: {e}")
-        return {**state, "error": str(e)}
-    finally:
-        await db.close()
-
-
-# --- Graph Builder ---
-
-def build_context_analysis_agent_graph():
-    """
-    Builds the LangGraph workflow for the Context Analysis Agent.
-    """
-    workflow = StateGraph(ContextAnalysisAgentState)
-    workflow.add_node("analyze_code_context", analyze_code_context)
-    workflow.set_entry_point("analyze_code_context")
-    workflow.add_edge("analyze_code_context", END)
-    
-    return workflow.compile()
-
-# --- Main execution function (for standalone testing if needed) ---
-async def run_agent(submission_id: UUID, file_path: str, file_content: str, project_context: Optional[str] = None):
-    graph = build_context_analysis_agent_graph()
-    initial_state = {
-        "submission_id": submission_id,
-        "file_path": file_path,
-        "file_content": file_content,
-        "project_context": project_context,
-    }
-    final_state = await graph.ainvoke(initial_state)
-    return final_state
+    task_breakdown = llm_response.parsed_output.dict()
+    logger.info(f"[{AGENT_NAME}] Context analysis complete. Relevant agents determined.")
+    return {"task_breakdown": task_breakdown}

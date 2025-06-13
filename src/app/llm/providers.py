@@ -45,7 +45,9 @@ class OpenAIProvider(LLMProvider):
             raise ValueError("OPENAI_API_KEY environment variable not set.")
         try:
             # Wrap the api_key string in SecretStr for Pydantic v2 compatibility
-            self.client = ChatOpenAI(api_key=SecretStr(self.api_key), model=self.model_name)
+            self.client = ChatOpenAI(
+                api_key=SecretStr(self.api_key), model=self.model_name
+            )
             logger.info(f"Initialized OpenAIProvider with model: {self.model_name}")
         except Exception as e:
             logger.error(f"Failed to initialize ChatOpenAI client: {e}")
@@ -54,7 +56,9 @@ class OpenAIProvider(LLMProvider):
     async def generate(
         self, prompt: str, generation_config_override: Optional[Dict[str, Any]] = None
     ) -> LLMResult:
-        logger.debug(f"OpenAIProvider sending prompt (first 50 chars): '{prompt[:50]}...'")
+        logger.debug(
+            f"OpenAIProvider sending prompt (first 50 chars): '{prompt[:50]}...'"
+        )
         message = HumanMessage(content=prompt)
         start_time = time.perf_counter()
         result = LLMResult(model_name=self.model_name)
@@ -64,19 +68,24 @@ class OpenAIProvider(LLMProvider):
             llm_with_overrides = self.client
             if generation_config_override:
                 llm_with_overrides = self.client.bind(**generation_config_override)
-                logger.info(f"Using generation_config override: {generation_config_override}")
+                logger.info(
+                    f"Using generation_config override: {generation_config_override}"
+                )
 
             response = await llm_with_overrides.ainvoke([message])
             end_time = time.perf_counter()
             result.latency_ms = int((end_time - start_time) * 1000)
             result.output_text = str(response.content)
 
-            if hasattr(response, "response_metadata") and "token_usage" in response.response_metadata:
+            if (
+                hasattr(response, "response_metadata")
+                and "token_usage" in response.response_metadata
+            ):
                 token_usage = response.response_metadata["token_usage"]
                 result.prompt_tokens = token_usage.get("prompt_tokens")
                 result.completion_tokens = token_usage.get("completion_tokens")
                 result.total_tokens = token_usage.get("total_tokens")
-            
+
             result.status = "success"
 
         except Exception as e:
@@ -86,7 +95,7 @@ class OpenAIProvider(LLMProvider):
             result.error = f"LLM generation failed: {str(e)}"
             result.status = "failed"
             result.output_text = f"Error: {str(e)}"
-        
+
         return result
 
 
@@ -104,7 +113,9 @@ class GoogleGeminiProvider(LLMProvider):
                 # Optional: configure safety settings if needed
                 # convert_system_message_to_human=True # Can be useful for some prompts
             )
-            logger.info(f"Initialized GoogleGeminiProvider with model: {self.model_name}")
+            logger.info(
+                f"Initialized GoogleGeminiProvider with model: {self.model_name}"
+            )
         except Exception as e:
             logger.error(f"Failed to initialize ChatGoogleGenerativeAI client: {e}")
             raise
@@ -112,7 +123,9 @@ class GoogleGeminiProvider(LLMProvider):
     async def generate(
         self, prompt: str, generation_config_override: Optional[Dict[str, Any]] = None
     ) -> LLMResult:
-        logger.debug(f"GoogleGeminiProvider sending prompt (first 50 chars): '{prompt[:50]}...'")
+        logger.debug(
+            f"GoogleGeminiProvider sending prompt (first 50 chars): '{prompt[:50]}...'"
+        )
         message = HumanMessage(content=prompt)
         start_time = time.perf_counter()
         result = LLMResult(model_name=self.model_name)
@@ -122,7 +135,9 @@ class GoogleGeminiProvider(LLMProvider):
             # Use .bind() to pass runtime parameters like temperature
             if generation_config_override:
                 llm_with_overrides = self.client.bind(**generation_config_override)
-                logger.info(f"Using generation_config override: {generation_config_override}")
+                logger.info(
+                    f"Using generation_config override: {generation_config_override}"
+                )
 
             response = await llm_with_overrides.ainvoke([message])
             end_time = time.perf_counter()
@@ -130,7 +145,10 @@ class GoogleGeminiProvider(LLMProvider):
             result.output_text = str(response.content)
 
             # LangChain for Google also provides token usage in response_metadata
-            if hasattr(response, "response_metadata") and "usage_metadata" in response.response_metadata:
+            if (
+                hasattr(response, "response_metadata")
+                and "usage_metadata" in response.response_metadata
+            ):
                 usage_metadata = response.response_metadata["usage_metadata"]
                 result.prompt_tokens = usage_metadata.get("prompt_token_count")
                 result.completion_tokens = usage_metadata.get("candidates_token_count")
