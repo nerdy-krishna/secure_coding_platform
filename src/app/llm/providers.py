@@ -9,6 +9,7 @@ from typing import Optional, Dict, Any
 # LangChain specific imports
 from langchain_openai import ChatOpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_anthropic import ChatAnthropic # Added for Anthropic
 from langchain_core.messages import HumanMessage
 from langchain_core.exceptions import OutputParserException
 
@@ -44,7 +45,6 @@ class OpenAIProvider(LLMProvider):
         if not self.api_key:
             raise ValueError("OPENAI_API_KEY environment variable not set.")
         try:
-            # Wrap the api_key string in SecretStr for Pydantic v2 compatibility
             self.client = ChatOpenAI(
                 api_key=SecretStr(self.api_key), model=self.model_name
             )
@@ -64,7 +64,6 @@ class OpenAIProvider(LLMProvider):
         result = LLMResult(model_name=self.model_name)
 
         try:
-            # LangChain's .bind() method is used to pass runtime parameters
             llm_with_overrides = self.client
             if generation_config_override:
                 llm_with_overrides = self.client.bind(**generation_config_override)
@@ -99,22 +98,20 @@ class OpenAIProvider(LLMProvider):
         return result
 
 
-class GoogleGeminiProvider(LLMProvider):
+# Renamed from GoogleGeminiProvider for consistency
+class GoogleProvider(LLMProvider):
     def __init__(self):
         self.api_key = os.getenv("GOOGLE_API_KEY")
         self.model_name = os.getenv("GOOGLE_MODEL_NAME", "gemini-1.5-flash-latest")
         if not self.api_key:
             raise ValueError("GOOGLE_API_KEY environment variable not set.")
         try:
-            # Initialize the LangChain wrapper for Google GenAI
             self.client = ChatGoogleGenerativeAI(
                 model=self.model_name,
                 google_api_key=self.api_key,
-                # Optional: configure safety settings if needed
-                # convert_system_message_to_human=True # Can be useful for some prompts
             )
             logger.info(
-                f"Initialized GoogleGeminiProvider with model: {self.model_name}"
+                f"Initialized GoogleProvider with model: {self.model_name}"
             )
         except Exception as e:
             logger.error(f"Failed to initialize ChatGoogleGenerativeAI client: {e}")
@@ -124,7 +121,7 @@ class GoogleGeminiProvider(LLMProvider):
         self, prompt: str, generation_config_override: Optional[Dict[str, Any]] = None
     ) -> LLMResult:
         logger.debug(
-            f"GoogleGeminiProvider sending prompt (first 50 chars): '{prompt[:50]}...'"
+            f"GoogleProvider sending prompt (first 50 chars): '{prompt[:50]}...'"
         )
         message = HumanMessage(content=prompt)
         start_time = time.perf_counter()
@@ -132,7 +129,6 @@ class GoogleGeminiProvider(LLMProvider):
 
         try:
             llm_with_overrides = self.client
-            # Use .bind() to pass runtime parameters like temperature
             if generation_config_override:
                 llm_with_overrides = self.client.bind(**generation_config_override)
                 logger.info(
@@ -144,7 +140,6 @@ class GoogleGeminiProvider(LLMProvider):
             result.latency_ms = int((end_time - start_time) * 1000)
             result.output_text = str(response.content)
 
-            # LangChain for Google also provides token usage in response_metadata
             if (
                 hasattr(response, "response_metadata")
                 and "usage_metadata" in response.response_metadata
@@ -160,6 +155,68 @@ class GoogleGeminiProvider(LLMProvider):
             end_time = time.perf_counter()
             result.latency_ms = int((end_time - start_time) * 1000)
             logger.error(f"Error during Google Gemini API call: {e}", exc_info=True)
+            result.error = f"LLM generation failed: {str(e)}"
+            result.status = "failed"
+            result.output_text = f"Error: {str(e)}"
+
+        return result
+
+
+# Added the missing AnthropicProvider, following the same LangChain pattern
+class AnthropicProvider(LLMProvider):
+    def __init__(self):
+        self.api_key = os.getenv("ANTHROPIC_API_KEY")
+        self.model_name = os.getenv("ANTHROPIC_MODEL_NAME", "claude-3-haiku-20240307")
+        if not self.api_key:
+            raise ValueError("ANTHROPIC_API_KEY environment variable not set.")
+        try:
+            self.client = ChatAnthropic(
+                api_key=self.api_key, model=self.model_name
+            )
+            logger.info(f"Initialized AnthropicProvider with model: {self.model_name}")
+        except Exception as e:
+            logger.error(f"Failed to initialize ChatAnthropic client: {e}")
+            raise
+
+    async def generate(
+        self, prompt: str, generation_config_override: Optional[Dict[str, Any]] = None
+    ) -> LLMResult:
+        logger.debug(
+            f"AnthropicProvider sending prompt (first 50 chars): '{prompt[:50]}...'"
+        )
+        message = HumanMessage(content=prompt)
+        start_time = time.perf_counter()
+        result = LLMResult(model_name=self.model_name)
+
+        try:
+            llm_with_overrides = self.client
+            if generation_config_override:
+                llm_with_overrides = self.client.bind(**generation_config_override)
+                logger.info(
+                    f"Using generation_config override: {generation_config_override}"
+                )
+
+            response = await llm_with_overrides.ainvoke([message])
+            end_time = time.perf_counter()
+            result.latency_ms = int((end_time - start_time) * 1000)
+            result.output_text = str(response.content)
+
+            if (
+                hasattr(response, "response_metadata")
+                and "usage" in response.response_metadata
+            ):
+                usage = response.response_metadata["usage"]
+                result.prompt_tokens = usage.get("input_tokens")
+                result.completion_tokens = usage.get("output_tokens")
+                if result.prompt_tokens and result.completion_tokens:
+                    result.total_tokens = result.prompt_tokens + result.completion_tokens
+            
+            result.status = "success"
+
+        except Exception as e:
+            end_time = time.perf_counter()
+            result.latency_ms = int((end_time - start_time) * 1000)
+            logger.error(f"Error during Anthropic API call: {e}", exc_info=True)
             result.error = f"LLM generation failed: {str(e)}"
             result.status = "failed"
             result.output_text = f"Error: {str(e)}"

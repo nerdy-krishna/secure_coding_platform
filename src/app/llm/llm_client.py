@@ -1,61 +1,151 @@
-import os
+# src/app/llm/llm_client.py
 import logging
-from dotenv import load_dotenv
-from typing import Optional  # Import Optional for type hinting
+import os
+import json
+from typing import Type, TypeVar, Optional, NamedTuple, Dict
 
-# Import the provider classes and base class
-# Ensure LLMProvider is correctly defined/imported in providers.py for the type hint below
-from .providers import LLMProvider, OpenAIProvider, GoogleGeminiProvider
+from pydantic import BaseModel
+
+from ..utils import cost_estimation
+from .providers import AnthropicProvider, OpenAIProvider, GoogleProvider, LLMProvider, LLMResult as ProviderLLMResult
 
 logger = logging.getLogger(__name__)
-load_dotenv()
 
-# Cache the client instance to avoid re-initialization
-_llm_client_instance: Optional[LLMProvider] = None  # Type hint using Optional
+T = TypeVar("T", bound=BaseModel)
 
-
-def get_llm_client() -> LLMProvider:
+class AgentLLMResult(NamedTuple):
     """
-    Factory function to get an instance of the configured LLM provider.
-    Reads LLM_PROVIDER from environment variables.
-    Caches the client instance.
+    Standardized result object returned to the agents.
+    This simplifies the interface for the agents, abstracting away the provider-specific result model.
     """
-    global _llm_client_instance
+    raw_output: str
+    parsed_output: Optional[BaseModel]
+    error: Optional[str]
+    cost: Optional[float]
 
-    if _llm_client_instance is not None:
-        logger.debug("Returning cached LLM client instance.")
-        return _llm_client_instance
 
-    provider_name = os.getenv("LLM_PROVIDER", "openai").lower()
-    logger.info(f"Attempting to initialize LLM client for provider: {provider_name}")
+class LLMClient:
+    """
+    A client for interacting with a configured Large Language Model.
+    This class acts as a singleton.
+    """
+    _instance: Optional['LLMClient'] = None
+    provider: LLMProvider
 
-    if provider_name == "openai":
+    def __new__(cls, *args, **kwargs) -> 'LLMClient':
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            provider_name = os.getenv("LLM_PROVIDER", "anthropic").lower()
+            
+            if provider_name == "openai":
+                cls._instance.provider = OpenAIProvider()
+            elif provider_name == "anthropic":
+                cls._instance.provider = AnthropicProvider()
+            elif provider_name == "google":
+                cls._instance.provider = GoogleProvider()
+            else:
+                raise ValueError(f"Unsupported LLM provider: {provider_name}")
+
+            logger.info(f"LLMClient initialized with provider: {provider_name}")
+            
+        return cls._instance
+
+    def _extract_json_from_text(self, text: str) -> Optional[Dict]:
+        """
+        Extracts a JSON object from a string, even if it's embedded in other text.
+        """
         try:
-            _llm_client_instance = OpenAIProvider()
-            logger.info("Successfully initialized OpenAI client.")
-        except Exception as e:
-            logger.error(
-                f"Failed to create OpenAIProvider instance: {e}", exc_info=True
-            )
-            raise ValueError(
-                f"Failed to initialize LLM provider '{provider_name}': {e}"
-            ) from e
-    elif provider_name == "google":  # Assuming "google" is the env var value for Gemini
-        try:
-            _llm_client_instance = GoogleGeminiProvider()
-            logger.info("Successfully initialized GoogleGeminiProvider client.")
-        except Exception as e:
-            logger.error(
-                f"Failed to create GoogleGeminiProvider instance: {e}", exc_info=True
-            )
-            raise ValueError(
-                f"Failed to initialize LLM provider '{provider_name}': {e}"
-            ) from e
-    # Add other providers later if needed (e.g., Anthropic)
-    # elif provider_name == "anthropic":
-    # _llm_client_instance = AnthropicProvider()
-    else:
-        logger.error(f"Unsupported LLM_PROVIDER specified: {provider_name}")
-        raise ValueError(f"Unsupported LLM_PROVIDER: {provider_name}")
+            json_start = text.find('{')
+            if json_start == -1:
+                return None
+            
+            brace_level = 0
+            json_end = -1
+            for i, char in enumerate(text[json_start:]):
+                if char == '{':
+                    brace_level += 1
+                elif char == '}':
+                    brace_level -= 1
+                    if brace_level == 0:
+                        json_end = json_start + i + 1
+                        break
+            
+            if json_end == -1:
+                return None
 
-    return _llm_client_instance
+            json_str = text[json_start:json_end]
+            return json.loads(json_str)
+
+        except (json.JSONDecodeError, Exception) as e:
+            logger.error(f"Could not extract or parse JSON from text: {e}")
+            return None
+
+    async def generate_structured_output(self, prompt: str, response_model: Type[T]) -> "AgentLLMResult":
+        """
+        Generates a structured response from the LLM based on a Pydantic model.
+        """
+        model_schema = response_model.schema_json(indent=2)
+        full_prompt = (
+            f"{prompt}\n\n"
+            f"Please provide your response in a JSON format that strictly follows this Pydantic schema:\n"
+            f"```json\n{model_schema}\n```\n"
+            f"Ensure the JSON is well-formed and complete."
+        )
+        
+        provider_result: ProviderLLMResult = await self.provider.generate(full_prompt)
+
+        if provider_result.status == "failed" or not provider_result.output_text:
+            return AgentLLMResult(
+                raw_output=provider_result.output_text or "",
+                parsed_output=None,
+                error=provider_result.error or "LLM generation failed with no output.",
+                cost=cost_estimation.estimate_cost(
+                    provider_result.model_name or "",
+                    provider_result.prompt_tokens or 0,
+                    provider_result.completion_tokens or 0
+                )
+            )
+
+        raw_output_text = provider_result.output_text
+        parsed_json = self._extract_json_from_text(raw_output_text)
+        
+        if parsed_json is None:
+            return AgentLLMResult(
+                raw_output=raw_output_text,
+                parsed_output=None,
+                error="Failed to extract a valid JSON object from the LLM response.",
+                cost=cost_estimation.estimate_cost(
+                    provider_result.model_name or "",
+                    provider_result.prompt_tokens or 0,
+                    provider_result.completion_tokens or 0
+                )
+            )
+
+        try:
+            parsed_output = response_model.parse_obj(parsed_json)
+            return AgentLLMResult(
+                raw_output=raw_output_text,
+                parsed_output=parsed_output,
+                error=None,
+                cost=cost_estimation.estimate_cost(
+                    provider_result.model_name or "",
+                    provider_result.prompt_tokens or 0,
+                    provider_result.completion_tokens or 0
+                )
+            )
+        except Exception as e:
+            logger.error(f"Failed to parse LLM response into Pydantic model: {e}\nRaw JSON:\n{parsed_json}")
+            return AgentLLMResult(
+                raw_output=raw_output_text,
+                parsed_output=None,
+                error=f"Pydantic validation failed: {e}",
+                cost=cost_estimation.estimate_cost(
+                    provider_result.model_name or "",
+                    provider_result.prompt_tokens or 0,
+                    provider_result.completion_tokens or 0
+                )
+            )
+
+def get_llm_client() -> LLMClient:
+    """Factory function to get the singleton instance of LLMClient."""
+    return LLMClient()

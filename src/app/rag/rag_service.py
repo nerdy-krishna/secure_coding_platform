@@ -1,84 +1,85 @@
 # src/app/rag/rag_service.py
+import chromadb
 import os
 import logging
 from typing import List, Dict, Any
 
-import chromadb
-
-# Configure logging
 logger = logging.getLogger(__name__)
+
+# Configuration for ChromaDB
+# Set the default host to the docker-compose service name
+CHROMA_HOST = os.getenv("CHROMA_HOST", "vector_db") 
+# Corrected default port to 8000, which is ChromaDB's default internal port.
+CHROMA_PORT = int(os.getenv("CHROMA_PORT", 8000)) 
+
+ASVS_COLLECTION_NAME = "asvs_collection"
 
 class RAGService:
     """
-    A service to interact with the ChromaDB RAG knowledge base.
+    A singleton service for interacting with the ChromaDB vector store.
     """
-    def __init__(self):
+    _instance = None
+    client: chromadb.HttpClient = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            try:
+                cls._instance = super().__new__(cls)
+                logger.info(f"Attempting to connect to ChromaDB at {CHROMA_HOST}:{CHROMA_PORT}")
+                cls._instance.client = chromadb.HttpClient(host=CHROMA_HOST, port=CHROMA_PORT)
+                # Heartbeat check to confirm connection before proceeding
+                cls._instance.client.heartbeat()
+                logger.info("Successfully connected to ChromaDB.")
+                
+                # Ensure the collection exists
+                cls._instance.asvs_collection = cls._instance.client.get_or_create_collection(name=ASVS_COLLECTION_NAME)
+                logger.info(f"Collection '{ASVS_COLLECTION_NAME}' loaded/created.")
+
+            except Exception as e:
+                logger.critical(f"Failed to initialize RAGService or connect to ChromaDB: {e}", exc_info=True)
+                cls._instance = None
+                raise
+        return cls._instance
+
+    def query_asvs(self, query_texts: List[str], n_results: int = 5) -> List[Dict[str, Any]]:
         """
-        Initializes the RAGService by connecting to the ChromaDB client.
-        """
-        try:
-            # For services running inside Docker talking to other Docker services,
-            # we use the service name as the host.
-            CHROMA_HOST = os.getenv("CHROMADB_HOST", "vector_db") 
-            CHROMA_PORT = int(os.getenv("CHROMA_PORT", "8000"))
-            
-            self.client = chromadb.HttpClient(host=CHROMA_HOST, port=CHROMA_PORT)
-            self.asvs_collection = self.client.get_collection(name="asvs_v5")
-            
-            logger.info("RAGService initialized and connected to ChromaDB collection 'asvs_v5'.")
-
-        except Exception as e:
-            logger.error(f"Failed to initialize RAGService or connect to ChromaDB: {e}", exc_info=True)
-            self.client = None
-            self.asvs_collection = None
-
-    def query_asvs(self, query_texts: List[str], n_results: int = 10) -> List[str]:
-        """
-        Queries the ASVS collection for security requirements relevant to the query texts.
-
-        Args:
-            query_texts: A list of strings to search for (e.g., ["password policy", "SQL injection"]).
-            n_results: The number of results to return for each query text.
-
-        Returns:
-            A flat, deduplicated list of the most relevant requirement document strings.
-            Returns an empty list if the service failed to initialize or the query fails.
+        Queries the ASVS collection for relevant security guidelines.
         """
         if not self.asvs_collection:
-            logger.error("Cannot query ASVS: RAGService is not properly initialized.")
+            logger.error("ASVS collection is not available.")
             return []
-
+            
         try:
-            # We only need the document text for the agent's context
             results = self.asvs_collection.query(
                 query_texts=query_texts,
                 n_results=n_results,
-                include=["documents"] 
             )
             
-            documents = results.get('documents')
-            if not documents:
-                return []
-
-            # The query returns a list of lists, one list per query_text.
-            # We need to flatten this into a single list.
-            flat_docs = [doc for sublist in documents for doc in sublist]
-            
-            # Return a list of unique documents, preserving order.
-            unique_docs = list(dict.fromkeys(flat_docs))
-            
-            logger.info(f"Successfully queried and returned {len(unique_docs)} unique requirements for: {query_texts}")
-            return unique_docs
-
+            # Reformat results to be more useful
+            formatted_results = []
+            if results and results.get('documents'):
+                for i, docs in enumerate(results['documents']):
+                    query_result = { "query": query_texts[i], "results": [] }
+                    for j, doc in enumerate(docs):
+                        query_result["results"].append({
+                            "document": doc,
+                            "distance": results['distances'][i][j] if results.get('distances') else None,
+                            "metadata": results['metadatas'][i][j] if results.get('metadatas') else None,
+                        })
+                    formatted_results.append(query_result)
+            return formatted_results
         except Exception as e:
-            logger.error(f"An error occurred during ASVS query: {e}", exc_info=True)
+            logger.error(f"Error querying ChromaDB: {e}", exc_info=True)
             return []
 
-# Singleton instance to be used by other parts of the application
-rag_service_instance = RAGService()
 
 def get_rag_service() -> RAGService:
     """
-    Returns the singleton instance of the RAGService.
+    Factory function to get the singleton instance of RAGService.
     """
-    return rag_service_instance
+    try:
+        return RAGService()
+    except Exception:
+        # The RAGService constructor will log the critical error.
+        # This allows the caller to handle the failure gracefully.
+        return None

@@ -1,178 +1,152 @@
 # src/app/api/endpoints.py
 import logging
-from fastapi import APIRouter, HTTPException, status, Depends
-from typing import Optional  # Added Any
+# Add Optional to the import from typing
+from typing import List, Optional 
 
-# SQLAlchemy Imports
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
 
-# Pydantic models from our local api.models
-from .models import CodeInput, AnalysisResultResponse
-# We might need SubmissionHistoryResponse, SubmissionHistoryItem later from .models
-
-# DB ORM Models
-from src.app.db.models import CodeSubmission, AnalysisResult
-from src.app.auth.models import User  # User model from auth.models
-
-# DB Session and Auth dependencies
+from src.app.db import crud
 from src.app.db.database import get_db_session
-from src.app.auth.core import current_active_user
+from src.app.utils.rabbitmq_utils import publish_to_rabbitmq
+from . import models as api_models
 
-# API Graph import
-from src.app.graphs.api_graph import api_workflow, ApiGraphState
+from src.app.auth.core import current_active_user, current_superuser
+from src.app.auth.models import User
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# --- Submission Endpoints ---
 
-@router.post(
-    "/analyze",
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Submit code for analysis",
-    response_description="Submission accepted for processing, returns submission ID.",
-)
-async def analyze_code_submission(
-    payload: CodeInput,
-    user: User = Depends(current_active_user),  # Require authenticated user
+@router.post("/submit", response_model=api_models.SubmissionResponse, status_code=status.HTTP_202_ACCEPTED)
+async def submit_code(
+    submission_request: api_models.SubmissionRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db_session),
+    user: User = Depends(current_active_user),
 ):
-    logger.info(
-        f"Received /analyze request from user ID: {user.id}. Language hint: {payload.language}"
-    )
-
-    initial_state = ApiGraphState(
-        input_code=payload.code,
-        input_files=payload.files,
-        language=payload.language,
-        user_id=user.id,  # Pass the authenticated user's ID
-        # Initialize other state fields to None or default
-        submission_id=None,
-        db_error=None,
-        publish_error=None,
-        final_message=None,
-        files_to_save=None,
-    )
+    """
+    Accepts code submissions for analysis. This single endpoint handles both file and repository submissions.
+    """
+    if not submission_request.files and not submission_request.repo_url:
+        raise HTTPException(status_code=400, detail="Either files or a repo_url must be provided.")
 
     try:
-        logger.debug(
-            f"Invoking API graph workflow with initial state for user {user.id}."
-        )
-        final_state = await api_workflow.ainvoke(initial_state)
-        logger.info(
-            f"API graph workflow completed for user {user.id}. Final state message: {final_state.get('final_message')}"
-        )
+        submission = await crud.create_submission(db, user_id=user.id, repo_url=submission_request.repo_url)
+        if submission_request.files:
+            # Assuming add_files_to_submission is designed to handle this structure
+            await crud.add_files_to_submission(db, submission.id, submission_request.files)
 
-        if final_state.get("db_error"):
-            logger.error(f"DB error from API graph: {final_state['db_error']}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=final_state.get("final_message")
-                or "Database operation failed during submission.",
-            )
-
-        if final_state.get("publish_error"):
-            logger.error(
-                f"MQ publish error from API graph: {final_state['publish_error']}"
-            )
-            # Note: The submission might be in DB but not queued.
-            # Decide on response: Could be 500, or 207 Multi-Status with details.
-            # For now, let's treat it as a server-side issue for the queueing part.
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=final_state.get("final_message")
-                or "Failed to queue submission for analysis.",
-            )
-
-        submission_id = final_state.get("submission_id")
-        if submission_id is not None:
-            return {
-                "message": final_state.get(
-                    "final_message", "Submission accepted and queued."
-                ),
-                "submission_id": submission_id,
-            }
-        else:
-            # This case should ideally be covered by db_error or publish_error
-            logger.error(
-                f"API graph completed without submission_id and no explicit error for user {user.id}."
-            )
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Submission processing failed to yield a submission ID.",
-            )
-
-    except HTTPException:  # Re-raise HTTPExceptions directly
-        raise
+        background_tasks.add_task(publish_to_rabbitmq, submission.id)
+        
+        return {"submission_id": submission.id, "message": "Submission accepted for analysis."}
     except Exception as e:
-        logger.error(
-            f"Unexpected error during /analyze endpoint for user {user.id}: {e}",
-            exc_info=True,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An unexpected error occurred while processing your submission.",
-        )
+        logger.error(f"Error during submission: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to process submission.")
 
+# --- Results and Status Endpoints ---
 
 @router.get(
-    "/results/{submission_id}",
-    response_model=AnalysisResultResponse,
-    summary="Get analysis results for a specific submission",
-    response_description="The analysis result object or error if not found/authorized.",
+    "/submissions/{submission_id}/results",
+    response_model=api_models.SubmissionResultResponse,
+    summary="Get Analysis Results for a Submission",
 )
 async def get_analysis_results(
     submission_id: int,
     db: AsyncSession = Depends(get_db_session),
-    user: User = Depends(current_active_user),  # Require authenticated user
+    user: User = Depends(current_active_user),
 ):
-    logger.info(f"User {user.id} requesting results for submission ID: {submission_id}")
+    """
+    Retrieves the analysis results for a specific submission, including all findings and fixes.
+    This endpoint is updated to use the new structured finding models.
+    """
+    submission = await crud.get_submission(db, submission_id)
+    if not submission:
+        raise HTTPException(status_code=404, detail="Submission not found")
+    
+    # Allow admin/superuser to view any submission
+    if not user.is_superuser and submission.user_id != user.id:
+         raise HTTPException(status_code=403, detail="Not authorized to view this submission")
 
-    # First, verify the submission belongs to the user
-    submission_check_stmt = select(CodeSubmission.id).where(
-        CodeSubmission.id == submission_id,
-        CodeSubmission.user_id == user.id,  # Ensure user owns the submission
+    return submission
+
+
+@router.get(
+    "/submissions/{submission_id}/status",
+    response_model=api_models.SubmissionStatus,
+    summary="Get Submission Status"
+)
+async def get_submission_status(
+    submission_id: int,
+    db: AsyncSession = Depends(get_db_session),
+    user: User = Depends(current_active_user),
+):
+    """Retrieves the current processing status of a submission."""
+    submission = await crud.get_submission(db, submission_id)
+    if not submission:
+        raise HTTPException(status_code=404, detail="Submission not found")
+
+    if not user.is_superuser and submission.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to view this submission")
+
+    return submission
+
+# --- Admin & Management Endpoints ---
+
+@router.get(
+    "/admin/queries/",
+    response_model=List[api_models.SecurityQueryResponse],
+    dependencies=[Depends(current_superuser)],
+    summary="List all security queries"
+)
+async def list_security_queries(db: AsyncSession = Depends(get_db_session)):
+    """(Admin) Lists all saved Tree-sitter security queries."""
+    logger.info("Placeholder: Admin requested list of security queries.")
+    return []
+
+
+@router.post(
+    "/admin/queries/",
+    response_model=api_models.SecurityQueryResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(current_superuser)],
+    summary="Create a new security query"
+)
+async def create_security_query(
+    query_data: api_models.SecurityQueryCreate,
+    db: AsyncSession = Depends(get_db_session)
+):
+    """(Admin) Creates a new Tree-sitter security query."""
+    logger.info("Placeholder: Admin attempting to create a security query.")
+    raise HTTPException(status_code=501, detail="Feature not yet implemented.")
+
+
+@router.get(
+    "/admin/dashboard/stats",
+    response_model=api_models.DashboardStats,
+    dependencies=[Depends(current_superuser)],
+    summary="Get Dashboard Statistics"
+)
+async def get_dashboard_stats(db: AsyncSession = Depends(get_db_session)):
+    """(Admin) Retrieves platform-wide statistics for the dashboard."""
+    logger.info("Placeholder: Admin requested dashboard stats.")
+    return api_models.DashboardStats(
+        total_submissions=0,
+        pending_submissions=0,
+        completed_submissions=0,
+        total_findings=0,
+        high_severity_findings=0
     )
-    submission_owner_check = await db.execute(submission_check_stmt)
-    if submission_owner_check.scalar_one_or_none() is None:
-        logger.warning(
-            f"User {user.id} attempted to access unauthorized or non-existent submission {submission_id}."
-        )
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,  # Or 403 Forbidden if you want to distinguish
-            detail=f"Submission ID {submission_id} not found or not accessible.",
-        )
-
-    # Fetch the analysis result
-    stmt = select(AnalysisResult).where(AnalysisResult.submission_id == submission_id)
-    result = await db.execute(stmt)
-    analysis_result: Optional[AnalysisResult] = result.scalar_one_or_none()
-
-    if analysis_result is None:
-        # If submission exists but result doesn't, it might still be processing
-        logger.info(
-            f"Analysis result not yet available for submission ID: {submission_id} (owned by user {user.id})."
-        )
-        # You could return a 202 Accepted or a specific message indicating processing.
-        # For now, let's treat "not found" as strictly for the AnalysisResult object.
-        # A more advanced version might check CodeSubmission status.
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Analysis result not found for submission ID {submission_id}. It may still be processing or encountered an issue.",
-        )
-
-    logger.info(
-        f"Returning analysis result for submission ID: {submission_id} to user {user.id}."
-    )
-    # Pydantic will serialize analysis_result to AnalysisResultResponse
-    # Ensure your AnalysisResult ORM model and AnalysisResultResponse Pydantic model align
-    # particularly with how 'original_code_snapshot' and 'fixed_code_snapshot' are handled.
-    # If they are stored as JSON strings in DB, and response model expects dict,
-    # you might need a pre-serialization step or a Pydantic validator.
-    # For now, assuming direct compatibility or that Pydantic handles JSON string to dict.
-    return analysis_result
 
 
-@router.get("/ping", tags=["Health"])
-async def ping():
-    """A simple ping endpoint to confirm the API router is working."""
-    return {"ping": "pong!"}
+@router.get(
+    "/admin/llm-interactions/",
+    response_model=List[api_models.LLMInteractionResponse],
+    dependencies=[Depends(current_superuser)],
+    summary="List LLM Interactions"
+)
+async def list_llm_interactions(submission_id: Optional[int] = None, db: AsyncSession = Depends(get_db_session)):
+    """(Admin) Lists recorded LLM interactions, optionally filtered by submission ID."""
+    logger.info("Placeholder: Admin requested LLM interactions.")
+    return []
