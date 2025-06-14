@@ -1,71 +1,66 @@
 # src/app/db/database.py
-import os
+
 import logging
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from typing import AsyncGenerator
+
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.orm import declarative_base
-from dotenv import load_dotenv
+
+# It's best practice to use a centralized settings management system
+# from `app.core.config` instead of loading environment variables in multiple files.
+# This aligns with the overall project structure.
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
-load_dotenv()  # Load environment variables from .env file
 
-DB_USER = os.getenv("POSTGRES_USER")
-DB_PASSWORD = os.getenv("POSTGRES_PASSWORD")
-DB_HOST = os.getenv(
-    "POSTGRES_HOST", "db"
-)  # Default to 'db' for Docker Compose service name
-DB_PORT = os.getenv("POSTGRES_PORT", "5432")
-DB_NAME = os.getenv("POSTGRES_DB")
-
-if not all([DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME]):
-    # This error will be raised when the module is imported if env vars are missing.
-    # It's a good practice to ensure critical configurations are present.
-    critical_error_msg = "One or more PostgreSQL environment variables are not set (POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_HOST, POSTGRES_PORT, POSTGRES_DB)"
+# Check if the database URL is configured in the central settings.
+if not settings.ASYNC_DATABASE_URL:
+    critical_error_msg = (
+        "ASYNC_DATABASE_URL is not set in the environment variables or .env file."
+    )
     logger.critical(critical_error_msg)
     raise ValueError(critical_error_msg)
 
-DATABASE_URL = (
-    f"postgresql+asyncpg://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-)
+# Create an asynchronous SQLAlchemy engine.
+# settings.DB_ECHO can be used to toggle SQL query logging for debugging.
+engine = create_async_engine(settings.ASYNC_DATABASE_URL, echo=settings.DB_ECHO)
 
-# Create an asynchronous SQLAlchemy engine
-# echo=False is suitable for production. Set to True for debugging SQL queries.
-engine = create_async_engine(DATABASE_URL, echo=False)
-
-# Create an asynchronous session factory
+# Create an asynchronous session factory.
+# expire_on_commit=False is a good default for FastAPI to prevent issues
+# with accessing ORM objects from a session after a commit.
 AsyncSessionLocal = async_sessionmaker(
     bind=engine,
     class_=AsyncSession,
-    expire_on_commit=False,  # Good default for FastAPI to prevent issues with background tasks
+    autocommit=False,
+    autoflush=False,
+    expire_on_commit=False,
 )
 
-# Define the declarative base for ORM models
-# All models in models.py will inherit from this Base.
+# Define the declarative base for our ORM models.
+# All models in src/app/db/models.py will inherit from this Base.
 Base = declarative_base()
 
 
-async def get_db_session() -> AsyncSession:
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """
-    Dependency function that provides a database session for FastAPI routes.
+    FastAPI dependency that provides an asynchronous database session.
+
+    The function name 'get_db' is used across the application (e.g., in auth, api endpoints)
+    and is required to resolve the ImportError we previously encountered.
+
+    The 'async with' statement correctly handles the session's lifecycle,
+    including rollback on exceptions and closing the session, so a try/finally
+    block is not needed for this basic dependency.
     """
     async with AsyncSessionLocal() as session:
-        try:
-            yield session
-        except Exception:
-            await session.rollback()
-            raise
-        finally:
-            await session.close()
+        yield session
 
 
-async def init_db():
-    """
-    Initializes the database by creating all tables defined by models
-    that inherit from Base. This is typically called once at application startup.
-    """
-    async with engine.begin() as conn:
-        # In a production environment with Alembic, you might not run create_all
-        # and rely on migrations instead. But for initial setup and development,
-        # create_all is convenient.
-        # await conn.run_sync(Base.metadata.drop_all) # Optional: for clean slate during dev
-        await conn.run_sync(Base.metadata.create_all)
-    logger.info("Database tables initialized (if they didn't exist).")
+# Note: The 'init_db' function using Base.metadata.create_all() has been omitted.
+# This project uses Alembic for database migrations, which is the standard
+# for managing database schema changes. Relying on `alembic upgrade head`
+# is the correct and safe approach.

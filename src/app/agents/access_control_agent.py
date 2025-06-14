@@ -4,17 +4,18 @@ from typing import Dict, Any
 
 from langgraph.graph import StateGraph, END
 
-from src.app.db import crud
-from src.app.db.database import AsyncSessionLocal
-# Import AgentLLMResult instead of LLMResult
-from src.app.llm.llm_client import get_llm_client, AgentLLMResult
-from src.app.rag.rag_service import get_rag_service
+from app.db import crud
+from app.db.database import AsyncSessionLocal
 
-from src.app.agents.schemas import (
+# Import AgentLLMResult instead of LLMResult
+from app.llm.llm_client import get_llm_client, AgentLLMResult
+from app.rag.rag_service import get_rag_service
+
+from app.agents.schemas import (
     AnalysisResult,
     FixSuggestion,
     FixResult,
-    SpecializedAgentState
+    SpecializedAgentState,
 )
 
 AGENT_NAME = "AccessControlAgent"
@@ -31,9 +32,15 @@ async def assess_vulnerabilities_node(state: SpecializedAgentState) -> Dict[str,
     rag_service = get_rag_service()
     if not rag_service:
         return {"error": "Failed to get RAG service."}
-    
-    retrieved_guidelines = rag_service.query_asvs(query_texts=[AGENT_DOMAIN_QUERY], n_results=10)
-    context_str = "\n".join(res['document'] for res in retrieved_guidelines[0]['results']) if retrieved_guidelines else "No specific guidelines retrieved."
+
+    retrieved_guidelines = rag_service.query_asvs(
+        query_texts=[AGENT_DOMAIN_QUERY], n_results=10
+    )
+    context_str = (
+        "\n".join(res["document"] for res in retrieved_guidelines[0]["results"])
+        if retrieved_guidelines
+        else "No specific guidelines retrieved."
+    )
 
     prompt = f"""
     You are a security expert specializing in {AGENT_NAME}. Analyze the following code snippet for vulnerabilities related to our domain.
@@ -53,18 +60,28 @@ async def assess_vulnerabilities_node(state: SpecializedAgentState) -> Dict[str,
     """
     llm_client = get_llm_client()
     # Use the correct type hint: AgentLLMResult
-    llm_response: AgentLLMResult = await llm_client.generate_structured_output(prompt, AnalysisResult)
+    llm_response: AgentLLMResult = await llm_client.generate_structured_output(
+        prompt, AnalysisResult
+    )
 
     async with AsyncSessionLocal() as db:
         await crud.save_llm_interaction(
-            db, submission_id=submission_id, agent_name=AGENT_NAME, prompt=prompt,
-            raw_response=llm_response.raw_output, parsed_output=llm_response.parsed_output.dict() if llm_response.parsed_output else None,
-            error=llm_response.error, file_path=filename, cost=llm_response.cost
+            db,
+            submission_id=submission_id,
+            agent_name=AGENT_NAME,
+            prompt=prompt,
+            raw_response=llm_response.raw_output,
+            parsed_output=llm_response.parsed_output.dict()
+            if llm_response.parsed_output
+            else None,
+            error=llm_response.error,
+            file_path=filename,
+            cost=llm_response.cost,
         )
 
     if llm_response.error or not llm_response.parsed_output:
         return {"error": f"LLM failed to produce valid analysis: {llm_response.error}"}
-    
+
     for finding in llm_response.parsed_output.findings:
         finding.file_path = filename
 
@@ -79,8 +96,10 @@ async def generate_fixes_node(state: SpecializedAgentState) -> Dict[str, Any]:
     submission_id = state["submission_id"]
     filename = state["filename"]
     code_snippet = state["code_snippet"]
-    logger.info(f"[{AGENT_NAME}] Generating fixes for {len(findings)} findings in: {filename}")
-    
+    logger.info(
+        f"[{AGENT_NAME}] Generating fixes for {len(findings)} findings in: {filename}"
+    )
+
     llm_client = get_llm_client()
     all_fixes = []
 
@@ -103,18 +122,30 @@ async def generate_fixes_node(state: SpecializedAgentState) -> Dict[str, Any]:
         Respond with a structured JSON object containing a brief description of the fix and the secure code snippet.
         """
         # Use the correct type hint: AgentLLMResult
-        llm_response: AgentLLMResult = await llm_client.generate_structured_output(prompt, FixSuggestion)
-        
+        llm_response: AgentLLMResult = await llm_client.generate_structured_output(
+            prompt, FixSuggestion
+        )
+
         async with AsyncSessionLocal() as db:
             await crud.save_llm_interaction(
-                db, submission_id=submission_id, agent_name=f"{AGENT_NAME}-Fixer", prompt=prompt,
-                raw_response=llm_response.raw_output, parsed_output=llm_response.parsed_output.dict() if llm_response.parsed_output else None,
-                error=llm_response.error, file_path=filename, cost=llm_response.cost
+                db,
+                submission_id=submission_id,
+                agent_name=f"{AGENT_NAME}-Fixer",
+                prompt=prompt,
+                raw_response=llm_response.raw_output,
+                parsed_output=llm_response.parsed_output.dict()
+                if llm_response.parsed_output
+                else None,
+                error=llm_response.error,
+                file_path=filename,
+                cost=llm_response.cost,
             )
-        
+
         if not llm_response.error and llm_response.parsed_output:
-            all_fixes.append(FixResult(finding=finding, suggestion=llm_response.parsed_output))
-    
+            all_fixes.append(
+                FixResult(finding=finding, suggestion=llm_response.parsed_output)
+            )
+
     return {"fixes": all_fixes}
 
 

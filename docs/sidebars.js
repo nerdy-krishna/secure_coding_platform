@@ -122,6 +122,7 @@ const sidebars = {
       collapsed: true,
       items: [
          'api-reference/authentication',
+         'api-reference/llm-configuration',
          'api-reference/code-analysis-endpoints',
          'api-reference/results-endpoints',
       ],

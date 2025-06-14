@@ -30,8 +30,14 @@ AGENT_DESCRIPTIONS = {
 
 
 class AgentRelevance(BaseModel):
-    is_relevant: bool = Field(..., description="True if the agent's security domain is relevant to the code, otherwise False.")
-    reasoning: str = Field(..., description="A brief explanation for why the agent is or is not relevant.")
+    is_relevant: bool = Field(
+        ...,
+        description="True if the agent's security domain is relevant to the code, otherwise False.",
+    )
+    reasoning: str = Field(
+        ..., description="A brief explanation for why the agent is or is not relevant."
+    )
+
 
 class TaskBreakdown(BaseModel):
     AccessControlAgent: AgentRelevance
@@ -49,11 +55,19 @@ class TaskBreakdown(BaseModel):
     SessionManagementAgent: AgentRelevance
     ValidationAgent: AgentRelevance
 
+
 class FullContextAnalysis(BaseModel):
     """The complete structured output for the context analysis agent."""
-    analysis_summary: str = Field(description="A brief, one-paragraph summary of the code's functionality.")
-    identified_components: List[str] = Field(description="A list of key components, frameworks, or libraries used (e.g., 'FastAPI', 'SQLAlchemy').")
-    asvs_analysis: TaskBreakdown = Field(description="The relevance analysis for each security agent based on the code.")
+
+    analysis_summary: str = Field(
+        description="A brief, one-paragraph summary of the code's functionality."
+    )
+    identified_components: List[str] = Field(
+        description="A list of key components, frameworks, or libraries used (e.g., 'FastAPI', 'SQLAlchemy')."
+    )
+    asvs_analysis: TaskBreakdown = Field(
+        description="The relevance analysis for each security agent based on the code."
+    )
 
 
 class ContextAnalysisAgentState(TypedDict):
@@ -61,6 +75,7 @@ class ContextAnalysisAgentState(TypedDict):
     Defines the state for the Context Analysis Agent's workflow.
     This is the state that will be passed between the nodes of its graph.
     """
+
     submission_id: int
     filename: str
     code_snippet: str
@@ -76,9 +91,11 @@ async def analyze_code_context_node(state: ContextAnalysisAgentState) -> Dict[st
     Analyzes the code snippet to provide a summary, identify components, and determine
     which specialized security agents are relevant for a deeper scan.
     """
-    logger.info(f"[{AGENT_NAME}] Starting context analysis for submission ID: {state['submission_id']}, file: {state['filename']}")
+    logger.info(
+        f"[{AGENT_NAME}] Starting context analysis for submission ID: {state['submission_id']}, file: {state['filename']}"
+    )
     code_snippet = state["code_snippet"]
-    
+
     llm_client = get_llm_client()
 
     prompt = f"""
@@ -99,20 +116,29 @@ async def analyze_code_context_node(state: ContextAnalysisAgentState) -> Dict[st
     Respond with a single, valid JSON object that strictly adheres to the provided schema.
     """
 
-    llm_response = await llm_client.generate_structured_output(prompt, FullContextAnalysis)
+    llm_response = await llm_client.generate_structured_output(
+        prompt, FullContextAnalysis
+    )
 
     if llm_response.error or not llm_response.parsed_output:
-        error_msg = llm_response.error or "Failed to get a valid structured response from the LLM."
-        logger.error(f"[{AGENT_NAME}] Failed to get full context analysis from LLM for file {state['filename']}: {error_msg}")
+        error_msg = (
+            llm_response.error
+            or "Failed to get a valid structured response from the LLM."
+        )
+        logger.error(
+            f"[{AGENT_NAME}] Failed to get full context analysis from LLM for file {state['filename']}: {error_msg}"
+        )
         return {"error_message": error_msg}
-    
+
     parsed_output = llm_response.parsed_output
-    logger.info(f"[{AGENT_NAME}] Context analysis complete for file {state['filename']}.")
-    
+    logger.info(
+        f"[{AGENT_NAME}] Context analysis complete for file {state['filename']}."
+    )
+
     return {
         "analysis_summary": parsed_output.analysis_summary,
         "identified_components": parsed_output.identified_components,
-        "asvs_analysis": parsed_output.asvs_analysis.dict(), # Convert Pydantic model to dict
+        "asvs_analysis": parsed_output.asvs_analysis.dict(),  # Convert Pydantic model to dict
         "error_message": None,
     }
 

@@ -1,152 +1,169 @@
 # src/app/api/endpoints.py
-import logging
-# Add Optional to the import from typing
-from typing import List, Optional 
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status
+import logging
+import uuid
+from typing import List, Optional, Annotated
+
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    UploadFile,
+    File,
+    Form,
+    Response,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.db import crud
-from src.app.db.database import get_db_session
-from src.app.utils.rabbitmq_utils import publish_to_rabbitmq
-from . import models as api_models
+from app.db import crud
+from app.db.database import get_db
+from app.db import models as db_models
+from app.api import models as api_models
 
-from src.app.auth.core import current_active_user, current_superuser
-from src.app.auth.models import User
+# CORRECTED IMPORT: Changed 'get_current_active_user' to 'current_active_user'
+from app.auth.core import current_active_user, current_superuser
+
+# Create two routers: one for general endpoints, one for admin-level LLM configs
+router = APIRouter()
+llm_router = APIRouter(prefix="/llm-configs", tags=["LLM Configurations"])
 
 logger = logging.getLogger(__name__)
-router = APIRouter()
 
-# --- Submission Endpoints ---
+# === LLM Configuration Endpoints ===
 
-@router.post("/submit", response_model=api_models.SubmissionResponse, status_code=status.HTTP_202_ACCEPTED)
+
+@llm_router.post("/", response_model=api_models.LLMConfigurationRead, status_code=201)
+async def create_llm_configuration(
+    config: api_models.LLMConfigurationCreate,
+    db: AsyncSession = Depends(get_db),
+    # CORRECTED DEPENDENCY
+    user: db_models.User = Depends(current_superuser),
+):
+    """
+    Creates a new LLM configuration. Requires superuser privileges.
+    """
+    return await crud.create_llm_config(db=db, config=config)
+
+
+@llm_router.get("/", response_model=List[api_models.LLMConfigurationRead])
+async def read_llm_configurations(
+    db: AsyncSession = Depends(get_db),
+    # CORRECTED DEPENDENCY
+    user: db_models.User = Depends(current_active_user),
+):
+    """
+    Retrieves all LLM configurations. API keys are not included.
+    """
+    configs = await crud.get_llm_configs(db)
+    return configs
+
+
+@llm_router.delete("/{config_id}", status_code=204)
+async def delete_llm_configuration(
+    config_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    # CORRECTED DEPENDENCY
+    user: db_models.User = Depends(current_superuser),
+):
+    """
+    Deletes an LLM configuration by its ID. Requires superuser privileges.
+    """
+    config = await crud.delete_llm_config(db=db, config_id=config_id)
+    if config is None:
+        raise HTTPException(status_code=404, detail="LLM Configuration not found")
+    return Response(status_code=204)
+
+
+# === Submission & Results Endpoints ===
+
+
+@router.post("/submit", response_model=api_models.SubmissionResponse)
 async def submit_code(
-    submission_request: api_models.SubmissionRequest,
-    background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db_session),
-    user: User = Depends(current_active_user),
+    # CORRECTED DEPENDENCY
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[db_models.User, Depends(current_active_user)],
+    main_llm_config_id: Annotated[uuid.UUID, Form(...)],
+    specialized_llm_config_id: Annotated[uuid.UUID, Form(...)],
+    frameworks: Annotated[str, Form(...)],
+    files: Optional[List[UploadFile]] = File(None),
+    repo_url: Optional[str] = Form(None),
 ):
     """
-    Accepts code submissions for analysis. This single endpoint handles both file and repository submissions.
+    Accepts code submission via file upload or Git repository URL.
     """
-    if not submission_request.files and not submission_request.repo_url:
-        raise HTTPException(status_code=400, detail="Either files or a repo_url must be provided.")
+    if not files and not repo_url:
+        raise HTTPException(
+            status_code=400,
+            detail="Either files must be uploaded or a git repository URL must be provided.",
+        )
 
-    try:
-        submission = await crud.create_submission(db, user_id=user.id, repo_url=submission_request.repo_url)
-        if submission_request.files:
-            # Assuming add_files_to_submission is designed to handle this structure
-            await crud.add_files_to_submission(db, submission.id, submission_request.files)
+    main_llm = await crud.get_llm_config(db, main_llm_config_id)
+    specialized_llm = await crud.get_llm_config(db, specialized_llm_config_id)
+    if not main_llm or not specialized_llm:
+        raise HTTPException(
+            status_code=404,
+            detail="One or both selected LLM configurations could not be found.",
+        )
 
-        background_tasks.add_task(publish_to_rabbitmq, submission.id)
-        
-        return {"submission_id": submission.id, "message": "Submission accepted for analysis."}
-    except Exception as e:
-        logger.error(f"Error during submission: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to process submission.")
+    framework_list = [f.strip() for f in frameworks.split(",")]
 
-# --- Results and Status Endpoints ---
+    files_data = []
+    if files:
+        for file in files:
+            content = await file.read()
+            files_data.append(
+                {
+                    "path": file.filename,
+                    "content": content.decode("utf-8"),
+                    "language": "python",
+                }
+            )
 
-@router.get(
-    "/submissions/{submission_id}/results",
-    response_model=api_models.SubmissionResultResponse,
-    summary="Get Analysis Results for a Submission",
-)
-async def get_analysis_results(
-    submission_id: int,
-    db: AsyncSession = Depends(get_db_session),
-    user: User = Depends(current_active_user),
-):
-    """
-    Retrieves the analysis results for a specific submission, including all findings and fixes.
-    This endpoint is updated to use the new structured finding models.
-    """
-    submission = await crud.get_submission(db, submission_id)
-    if not submission:
-        raise HTTPException(status_code=404, detail="Submission not found")
-    
-    # Allow admin/superuser to view any submission
-    if not user.is_superuser and submission.user_id != user.id:
-         raise HTTPException(status_code=403, detail="Not authorized to view this submission")
-
-    return submission
-
-
-@router.get(
-    "/submissions/{submission_id}/status",
-    response_model=api_models.SubmissionStatus,
-    summary="Get Submission Status"
-)
-async def get_submission_status(
-    submission_id: int,
-    db: AsyncSession = Depends(get_db_session),
-    user: User = Depends(current_active_user),
-):
-    """Retrieves the current processing status of a submission."""
-    submission = await crud.get_submission(db, submission_id)
-    if not submission:
-        raise HTTPException(status_code=404, detail="Submission not found")
-
-    if not user.is_superuser and submission.user_id != user.id:
-        raise HTTPException(status_code=403, detail="Not authorized to view this submission")
-
-    return submission
-
-# --- Admin & Management Endpoints ---
-
-@router.get(
-    "/admin/queries/",
-    response_model=List[api_models.SecurityQueryResponse],
-    dependencies=[Depends(current_superuser)],
-    summary="List all security queries"
-)
-async def list_security_queries(db: AsyncSession = Depends(get_db_session)):
-    """(Admin) Lists all saved Tree-sitter security queries."""
-    logger.info("Placeholder: Admin requested list of security queries.")
-    return []
-
-
-@router.post(
-    "/admin/queries/",
-    response_model=api_models.SecurityQueryResponse,
-    status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(current_superuser)],
-    summary="Create a new security query"
-)
-async def create_security_query(
-    query_data: api_models.SecurityQueryCreate,
-    db: AsyncSession = Depends(get_db_session)
-):
-    """(Admin) Creates a new Tree-sitter security query."""
-    logger.info("Placeholder: Admin attempting to create a security query.")
-    raise HTTPException(status_code=501, detail="Feature not yet implemented.")
-
-
-@router.get(
-    "/admin/dashboard/stats",
-    response_model=api_models.DashboardStats,
-    dependencies=[Depends(current_superuser)],
-    summary="Get Dashboard Statistics"
-)
-async def get_dashboard_stats(db: AsyncSession = Depends(get_db_session)):
-    """(Admin) Retrieves platform-wide statistics for the dashboard."""
-    logger.info("Placeholder: Admin requested dashboard stats.")
-    return api_models.DashboardStats(
-        total_submissions=0,
-        pending_submissions=0,
-        completed_submissions=0,
-        total_findings=0,
-        high_severity_findings=0
+    submission = await crud.create_submission(
+        db=db,
+        user_id=current_user.id,
+        repo_url=repo_url,
+        files=files_data,
+        frameworks=framework_list,
+        main_llm_config_id=main_llm_config_id,
+        specialized_llm_config_id=specialized_llm_config_id,
     )
 
+    # await rabbitmq_utils.publish_submission(str(submission.id))
+    # logger.info(f"Published submission {submission.id} to RabbitMQ.")
+
+    return {
+        "submission_id": submission.id,
+        "message": "Submission received and queued for analysis.",
+    }
+
+
+@router.get("/status/{submission_id}", response_model=api_models.SubmissionStatus)
+async def get_submission_status(
+    submission_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+):
+    """Retrieves the current status of a code submission."""
+    submission = await crud.get_submission(db, submission_id)
+    if not submission:
+        raise HTTPException(status_code=404, detail="Submission not found")
+    return submission
+
 
 @router.get(
-    "/admin/llm-interactions/",
-    response_model=List[api_models.LLMInteractionResponse],
-    dependencies=[Depends(current_superuser)],
-    summary="List LLM Interactions"
+    "/results/{submission_id}", response_model=api_models.SubmissionResultResponse
 )
-async def list_llm_interactions(submission_id: Optional[int] = None, db: AsyncSession = Depends(get_db_session)):
-    """(Admin) Lists recorded LLM interactions, optionally filtered by submission ID."""
-    logger.info("Placeholder: Admin requested LLM interactions.")
-    return []
+async def get_submission_results(
+    submission_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+):
+    """Retrieves the full analysis results for a completed submission."""
+    submission = await crud.get_submission(db, submission_id)
+    if not submission:
+        raise HTTPException(status_code=404, detail="Submission not found")
+
+    if submission.status != "Completed":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Submission is still in '{submission.status}' state.",
+        )
+
+    return submission

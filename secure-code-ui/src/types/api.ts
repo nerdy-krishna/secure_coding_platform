@@ -10,6 +10,19 @@ export interface UserLoginData {
   client_secret?: string;
 }
 
+// Defines the shape of the data and functions in our AuthContext
+export interface AuthContextType {
+  user: UserRead | null;
+  accessToken: string | null;
+  isLoading: boolean;
+  initialAuthChecked: boolean;
+  error: string | null; // Added
+  login: (loginData: UserLoginData) => Promise<void>;
+  logout: () => Promise<void>;
+  register: (registerData: UserRegisterData) => Promise<UserRead>; // Corrected return type
+  clearError: () => void; // Added
+}
+
 export interface TokenResponse {
   access_token: string;
   token_type: string;
@@ -31,6 +44,24 @@ export interface UserRead {
   is_active: boolean;
   is_superuser: boolean;
   is_verified: boolean;
+}
+
+// For reading LLM configurations (API key is not sent)
+export interface LLMConfiguration {
+  id: string; // UUID as string
+  name: string;
+  provider: string;
+  model_name: string;
+  created_at: string; // ISO date-time string
+  updated_at: string; // ISO date-time string
+}
+
+// For creating a new LLM configuration (includes the API key)
+export interface LLMConfigurationCreate {
+  name: string;
+  provider: string;
+  model_name: string;
+  api_key: string;
 }
 
 // For Code Submission
