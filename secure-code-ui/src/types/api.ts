@@ -33,6 +33,24 @@ export interface UserRead {
   is_verified: boolean;
 }
 
+// For reading LLM configurations (API key is not sent)
+export interface LLMConfiguration {
+  id: string; // UUID as string
+  name: string;
+  provider: string;
+  model_name: string;
+  created_at: string; // ISO date-time string
+  updated_at: string; // ISO date-time string
+}
+
+// For creating a new LLM configuration (includes the API key)
+export interface LLMConfigurationCreate {
+  name: string;
+  provider: string;
+  model_name: string;
+  api_key: string;
+}
+
 // For Code Submission
 export interface FileForSubmission {
   filename: string;
