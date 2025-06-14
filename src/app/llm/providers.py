@@ -9,9 +9,8 @@ from typing import Optional, Dict, Any
 # LangChain specific imports
 from langchain_openai import ChatOpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_anthropic import ChatAnthropic # Added for Anthropic
+from langchain_anthropic import ChatAnthropic  # Added for Anthropic
 from langchain_core.messages import HumanMessage
-from langchain_core.exceptions import OutputParserException
 
 from dotenv import load_dotenv
 
@@ -110,9 +109,7 @@ class GoogleProvider(LLMProvider):
                 model=self.model_name,
                 google_api_key=self.api_key,
             )
-            logger.info(
-                f"Initialized GoogleProvider with model: {self.model_name}"
-            )
+            logger.info(f"Initialized GoogleProvider with model: {self.model_name}")
         except Exception as e:
             logger.error(f"Failed to initialize ChatGoogleGenerativeAI client: {e}")
             raise
@@ -170,9 +167,7 @@ class AnthropicProvider(LLMProvider):
         if not self.api_key:
             raise ValueError("ANTHROPIC_API_KEY environment variable not set.")
         try:
-            self.client = ChatAnthropic(
-                api_key=self.api_key, model=self.model_name
-            )
+            self.client = ChatAnthropic(api_key=self.api_key, model=self.model_name)
             logger.info(f"Initialized AnthropicProvider with model: {self.model_name}")
         except Exception as e:
             logger.error(f"Failed to initialize ChatAnthropic client: {e}")
@@ -209,8 +204,10 @@ class AnthropicProvider(LLMProvider):
                 result.prompt_tokens = usage.get("input_tokens")
                 result.completion_tokens = usage.get("output_tokens")
                 if result.prompt_tokens and result.completion_tokens:
-                    result.total_tokens = result.prompt_tokens + result.completion_tokens
-            
+                    result.total_tokens = (
+                        result.prompt_tokens + result.completion_tokens
+                    )
+
             result.status = "success"
 
         except Exception as e:

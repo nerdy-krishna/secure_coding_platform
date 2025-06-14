@@ -1,0 +1,71 @@
+# src/app/core/config.py
+from pydantic import field_validator, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import List, Optional
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+    )
+
+    # --- Database Configuration ---
+    POSTGRES_USER: str
+    POSTGRES_PASSWORD: str
+    POSTGRES_DB: str
+    POSTGRES_HOST: str
+    POSTGRES_PORT: int
+    POSTGRES_HOST_ALEMBIC: str
+    DB_ECHO: bool = False
+
+    # Derived database URLs
+    ASYNC_DATABASE_URL: Optional[str] = None
+    ALEMBIC_DATABASE_URL: Optional[str] = None
+
+    @field_validator("ASYNC_DATABASE_URL", mode="before")
+    def assemble_async_db_connection(cls, v, info):
+        if v:
+            return v
+        values = info.data
+        return f"postgresql+asyncpg://{values.get('POSTGRES_USER')}:{values.get('POSTGRES_PASSWORD')}@{values.get('POSTGRES_HOST')}:{values.get('POSTGRES_PORT')}/{values.get('POSTGRES_DB')}"
+
+    @field_validator("ALEMBIC_DATABASE_URL", mode="before")
+    def assemble_alembic_db_connection(cls, v, info):
+        if v:
+            return v
+        values = info.data
+        return f"postgresql+asyncpg://{values.get('POSTGRES_USER')}:{values.get('POSTGRES_PASSWORD')}@{values.get('POSTGRES_HOST_ALEMBIC')}:{values.get('POSTGRES_PORT')}/{values.get('POSTGRES_DB')}"
+
+    # --- RabbitMQ Configuration ---
+    RABBITMQ_DEFAULT_USER: str
+    RABBITMQ_DEFAULT_PASS: str
+    RABBITMQ_HOST: str
+    RABBITMQ_URL: Optional[str] = None
+
+    @field_validator("RABBITMQ_URL", mode="before")
+    def assemble_rabbitmq_connection(cls, v, info):
+        if v:
+            return v
+        values = info.data
+        return f"amqp://{values.get('RABBITMQ_DEFAULT_USER')}:{values.get('RABBITMQ_DEFAULT_PASS')}@{values.get('RABBITMQ_HOST')}/"
+
+    # --- Security & Auth ---
+    SECRET_KEY: str
+    ENCRYPTION_KEY: str
+    ENVIRONMENT: str = "development"
+    ACCESS_TOKEN_LIFETIME_SECONDS: int = 60 * 30  # 30 minutes
+    REFRESH_TOKEN_LIFETIME_SECONDS: int = 60 * 60 * 24 * 7  # 7 days
+
+    # Pydantic V2 tries to auto-parse list-like fields from JSON.
+    # To handle a simple comma-separated string from the .env file,
+    # we read it into a string field with an alias...
+    ALLOWED_ORIGINS_STR: str = Field(alias="ALLOWED_ORIGINS")
+
+    # ...and then provide a property for the application to use, which
+    # contains the correctly parsed list of strings.
+    @property
+    def ALLOWED_ORIGINS(self) -> List[str]:
+        return [origin.strip() for origin in self.ALLOWED_ORIGINS_STR.split(",")]
+
+
+settings = Settings()  # type: ignore

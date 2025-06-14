@@ -6,29 +6,30 @@ import {
   LogoutOutlined,
   PieChartOutlined,
   SettingOutlined,
+  ToolOutlined, // <-- Ensure ToolOutlined is imported for the Admin menu
   UserOutlined,
 } from "@ant-design/icons";
 import type { MenuProps } from "antd";
 import {
   Avatar,
-  Button, // <-- ADDED Button
+  Button,
   Dropdown,
   Layout,
   Menu,
   Space,
-  Tooltip, // <-- ADDED Tooltip
+  Tooltip,
   Typography,
   theme as antdTheme,
 } from "antd";
-import React, { useState } from "react";
-import { Link } from "react-router-dom"; // useNavigate removed if not used
-import { useAuth } from "../hooks/useAuth"; // <-- CORRECTED PATH
+import React, { useMemo, useState } from "react"; // <-- useMemo is added
+import { Link } from "react-router-dom";
+import { useAuth } from "../hooks/useAuth";
 
 const { Header, Content, Footer, Sider } = Layout;
-const { Text } = Typography;
 
 type MenuItem = Required<MenuProps>["items"][number];
 
+// This helper function creates menu items. It can be kept outside the component.
 function getItem(
   label: React.ReactNode,
   key: React.Key,
@@ -38,57 +39,69 @@ function getItem(
   return { key, icon, children, label } as MenuItem;
 }
 
-const siderMenuItems: MenuItem[] = [
-  getItem(
-    <Link to="/dashboard">Dashboard</Link>,
-    "dashboard_overview",
-    <PieChartOutlined />,
-  ),
-  getItem(
-    <Link to="/submit">Submit Code</Link>,
-    "submit_code",
-    <FileTextOutlined />,
-  ),
-  getItem(
-    <Link to="/history">History</Link>,
-    "submission_history",
-    <DesktopOutlined />,
-  ),
-  // getItem("Team", "team_sub", <TeamOutlined />, [ // Example a sub-menu
-  //   getItem("Team 1", "team_1"),
-  //   getItem("Team 2", "team_2"),
-  // ]),
-  getItem(
-    <Link to="/profile">User Profile</Link>,
-    "user_profile_nav",
-    <UserOutlined />,
-  ),
-  getItem(
-    <Link to="/settings">Settings</Link>,
-    "user_settings_nav",
-    <SettingOutlined />,
-  ),
-];
-
 const DashboardLayout: React.FC<{ children?: React.ReactNode }> = ({
   children,
 }) => {
   const [collapsed, setCollapsed] = useState(false);
-  // const navigate = useNavigate(); // REMOVE if not used
-  const { logout, user } = useAuth();
+  const { logout, user } = useAuth(); // Get the user object from our auth hook
   const {
     token: { colorBgContainer, borderRadiusLG },
   } = antdTheme.useToken();
 
-  const handleLogout = async () => {
-    console.log("DashboardLayout: Logout button clicked.");
-    try {
-      await logout();
-      // Navigation to /login should be handled by App.tsx routing logic
-      // due to accessToken becoming null in AuthContext
-    } catch (error) {
-      console.error("DashboardLayout: Error during logout:", error);
+  // --- DYNAMIC SIDEBAR MENU ---
+  // We use useMemo to create the menu items so they only recalculate when the user's status changes.
+  const siderMenuItems = useMemo(() => {
+    const items: MenuItem[] = [
+      getItem(
+        <Link to="/dashboard">Dashboard</Link>,
+        "dashboard_overview",
+        <PieChartOutlined />,
+      ),
+      getItem(
+        <Link to="/submit">Submit Code</Link>,
+        "submit_code",
+        <FileTextOutlined />,
+      ),
+      getItem(
+        <Link to="/history">History</Link>,
+        "submission_history",
+        <DesktopOutlined />,
+      ),
+    ];
+
+    // Conditionally add the Admin menu if the user is a superuser
+    if (user?.is_superuser) {
+      items.push(
+        getItem("Admin", "admin_section", <ToolOutlined />, [
+          getItem(
+            <Link to="/settings/llm">LLM Settings</Link>,
+            "llm_settings_nav",
+          ),
+          // Future admin links can be added here
+        ]),
+      );
     }
+
+    // Add a divider and user-specific items at the end
+    items.push({ type: "divider" });
+    items.push(
+      getItem(
+        <Link to="/profile">User Profile</Link>,
+        "user_profile_nav",
+        <UserOutlined />,
+      ),
+      getItem(
+        <Link to="/settings">Settings</Link>,
+        "user_settings_nav",
+        <SettingOutlined />,
+      ),
+    );
+
+    return items;
+  }, [user?.is_superuser]); // The dependency array ensures this runs only when user status changes
+
+  const handleLogout = async () => {
+    await logout();
   };
 
   const userAccountMenuItems: MenuProps["items"] = [
@@ -117,7 +130,7 @@ const DashboardLayout: React.FC<{ children?: React.ReactNode }> = ({
       key: "logout",
       icon: <LogoutOutlined style={{ marginRight: 8 }} />,
       label: "Logout",
-      onClick: handleLogout, // More idiomatic way to handle menu item click
+      onClick: handleLogout,
     },
   ];
 
@@ -140,44 +153,38 @@ const DashboardLayout: React.FC<{ children?: React.ReactNode }> = ({
             overflow: "hidden",
           }}
         >
-          <Text
+          <Typography.Text
             style={{
               color: "white",
               fontSize: collapsed ? "12px" : "16px",
               fontWeight: "bold",
             }}
           >
-            {collapsed ? "S" : "SCP"}
-          </Text>
+            {collapsed ? "SCP" : "Secure Code"}
+          </Typography.Text>
         </div>
         <Menu
           theme="dark"
           defaultSelectedKeys={["dashboard_overview"]}
           mode="inline"
-          items={siderMenuItems}
+          items={siderMenuItems} // Use the dynamic menu items here
         />
       </Sider>
-      <Layout className="site-layout">
-        {" "}
-        {/* Added className for potential specific styling */}
+      <Layout>
         <Header
           style={{
             padding: "0 24px",
             background: colorBgContainer,
             display: "flex",
             alignItems: "center",
-            justifyContent: "space-between",
+            justifyContent: "flex-end",
           }}
         >
-          <div>{/* Placeholder for breadcrumbs or page title */}</div>
           <Space align="center" size="middle">
             <Tooltip title="Notifications">
               <Button shape="circle" icon={<BellOutlined />} />
             </Tooltip>
-            <Dropdown
-              menu={{ items: userAccountMenuItems }}
-              trigger={["click"]}
-            >
+            <Dropdown menu={{ items: userAccountMenuItems }} trigger={["click"]}>
               <a
                 onClick={(e) => e.preventDefault()}
                 style={{
@@ -191,7 +198,9 @@ const DashboardLayout: React.FC<{ children?: React.ReactNode }> = ({
                   icon={<UserOutlined />}
                   style={{ marginRight: 8 }}
                 />
-                <Text>{user ? user.email : "User"}</Text>
+                <Typography.Text>
+                  {user ? user.email : "User"}
+                </Typography.Text>
               </a>
             </Dropdown>
           </Space>
@@ -202,16 +211,14 @@ const DashboardLayout: React.FC<{ children?: React.ReactNode }> = ({
               padding: 24,
               background: colorBgContainer,
               borderRadius: borderRadiusLG,
-              minHeight: "calc(100vh - 64px - 48px - 69px)", // Example: 100vh - header - content_margin_top_bottom - footer
-              // Adjust these values based on your actual layout heights
+              minHeight: "calc(100vh - 64px - 48px - 69px)",
             }}
           >
-            {children}{" "}
-            {/* This renders the <Outlet /> passed from ProtectedRoutesWithLayout */}
+            {children}
           </div>
         </Content>
         <Footer style={{ textAlign: "center" }}>
-          Secure Code Platform ©{new Date().getFullYear()}
+          Secure Coding Platform ©{new Date().getFullYear()}
         </Footer>
       </Layout>
     </Layout>

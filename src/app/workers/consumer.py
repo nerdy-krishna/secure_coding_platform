@@ -11,7 +11,7 @@ from typing import Callable, Optional  # Added Optional
 from dotenv import load_dotenv
 
 # Import the worker graph and its state (though worker_workflow isn't called in this test version)
-from src.app.graphs.worker_graph import worker_workflow, WorkerGraphState
+from app.graphs.worker_graph import worker_workflow, WorkerGraphState
 
 # Ensure necessary imports for type hints used in this file
 from pika.channel import Channel
@@ -24,7 +24,7 @@ logging.basicConfig(
 logger = logging.getLogger(
     __name__
 )  # Gets logger for current module __main__ if run directly
-# or src.app.workers.consumer if imported.
+# or app.workers.consumer if imported.
 # Consider a fixed name if preferred: logging.getLogger("secure_coding_platform.worker")
 
 logging.getLogger("pika").setLevel(logging.WARNING)

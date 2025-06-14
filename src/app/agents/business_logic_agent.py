@@ -4,11 +4,11 @@ from typing import Dict, Any
 
 from langgraph.graph import StateGraph, END
 
-from src.app.db import crud
-from src.app.db.database import AsyncSessionLocal
-from src.app.llm.llm_client import get_llm_client, AgentLLMResult
-from src.app.rag.rag_service import get_rag_service
-from src.app.agents.schemas import (
+from app.db import crud
+from app.db.database import AsyncSessionLocal
+from app.llm.llm_client import get_llm_client, AgentLLMResult
+from app.rag.rag_service import get_rag_service
+from app.agents.schemas import (
     AnalysisResult,
     FixSuggestion,
     FixResult,
@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 # --- Agent Nodes ---
 
+
 async def assess_vulnerabilities_node(state: SpecializedAgentState) -> Dict[str, Any]:
     """
     Queries the RAG for relevant guidelines and uses the LLM to find business logic vulnerabilities.
@@ -36,8 +37,14 @@ async def assess_vulnerabilities_node(state: SpecializedAgentState) -> Dict[str,
     if not rag_service:
         return {"error": "Failed to get RAG service."}
 
-    retrieved_guidelines = rag_service.query_asvs(query_texts=[AGENT_DOMAIN_QUERY], n_results=10)
-    context_str = "\n".join(res['document'] for res in retrieved_guidelines[0]['results']) if retrieved_guidelines else "No specific guidelines retrieved."
+    retrieved_guidelines = rag_service.query_asvs(
+        query_texts=[AGENT_DOMAIN_QUERY], n_results=10
+    )
+    context_str = (
+        "\n".join(res["document"] for res in retrieved_guidelines[0]["results"])
+        if retrieved_guidelines
+        else "No specific guidelines retrieved."
+    )
 
     prompt = f"""
     You are a security expert specializing in {AGENT_NAME}. Analyze the following code snippet for vulnerabilities related to the application's business logic.
@@ -57,13 +64,23 @@ async def assess_vulnerabilities_node(state: SpecializedAgentState) -> Dict[str,
     Identify business logic security vulnerabilities and respond with a structured list of findings. If no vulnerabilities are found, return an empty list.
     """
     llm_client = get_llm_client()
-    llm_response: AgentLLMResult = await llm_client.generate_structured_output(prompt, AnalysisResult)
+    llm_response: AgentLLMResult = await llm_client.generate_structured_output(
+        prompt, AnalysisResult
+    )
 
     async with AsyncSessionLocal() as db:
         await crud.save_llm_interaction(
-            db, submission_id=submission_id, agent_name=AGENT_NAME, prompt=prompt,
-            raw_response=llm_response.raw_output, parsed_output=llm_response.parsed_output.dict() if llm_response.parsed_output else None,
-            error=llm_response.error, file_path=filename, cost=llm_response.cost
+            db,
+            submission_id=submission_id,
+            agent_name=AGENT_NAME,
+            prompt=prompt,
+            raw_response=llm_response.raw_output,
+            parsed_output=llm_response.parsed_output.dict()
+            if llm_response.parsed_output
+            else None,
+            error=llm_response.error,
+            file_path=filename,
+            cost=llm_response.cost,
         )
 
     if llm_response.error or not llm_response.parsed_output:
@@ -86,8 +103,10 @@ async def generate_fixes_node(state: SpecializedAgentState) -> Dict[str, Any]:
     submission_id = state["submission_id"]
     filename = state["filename"]
     code_snippet = state["code_snippet"]
-    logger.info(f"[{AGENT_NAME}] Generating fixes for {len(findings)} findings in: {filename}")
-    
+    logger.info(
+        f"[{AGENT_NAME}] Generating fixes for {len(findings)} findings in: {filename}"
+    )
+
     llm_client = get_llm_client()
     all_fixes = []
 
@@ -109,22 +128,35 @@ async def generate_fixes_node(state: SpecializedAgentState) -> Dict[str, Any]:
         Describe the fix and, if applicable, provide a code snippet illustrating the corrected logic.
         Respond with a structured JSON object.
         """
-        llm_response: AgentLLMResult = await llm_client.generate_structured_output(prompt, FixSuggestion)
-        
+        llm_response: AgentLLMResult = await llm_client.generate_structured_output(
+            prompt, FixSuggestion
+        )
+
         async with AsyncSessionLocal() as db:
             await crud.save_llm_interaction(
-                db, submission_id=submission_id, agent_name=f"{AGENT_NAME}-Fixer", prompt=prompt,
-                raw_response=llm_response.raw_output, parsed_output=llm_response.parsed_output.dict() if llm_response.parsed_output else None,
-                error=llm_response.error, file_path=filename, cost=llm_response.cost
+                db,
+                submission_id=submission_id,
+                agent_name=f"{AGENT_NAME}-Fixer",
+                prompt=prompt,
+                raw_response=llm_response.raw_output,
+                parsed_output=llm_response.parsed_output.dict()
+                if llm_response.parsed_output
+                else None,
+                error=llm_response.error,
+                file_path=filename,
+                cost=llm_response.cost,
             )
-        
+
         if not llm_response.error and llm_response.parsed_output:
-            all_fixes.append(FixResult(finding=finding, suggestion=llm_response.parsed_output))
-    
+            all_fixes.append(
+                FixResult(finding=finding, suggestion=llm_response.parsed_output)
+            )
+
     return {"fixes": all_fixes}
 
 
 # --- Graph Builder ---
+
 
 def build_specialized_agent_graph():
     """Builds the LangGraph workflow for the Business Logic Agent."""

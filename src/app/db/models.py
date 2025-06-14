@@ -1,89 +1,153 @@
 # src/app/db/models.py
-from sqlalchemy import (
-    Column, Integer, String, ForeignKey, DateTime, JSON, Text, Float
-)
-from sqlalchemy.orm import relationship, declarative_base
-from sqlalchemy.sql import func
+import uuid
+from datetime import datetime
+from typing import List, Optional, Dict, Any
 
-Base = declarative_base()
+from sqlalchemy import String, Text, DateTime, ForeignKey, Integer, JSON, Float
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.orm import relationship, Mapped, mapped_column
+
+from app.db.database import Base
+
+# Import the base table from the main fastapi-users library
+from fastapi_users.db import SQLAlchemyBaseUserTable
+
+
+# The User model now uses the built-in base table and is correctly
+# typed with an 'int' primary key.
+class User(SQLAlchemyBaseUserTable[int], Base):
+    __tablename__ = "user"
+
+    # --- START: THE FINAL FIX ---
+    # Explicitly define the 'id' column to ensure SQLAlchemy's mapper
+    # can identify it as the primary key.
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # --- END: THE FINAL FIX ---
+
+    submissions: Mapped[List["CodeSubmission"]] = relationship(
+        "CodeSubmission", back_populates="user"
+    )
+
+
+class LLMConfiguration(Base):
+    __tablename__ = "llm_configurations"
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    provider: Mapped[str] = mapped_column(String, nullable=False)
+    model_name: Mapped[str] = mapped_column(String, nullable=False)
+    encrypted_api_key: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
 
 class CodeSubmission(Base):
-    """Represents a single code analysis submission."""
     __tablename__ = "code_submissions"
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    # This foreign key now correctly points to an integer column.
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), nullable=False)
+    # ... rest of the CodeSubmission model ...
+    repo_url: Mapped[Optional[str]] = mapped_column(String)
+    status: Mapped[str] = mapped_column(String, default="Pending")
+    submitted_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    frameworks: Mapped[Optional[List[str]]] = mapped_column(JSON)
+    main_llm_config_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("llm_configurations.id")
+    )
+    specialized_llm_config_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("llm_configurations.id")
+    )
+    user: Mapped["User"] = relationship(back_populates="submissions")
+    files: Mapped[List["SubmittedFile"]] = relationship(
+        "SubmittedFile", back_populates="submission"
+    )
+    findings: Mapped[List["VulnerabilityFinding"]] = relationship(
+        "VulnerabilityFinding", back_populates="submission"
+    )
+    llm_interactions: Mapped[List["LLMInteraction"]] = relationship(
+        "LLMInteraction", back_populates="submission"
+    )
 
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
-    repo_url = Column(String, nullable=True)
-    status = Column(String, default="Pending")
-    submitted_at = Column(DateTime(timezone=True), server_default=func.now())
-    completed_at = Column(DateTime(timezone=True), nullable=True)
 
-    user = relationship("User", back_populates="submissions")
-    files = relationship("SubmittedFile", back_populates="submission", cascade="all, delete-orphan")
-    llm_interactions = relationship("LLMInteraction", back_populates="submission", cascade="all, delete-orphan")
-    findings = relationship("VulnerabilityFinding", back_populates="submission", cascade="all, delete-orphan")
+# ... The rest of your models remain exactly the same ...
 
 
 class SubmittedFile(Base):
-    """Represents a single file within a code submission."""
     __tablename__ = "submitted_files"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    submission_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("code_submissions.id"), nullable=False
+    )
+    file_path: Mapped[str] = mapped_column(String, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    language: Mapped[str] = mapped_column(String, default="unknown")
+    analysis_summary: Mapped[Optional[str]] = mapped_column(Text)
+    identified_components: Mapped[Optional[List[str]]] = mapped_column(JSON)
+    asvs_analysis: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON)
 
-    id = Column(Integer, primary_key=True, index=True)
-    submission_id = Column(Integer, ForeignKey("code_submissions.id"), nullable=False)
-    file_path = Column(String, nullable=False)
-    content = Column(Text, nullable=False)
-    language = Column(String, nullable=True)
-    analysis_summary = Column(Text, nullable=True)
-    identified_components = Column(JSON, nullable=True)
-    asvs_analysis = Column(JSON, nullable=True)
-
-    submission = relationship("CodeSubmission", back_populates="files")
-
-
-class LLMInteraction(Base):
-    """Logs every interaction with the LLM for traceability and debugging."""
-    __tablename__ = "llm_interactions"
-
-    id = Column(Integer, primary_key=True, index=True)
-    submission_id = Column(Integer, ForeignKey("code_submissions.id"), nullable=False)
-    file_path = Column(String, nullable=True)
-    agent_name = Column(String, nullable=False)
-    prompt = Column(Text, nullable=False)
-    raw_response = Column(Text, nullable=True)
-    parsed_output = Column(JSON, nullable=True)
-    error = Column(Text, nullable=True)
-    cost = Column(Float, nullable=True)
-    timestamp = Column(DateTime(timezone=True), server_default=func.now())
-
-    submission = relationship("CodeSubmission", back_populates="llm_interactions")
+    submission: Mapped["CodeSubmission"] = relationship(
+        "CodeSubmission", back_populates="files"
+    )
 
 
 class VulnerabilityFinding(Base):
-    """Stores a single vulnerability identified by an agent."""
-    __tablename__ = 'vulnerability_findings'
+    __tablename__ = "vulnerability_findings"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    submission_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("code_submissions.id"), nullable=False
+    )
+    file_path: Mapped[str] = mapped_column(String, nullable=False)
+    cwe: Mapped[str] = mapped_column(String)
+    description: Mapped[str] = mapped_column(Text)
+    severity: Mapped[str] = mapped_column(String)
+    line_number: Mapped[int] = mapped_column(Integer)
+    remediation: Mapped[str] = mapped_column(Text)
+    confidence: Mapped[str] = mapped_column(String)
+    references: Mapped[Optional[List[str]]] = mapped_column(JSON)
 
-    id = Column(Integer, primary_key=True, index=True)
-    submission_id = Column(Integer, ForeignKey('code_submissions.id'), nullable=False)
-    file_path = Column(String, nullable=False)
-    cwe = Column(String)
-    description = Column(Text)
-    severity = Column(String)
-    line_number = Column(Integer)
-    remediation = Column(Text)
-    confidence = Column(String)
-    references = Column(JSON)
-    
-    submission = relationship("CodeSubmission", back_populates="findings")
-    fixes = relationship("FixSuggestion", back_populates="finding", cascade="all, delete-orphan")
+    submission: Mapped["CodeSubmission"] = relationship(
+        "CodeSubmission", back_populates="findings"
+    )
+    fixes: Mapped[List["FixSuggestion"]] = relationship(
+        "FixSuggestion", back_populates="finding"
+    )
 
 
 class FixSuggestion(Base):
-    """Stores a single code fix suggestion for a vulnerability."""
-    __tablename__ = 'fix_suggestions'
-    
-    id = Column(Integer, primary_key=True, index=True)
-    finding_id = Column(Integer, ForeignKey('vulnerability_findings.id'), nullable=False)
-    description = Column(Text)
-    suggested_fix = Column(Text)
+    __tablename__ = "fix_suggestions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    finding_id: Mapped[int] = mapped_column(
+        ForeignKey("vulnerability_findings.id"), nullable=False
+    )
+    description: Mapped[str] = mapped_column(Text)
+    suggested_fix: Mapped[str] = mapped_column(Text)
 
-    finding = relationship("VulnerabilityFinding", back_populates="fixes")
+    finding: Mapped["VulnerabilityFinding"] = relationship(
+        "VulnerabilityFinding", back_populates="fixes"
+    )
+
+
+class LLMInteraction(Base):
+    __tablename__ = "llm_interactions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    submission_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("code_submissions.id")
+    )
+    file_path: Mapped[Optional[str]] = mapped_column(String)
+    agent_name: Mapped[str] = mapped_column(String)
+    prompt: Mapped[str] = mapped_column(Text)
+    raw_response: Mapped[str] = mapped_column(Text)
+    parsed_output: Mapped[Optional[Dict]] = mapped_column(JSON)
+    error: Mapped[Optional[str]] = mapped_column(Text)
+    cost: Mapped[Optional[float]] = mapped_column(Float)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    submission: Mapped["CodeSubmission"] = relationship(
+        "CodeSubmission", back_populates="llm_interactions"
+    )

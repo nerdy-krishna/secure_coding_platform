@@ -1,86 +1,100 @@
----
-sidebar_position: 2
-title: Configuration
----
-
 # Configuration Guide
 
-The Secure Coding Platform is configured primarily through environment variables defined in a `.env` file located in the project root directory (`secure-code-platform/.env`).
+The Secure Coding Platform is configured primarily through environment variables defined in a `.env` file located in the project root.
 
-It is crucial to set up this file correctly before running the application. You should copy the `.env.example` file to `.env` and then modify the values as needed.
+> ⚠️ It is crucial to set up this file correctly before running the application.
+
+Start by copying the example file to create your own local configuration:
 
 ```bash
 cp .env.example .env
 ```
 
-Below is a list of environment variables used by the platform, their purpose, and example values. **Never commit your actual `.env` file with sensitive credentials to version control.**
+> ❗ **Never commit your actual `.env` file with sensitive credentials to version control.**
 
-## General Application Settings
+---
 
-| Variable          | Description                                                                                                | Example                                  | Notes                                                                    |
-| ----------------- | ---------------------------------------------------------------------------------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------ |
-| `APP_PORT`        | The port on which the backend FastAPI application will listen.                                               | `8000`                                   | Ensure this port is free on your host.                                     |
-| `ENVIRONMENT`     | Sets the runtime environment. Affects things like debug mode, logging levels.                                | `development` or `production`            | Defaults to `development` if not set in some contexts.                   |
-| `SECRET_KEY`      | **Critical for security.** Used for signing JWTs, session data, password recovery tokens, etc.             | `your-super-strong-random-secret-string` | Must be a long, random, and unique string. Use `openssl rand -hex 32`. |
-| `ALLOWED_ORIGINS` | Comma-separated list of frontend origins allowed to make CORS requests to the backend API.                   | `http://localhost:5173,http://127.0.0.1:5173` | No trailing slashes. Important for frontend-backend communication.         |
+## 🔐 `ENCRYPTION_KEY` (CRITICAL)
 
-## PostgreSQL Database
+This is the **most important secret** for your installation. It's used to encrypt and decrypt all sensitive data stored in the database — especially the LLM API keys managed via the UI.
 
-These variables configure the connection to the PostgreSQL database used by the application and Alembic migrations.
+Generate it with:
 
-| Variable             | Description                                     | Example        | Notes                                   |
-| -------------------- | ----------------------------------------------- | -------------- | --------------------------------------- |
-| `POSTGRES_HOST`      | Hostname of the PostgreSQL server.              | `db`           | Use `db` when running via Docker Compose. |
-| `POSTGRES_PORT`      | Port of the PostgreSQL server.                  | `5432`         | Default PostgreSQL port.                |
-| `POSTGRES_USER`      | Username for the PostgreSQL database.           | `devuser`      |                                         |
-| `POSTGRES_PASSWORD`  | Password for the PostgreSQL user.               | `yoursecurepassword` | Change from default.                    |
-| `POSTGRES_DB`        | Name of the PostgreSQL database to connect to.  | `securecodedb` |                                         |
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
 
-## RabbitMQ Message Queue
+Then add it to your `.env` file:
 
-Configuration for the RabbitMQ service used for asynchronous task queuing.
+```env
+ENCRYPTION_KEY=your-super-secret-generated-key-goes-here
+```
 
-| Variable                   | Description                                          | Example        | Notes                                   |
-| -------------------------- | ---------------------------------------------------- | -------------- | --------------------------------------- |
-| `RABBITMQ_HOST`            | Hostname of the RabbitMQ server.                     | `rabbitmq`     | Use `rabbitmq` for Docker Compose.      |
-| `RABBITMQ_PORT`            | AMQP port for RabbitMQ.                              | `5672`         | Default AMQP port.                      |
-| `RABBITMQ_MANAGEMENT_PORT` | Port for the RabbitMQ Management UI on the host.     | `15672`        |                                         |
-| `RABBITMQ_DEFAULT_USER`    | Username for RabbitMQ.                               | `devuser`      |                                         |
-| `RABBITMQ_DEFAULT_PASS`    | Password for the RabbitMQ user.                      | `yoursecurepassword` | Change from default.                    |
-| `CODE_QUEUE`               | Name of the RabbitMQ queue for code analysis tasks.  | `code_review_queue` |                                         |
+---
 
-## ChromaDB Vector Database
+## ⚙️ General Application Settings
 
-Configuration for the ChromaDB service used for Retrieval Augmented Generation (RAG).
+| Variable | Description | Example | Notes |
+| -------- | ----------- | ------- | ----- |
+| `APP_PORT` | Port for the backend FastAPI app | `8000` | Ensure this port is available |
+| `SECRET_KEY` | Used to sign JWT tokens | `your-random-secret` | Must be unique and strong |
+| `ALLOWED_ORIGINS` | Allowed origins for CORS | `http://localhost:5173` | No trailing slash |
+| `ACCESS_TOKEN_LIFETIME_SECONDS` | Access token expiry time | `1800` | 30 minutes |
+| `REFRESH_TOKEN_LIFETIME_SECONDS` | Refresh token lifetime | `604800` | 7 days |
 
-| Variable                   | Description                                                        | Example             | Notes                                   |
-| -------------------------- | ------------------------------------------------------------------ | ------------------- | --------------------------------------- |
-| `CHROMA_SERVER_HOST`       | Hostname for the ChromaDB server within the Docker network.        | `vector_db`         | Service name from `docker-compose.yml`. |
-| `CHROMA_SERVER_HTTP_PORT`  | Port on which ChromaDB listens inside its container.               | `8000`              | This is internal to ChromaDB.           |
-| `IS_PERSISTENT`            | Enables data persistence for ChromaDB.                             | `TRUE`              | Recommended for production.             |
-| `ANONYMIZED_TELEMETRY`     | Enables/disables anonymized telemetry for ChromaDB.                | `FALSE`             | Optional.                               |
-| `CHROMA_TENANT`            | Default tenant for ChromaDB (relevant for ChromaDB 0.5.x+).        | `default_tenant`    | Check ChromaDB documentation if needed. |
-| `CHROMA_DATABASE`          | Default database for ChromaDB (relevant for ChromaDB 0.5.x+).      | `default_database`  | Check ChromaDB documentation if needed. |
+---
 
-## LLM (Large Language Model) Providers
+## 🗄️ PostgreSQL Database
 
-Configuration for integrating with LLM providers.
+| Variable | Description | Example | Notes |
+| -------- | ----------- | ------- | ----- |
+| `POSTGRES_USER` | DB username | `devuser_scp` | |
+| `POSTGRES_PASSWORD` | DB password | `yoursecurepassword` | |
+| `POSTGRES_DB` | DB name | `securecodedb_dev` | |
+| `POSTGRES_HOST` | Host (for internal services) | `db` | Should match `docker-compose` service name |
+| `POSTGRES_PORT` | Internal container port | `5432` | Default PostgreSQL port |
+| `POSTGRES_PORT_HOST` | Local port mapped to PostgreSQL | `5432` | For connecting from local tools |
+| `POSTGRES_HOST_ALEMBIC` | Host for Alembic (from CLI) | `localhost` | Always `localhost` for migrations |
 
-| Variable             | Description                                                                | Example                      | Notes                                                       |
-| -------------------- | -------------------------------------------------------------------------- | ---------------------------- | ----------------------------------------------------------- |
-| `LLM_PROVIDER`       | Specifies the active LLM provider.                                         | `openai` or `google_gemini`  | Currently supported: `openai`, `google_gemini`.             |
-| `OPENAI_API_KEY`     | Your API key for OpenAI services.                                          | `sk-xxxxxxxxxxxxxxxxxxxxxx`  | Required if `LLM_PROVIDER=openai`.                          |
-| `OPENAI_MODEL_NAME`  | The specific OpenAI model to use (e.g., GPT-4o Mini, GPT-4 Turbo).         | `gpt-4o-mini-2024-07-18`   | Ensure model compatibility.                                 |
-| `GOOGLE_API_KEY`     | Your API key for Google AI (Gemini) services.                              | `AIzaSyxxxxxxxxxxxxxxxxxxx`  | Required if `LLM_PROVIDER=google_gemini`.                   |
-| `GEMINI_MODEL_NAME`  | The specific Google Gemini model to use.                                   | `gemini-1.5-flash-latest`    | Ensure model availability and compatibility.                |
+---
 
-## Authentication (FastAPI Users & JWT)
+## 📬 RabbitMQ Message Queue
 
-Variables related to user authentication and session management.
+| Variable | Description | Example |
+| -------- | ----------- | ------- |
+| `RABBITMQ_DEFAULT_USER` | RabbitMQ username | `devuser_scp` |
+| `RABBITMQ_DEFAULT_PASS` | RabbitMQ password | `yoursecurepassword` |
+| `RABBITMQ_HOST` | RabbitMQ host (internal) | `rabbitmq` |
+| `RABBITMQ_PORT` | AMQP port | `5672` |
+| `RABBITMQ_MANAGEMENT_PORT` | Port for RabbitMQ UI | `15672` |
+| `CODE_QUEUE` | Queue name for analysis tasks | `code_analysis_queue` |
 
-| Variable                | Description                                                                | Example                      | Notes                                                                   |
-| ----------------------- | -------------------------------------------------------------------------- | ---------------------------- | ----------------------------------------------------------------------- |
-| `REFRESH_COOKIE_NAME`   | Name for the HttpOnly refresh token cookie.                                | `mySecureAppRefreshToken`    | Optional. Defaults to `fastapiusersauth` in some FastAPI Users setups. We use `myAppRefreshToken` in our `CustomCookieJWTStrategy`. |
-| `ENVIRONMENT`           | (Also listed under General) Used by `CustomCookieJWTStrategy` to set cookie `Secure` flag. | `production` or `development` | `Secure` flag for cookies set to `True` if `ENVIRONMENT=production`. |
+---
 
-Make sure to keep your `.env` file secure and do not commit it to your version control system. Add `.env` to your `.gitignore` file if it's not already there.
+## 🧠 ChromaDB Vector Database
+
+| Variable | Description | Example |
+| -------- | ----------- | ------- |
+| `CHROMA_PORT_HOST` | Local port mapped to ChromaDB | `8001` |
+| `CHROMA_HOST` | Internal hostname | `vector_db` |
+| `CHROMA_PORT` | Internal container port | `8000` |
+
+---
+
+## 🤖 LLM Provider Configuration (Major Change)
+
+> **LLM API keys are no longer configured via the `.env` file.**
+
+The platform now includes a secure **dynamic LLM configuration UI**.
+
+After launching the app and logging in as a **superuser**, you can:
+
+- Add/remove LLM providers (e.g., OpenAI, Google, Anthropic)
+- Enter API keys securely (encrypted with your `ENCRYPTION_KEY`)
+- Manage model-specific settings
+
+This approach ensures greater **security** and **flexibility** — and keeps secrets out of source-controlled config files.
+
+---
+
+Happy configuring! 🎛️

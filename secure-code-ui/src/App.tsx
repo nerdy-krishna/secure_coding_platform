@@ -1,4 +1,5 @@
 // secure-code-ui/src/App.tsx
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import {
   Navigate,
@@ -8,7 +9,7 @@ import {
   Routes,
 } from "react-router-dom";
 
-import { AuthProvider } from "./contexts/AuthProvider"; // Import from the new AuthProvider.tsx file
+import { AuthProvider } from "./contexts/AuthProvider";
 import { useAuth } from "./hooks/useAuth";
 
 // Layouts
@@ -19,17 +20,17 @@ import DashboardLayout from "./layouts/DashboardLayout";
 import LoginPage from "./pages/auth/LoginPage";
 import RegisterPage from "./pages/auth/RegisterPage";
 import DashboardPage from "./pages/dashboard/DashboardPage";
+import LLMSettingsPage from "./pages/dashboard/LLMSettingsPage";
 import SettingsPage from "./pages/dashboard/SettingsPage";
 import UserProfilePage from "./pages/dashboard/UserProfilePage";
 import ResultsPage from "./pages/ResultsPage";
 import SubmitCodePage from "./pages/SubmitCodePage";
 
-// Placeholder Pages (as defined before)
+// Placeholder Pages
 const SubmissionHistoryPage: React.FC = () => (
   <div>
     <h2>Submission History</h2>
     <p>Your past submissions will appear here.</p>
-    {/* You can add more placeholder content or styling as needed */}
   </div>
 );
 
@@ -46,13 +47,12 @@ const NotFoundPage: React.FC = () => (
   </div>
 );
 
-// Updated: Wrapper for routes that need the DashboardLayout (Protected Routes)
+// Wrapper for regular authenticated user routes
 const ProtectedRoutesWithLayout: React.FC = () => {
   const { accessToken, initialAuthChecked, isLoading } = useAuth();
 
   if (!initialAuthChecked || isLoading) {
-    // Show a loading spinner or a blank page while checking auth
-    return <div>Loading authentication status...</div>; // Or a proper spinner component
+    return <div>Loading authentication status...</div>;
   }
 
   if (!accessToken) {
@@ -65,7 +65,7 @@ const ProtectedRoutesWithLayout: React.FC = () => {
   );
 };
 
-// Updated: Wrapper for routes that need the AuthLayout (Public routes like Login/Register)
+// Wrapper for public auth routes (login/register)
 const AuthRoutesWithLayout: React.FC = () => {
   const { accessToken, initialAuthChecked, isLoading } = useAuth();
 
@@ -83,12 +83,12 @@ const AuthRoutesWithLayout: React.FC = () => {
   );
 };
 
-// RootRedirector component to handle root path redirection based on auth state
+// Redirector for the root path
 const RootRedirector: React.FC = () => {
   const { accessToken, initialAuthChecked, isLoading } = useAuth();
 
   if (!initialAuthChecked || isLoading) {
-    return <div>Loading...</div>; // Or a global loading indicator
+    return <div>Loading...</div>;
   }
 
   return accessToken ? (
@@ -98,16 +98,41 @@ const RootRedirector: React.FC = () => {
   );
 };
 
+// New Wrapper for Superuser-only routes
+const SuperuserRoutesWithLayout: React.FC = () => {
+  const { user, accessToken, initialAuthChecked, isLoading } = useAuth();
+
+  if (!initialAuthChecked || isLoading) {
+    return <div>Loading authentication status...</div>;
+  }
+
+  if (!accessToken) {
+    return <Navigate to="/login" replace />;
+  }
+
+  // Redirect if user is not a superuser
+  if (!user?.is_superuser) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  return (
+    <DashboardLayout>
+      <Outlet />
+    </DashboardLayout>
+  );
+};
+
 function AppContent() {
-  // Renamed old App to AppContent
   return (
     <Router>
       <Routes>
+        {/* Public auth routes */}
         <Route element={<AuthRoutesWithLayout />}>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
         </Route>
 
+        {/* Protected routes for regular authenticated users */}
         <Route element={<ProtectedRoutesWithLayout />}>
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/submit" element={<SubmitCodePage />} />
@@ -117,6 +142,12 @@ function AppContent() {
           <Route path="/settings" element={<SettingsPage />} />
         </Route>
 
+        {/* Protected routes for superusers only */}
+        <Route element={<SuperuserRoutesWithLayout />}>
+          <Route path="/settings/llm" element={<LLMSettingsPage />} />
+        </Route>
+
+        {/* Root and wildcard routes */}
         <Route path="/" element={<RootRedirector />} />
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
@@ -124,12 +155,16 @@ function AppContent() {
   );
 }
 
-// New App component that includes the AuthProvider
+// Create a react-query client instance
+const queryClient = new QueryClient();
+
 function App() {
   return (
-    <AuthProvider>
-      <AppContent />
-    </AuthProvider>
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <AppContent />
+      </AuthProvider>
+    </QueryClientProvider>
   );
 }
 

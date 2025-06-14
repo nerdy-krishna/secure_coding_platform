@@ -1,26 +1,20 @@
 # src/app/auth/db.py
-from typing import AsyncGenerator
 from fastapi import Depends
-from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
+from fastapi_users.db import SQLAlchemyUserDatabase
 from sqlalchemy.ext.asyncio import AsyncSession
 
-# Import your User model and the AsyncSessionLocal from your main database setup
-from .models import User
-from src.app.db.database import (
-    AsyncSessionLocal,
-)  # Corrected import path from ..db.database
+from app.db.models import User
+
+# --- START: THE FINAL FIX ---
+# Import the correctly named dependency from the central database module.
+from app.db.database import get_db
+# --- END: THE FINAL FIX ---
 
 
-async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
-    """
-    Dependency to get an SQLAlchemy async database session.
-    Uses the global AsyncSessionLocal factory.
-    """
-    async with AsyncSessionLocal() as session:
-        yield session
-
-
-async def get_user_db(session: AsyncSession = Depends(get_async_session)):
+# --- START: CORRECTED DEPENDENCY USAGE ---
+# The dependency passed to Depends() must match the name of the imported function.
+async def get_user_db(session: AsyncSession = Depends(get_db)):
+    # --- END: CORRECTED DEPENDENCY USAGE ---
     """
     Dependency to get the SQLAlchemyUserDatabase adapter.
     This adapter is used by FastAPI Users to interact with the User model.
