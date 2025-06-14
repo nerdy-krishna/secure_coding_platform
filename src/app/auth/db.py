@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 # Import your User model and the AsyncSessionLocal from your main database setup
 from .models import User
-from src.app.db.database import (
+from app.db.database import (
     AsyncSessionLocal,
 )  # Corrected import path from ..db.database
 

@@ -10,12 +10,12 @@ from fastapi.concurrency import (
 from langgraph.graph import StateGraph, END
 
 # Database imports
-from src.app.db.database import AsyncSessionLocal
-from src.app.db.models import CodeSubmission, SubmittedFile
-from src.app.api.models import CodeFile  # Pydantic model for input files
+from app.db.database import AsyncSessionLocal
+from app.db.models import CodeSubmission, SubmittedFile
+from app.api.models import CodeFile  # Pydantic model for input files
 
 # RabbitMQ import
-from src.app.utils.rabbitmq_utils import publish_to_rabbitmq, CODE_QUEUE
+from app.utils.rabbitmq_utils import publish_to_rabbitmq, CODE_QUEUE
 
 logger = logging.getLogger(__name__)
 

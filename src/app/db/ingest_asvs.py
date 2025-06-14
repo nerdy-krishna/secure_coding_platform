@@ -4,7 +4,7 @@ import io
 import pandas as pd
 import chromadb
 import logging
-from typing import Dict, Any, List
+from typing import List
 
 # FIX: Import the embedding_functions utility from chromadb
 from chromadb.utils import embedding_functions
@@ -370,6 +370,7 @@ V17,WebRTC,V17.2,Media,V17.2.8,"Verify that the Datagram Transport Layer Securit
 V17,WebRTC,V17.3,Signaling,V17.3.1,Verify that the signaling server is able to continue processing legitimate incoming signaling messages during a flood attack. This should be achieved by implementing rate limiting at the signaling level.,2
 V17,WebRTC,V17.3,Signaling,V17.3.2,"Verify that the signaling server is able to continue processing legitimate signaling messages when encountering malformed signaling message that could cause a denial of service condition. This could include implementing input validation, safely handling integer overflows, preventing buffer overflows, and employing other robust error-handling techniques.",2"""
 
+
 def main():
     """
     Main function to ingest ASVS data into ChromaDB.
@@ -395,12 +396,12 @@ def main():
     collection = client.get_or_create_collection(
         name=COLLECTION_NAME,
         embedding_function=embedding_function,  # type: ignore
-        metadata={"hnsw:space": "cosine"}
+        metadata={"hnsw:space": "cosine"},
     )
 
     documents = df["req_description"].tolist()
     ids = df["req_id"].tolist()
-    
+
     metadatas: List[Metadata] = []
     for index, row in df.iterrows():
         record: Metadata = {
@@ -409,17 +410,15 @@ def main():
             "section_id": str(row["section_id"]),
             "section_name": str(row["section_name"]),
             "req_id": str(row["req_id"]),
-            "L": int(row["L"])
+            "L": int(row["L"]),
         }
         metadatas.append(record)
 
-    logger.info(f"Ingesting {len(documents)} documents into ChromaDB. This may take a moment...")
-    
-    collection.add(
-        documents=documents,
-        metadatas=metadatas,
-        ids=ids
+    logger.info(
+        f"Ingesting {len(documents)} documents into ChromaDB. This may take a moment..."
     )
+
+    collection.add(documents=documents, metadatas=metadatas, ids=ids)
     logger.info("✅ Ingestion complete!")
 
 

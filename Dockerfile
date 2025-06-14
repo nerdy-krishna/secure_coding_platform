@@ -51,4 +51,4 @@ EXPOSE 8000
 
 # The command to run the application will be specified in docker-compose.yml,
 # overriding any CMD here. If you needed a default CMD for running the image directly:
-# CMD ["poetry", "run", "uvicorn", "src.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# CMD ["poetry", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

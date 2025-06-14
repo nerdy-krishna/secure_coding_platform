@@ -1,5 +1,4 @@
 # src/app/auth/core.py
-from fastapi import Depends
 from fastapi_users import FastAPIUsers
 from fastapi_users.authentication import (
     AuthenticationBackend,
@@ -14,11 +13,13 @@ from .models import User
 # Define the cookie transport mechanism
 cookie_transport = CookieTransport(cookie_name="scpc", cookie_max_age=3600)
 
+
 # Define the JWT strategy
 def get_jwt_strategy() -> JWTStrategy:
     # In a real app, this MUST be a strong, randomly-generated secret
     # loaded from a secure configuration (e.g., environment variable).
     return JWTStrategy(secret="MY_SUPER_SECRET_SECRET", lifetime_seconds=3600)
+
 
 # The primary authentication backend
 auth_backend = AuthenticationBackend(

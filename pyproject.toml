@@ -35,6 +35,8 @@ chromadb = "0.5.3" # Vector DB - Pinned to match server version
 sentence-transformers = "^4.1.0"
 pandas = "^2.3.0"
 langchain-anthropic = "^0.3.15"
+cryptography = "^45.0.4"
+pydantic-settings = "^2.9.1"
 
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.11.11"
