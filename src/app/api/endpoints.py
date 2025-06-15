@@ -19,9 +19,9 @@ from app.db import crud
 from app.db.database import get_db
 from app.db import models as db_models
 from app.api import models as api_models
+
 # CORRECTED IMPORT: Changed 'get_current_active_user' to 'current_active_user'
 from app.auth.core import current_active_user, current_superuser
-from app.utils import rabbitmq_utils
 
 # Create two routers: one for general endpoints, one for admin-level LLM configs
 router = APIRouter()
@@ -30,6 +30,7 @@ llm_router = APIRouter(prefix="/llm-configs", tags=["LLM Configurations"])
 logger = logging.getLogger(__name__)
 
 # === LLM Configuration Endpoints ===
+
 
 @llm_router.post("/", response_model=api_models.LLMConfigurationRead, status_code=201)
 async def create_llm_configuration(
@@ -43,6 +44,7 @@ async def create_llm_configuration(
     """
     return await crud.create_llm_config(db=db, config=config)
 
+
 @llm_router.get("/", response_model=List[api_models.LLMConfigurationRead])
 async def read_llm_configurations(
     db: AsyncSession = Depends(get_db),
@@ -54,6 +56,7 @@ async def read_llm_configurations(
     """
     configs = await crud.get_llm_configs(db)
     return configs
+
 
 @llm_router.delete("/{config_id}", status_code=204)
 async def delete_llm_configuration(
@@ -70,7 +73,9 @@ async def delete_llm_configuration(
         raise HTTPException(status_code=404, detail="LLM Configuration not found")
     return Response(status_code=204)
 
+
 # === Submission & Results Endpoints ===
+
 
 @router.post("/submit", response_model=api_models.SubmissionResponse)
 async def submit_code(
@@ -95,15 +100,24 @@ async def submit_code(
     main_llm = await crud.get_llm_config(db, main_llm_config_id)
     specialized_llm = await crud.get_llm_config(db, specialized_llm_config_id)
     if not main_llm or not specialized_llm:
-        raise HTTPException(status_code=404, detail="One or both selected LLM configurations could not be found.")
+        raise HTTPException(
+            status_code=404,
+            detail="One or both selected LLM configurations could not be found.",
+        )
 
     framework_list = [f.strip() for f in frameworks.split(",")]
-    
+
     files_data = []
     if files:
         for file in files:
             content = await file.read()
-            files_data.append({"path": file.filename, "content": content.decode("utf-8"), "language": "python"})
+            files_data.append(
+                {
+                    "path": file.filename,
+                    "content": content.decode("utf-8"),
+                    "language": "python",
+                }
+            )
 
     submission = await crud.create_submission(
         db=db,
@@ -118,13 +132,15 @@ async def submit_code(
     # await rabbitmq_utils.publish_submission(str(submission.id))
     # logger.info(f"Published submission {submission.id} to RabbitMQ.")
 
-    return {"submission_id": submission.id, "message": "Submission received and queued for analysis."}
+    return {
+        "submission_id": submission.id,
+        "message": "Submission received and queued for analysis.",
+    }
 
 
 @router.get("/status/{submission_id}", response_model=api_models.SubmissionStatus)
 async def get_submission_status(
-    submission_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db)
+    submission_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 ):
     """Retrieves the current status of a code submission."""
     submission = await crud.get_submission(db, submission_id)
@@ -132,10 +148,12 @@ async def get_submission_status(
         raise HTTPException(status_code=404, detail="Submission not found")
     return submission
 
-@router.get("/results/{submission_id}", response_model=api_models.SubmissionResultResponse)
+
+@router.get(
+    "/results/{submission_id}", response_model=api_models.SubmissionResultResponse
+)
 async def get_submission_results(
-    submission_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db)
+    submission_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 ):
     """Retrieves the full analysis results for a completed submission."""
     submission = await crud.get_submission(db, submission_id)
@@ -143,6 +161,9 @@ async def get_submission_results(
         raise HTTPException(status_code=404, detail="Submission not found")
 
     if submission.status != "Completed":
-        raise HTTPException(status_code=400, detail=f"Submission is still in '{submission.status}' state.")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Submission is still in '{submission.status}' state.",
+        )
 
     return submission

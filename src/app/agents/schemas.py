@@ -71,11 +71,20 @@ class SpecializedAgentState(TypedDict):
 
 class LLMInteraction(BaseModel):
     """A standard representation of a single interaction with an LLM."""
+
     submission_id: Optional[uuid.UUID] = None
     file_path: Optional[str] = None
-    agent_name: str = Field(description="The name of the agent that initiated the interaction.")
+    agent_name: str = Field(
+        description="The name of the agent that initiated the interaction."
+    )
     prompt: str = Field(description="The full prompt sent to the LLM.")
     raw_response: str = Field(description="The raw text response from the LLM.")
-    parsed_output: Optional[Dict] = Field(None, description="The structured output after parsing the response.")
-    error: Optional[str] = Field(None, description="Any validation or parsing errors that occurred.")
-    cost: Optional[float] = Field(None, description="The estimated cost of the LLM interaction.")
+    parsed_output: Optional[Dict] = Field(
+        None, description="The structured output after parsing the response."
+    )
+    error: Optional[str] = Field(
+        None, description="Any validation or parsing errors that occurred."
+    )
+    cost: Optional[float] = Field(
+        None, description="The estimated cost of the LLM interaction."
+    )

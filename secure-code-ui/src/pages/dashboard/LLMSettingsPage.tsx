@@ -13,11 +13,13 @@ import {
     Table,
     Tag,
     Typography,
+    type TableProps, // <-- FIX 1: Import TableProps for explicit typing
 } from "antd";
-import { AxiosError } from "axios";
 import React from "react";
 import { llmConfigService } from "../../services/llmConfigService";
-import { LLMConfiguration, LLMConfigurationCreate } from "../../types/api";
+// FIX 2: Use a type-only import
+import { AxiosError } from "axios";
+import type { LLMConfiguration, LLMConfigurationCreate } from "../../types/api";
 
 const { Title, Paragraph } = Typography;
 const { Option } = Select;
@@ -28,9 +30,6 @@ const LLMSettingsPage: React.FC = () => {
   const [form] = Form.useForm();
   const queryClient = useQueryClient();
 
-  // --- React Query Hooks ---
-
-  // Query to fetch LLM configurations
   const {
     data: llmConfigs,
     isLoading,
@@ -41,7 +40,6 @@ const LLMSettingsPage: React.FC = () => {
     queryFn: llmConfigService.getLlmConfigs,
   });
 
-  // Mutation for creating a new LLM configuration
   const createMutation = useMutation<
     LLMConfiguration,
     AxiosError,
@@ -61,7 +59,6 @@ const LLMSettingsPage: React.FC = () => {
     },
   });
 
-  // Mutation for deleting an LLM configuration
   const deleteMutation = useMutation<void, AxiosError, string>({
     mutationFn: llmConfigService.deleteLlmConfig,
     onSuccess: () => {
@@ -76,8 +73,6 @@ const LLMSettingsPage: React.FC = () => {
     },
   });
 
-  // --- Event Handlers ---
-
   const handleCreate = (values: LLMConfigurationCreate) => {
     createMutation.mutate(values);
   };
@@ -86,24 +81,21 @@ const LLMSettingsPage: React.FC = () => {
     deleteMutation.mutate(configId);
   };
 
-  // --- Table Columns ---
-
-  const columns = [
+  // FIX 3: Explicitly type the 'columns' constant
+  const columns: TableProps<LLMConfiguration>["columns"] = [
     {
       title: "Name",
       dataIndex: "name",
       key: "name",
-      sorter: (a: LLMConfiguration, b: LLMConfiguration) =>
-        a.name.localeCompare(b.name),
+      sorter: (a, b) => a.name.localeCompare(b.name),
     },
     {
       title: "Provider",
       dataIndex: "provider",
       key: "provider",
-      render: (provider: string) => <Tag>{provider.toUpperCase()}</Tag>,
+      render: (provider) => <Tag>{provider.toUpperCase()}</Tag>,
       filters: LLM_PROVIDERS.map((p) => ({ text: p.toUpperCase(), value: p })),
-      onFilter: (value: string | number | boolean, record: LLMConfiguration) =>
-        record.provider === value,
+      onFilter: (value, record) => record.provider === value,
     },
     {
       title: "Model Name",
@@ -114,14 +106,14 @@ const LLMSettingsPage: React.FC = () => {
       title: "Created At",
       dataIndex: "created_at",
       key: "created_at",
-      render: (text: string) => new Date(text).toLocaleString(),
-      sorter: (a: LLMConfiguration, b: LLMConfiguration) =>
+      render: (text) => new Date(text).toLocaleString(),
+      sorter: (a, b) =>
         new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
     },
     {
       title: "Action",
       key: "action",
-      render: (_: any, record: LLMConfiguration) => (
+      render: (_value, record) => (
         <Popconfirm
           title="Delete this configuration?"
           description="This action cannot be undone."
@@ -132,7 +124,9 @@ const LLMSettingsPage: React.FC = () => {
           <Button
             danger
             icon={<DeleteOutlined />}
-            loading={deleteMutation.isPending && deleteMutation.variables === record.id}
+            loading={
+              deleteMutation.isPending && deleteMutation.variables === record.id
+            }
           >
             Delete
           </Button>
@@ -187,7 +181,9 @@ const LLMSettingsPage: React.FC = () => {
           <Form.Item
             name="model_name"
             label="Model Name"
-            rules={[{ required: true, message: "Please enter the model name." }]}
+            rules={[
+              { required: true, message: "Please enter the model name." },
+            ]}
           >
             <Input placeholder="e.g., gpt-4o-mini" />
           </Form.Item>

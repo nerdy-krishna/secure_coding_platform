@@ -2,7 +2,7 @@
 
 import logging
 import uuid
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Optional
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,38 +19,64 @@ logger = logging.getLogger(__name__)
 
 # === LLMConfiguration CRUD Functions (NEW) ===
 
-async def get_llm_config(db: AsyncSession, config_id: uuid.UUID) -> Optional[db_models.LLMConfiguration]:
+
+async def get_llm_config(
+    db: AsyncSession, config_id: uuid.UUID
+) -> Optional[db_models.LLMConfiguration]:
     """Retrieves a single LLM configuration by its ID."""
-    result = await db.execute(select(db_models.LLMConfiguration).filter(db_models.LLMConfiguration.id == config_id))
+    result = await db.execute(
+        select(db_models.LLMConfiguration).filter(
+            db_models.LLMConfiguration.id == config_id
+        )
+    )
     return result.scalars().first()
 
-async def get_llm_config_with_decrypted_key(db: AsyncSession, config_id: uuid.UUID) -> Optional[db_models.LLMConfiguration]:
+
+async def get_llm_config_with_decrypted_key(
+    db: AsyncSession, config_id: uuid.UUID
+) -> Optional[db_models.LLMConfiguration]:
     """Retrieves an LLM config and adds a temporary 'decrypted_api_key' attribute."""
     config = await get_llm_config(db, config_id)
     if config:
-        setattr(config, 'decrypted_api_key', FernetEncrypt.decrypt(config.encrypted_api_key))
+        setattr(
+            config, "decrypted_api_key", FernetEncrypt.decrypt(config.encrypted_api_key)
+        )
     return config
 
-async def get_llm_configs(db: AsyncSession, skip: int = 0, limit: int = 100) -> List[db_models.LLMConfiguration]:
+
+async def get_llm_configs(
+    db: AsyncSession, skip: int = 0, limit: int = 100
+) -> List[db_models.LLMConfiguration]:
     """Retrieves a list of all LLM configurations."""
-    result = await db.execute(select(db_models.LLMConfiguration).order_by(db_models.LLMConfiguration.name).offset(skip).limit(limit))
+    result = await db.execute(
+        select(db_models.LLMConfiguration)
+        .order_by(db_models.LLMConfiguration.name)
+        .offset(skip)
+        .limit(limit)
+    )
     return result.scalars().all()
 
-async def create_llm_config(db: AsyncSession, config: api_models.LLMConfigurationCreate) -> db_models.LLMConfiguration:
+
+async def create_llm_config(
+    db: AsyncSession, config: api_models.LLMConfigurationCreate
+) -> db_models.LLMConfiguration:
     """Creates a new LLM configuration, encrypting the API key before storage."""
     encrypted_key = FernetEncrypt.encrypt(config.api_key)
     db_config = db_models.LLMConfiguration(
         name=config.name,
         provider=config.provider,
         model_name=config.model_name,
-        encrypted_api_key=encrypted_key
+        encrypted_api_key=encrypted_key,
     )
     db.add(db_config)
     await db.commit()
     await db.refresh(db_config)
     return db_config
 
-async def delete_llm_config(db: AsyncSession, config_id: uuid.UUID) -> Optional[db_models.LLMConfiguration]:
+
+async def delete_llm_config(
+    db: AsyncSession, config_id: uuid.UUID
+) -> Optional[db_models.LLMConfiguration]:
     """Deletes an LLM configuration by its ID."""
     config = await get_llm_config(db, config_id)
     if config:
@@ -58,17 +84,27 @@ async def delete_llm_config(db: AsyncSession, config_id: uuid.UUID) -> Optional[
         await db.commit()
     return config
 
+
 # === User CRUD (Corrected) ===
+
 
 async def get_user_by_email(db: AsyncSession, email: str) -> Optional[User]:
     """Retrieves a user by their email address."""
     result = await db.execute(select(User).filter(User.email == email))
     return result.scalars().first()
 
+
 # === Submission & Analysis CRUD (Rewritten & Corrected) ===
 
+
 async def create_submission(
-    db: AsyncSession, user_id: uuid.UUID, repo_url: Optional[str] = None, files: Optional[List[Dict]] = None, frameworks: Optional[List[str]] = None, main_llm_config_id: Optional[uuid.UUID] = None, specialized_llm_config_id: Optional[uuid.UUID] = None
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    repo_url: Optional[str] = None,
+    files: Optional[List[Dict]] = None,
+    frameworks: Optional[List[str]] = None,
+    main_llm_config_id: Optional[uuid.UUID] = None,
+    specialized_llm_config_id: Optional[uuid.UUID] = None,
 ) -> db_models.CodeSubmission:
     """Creates a new code submission record."""
     submission = db_models.CodeSubmission(
@@ -77,7 +113,7 @@ async def create_submission(
         status="Pending",
         frameworks=frameworks,
         main_llm_config_id=main_llm_config_id,
-        specialized_llm_config_id=specialized_llm_config_id
+        specialized_llm_config_id=specialized_llm_config_id,
     )
     db.add(submission)
     await db.commit()
@@ -87,6 +123,7 @@ async def create_submission(
         await add_files_to_submission(db, submission.id, files)
 
     return submission
+
 
 async def add_files_to_submission(
     db: AsyncSession, submission_id: uuid.UUID, files: List[Dict[str, str]]
@@ -104,6 +141,7 @@ async def add_files_to_submission(
     db.add_all(db_files)
     await db.commit()
 
+
 async def get_submission(
     db: AsyncSession, submission_id: uuid.UUID
 ) -> Optional[db_models.CodeSubmission]:
@@ -120,13 +158,23 @@ async def get_submission(
     )
     return result.scalars().first()
 
-async def update_submission_status(db: AsyncSession, submission_id: uuid.UUID, status: str):
+
+async def update_submission_status(
+    db: AsyncSession, submission_id: uuid.UUID, status: str
+):
     """Updates the status of a submission."""
-    stmt = update(db_models.CodeSubmission).where(db_models.CodeSubmission.id == submission_id).values(status=status)
+    stmt = (
+        update(db_models.CodeSubmission)
+        .where(db_models.CodeSubmission.id == submission_id)
+        .values(status=status)
+    )
     await db.execute(stmt)
     await db.commit()
 
-async def save_llm_interaction(db: AsyncSession, interaction_data: agent_schemas.LLMInteraction):
+
+async def save_llm_interaction(
+    db: AsyncSession, interaction_data: agent_schemas.LLMInteraction
+):
     """Saves a record of an interaction with an LLM."""
     # This now correctly uses the pydantic model directly
     db_interaction = db_models.LLMInteraction(**interaction_data.model_dump())
@@ -135,7 +183,9 @@ async def save_llm_interaction(db: AsyncSession, interaction_data: agent_schemas
 
 
 async def save_findings(
-    db: AsyncSession, submission_id: uuid.UUID, findings: List[agent_schemas.VulnerabilityFinding]
+    db: AsyncSession,
+    submission_id: uuid.UUID,
+    findings: List[agent_schemas.VulnerabilityFinding],
 ) -> List[db_models.VulnerabilityFinding]:
     """Saves a list of vulnerability findings and returns the persisted objects."""
     if not findings:
@@ -156,7 +206,7 @@ async def save_findings(
         for finding in findings
     ]
     db.add_all(db_findings)
-    await db.flush() # Use flush to get IDs before commit
+    await db.flush()  # Use flush to get IDs before commit
     for finding in db_findings:
         await db.refresh(finding)
     await db.commit()

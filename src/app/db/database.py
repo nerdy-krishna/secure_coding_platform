@@ -19,7 +19,9 @@ logger = logging.getLogger(__name__)
 
 # Check if the database URL is configured in the central settings.
 if not settings.ASYNC_DATABASE_URL:
-    critical_error_msg = "ASYNC_DATABASE_URL is not set in the environment variables or .env file."
+    critical_error_msg = (
+        "ASYNC_DATABASE_URL is not set in the environment variables or .env file."
+    )
     logger.critical(critical_error_msg)
     raise ValueError(critical_error_msg)
 
@@ -56,6 +58,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """
     async with AsyncSessionLocal() as session:
         yield session
+
 
 # Note: The 'init_db' function using Base.metadata.create_all() has been omitted.
 # This project uses Alembic for database migrations, which is the standard

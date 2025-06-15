@@ -7,13 +7,22 @@ from typing import List, Optional, Dict
 
 # === LLM Configuration Schemas (NEW) ===
 
+
 class LLMConfigurationBase(BaseModel):
-    name: str = Field(..., description="A unique, user-friendly name for the LLM configuration.")
-    provider: str = Field(..., description="The LLM provider (e.g., 'openai', 'google', 'anthropic').")
-    model_name: str = Field(..., description="The specific model name (e.g., 'gpt-4o', 'gemini-1.5-pro').")
+    name: str = Field(
+        ..., description="A unique, user-friendly name for the LLM configuration."
+    )
+    provider: str = Field(
+        ..., description="The LLM provider (e.g., 'openai', 'google', 'anthropic')."
+    )
+    model_name: str = Field(
+        ..., description="The specific model name (e.g., 'gpt-4o', 'gemini-1.5-pro')."
+    )
+
 
 class LLMConfigurationCreate(LLMConfigurationBase):
     api_key: str = Field(..., description="The API key for the provider.")
+
 
 class LLMConfigurationRead(LLMConfigurationBase):
     id: uuid.UUID
@@ -24,6 +33,7 @@ class LLMConfigurationRead(LLMConfigurationBase):
 
 # --- Request Models (EXISTING, MERGED & UPDATED) ---
 
+
 class SubmissionRequest(BaseModel):
     files: Optional[List[Dict[str, str]]] = Field(
         None, description="List of files, each a dict with 'path' and 'content'."
@@ -32,9 +42,15 @@ class SubmissionRequest(BaseModel):
         None, description="URL of the Git repository to analyze."
     )
     # NEW fields based on our plan
-    frameworks: List[str] = Field(..., description="List of security frameworks to analyze against.")
-    main_llm_config_id: uuid.UUID = Field(..., description="ID of the LLM config for the main agent.")
-    specialized_llm_config_id: uuid.UUID = Field(..., description="ID of the LLM config for specialized agents.")
+    frameworks: List[str] = Field(
+        ..., description="List of security frameworks to analyze against."
+    )
+    main_llm_config_id: uuid.UUID = Field(
+        ..., description="ID of the LLM config for the main agent."
+    )
+    specialized_llm_config_id: uuid.UUID = Field(
+        ..., description="ID of the LLM config for specialized agents."
+    )
 
 
 class SecurityQueryCreate(BaseModel):
@@ -55,13 +71,14 @@ class SecurityQueryUpdate(BaseModel):
 
 # --- Response Models (EXISTING, MODERNIZED) ---
 
+
 class SubmissionResponse(BaseModel):
     submission_id: uuid.UUID  # Corrected from int to uuid
     message: str
 
 
 class FixSuggestionResponse(BaseModel):
-    id: int # Assuming this remains an integer as it might not be a primary table
+    id: int  # Assuming this remains an integer as it might not be a primary table
     description: str
     suggested_fix: str
 
@@ -86,7 +103,7 @@ class VulnerabilityFindingResponse(BaseModel):
 
 
 class SubmissionResultResponse(BaseModel):
-    id: uuid.UUID # Corrected from int to uuid
+    id: uuid.UUID  # Corrected from int to uuid
     status: str
     submitted_at: datetime.datetime
     completed_at: Optional[datetime.datetime] = None
@@ -97,7 +114,7 @@ class SubmissionResultResponse(BaseModel):
 
 
 class SubmissionStatus(BaseModel):
-    submission_id: uuid.UUID # Corrected from int to uuid
+    submission_id: uuid.UUID  # Corrected from int to uuid
     status: str
     submitted_at: Optional[datetime.datetime] = None
     completed_at: Optional[datetime.datetime] = None

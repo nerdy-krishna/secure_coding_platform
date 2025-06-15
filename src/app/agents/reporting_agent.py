@@ -7,9 +7,10 @@ from langgraph.graph import StateGraph, END, Pregel
 from pydantic import BaseModel
 
 from app.db import crud
-from app.db.database import get_db_session, AsyncSessionLocal
+from app.db.database import get_db, AsyncSessionLocal
 from app.llm.llm_client import get_llm_client, AgentLLMResult
 from app.db.models import CodeSubmission
+from app.api.models import VulnerabilityFindingResponse
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -106,7 +107,7 @@ async def fetch_submission_data_node(state: ReportingAgentState) -> Dict[str, An
     submission_id = state["submission_id"]
     logger.info(f"[{AGENT_NAME}] Fetching data for submission ID: {submission_id}")
 
-    async with get_db_session() as db:
+    async with get_db() as db:
         submission = await crud.get_submission(db, submission_id)
         if not submission:
             return {"error": f"Submission {submission_id} not found."}

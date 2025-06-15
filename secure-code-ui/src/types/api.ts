@@ -10,6 +10,19 @@ export interface UserLoginData {
   client_secret?: string;
 }
 
+// Defines the shape of the data and functions in our AuthContext
+export interface AuthContextType {
+  user: UserRead | null;
+  accessToken: string | null;
+  isLoading: boolean;
+  initialAuthChecked: boolean;
+  error: string | null; // Added
+  login: (loginData: UserLoginData) => Promise<void>;
+  logout: () => Promise<void>;
+  register: (registerData: UserRegisterData) => Promise<UserRead>; // Corrected return type
+  clearError: () => void; // Added
+}
+
 export interface TokenResponse {
   access_token: string;
   token_type: string;
