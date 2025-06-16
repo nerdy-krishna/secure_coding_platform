@@ -6,12 +6,12 @@ import asyncio
 import json
 import threading
 import time  # For sleep in retry logic and initial loop spin-up
-from typing import Callable, Optional  # Added Optional
+from typing import Any, Callable, Dict, Optional, TypedDict
 
 from dotenv import load_dotenv
 
 # Import the worker graph and its state (though worker_workflow isn't called in this test version)
-from app.graphs.worker_graph import worker_workflow, WorkerGraphState
+from app.graphs.worker_graph import worker_workflow
 
 # Ensure necessary imports for type hints used in this file
 from pika.channel import Channel
@@ -48,6 +48,11 @@ _pika_channel: Optional[Channel] = None  # Explicitly pika.channel.Channel
 
 _stop_event = threading.Event()  # For signaling threads to stop
 
+class WorkerGraphState(TypedDict):
+    """Overall state for the worker graph, used by the consumer."""
+    submission_id: str
+    result: Optional[Dict[str, Any]]
+    error: Optional[str]
 
 # --- Asyncio Task Execution ---
 async def run_graph_task_wrapper(initial_state: WorkerGraphState, delivery_tag: int):
