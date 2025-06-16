@@ -2,6 +2,7 @@
 import asyncio
 import logging
 from typing import Any, Dict, List, TypedDict, Optional
+import uuid
 
 from langgraph.graph import END, StateGraph
 
@@ -57,10 +58,11 @@ from app.agents.validation_agent import (
     build_specialized_agent_graph as build_validation_agent,
 )
 from app.db import crud
-from app.db.database import get_db
+from app.db.database import async_session_factory
 from app.db.models import CodeSubmission
 
 logger = logging.getLogger(__name__)
+
 AGENT_NAME = "CoordinatorAgent"
 
 AGENT_BUILDER_MAP = {
@@ -91,24 +93,37 @@ class CoordinatorState(TypedDict):
 
 
 async def retrieve_submission_node(state: CoordinatorState) -> Dict[str, Any]:
+    """
+    Retrieves the code submission details from the database.
+    This is the entry point for the worker's graph execution.
+    """
     submission_id = state["submission_id"]
     logger.info(f"[{AGENT_NAME}] Retrieving submission {submission_id}")
-    async with get_db() as db:
-        submission = await crud.get_submission(db, submission_id)
-        if not submission:
-            logger.error(f"[{AGENT_NAME}] Submission {submission_id} not found.")
-            return {"error": "Submission not found"}
-
-        files = await crud.get_submission_files(db, submission_id)
-        code_snippets_and_paths = [
-            {"path": file.file_path, "code": file.content, "language": file.language}
-            for file in files
-        ]
-
-    return {
-        "submission": submission,
-        "code_snippets_and_paths": code_snippets_and_paths,
-    }
+    
+    # Corrected: Use the session factory to create a session for this task
+    async with async_session_factory() as db:
+        try:
+            submission_id = uuid.UUID(submission_id)
+            submission = await crud.get_submission(db, submission_id)
+            if not submission:
+                logger.error(f"[{AGENT_NAME}] Submission {submission_id} not found.")
+                return {"error": "Submission not found"}
+            
+            # Your existing logic for getting files is preserved
+            files = await crud.get_submission(db, submission_id)
+            code_snippets_and_paths = [
+                {"path": file.file_path, "code": file.content, "language": file.language}
+                for file in files
+            ]
+            
+            # The return dictionary is also preserved
+            return {
+                "submission": submission,
+                "code_snippets_and_paths": code_snippets_and_paths,
+            }
+        except Exception as e:
+            logger.error(f"Failed to retrieve submission {submission_id}: {e}", exc_info=True)
+            return {"error": f"Failed to retrieve submission: {e}"}
 
 
 async def initial_analysis_and_routing_node(state: CoordinatorState) -> Dict[str, Any]:
@@ -144,7 +159,7 @@ async def initial_analysis_and_routing_node(state: CoordinatorState) -> Dict[str
             continue
 
         asvs_analysis = result_state.get("asvs_analysis", {})
-        async with get_db() as db:
+        async with async_session_factory() as db:
             await crud.update_submission_file_context(
                 db=db,
                 submission_id=submission_id,
@@ -255,7 +270,7 @@ async def finalize_analysis_node(state: CoordinatorState) -> Dict[str, Any]:
     logger.info(f"[{AGENT_NAME}] Finalizing analysis for submission {submission_id}.")
 
     if findings_to_save:
-        async with get_db() as db:
+        async with async_session_factory() as db:
             persisted_findings = await crud.save_findings(
                 db, submission_id, findings_to_save
             )
@@ -319,4 +334,4 @@ def build_coordinator_graph():
     workflow.add_edge("run_specialized_agents", "finalize_analysis")
     workflow.add_edge("finalize_analysis", END)
 
-    return workflow.compile()
+    return workflow
