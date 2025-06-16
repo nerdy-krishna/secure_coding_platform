@@ -3,7 +3,7 @@
 from datetime import datetime
 import uuid
 from pydantic import UUID4, BaseModel, Field
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 
 # === LLM Configuration Schemas (NEW) ===
 
