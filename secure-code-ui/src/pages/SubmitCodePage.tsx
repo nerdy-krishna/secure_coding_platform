@@ -1,4 +1,5 @@
 import {
+  GithubOutlined, // Added GithubOutlined
   InboxOutlined,
   RobotOutlined,
   SafetyOutlined,
@@ -12,6 +13,7 @@ import {
   Checkbox,
   Col,
   Form,
+  Input, // Added Input
   Row,
   Select,
   Spin,
@@ -35,6 +37,7 @@ const { Option } = Select;
 interface SubmissionFormValues {
   main_llm_config_id: string;
   specialized_llm_config_id: string;
+  repo_url?: string; // Added repository URL field
   frameworks: string[];
 }
 
@@ -55,8 +58,8 @@ const SubmitCodePage: React.FC = () => {
   });
 
 const handleSubmit = async (values: SubmissionFormValues) => {
-    if (fileList.length === 0) {
-      message.error("Please upload at least one file.");
+    if (fileList.length === 0 && (!values.repo_url || values.repo_url.trim() === "")) {
+      message.error("Please upload files or provide a repository URL.");
       return;
     }
     setIsSubmitting(true);
@@ -80,6 +83,10 @@ const handleSubmit = async (values: SubmissionFormValues) => {
         values.specialized_llm_config_id
       );
 
+      if (values.repo_url && values.repo_url.trim() !== "") {
+        formData.append("repo_url", values.repo_url.trim());
+      }
+
       console.log("--- [Frontend] Data being sent: ---");
       for (const entry of formData.entries()) {
         // Log each key-value pair. For files, it will log the File object.
@@ -89,7 +96,7 @@ const handleSubmit = async (values: SubmissionFormValues) => {
       
       const response = await submissionService.submitCode(formData);
       message.success(response.message);
-      navigate(`/results/${response.submission_id}`);
+      navigate("/history"); // Changed navigation to /history
     } catch (error: unknown) {
       console.error("Submission failed:", error);
       let errorMessage = "An unknown error occurred during submission.";
@@ -184,6 +191,24 @@ const handleSubmit = async (values: SubmissionFormValues) => {
               </Form.Item>
             </Col>
           </Row>
+
+          <Form.Item
+            name="repo_url"
+            label={
+              <>
+                <GithubOutlined style={{ marginRight: 8 }} />
+                Repository URL (Optional)
+              </>
+            }
+            rules={[
+              {
+                type: "url",
+                message: "Please enter a valid URL.",
+              },
+            ]}
+          >
+            <Input placeholder="e.g., https://github.com/user/repo.git" />
+          </Form.Item>
 
           <Form.Item
             label={
