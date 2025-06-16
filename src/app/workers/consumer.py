@@ -188,7 +188,7 @@ async def run_graph_task_wrapper(initial_state: CoordinatorState, delivery_tag: 
         _pika_connection.add_callback_threadsafe(pika_finalize_message)
     else:
         logger.error(
-            f"ASYNC WRAPPER: Pika channel/connection not open. Cannot ACK/NACK SID {submission_id}, delivery_tag {delivery_tag}."
+            f"ASYNC WRAPPER: Pika channel/connection not open. Cannot ACK/NACK SID {submission_id_str_log}, delivery_tag {delivery_tag}."
         )
 
 
@@ -277,7 +277,7 @@ def pika_message_callback( # pyright: ignore[reportGeneralTypeIssues]
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
     except Exception as e:
         logger.error(
-            f"PIKA CB: Unhandled error for SID '{submission_id_str}': {e}",
+            f"PIKA CB: Unhandled error for SID '{submission_id_str_log}': {e}",
             exc_info=True,
         )
         if ch.is_open:

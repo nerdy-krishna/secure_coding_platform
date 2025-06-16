@@ -212,6 +212,38 @@ const ResultsPage: React.FC = () => {
       <Tabs activeKey={activeFileKey} onChange={setActiveFileKey} type="card">
         {filesAnalyzed.map((file) => (
           <TabPane tab={file.file_path} key={file.file_path}>
+            <Title level={4}>Details for {file.file_path}</Title>
+            <Descriptions bordered column={1} size="small" style={{ marginBottom: 20 }}>
+              <Descriptions.Item label="Language">
+                {file.language || "N/A"}
+              </Descriptions.Item>
+              <Descriptions.Item label="Analysis Summary">
+                {file.analysis_summary ? (
+                  <Paragraph>{file.analysis_summary}</Paragraph>
+                ) : (
+                  "N/A"
+                )}
+              </Descriptions.Item>
+              <Descriptions.Item label="Identified Components">
+                {file.identified_components &&
+                file.identified_components.length > 0
+                  ? file.identified_components.map((comp) => (
+                      <Tag key={comp}>{comp}</Tag>
+                    ))
+                  : "N/A"}
+              </Descriptions.Item>
+              <Descriptions.Item label="ASVS Analysis">
+                {file.asvs_analysis &&
+                Object.keys(file.asvs_analysis).length > 0 ? (
+                  <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
+                    {JSON.stringify(file.asvs_analysis, null, 2)}
+                  </pre>
+                ) : (
+                  "N/A"
+                )}
+              </Descriptions.Item>
+            </Descriptions>
+
             <Title level={5}>Findings for {file.file_path}</Title>
             {file.findings && file.findings.length > 0 ? (
               <Collapse accordion>
@@ -233,9 +265,10 @@ const ResultsPage: React.FC = () => {
                               "N/A"}
                           </Tag>
                         </Tooltip>
-                        <Text strong>{finding.message}</Text>
+                        {/* Backend provides 'description', frontend uses 'message' in header. Using finding.description here. */}
+                        <Text strong>{finding.description || finding.message || "No title"}</Text> 
                         <Text type="secondary">
-                          - {finding.cwe_id || "N/A"} (
+                          - CWE: {finding.cwe || "N/A"} (Rule:
                           {finding.rule_id || "N/A"})
                         </Text>
                       </Space>
@@ -251,16 +284,70 @@ const ResultsPage: React.FC = () => {
                           {finding.description || "No description available."}
                         </Paragraph>
                       </Descriptions.Item>
-                      <Descriptions.Item label="ASVS Categories">
+                      <Descriptions.Item label="Remediation">
+                        <Paragraph>
+                          {finding.remediation || "No remediation advice available."}
+                        </Paragraph>
+                      </Descriptions.Item>
+                      <Descriptions.Item label="Confidence">
+                        {finding.confidence || "N/A"}
+                      </Descriptions.Item>
+                      <Descriptions.Item label="References">
+                        {finding.references && finding.references.length > 0 ? (
+                          <ul>
+                            {finding.references.map((ref, i) => (
+                              <li key={i}>
+                                <a
+                                  href={ref}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  {ref}
+                                </a>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          "N/A"
+                        )}
+                      </Descriptions.Item>
+                      <Descriptions.Item label="ASVS Categories (Finding Specific)">
+                        {/* This field is not in the current backend VulnerabilityFinding model */}
                         {finding.asvs_categories &&
                         finding.asvs_categories.length > 0
                           ? finding.asvs_categories.join(", ")
-                          : "N/A"}
+                          : "N/A (Not in current backend model)"}
                       </Descriptions.Item>
-                      <Descriptions.Item label="Attack Name">
-                        {finding.attack_name_summary || "N/A"}
+                      <Descriptions.Item label="Attack Name Summary">
+                         {/* This field is not in the current backend VulnerabilityFinding model */}
+                        {finding.attack_name_summary || "N/A (Not in current backend model)"}
                       </Descriptions.Item>
                     </Descriptions>
+                    
+                    {finding.fixes && finding.fixes.length > 0 && (
+                      <Card
+                        size="small"
+                        title="Suggested Fixes"
+                        style={{ marginTop: 10 }}
+                      >
+                        <Collapse>
+                          {finding.fixes.map((fix, fixIndex) => (
+                            <Panel
+                              header={fix.description || `Suggested Fix ${fixIndex + 1}`}
+                              key={`${file.file_path}-finding-${index}-fix-${fixIndex}`}
+                            >
+                              <Text strong>Description:</Text>
+                              <Paragraph>{fix.description || "N/A"}</Paragraph>
+                              <Text strong>Suggested Code:</Text>
+                              <pre style={{ whiteSpace: "pre-wrap", background: "#f5f5f5", padding: "10px", borderRadius: "4px" }}>
+                                {fix.suggested_fix || "No code suggestion."}
+                              </pre>
+                            </Panel>
+                          ))}
+                        </Collapse>
+                      </Card>
+                    )}
+
                     {finding.code_snippet && (
                       <Card
                         size="small"
@@ -316,7 +403,7 @@ const ResultsPage: React.FC = () => {
     >
       <Button
         icon={<ArrowLeftOutlined />}
-        onClick={() => navigate("/dashboard/history")} // Or navigate(-1) if appropriate
+        onClick={() => navigate("/history")} // Or navigate(-1) if appropriate
         style={{ marginBottom: 20 }}
       >
         Back to Submission History
