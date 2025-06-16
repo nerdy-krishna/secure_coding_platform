@@ -84,9 +84,9 @@ AGENT_BUILDER_MAP = {
 
 
 class CoordinatorState(TypedDict):
-    submission_id: int
+    submission_id: uuid.UUID  # Changed from int
     submission: Optional[CodeSubmission]
-    code_snippets_and_paths: List[Dict[str, str]]
+    code_snippets_and_paths: List[Dict[str, Any]]  # Values can be str, int (for file_db_id)
     relevant_agents: Dict[str, List[str]]
     results: Dict[str, Any]
     error: Optional[str]
@@ -97,33 +97,54 @@ async def retrieve_submission_node(state: CoordinatorState) -> Dict[str, Any]:
     Retrieves the code submission details from the database.
     This is the entry point for the worker's graph execution.
     """
-    submission_id = state["submission_id"]
-    logger.info(f"[{AGENT_NAME}] Retrieving submission {submission_id}")
-    
-    # Corrected: Use the session factory to create a session for this task
+    submission_id_val = state["submission_id"]  # Now uuid.UUID
+    logger.info(f"[{AGENT_NAME}] Retrieving submission {submission_id_val}")
+
     async with async_session_factory() as db:
         try:
-            submission_id = uuid.UUID(submission_id)
-            submission = await crud.get_submission(db, submission_id)
+            # submission_id_val is already uuid.UUID, no conversion needed.
+            submission = await crud.get_submission(db, submission_id_val)
             if not submission:
-                logger.error(f"[{AGENT_NAME}] Submission {submission_id} not found.")
-                return {"error": "Submission not found"}
-            
-            # Your existing logic for getting files is preserved
-            files = await crud.get_submission(db, submission_id)
+                logger.error(f"[{AGENT_NAME}] Submission {submission_id_val} not found.")
+                return {
+                    "submission": None,
+                    "code_snippets_and_paths": [],
+                    "error": "Submission not found",
+                }
+
+            # Access submitted files through the relationship on the Submission object
+            # Assuming CodeSubmission model has a relationship 'submitted_files'
+            # and each item has 'id' (int PK), 'file_path', 'content', 'language'
+            submitted_files_list = submission.submitted_files
+            if submitted_files_list is None: # Handle case where relationship might not be loaded or is empty
+                logger.warning(f"[{AGENT_NAME}] No submitted files found for submission {submission_id_val}.")
+                submitted_files_list = []
+
+
             code_snippets_and_paths = [
-                {"path": file.file_path, "code": file.content, "language": file.language}
-                for file in files
+                {
+                    "path": file_obj.file_path,
+                    "code": file_obj.content,
+                    "language": file_obj.language,
+                    "file_db_id": file_obj.id,  # Add file_db_id (int PK of SubmittedFile)
+                }
+                for file_obj in submitted_files_list
             ]
-            
-            # The return dictionary is also preserved
+
             return {
                 "submission": submission,
                 "code_snippets_and_paths": code_snippets_and_paths,
+                "error": None, # Explicitly set error to None on success
             }
         except Exception as e:
-            logger.error(f"Failed to retrieve submission {submission_id}: {e}", exc_info=True)
-            return {"error": f"Failed to retrieve submission: {e}"}
+            logger.error(
+                f"Failed to retrieve submission {submission_id_val}: {e}", exc_info=True
+            )
+            return {
+                "submission": None,
+                "code_snippets_and_paths": [],
+                "error": f"Failed to retrieve submission: {e}",
+            }
 
 
 async def initial_analysis_and_routing_node(state: CoordinatorState) -> Dict[str, Any]:
@@ -159,15 +180,24 @@ async def initial_analysis_and_routing_node(state: CoordinatorState) -> Dict[str
             continue
 
         asvs_analysis = result_state.get("asvs_analysis", {})
-        async with async_session_factory() as db:
-            await crud.update_submission_file_context(
-                db=db,
-                submission_id=submission_id,
-                file_path=file_path,
-                analysis_summary=result_state.get("analysis_summary"),
-                identified_components=result_state.get("identified_components"),
-                asvs_analysis=asvs_analysis,
-            )
+        
+        # Prepare context for update_submission_file_context
+        context_data = {
+            "analysis_summary": result_state.get("analysis_summary"),
+            "identified_components": result_state.get("identified_components"),
+            "asvs_analysis": asvs_analysis,
+        }
+        
+        file_db_id = file_info.get("file_db_id")
+        if file_db_id is None:
+            logger.error(f"[{AGENT_NAME}] Missing file_db_id for file {file_path} in submission {submission_id}. Cannot update context.")
+        else:
+            async with async_session_factory() as db:
+                await crud.update_submission_file_context(
+                    db=db,
+                    file_id=file_db_id, # Use file_db_id (int)
+                    context=context_data, # Pass context as a dict
+                )
 
         for agent, details in asvs_analysis.items():
             if details.get("is_relevant"):
@@ -269,13 +299,53 @@ async def finalize_analysis_node(state: CoordinatorState) -> Dict[str, Any]:
 
     logger.info(f"[{AGENT_NAME}] Finalizing analysis for submission {submission_id}.")
 
-    if findings_to_save:
-        async with async_session_factory() as db:
-            persisted_findings = await crud.save_findings(
-                db, submission_id, findings_to_save
-            )
+    # Retrieve the submission object from state to get its integer PK for save_findings
+    current_submission = state.get("submission")
 
-            finding_map = {
+    if findings_to_save:
+        if current_submission and hasattr(current_submission, 'id'):
+            submission_int_pk = current_submission.id # Assuming .id is the int PK
+            async with async_session_factory() as db:
+                persisted_findings = await crud.save_findings(
+                    db, submission_int_pk, findings_to_save # Use int PK here
+                )
+
+                finding_map = {
+        else:
+            logger.error(
+                f"[{AGENT_NAME}] Cannot save findings for submission {submission_id} "
+                f"because submission object or its integer PK is missing in state."
+            )
+            persisted_findings = [] # Ensure persisted_findings is defined
+
+        # This block for saving fixes should be inside the 'if findings_to_save:' 
+        # and 'if current_submission:' blocks if finding_map depends on persisted_findings
+        if persisted_findings and fixes_to_save: # Check if persisted_findings were actually made
+            logger.info(f"Saving {len(fixes_to_save)} fix suggestions.")
+            async with async_session_factory() as db: # Potentially re-use session if possible
+                for fix_result in fixes_to_save:
+                    pydantic_finding = fix_result.finding
+                    finding_key = (
+                        pydantic_finding.file_path,
+                        pydantic_finding.line_number,
+                        pydantic_finding.cwe,
+                        pydantic_finding.description,
+                    )
+                    finding_id = finding_map.get(finding_key)
+
+                    if finding_id:
+                        await crud.save_fix_suggestion(
+                            db, finding_id, fix_result.suggestion
+                        )
+                    else:
+                        logger.warning(
+                            f"Could not find a matching saved finding for fix: '{fix_result.suggestion.description}'. Fix will not be saved."
+                        )
+
+    async with async_session_factory() as db: # Changed from get_db for consistency
+        await crud.update_submission_status(db, submission_id, "Completed") # submission_id is uuid.UUID
+
+    results["final_status"] = "Analysis complete."
                 (f.file_path, f.line_number, f.cwe, f.description): f.id
                 for f in persisted_findings
             }
