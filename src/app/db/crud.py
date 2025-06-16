@@ -139,6 +139,18 @@ async def add_files_to_submission(
     await db.commit()
 
 
+async def get_submitted_files_for_submission(
+    db: AsyncSession, submission_id: uuid.UUID
+) -> List[db_models.SubmittedFile]:
+    """Retrieves all submitted files for a given submission ID."""
+    result = await db.execute(
+        select(db_models.SubmittedFile).filter(
+            db_models.SubmittedFile.submission_id == submission_id
+        )
+    )
+    return list(result.scalars().all())
+
+
 async def get_submission(
     db: AsyncSession, submission_id: uuid.UUID
 ) -> Optional[db_models.CodeSubmission]:
