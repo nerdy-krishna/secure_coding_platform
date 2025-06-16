@@ -6,7 +6,7 @@ from typing import Type, TypeVar, Optional, NamedTuple, Dict, Any
 
 from pydantic import BaseModel
 from app.db import crud
-from app.db.database import async_session_factory
+from app.db.database import AsyncSessionLocal as async_session_factory # Corrected import
 from app.db.models import LLMConfiguration as DB_LLMConfiguration
 from app.utils import cost_estimation
 from .providers import (
