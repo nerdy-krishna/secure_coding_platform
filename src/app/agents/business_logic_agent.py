@@ -63,7 +63,14 @@ async def assess_vulnerabilities_node(state: SpecializedAgentState) -> Dict[str,
 
     Identify business logic security vulnerabilities and respond with a structured list of findings. If no vulnerabilities are found, return an empty list.
     """
-    llm_client = get_llm_client()
+    llm_config_id = state.get("llm_config_id")
+    if not llm_config_id:
+        return {"error": f"[{AGENT_NAME}] LLM configuration ID not provided."}
+
+    llm_client = await get_llm_client(llm_config_id=llm_config_id)
+    if not llm_client:
+        return {"error": f"[{AGENT_NAME}] Failed to initialize LLM client with config ID {llm_config_id}."}
+
     llm_response: AgentLLMResult = await llm_client.generate_structured_output(
         prompt, AnalysisResult
     )
@@ -107,10 +114,18 @@ async def generate_fixes_node(state: SpecializedAgentState) -> Dict[str, Any]:
         f"[{AGENT_NAME}] Generating fixes for {len(findings)} findings in: {filename}"
     )
 
-    llm_client = get_llm_client()
     all_fixes = []
 
     for finding in findings:
+        llm_config_id = state.get("llm_config_id")
+        if not llm_config_id:
+            logger.warning(f"[{AGENT_NAME}] LLM configuration ID not provided for fix generation for finding: {finding.description}. Skipping this fix.")
+            continue
+
+        fixer_llm_client = await get_llm_client(llm_config_id=llm_config_id)
+        if not fixer_llm_client:
+            logger.warning(f"[{AGENT_NAME}] Failed to initialize LLM client for fix generation with config ID {llm_config_id} for finding: {finding.description}. Skipping this fix.")
+            continue
         prompt = f"""
         A business logic vulnerability has been identified in the following code snippet from file '{filename}'.
 
@@ -128,7 +143,7 @@ async def generate_fixes_node(state: SpecializedAgentState) -> Dict[str, Any]:
         Describe the fix and, if applicable, provide a code snippet illustrating the corrected logic.
         Respond with a structured JSON object.
         """
-        llm_response: AgentLLMResult = await llm_client.generate_structured_output(
+        llm_response: AgentLLMResult = await fixer_llm_client.generate_structured_output(
             prompt, FixSuggestion
         )
 
