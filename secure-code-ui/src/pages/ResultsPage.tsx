@@ -316,7 +316,7 @@ const ResultsPage: React.FC = () => {
     >
       <Button
         icon={<ArrowLeftOutlined />}
-        onClick={() => navigate("/dashboard/history")} // Or navigate(-1) if appropriate
+        onClick={() => navigate("/history")} // Or navigate(-1) if appropriate
         style={{ marginBottom: 20 }}
       >
         Back to Submission History
