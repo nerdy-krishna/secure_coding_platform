@@ -2,7 +2,7 @@
 
 import logging
 import uuid
-from typing import List, Optional, Annotated
+from typing import List, Optional, Annotated, Dict
 
 from fastapi import (
     APIRouter,
