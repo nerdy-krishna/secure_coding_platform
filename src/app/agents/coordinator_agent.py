@@ -149,15 +149,23 @@ async def retrieve_submission_node(state: CoordinatorState) -> Dict[str, Any]:
 
 async def initial_analysis_and_routing_node(state: CoordinatorState) -> Dict[str, Any]:
     submission = state["submission"]
+    if not submission:
+        error_msg = f"[{AGENT_NAME}] Critical error: Submission object is None in 'initial_analysis_and_routing_node'."
+        logger.error(error_msg)
+        # Return a state that includes 'error' to be caught by 'should_continue'
+        # and 'relevant_agents' to match the expected output structure if other paths were taken.
+        return {"error": error_msg, "relevant_agents": {}}
+
     code_snippets_and_paths = state["code_snippets_and_paths"]
     logger.info(
         f"[{AGENT_NAME}] Starting initial analysis for submission {submission.id}"
     )
 
     # Get the ID for the main LLM, selected by the user during submission
-    main_llm_id = submission.main_llm_config_id
+    main_llm_id = submission.main_llm_config_id # Now submission is confirmed not None
     if not main_llm_id:
-        return {"error": "Main LLM configuration ID not found in submission."}
+        # This error implies submission exists but main_llm_config_id is missing.
+        return {"error": "Main LLM configuration ID not found in submission.", "relevant_agents": {}}
 
     relevant_agents: Dict[str, List[str]] = {}
     context_analysis_workflow = build_context_analysis_agent_graph()
@@ -168,7 +176,7 @@ async def initial_analysis_and_routing_node(state: CoordinatorState) -> Dict[str
 
         # Corrected: Prepare the initial state for the sub-agent, including the llm_config_id
         initial_state: ContextAnalysisAgentState = {
-            "submission_id": submission.id,
+            "submission_id": submission.id, # submission is confirmed not None here
             "filename": file_path,
             "code_snippet": file_info["code"],
             "language": file_info["language"],

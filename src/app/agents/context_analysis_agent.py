@@ -1,7 +1,7 @@
 # src/app/agents/context_analysis_agent.py
 import logging
 import uuid
-from typing import Dict, Any, TypedDict, Optional, List
+from typing import Dict, Any, TypedDict, Optional, List, cast # Added cast
 
 from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
@@ -137,7 +137,9 @@ async def analyze_code_context_node(state: ContextAnalysisAgentState) -> Dict[st
         )
         return {"error_message": error_msg}
 
-    parsed_output = llm_response.parsed_output
+    # After the check, llm_response.parsed_output is known to be not None.
+    # Cast to the specific Pydantic model type.
+    parsed_output = cast(FullContextAnalysis, llm_response.parsed_output)
     logger.info(
         f"[{AGENT_NAME}] Context analysis complete for file {filename}."
     )
