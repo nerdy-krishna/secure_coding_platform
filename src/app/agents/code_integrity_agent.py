@@ -1,6 +1,6 @@
 # src/app/agents/code_integrity_agent.py
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, cast
 
 from langgraph.graph import StateGraph, END
 
@@ -13,6 +13,7 @@ from app.agents.schemas import (
     FixSuggestion,
     FixResult,
     SpecializedAgentState,
+    LLMInteraction, # Added import
 )
 
 # Agent-specific configuration
@@ -63,33 +64,45 @@ async def assess_vulnerabilities_node(state: SpecializedAgentState) -> Dict[str,
 
     Identify code integrity vulnerabilities and respond with a structured list of findings. If no vulnerabilities are found, return an empty list.
     """
-    llm_client = get_llm_client()
+    llm_config_id = state.get("llm_config_id")
+    if not llm_config_id:
+        return {"error": f"[{AGENT_NAME}] LLM configuration ID not provided."}
+
+    llm_client = await get_llm_client(llm_config_id=llm_config_id)
+    if not llm_client:
+        return {"error": f"[{AGENT_NAME}] Failed to initialize LLM client with config ID {llm_config_id}."}
+
     llm_response: AgentLLMResult = await llm_client.generate_structured_output(
         prompt, AnalysisResult
     )
 
+    parsed_output_dict = None
+    if llm_response.parsed_output:
+        # Assuming llm_response.parsed_output is a Pydantic model (AnalysisResult instance)
+        parsed_output_dict = llm_response.parsed_output.dict()
+
+    interaction = LLMInteraction(
+        submission_id=submission_id,
+        agent_name=AGENT_NAME,
+        prompt=prompt,
+        raw_response=llm_response.raw_output,
+        parsed_output=parsed_output_dict,
+        error=llm_response.error,
+        file_path=filename,
+        cost=llm_response.cost,
+    )
     async with AsyncSessionLocal() as db:
-        await crud.save_llm_interaction(
-            db,
-            submission_id=submission_id,
-            agent_name=AGENT_NAME,
-            prompt=prompt,
-            raw_response=llm_response.raw_output,
-            parsed_output=llm_response.parsed_output.dict()
-            if llm_response.parsed_output
-            else None,
-            error=llm_response.error,
-            file_path=filename,
-            cost=llm_response.cost,
-        )
+        await crud.save_llm_interaction(db, interaction_data=interaction)
 
     if llm_response.error or not llm_response.parsed_output:
         return {"error": f"LLM failed to produce valid analysis: {llm_response.error}"}
 
-    for finding in llm_response.parsed_output.findings:
+    # Cast parsed_output to AnalysisResult for Pylance
+    analysis_result = cast(AnalysisResult, llm_response.parsed_output)
+    for finding in analysis_result.findings:
         finding.file_path = filename
 
-    return {"findings": llm_response.parsed_output.findings}
+    return {"findings": analysis_result.findings}
 
 
 async def generate_fixes_node(state: SpecializedAgentState) -> Dict[str, Any]:
@@ -107,10 +120,18 @@ async def generate_fixes_node(state: SpecializedAgentState) -> Dict[str, Any]:
         f"[{AGENT_NAME}] Generating fixes for {len(findings)} findings in: {filename}"
     )
 
-    llm_client = get_llm_client()
     all_fixes = []
 
     for finding in findings:
+        llm_config_id = state.get("llm_config_id")
+        if not llm_config_id:
+            logger.warning(f"[{AGENT_NAME}] LLM configuration ID not provided for fix generation for finding: {finding.description}. Skipping this fix.")
+            continue
+
+        fixer_llm_client = await get_llm_client(llm_config_id=llm_config_id)
+        if not fixer_llm_client:
+            logger.warning(f"[{AGENT_NAME}] Failed to initialize LLM client for fix generation with config ID {llm_config_id} for finding: {finding.description}. Skipping this fix.")
+            continue
         prompt = f"""
         A security vulnerability has been identified in the following code snippet from file '{filename}'.
 
@@ -127,28 +148,33 @@ async def generate_fixes_node(state: SpecializedAgentState) -> Dict[str, Any]:
         Your task is to provide a secure code replacement for the vulnerable part. For insecure deserialization, this may involve using safer serialization formats or adding strict type validation.
         Respond with a structured JSON object containing a brief description of the fix and the secure code snippet.
         """
-        llm_response: AgentLLMResult = await llm_client.generate_structured_output(
+        llm_response: AgentLLMResult = await fixer_llm_client.generate_structured_output(
             prompt, FixSuggestion
         )
 
+        parsed_output_dict = None
+        if llm_response.parsed_output:
+            # Assuming llm_response.parsed_output is a Pydantic model (FixSuggestion instance)
+            parsed_output_dict = llm_response.parsed_output.dict()
+
+        interaction = LLMInteraction(
+            submission_id=submission_id,
+            agent_name=f"{AGENT_NAME}-Fixer",
+            prompt=prompt,
+            raw_response=llm_response.raw_output,
+            parsed_output=parsed_output_dict,
+            error=llm_response.error,
+            file_path=filename,
+            cost=llm_response.cost,
+        )
         async with AsyncSessionLocal() as db:
-            await crud.save_llm_interaction(
-                db,
-                submission_id=submission_id,
-                agent_name=f"{AGENT_NAME}-Fixer",
-                prompt=prompt,
-                raw_response=llm_response.raw_output,
-                parsed_output=llm_response.parsed_output.dict()
-                if llm_response.parsed_output
-                else None,
-                error=llm_response.error,
-                file_path=filename,
-                cost=llm_response.cost,
-            )
+            await crud.save_llm_interaction(db, interaction_data=interaction)
 
         if not llm_response.error and llm_response.parsed_output:
+            # Cast parsed_output to FixSuggestion for Pylance
+            fix_suggestion = cast(FixSuggestion, llm_response.parsed_output)
             all_fixes.append(
-                FixResult(finding=finding, suggestion=llm_response.parsed_output)
+                FixResult(finding=finding, suggestion=fix_suggestion)
             )
 
     return {"fixes": all_fixes}

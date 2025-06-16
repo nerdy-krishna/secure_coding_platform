@@ -1,6 +1,7 @@
 # src/app/agents/context_analysis_agent.py
 import logging
-from typing import Dict, Any, TypedDict, Optional, List
+import uuid
+from typing import Dict, Any, TypedDict, Optional, List, cast # Added cast
 
 from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
@@ -73,10 +74,11 @@ class FullContextAnalysis(BaseModel):
 class ContextAnalysisAgentState(TypedDict):
     """
     Defines the state for the Context Analysis Agent's workflow.
-    This is the state that will be passed between the nodes of its graph.
     """
-
-    submission_id: int
+    # Added: A field to receive the ID of the LLM config to use
+    llm_config_id: uuid.UUID
+    
+    submission_id: uuid.UUID
     filename: str
     code_snippet: str
     language: str
@@ -91,13 +93,18 @@ async def analyze_code_context_node(state: ContextAnalysisAgentState) -> Dict[st
     Analyzes the code snippet to provide a summary, identify components, and determine
     which specialized security agents are relevant for a deeper scan.
     """
-    logger.info(
-        f"[{AGENT_NAME}] Starting context analysis for submission ID: {state['submission_id']}, file: {state['filename']}"
-    )
+    filename = state['filename']
+    llm_config_id = state['llm_config_id'] # Get the config ID from the state
+    logger.info(f"[{AGENT_NAME}] Starting context analysis for file: {filename}")
+    
+    # Corrected: Get a configured LLM client using the new factory function
+    llm_client = await get_llm_client(llm_config_id)
+    if not llm_client:
+        error_msg = f"Failed to initialize LLM Client for config ID {llm_config_id}."
+        logger.error(f"[{AGENT_NAME}] {error_msg}")
+        return {"error_message": error_msg}
+
     code_snippet = state["code_snippet"]
-
-    llm_client = get_llm_client()
-
     prompt = f"""
     You are an expert security architect. Your task is to analyze the provided code snippet.
     
@@ -126,19 +133,21 @@ async def analyze_code_context_node(state: ContextAnalysisAgentState) -> Dict[st
             or "Failed to get a valid structured response from the LLM."
         )
         logger.error(
-            f"[{AGENT_NAME}] Failed to get full context analysis from LLM for file {state['filename']}: {error_msg}"
+            f"[{AGENT_NAME}] Failed to get full context analysis from LLM for file {filename}: {error_msg}"
         )
         return {"error_message": error_msg}
 
-    parsed_output = llm_response.parsed_output
+    # After the check, llm_response.parsed_output is known to be not None.
+    # Cast to the specific Pydantic model type.
+    parsed_output = cast(FullContextAnalysis, llm_response.parsed_output)
     logger.info(
-        f"[{AGENT_NAME}] Context analysis complete for file {state['filename']}."
+        f"[{AGENT_NAME}] Context analysis complete for file {filename}."
     )
 
     return {
         "analysis_summary": parsed_output.analysis_summary,
         "identified_components": parsed_output.identified_components,
-        "asvs_analysis": parsed_output.asvs_analysis.dict(),  # Convert Pydantic model to dict
+        "asvs_analysis": parsed_output.asvs_analysis.model_dump(), # Use model_dump() for Pydantic v2
         "error_message": None,
     }
 

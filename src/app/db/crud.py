@@ -1,8 +1,6 @@
-# src/app/db/crud.py
-
 import logging
 import uuid
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,14 +8,13 @@ from sqlalchemy.orm import selectinload
 
 # Correctly import all models from a single source of truth
 from app.db import models as db_models
-from app.auth.models import User
 from app.api import models as api_models
 from app.agents import schemas as agent_schemas
 from app.utils.encryption import FernetEncrypt
 
 logger = logging.getLogger(__name__)
 
-# === LLMConfiguration CRUD Functions (NEW) ===
+# === LLMConfiguration CRUD Functions ===
 
 
 async def get_llm_config(
@@ -54,7 +51,8 @@ async def get_llm_configs(
         .offset(skip)
         .limit(limit)
     )
-    return result.scalars().all()
+    # Corrected: Explicitly convert the Sequence to a List
+    return list(result.scalars().all())
 
 
 async def create_llm_config(
@@ -88,20 +86,19 @@ async def delete_llm_config(
 # === User CRUD (Corrected) ===
 
 
-async def get_user_by_email(db: AsyncSession, email: str) -> Optional[User]:
+async def get_user_by_email(db: AsyncSession, email: str) -> Optional[db_models.User]:
     """Retrieves a user by their email address."""
-    result = await db.execute(select(User).filter(User.email == email))
+    result = await db.execute(select(db_models.User).filter(db_models.User.email == email))
     return result.scalars().first()
 
-
-# === Submission & Analysis CRUD (Rewritten & Corrected) ===
+# === Submission & Analysis CRUD ===
 
 
 async def create_submission(
     db: AsyncSession,
-    user_id: uuid.UUID,
+    user_id: int,
     repo_url: Optional[str] = None,
-    files: Optional[List[Dict]] = None,
+    files: Optional[List[Dict[str, Any]]] = None,
     frameworks: Optional[List[str]] = None,
     main_llm_config_id: Optional[uuid.UUID] = None,
     specialized_llm_config_id: Optional[uuid.UUID] = None,
@@ -126,7 +123,7 @@ async def create_submission(
 
 
 async def add_files_to_submission(
-    db: AsyncSession, submission_id: uuid.UUID, files: List[Dict[str, str]]
+    db: AsyncSession, submission_id: uuid.UUID, files: List[Dict[str, Any]]
 ):
     """Adds multiple files to an existing submission."""
     db_files = [
@@ -171,12 +168,22 @@ async def update_submission_status(
     await db.execute(stmt)
     await db.commit()
 
+async def update_submission_file_context(
+    db: AsyncSession, file_id: int, context: Dict[str, Any]
+):
+    """Updates the analysis context for a single file."""
+    stmt = (
+        update(db_models.SubmittedFile)
+        .where(db_models.SubmittedFile.id == file_id)
+        .values(asvs_analysis=context) # Assuming context is saved to asvs_analysis
+    )
+    await db.execute(stmt)
+    await db.commit()
 
 async def save_llm_interaction(
     db: AsyncSession, interaction_data: agent_schemas.LLMInteraction
 ):
     """Saves a record of an interaction with an LLM."""
-    # This now correctly uses the pydantic model directly
     db_interaction = db_models.LLMInteraction(**interaction_data.model_dump())
     db.add(db_interaction)
     await db.commit()
@@ -184,7 +191,7 @@ async def save_llm_interaction(
 
 async def save_findings(
     db: AsyncSession,
-    submission_id: uuid.UUID,
+    submission_id: uuid.UUID,  # Changed from int
     findings: List[agent_schemas.VulnerabilityFinding],
 ) -> List[db_models.VulnerabilityFinding]:
     """Saves a list of vulnerability findings and returns the persisted objects."""
@@ -206,7 +213,7 @@ async def save_findings(
         for finding in findings
     ]
     db.add_all(db_findings)
-    await db.flush()  # Use flush to get IDs before commit
+    await db.flush()
     for finding in db_findings:
         await db.refresh(finding)
     await db.commit()
@@ -224,3 +231,12 @@ async def save_fix_suggestion(
     )
     db.add(fix)
     await db.commit()
+
+async def get_submission_history(db: AsyncSession, user_id: int) -> List[db_models.CodeSubmission]:
+    """Retrieves a list of all submissions for a specific user."""
+    result = await db.execute(
+        select(db_models.CodeSubmission)
+        .filter(db_models.CodeSubmission.user_id == user_id)
+        .order_by(db_models.CodeSubmission.submitted_at.desc())
+    )
+    return list(result.scalars().all())
