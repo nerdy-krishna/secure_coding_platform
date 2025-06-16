@@ -148,11 +148,16 @@ async def retrieve_submission_node(state: CoordinatorState) -> Dict[str, Any]:
 
 
 async def initial_analysis_and_routing_node(state: CoordinatorState) -> Dict[str, Any]:
-    submission_id = state["submission_id"]
+    submission = state["submission"]
     code_snippets_and_paths = state["code_snippets_and_paths"]
     logger.info(
-        f"[{AGENT_NAME}] Starting initial analysis for submission {submission_id}"
+        f"[{AGENT_NAME}] Starting initial analysis for submission {submission.id}"
     )
+
+    # Get the ID for the main LLM, selected by the user during submission
+    main_llm_id = submission.main_llm_config_id
+    if not main_llm_id:
+        return {"error": "Main LLM configuration ID not found in submission."}
 
     relevant_agents: Dict[str, List[str]] = {}
     context_analysis_workflow = build_context_analysis_agent_graph()
@@ -161,11 +166,13 @@ async def initial_analysis_and_routing_node(state: CoordinatorState) -> Dict[str
         file_path = file_info["path"]
         logger.info(f"[{AGENT_NAME}] Analyzing context for file: {file_path}")
 
+        # Corrected: Prepare the initial state for the sub-agent, including the llm_config_id
         initial_state: ContextAnalysisAgentState = {
-            "submission_id": submission_id,
+            "submission_id": submission.id,
             "filename": file_path,
             "code_snippet": file_info["code"],
             "language": file_info["language"],
+            "llm_config_id": main_llm_id,  # <-- Pass the main LLM config ID
             "analysis_summary": None,
             "identified_components": None,
             "asvs_analysis": None,
@@ -178,27 +185,22 @@ async def initial_analysis_and_routing_node(state: CoordinatorState) -> Dict[str
                 f"Context analysis failed for {file_path}: {result_state['error_message']}"
             )
             continue
-
-        asvs_analysis = result_state.get("asvs_analysis", {})
         
-        # Prepare context for update_submission_file_context
+        # ... (the rest of your logic for processing the results remains the same)
+        asvs_analysis = result_state.get("asvs_analysis", {})
         context_data = {
             "analysis_summary": result_state.get("analysis_summary"),
             "identified_components": result_state.get("identified_components"),
             "asvs_analysis": asvs_analysis,
         }
-        
         file_db_id = file_info.get("file_db_id")
-        if file_db_id is None:
-            logger.error(f"[{AGENT_NAME}] Missing file_db_id for file {file_path} in submission {submission_id}. Cannot update context.")
-        else:
+        if file_db_id:
             async with async_session_factory() as db:
                 await crud.update_submission_file_context(
                     db=db,
-                    file_id=file_db_id, # Use file_db_id (int)
-                    context=context_data, # Pass context as a dict
+                    file_id=file_db_id,
+                    context=context_data,
                 )
-
         for agent, details in asvs_analysis.items():
             if details.get("is_relevant"):
                 if agent not in relevant_agents:
