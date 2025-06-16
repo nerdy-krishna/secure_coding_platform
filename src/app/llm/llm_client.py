@@ -102,9 +102,9 @@ class LLMClient:
         self.model_name_for_cost = llm_config.model_name
 
         if self.provider_name == "openai":
-            self.chat_model = ChatOpenAI(api_key=decrypted_api_key, model_name=llm_config.model_name) # Changed 'model' to 'model_name'
+            self.chat_model = ChatOpenAI(api_key=decrypted_api_key, model=llm_config.model_name)
         elif self.provider_name == "anthropic":
-            self.chat_model = ChatAnthropic(api_key=decrypted_api_key, model=llm_config.model_name)
+            self.chat_model = ChatAnthropic(api_key=decrypted_api_key, model_name=llm_config.model_name, timeout=120, stop=None)
         elif self.provider_name == "google":
             self.chat_model = ChatGoogleGenerativeAI(google_api_key=decrypted_api_key, model=llm_config.model_name)
         else:
