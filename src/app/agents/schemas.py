@@ -61,7 +61,7 @@ class FixResult(BaseModel):
 class SpecializedAgentState(TypedDict):
     """Represents the state of any specialized agent's workflow."""
 
-    submission_id: int
+    submission_id: uuid.UUID  # Changed from int
     filename: str
     code_snippet: str
     findings: List[VulnerabilityFinding]

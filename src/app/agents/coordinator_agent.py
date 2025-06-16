@@ -58,7 +58,7 @@ from app.agents.validation_agent import (
     build_specialized_agent_graph as build_validation_agent,
 )
 from app.db import crud
-from app.db.database import async_session_factory
+from app.db.database import AsyncSessionLocal as async_session_factory # Corrected import alias
 from app.db.models import CodeSubmission
 
 logger = logging.getLogger(__name__)
@@ -277,13 +277,17 @@ async def run_specialized_agents_node(state: CoordinatorState) -> Dict[str, Any]
             logger.error(
                 f"[{AGENT_NAME}] An agent task failed: {result}", exc_info=result
             )
-        elif result.get("error"):
-            logger.error(
-                f"[{AGENT_NAME}] An agent task completed with an error: {result['error']}"
-            )
+        elif isinstance(result, dict): # Check if result is a dictionary
+            if result.get("error"):
+                logger.error(
+                    f"[{AGENT_NAME}] An agent task completed with an error: {result.get('error')}" # Use .get() for safety
+                )
+            else:
+                all_findings.extend(result.get("findings", []))
+                all_fixes.extend(result.get("fixes", []))
         else:
-            all_findings.extend(result.get("findings", []))
-            all_fixes.extend(result.get("fixes", []))
+            # Handle unexpected result types, though gather with return_exceptions=True should yield dicts or exceptions
+            logger.error(f"[{AGENT_NAME}] Unexpected result type from agent task: {type(result)} - {result!r}")
 
     logger.info(
         f"[{AGENT_NAME}] Collated {len(all_findings)} findings and {len(all_fixes)} fixes from all agents."

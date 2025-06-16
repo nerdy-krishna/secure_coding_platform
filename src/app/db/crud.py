@@ -191,7 +191,7 @@ async def save_llm_interaction(
 
 async def save_findings(
     db: AsyncSession,
-    submission_id: int,
+    submission_id: uuid.UUID,  # Changed from int
     findings: List[agent_schemas.VulnerabilityFinding],
 ) -> List[db_models.VulnerabilityFinding]:
     """Saves a list of vulnerability findings and returns the persisted objects."""
