@@ -293,86 +293,70 @@ async def run_specialized_agents_node(state: CoordinatorState) -> Dict[str, Any]
 
 async def finalize_analysis_node(state: CoordinatorState) -> Dict[str, Any]:
     submission_id = state["submission_id"]
-    results = state.get("results", {})
+    # Ensure results dict exists, defaulting to an empty one if not provided by previous nodes
+    results = state.get("results", {}).copy() # Use a copy to avoid modifying state directly if not intended
     findings_to_save = results.get("findings", [])
     fixes_to_save = results.get("fixes", [])
 
     logger.info(f"[{AGENT_NAME}] Finalizing analysis for submission {submission_id}.")
 
-    # Retrieve the submission object from state to get its integer PK for save_findings
     current_submission = state.get("submission")
 
     if findings_to_save:
         if current_submission and hasattr(current_submission, 'id'):
-            submission_int_pk = current_submission.id # Assuming .id is the int PK
-            async with async_session_factory() as db:
+            submission_int_pk = current_submission.id  # Assuming .id is the int PK
+            async with async_session_factory() as db:  # Single session for findings and fixes
+                # Save Findings
                 persisted_findings = await crud.save_findings(
-                    db, submission_int_pk, findings_to_save # Use int PK here
+                    db, submission_int_pk, findings_to_save
                 )
+                logger.info(f"[{AGENT_NAME}] Saved {len(persisted_findings)} findings for submission {submission_id}.")
 
                 finding_map = {
+                    (f.file_path, f.line_number, f.cwe, f.description): f.id
+                    for f in persisted_findings
+                }
+
+                # Save Fixes (if any persisted_findings and fixes_to_save)
+                if persisted_findings and fixes_to_save:
+                    logger.info(f"[{AGENT_NAME}] Saving {len(fixes_to_save)} fix suggestions for submission {submission_id}.")
+                    for fix_result in fixes_to_save:
+                        pydantic_finding = fix_result.finding
+                        finding_key = (
+                            pydantic_finding.file_path,
+                            pydantic_finding.line_number,
+                            pydantic_finding.cwe,
+                            pydantic_finding.description,
+                        )
+                        finding_id = finding_map.get(finding_key)
+
+                        if finding_id:
+                            await crud.save_fix_suggestion(
+                                db, finding_id, fix_result.suggestion
+                            )
+                        else:
+                            logger.warning(
+                                f"[{AGENT_NAME}] Could not find a matching saved finding for fix: '{fix_result.suggestion.description}' in submission {submission_id}. Fix will not be saved."
+                            )
+                elif fixes_to_save:  # Log if fixes exist but no findings were persisted (e.g., DB error during save_findings)
+                     logger.warning(
+                        f"[{AGENT_NAME}] Fixes present but no findings were persisted for submission {submission_id} (persisted_findings count: {len(persisted_findings)}). Fixes will not be saved."
+                    )
         else:
             logger.error(
                 f"[{AGENT_NAME}] Cannot save findings for submission {submission_id} "
-                f"because submission object or its integer PK is missing in state."
+                f"because submission object or its integer PK is missing in state. Fixes will also be skipped."
             )
-            persisted_findings = [] # Ensure persisted_findings is defined
+    elif fixes_to_save:  # Log if fixes exist but no findings were generated/requested to save
+        logger.warning(
+            f"[{AGENT_NAME}] No findings to save for submission {submission_id}, but {len(fixes_to_save)} fixes were generated. "
+            "Fixes will not be saved as they require associated findings."
+        )
 
-        # This block for saving fixes should be inside the 'if findings_to_save:' 
-        # and 'if current_submission:' blocks if finding_map depends on persisted_findings
-        if persisted_findings and fixes_to_save: # Check if persisted_findings were actually made
-            logger.info(f"Saving {len(fixes_to_save)} fix suggestions.")
-            async with async_session_factory() as db: # Potentially re-use session if possible
-                for fix_result in fixes_to_save:
-                    pydantic_finding = fix_result.finding
-                    finding_key = (
-                        pydantic_finding.file_path,
-                        pydantic_finding.line_number,
-                        pydantic_finding.cwe,
-                        pydantic_finding.description,
-                    )
-                    finding_id = finding_map.get(finding_key)
-
-                    if finding_id:
-                        await crud.save_fix_suggestion(
-                            db, finding_id, fix_result.suggestion
-                        )
-                    else:
-                        logger.warning(
-                            f"Could not find a matching saved finding for fix: '{fix_result.suggestion.description}'. Fix will not be saved."
-                        )
-
-    async with async_session_factory() as db: # Changed from get_db for consistency
-        await crud.update_submission_status(db, submission_id, "Completed") # submission_id is uuid.UUID
-
-    results["final_status"] = "Analysis complete."
-                (f.file_path, f.line_number, f.cwe, f.description): f.id
-                for f in persisted_findings
-            }
-
-            if fixes_to_save:
-                logger.info(f"Saving {len(fixes_to_save)} fix suggestions.")
-                for fix_result in fixes_to_save:
-                    pydantic_finding = fix_result.finding
-                    finding_key = (
-                        pydantic_finding.file_path,
-                        pydantic_finding.line_number,
-                        pydantic_finding.cwe,
-                        pydantic_finding.description,
-                    )
-                    finding_id = finding_map.get(finding_key)
-
-                    if finding_id:
-                        await crud.save_fix_suggestion(
-                            db, finding_id, fix_result.suggestion
-                        )
-                    else:
-                        logger.warning(
-                            f"Could not find a matching saved finding for fix: '{fix_result.suggestion.description}'. Fix will not be saved."
-                        )
-
-    async with get_db() as db:
+    # Update submission status
+    async with async_session_factory() as db:
         await crud.update_submission_status(db, submission_id, "Completed")
+    logger.info(f"[{AGENT_NAME}] Updated status to 'Completed' for submission {submission_id}.")
 
     results["final_status"] = "Analysis complete."
     logger.info(
