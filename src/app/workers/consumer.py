@@ -6,7 +6,7 @@ import asyncio
 import json
 import threading
 import time  # For sleep in retry logic and initial loop spin-up
-from typing import Any, Callable, Dict, Optional, TypedDict
+from typing import Any, Callable, Dict, Optional, TypedDict, cast
 
 from dotenv import load_dotenv
 
@@ -14,8 +14,10 @@ from dotenv import load_dotenv
 from app.graphs.worker_graph import worker_workflow
 
 # Ensure necessary imports for type hints used in this file
-from pika.channel import Channel
-from pika.spec import Basic  # For Basic.Deliver type hint
+from pika.adapters.blocking_connection import BlockingChannel # For Pika channel type
+from pika.channel import Channel # Original import, BlockingChannel is more specific here
+from pika.spec import BasicProperties, Deliver # For Pika message properties and delivery info
+from pika.exceptions import AMQPConnectionError # For specific Pika exception handling
 
 logging.basicConfig(
     level=logging.INFO,  # Lower to DEBUG for more verbose output from this module
@@ -44,7 +46,7 @@ CODE_QUEUE = os.getenv("CODE_QUEUE", "code_analysis_queue")
 _async_loop: Optional[asyncio.AbstractEventLoop] = None
 _event_loop_thread: Optional[threading.Thread] = None
 _pika_connection: Optional[pika.BlockingConnection] = None
-_pika_channel: Optional[Channel] = None  # Explicitly pika.channel.Channel
+_pika_channel: Optional[BlockingChannel] = None # Changed to BlockingChannel
 
 _stop_event = threading.Event()  # For signaling threads to stop
 
@@ -76,7 +78,17 @@ async def run_graph_task_wrapper(initial_state: WorkerGraphState, delivery_tag: 
         logger.info(
             f"ASYNC WRAPPER: Invoking worker_workflow for SID: {submission_id}..."
         )
-        final_graph_state = await worker_workflow.ainvoke(initial_state)
+        # Cast the result to the expected type
+        invoked_state = await worker_workflow.ainvoke(initial_state)
+        if isinstance(invoked_state, dict):
+            final_graph_state = cast(WorkerGraphState, invoked_state)
+        elif invoked_state is None:
+            final_graph_state = None
+        else:
+            # Handle unexpected type from ainvoke if necessary, or assume it's WorkerGraphState | None
+            logger.error(f"ASYNC WRAPPER: Unexpected type from worker_workflow.ainvoke: {type(invoked_state)}")
+            final_graph_state = None # Or handle as an error state
+
         logger.info(
             f"ASYNC WRAPPER: worker_workflow completed for SID: {submission_id}."
         )
@@ -108,8 +120,11 @@ async def run_graph_task_wrapper(initial_state: WorkerGraphState, delivery_tag: 
             )
             success = False
             # Create a minimal final_graph_state for error reporting to Pika finalize
-            final_graph_state = initial_state.copy() if initial_state else {"submission_id": submission_id} # Ensure it's a dict
-            final_graph_state["error"] = "Worker workflow returned None" # Use 'error' key from WorkerGraphState
+            final_graph_state: WorkerGraphState = {
+                "submission_id": submission_id, # submission_id from the current scope
+                "result": None,
+                "error": "Worker workflow returned None",
+            }
 
     except Exception as e:
         logger.error(
@@ -121,8 +136,15 @@ async def run_graph_task_wrapper(initial_state: WorkerGraphState, delivery_tag: 
         if (
             final_graph_state is None
         ):  # If error happened before final_graph_state was set
-            final_graph_state = initial_state.copy() if initial_state else {"submission_id": submission_id}
-        final_graph_state["error"] = str(e)  # Use 'error' key from WorkerGraphState
+            # Create a new WorkerGraphState for error reporting
+            final_graph_state: WorkerGraphState = {
+                "submission_id": submission_id, # submission_id from the current scope
+                "result": None,
+                "error": str(e),
+            }
+        else: # final_graph_state exists, just update the error
+            final_graph_state["error"] = str(e)
+
 
     # Safely schedule Pika operations on Pika's I/O loop thread
     if (
@@ -191,10 +213,10 @@ def schedule_task_on_async_loop(target_coroutine_func: Callable, *args, **kwargs
         )
 
 
-def pika_message_callback(
-    ch: Channel,
-    method: Basic.Deliver,
-    properties: pika.spec.BasicProperties,
+def pika_message_callback( # pyright: ignore[reportGeneralTypeIssues]
+    ch: BlockingChannel, # Changed from Channel
+    method: Deliver, # Changed from Basic.Deliver
+    properties: BasicProperties, # Changed from pika.spec.BasicProperties
     body: bytes,
 ):
     """Pika callback for received messages."""
@@ -370,7 +392,7 @@ def start_worker_consumer():
             )
             _pika_channel.start_consuming()  # This blocks until connection closes, error, or stop_consuming
 
-        except pika.exceptions.AMQPConnectionError as conn_err:
+        except AMQPConnectionError as conn_err: # Changed from pika.exceptions.AMQPConnectionError
             logger.error(f"WORKER: RabbitMQ connection error: {conn_err}.")
             if _stop_event.is_set():
                 break
