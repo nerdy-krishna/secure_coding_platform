@@ -75,8 +75,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
     setError(null);
     try {
       const response: TokenResponse = await loginUser(credentials);
-      console.log("1. [AuthProvider] Token received from server:", response.access_token);
-      console.log("2. [AuthProvider] Saving token to localStorage with key 'accessToken'");
       localStorage.setItem("accessToken", response.access_token);
       setAccessToken(response.access_token);
     } catch (err: unknown) {

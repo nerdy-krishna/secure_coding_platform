@@ -1,8 +1,8 @@
 # src/app/api/models.py
 
-import datetime
+from datetime import datetime
 import uuid
-from pydantic import BaseModel, Field
+from pydantic import UUID4, BaseModel, Field
 from typing import List, Optional, Dict
 
 # === LLM Configuration Schemas (NEW) ===
@@ -105,8 +105,8 @@ class VulnerabilityFindingResponse(BaseModel):
 class SubmissionResultResponse(BaseModel):
     id: uuid.UUID  # Corrected from int to uuid
     status: str
-    submitted_at: datetime.datetime
-    completed_at: Optional[datetime.datetime] = None
+    submitted_at: datetime
+    completed_at: Optional[datetime] = None
     findings: List[VulnerabilityFindingResponse] = []
 
     class Config:
@@ -116,8 +116,8 @@ class SubmissionResultResponse(BaseModel):
 class SubmissionStatus(BaseModel):
     submission_id: uuid.UUID  # Corrected from int to uuid
     status: str
-    submitted_at: Optional[datetime.datetime] = None
-    completed_at: Optional[datetime.datetime] = None
+    submitted_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
 
 
 class SecurityQueryResponse(BaseModel):
@@ -126,8 +126,8 @@ class SecurityQueryResponse(BaseModel):
     language: str
     description: Optional[str]
     status: str
-    created_at: datetime.datetime
-    updated_at: datetime.datetime
+    created_at: datetime
+    updated_at: datetime
 
     class Config:
         from_attributes = True
@@ -136,7 +136,7 @@ class SecurityQueryResponse(BaseModel):
 class LLMInteractionResponse(BaseModel):
     id: int
     agent_name: str
-    timestamp: datetime.datetime
+    timestamp: datetime
     prompt_title: Optional[str]
     status: str
     interaction_context: Optional[Dict]
@@ -151,3 +151,12 @@ class DashboardStats(BaseModel):
     completed_submissions: int
     total_findings: int
     high_severity_findings: int
+
+class SubmissionHistoryItem(BaseModel):
+    id: UUID4
+    status: str
+    submitted_at: datetime
+    completed_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True

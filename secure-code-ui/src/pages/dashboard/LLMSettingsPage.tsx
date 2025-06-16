@@ -2,18 +2,18 @@
 import { DeleteOutlined, PlusOutlined } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-    Button,
-    Card,
-    Form,
-    Input,
-    message,
-    Popconfirm,
-    Select,
-    Space,
-    Table,
-    Tag,
-    Typography,
-    type TableProps, // <-- FIX 1: Import TableProps for explicit typing
+  Button,
+  Card,
+  Form,
+  Input,
+  message,
+  Popconfirm,
+  Select,
+  Space,
+  Table,
+  Tag,
+  Typography,
+  type TableProps, // <-- FIX 1: Import TableProps for explicit typing
 } from "antd";
 import React from "react";
 import { llmConfigService } from "../../services/llmConfigService";

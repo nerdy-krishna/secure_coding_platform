@@ -1,76 +1,58 @@
-# src/app/utils/rabbitmq_utils.py
 import pika
-import os
 import logging
-from dotenv import load_dotenv
+import json
+
+from app.core.config import settings
+from pika.exceptions import AMQPConnectionError
 
 logger = logging.getLogger(__name__)
-load_dotenv()  # Load environment variables from .env
 
-# RabbitMQ Configuration from environment variables
-RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "rabbitmq")
-RABBITMQ_PORT = os.getenv(
-    "RABBITMQ_PORT_DOCKER", "5672"
-)  # Port used by services within Docker network
-RABBITMQ_USER = os.getenv(
-    "RABBITMQ_DEFAULT_USER", "devuser_scp"
-)  # Ensure consistency with .env
-RABBITMQ_PASS = os.getenv(
-    "RABBITMQ_DEFAULT_PASS", "YourStrongRabbitPassword!"
-)  # Ensure consistency with .env
-
-# Queue name from environment variable, defaulting if not set
-# This was referenced in api_graph.py, so ensure it's defined.
-CODE_QUEUE = os.getenv("CODE_QUEUE", "code_analysis_queue")
-
-
-def publish_to_rabbitmq(message_body_str: str):  # Renamed for clarity
+def publish_submission(submission_id: str):
     """
-    Publishes a message (string) to the specified RabbitMQ queue (CODE_QUEUE).
-    Handles connection and channel setup/teardown.
-    This is a synchronous function; use with run_in_threadpool in async contexts.
+    Publishes a submission ID to the specified RabbitMQ queue.
+    This is a synchronous, blocking function.
     """
     connection = None
+    queue_name = settings.CODE_QUEUE
+    
+    if not settings.RABBITMQ_URL:
+        logger.error("RABBITMQ_URL is not configured in settings. Cannot publish message.")
+        raise ValueError("RABBITMQ_URL is not configured.")
+
     logger.debug(
-        f"Attempting to publish to RabbitMQ. Host: {RABBITMQ_HOST}, Port: {RABBITMQ_PORT}, Queue: {CODE_QUEUE}"
+        f"Attempting to publish to RabbitMQ queue '{queue_name}'."
     )
     try:
-        credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASS)
-        parameters = pika.ConnectionParameters(
-            host=RABBITMQ_HOST,
-            port=int(RABBITMQ_PORT),  # Ensure port is integer
-            credentials=credentials,
-            heartbeat=600,  # Keep connection alive
-            blocked_connection_timeout=300,  # Timeout for blocked connections
-        )
+        parameters = pika.URLParameters(settings.RABBITMQ_URL)
         connection = pika.BlockingConnection(parameters)
         channel = connection.channel()
 
-        # Declare the queue as durable (it will survive a broker restart)
-        channel.queue_declare(queue=CODE_QUEUE, durable=True)
+        channel.queue_declare(queue=queue_name, durable=True)
+
+        message_body = json.dumps({"submission_id": submission_id})
 
         channel.basic_publish(
-            exchange="",  # Default exchange
-            routing_key=CODE_QUEUE,  # Queue name
-            body=message_body_str.encode("utf-8"),  # Ensure message is bytes
+            exchange="",
+            routing_key=queue_name,
+            body=message_body.encode("utf-8"),
             properties=pika.BasicProperties(
-                delivery_mode=pika.spec.PERSISTENT_DELIVERY_MODE,  # Make message persistent
+                delivery_mode=2,
             ),
         )
         logger.info(
-            f"Successfully sent message to RabbitMQ queue '{CODE_QUEUE}': '{message_body_str[:50]}...'"
+            f"Successfully sent message to RabbitMQ queue '{queue_name}': '{submission_id}'"
         )
-    except pika.exceptions.AMQPConnectionError as e:
+    except AMQPConnectionError as e:
         logger.error(
-            f"Failed to connect to RabbitMQ at {RABBITMQ_HOST}:{RABBITMQ_PORT}. Error: {e}",
+            f"Failed to connect to RabbitMQ using URL from settings. Error: {e}",
             exc_info=True,
         )
-        raise  # Re-raise the exception to be handled by the caller
+        raise
     except Exception as e:
         logger.error(
             f"An unexpected error occurred during RabbitMQ publish: {e}", exc_info=True
         )
-        raise  # Re-raise
+        raise
     finally:
         if connection and connection.is_open:
             try:
