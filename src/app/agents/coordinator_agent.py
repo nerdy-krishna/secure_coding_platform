@@ -113,9 +113,9 @@ async def retrieve_submission_node(state: CoordinatorState) -> Dict[str, Any]:
                 }
 
             # Access submitted files through the relationship on the Submission object
-            # Assuming CodeSubmission model has a relationship 'submitted_files'
+            # The relationship is named 'files' in the CodeSubmission model.
             # and each item has 'id' (int PK), 'file_path', 'content', 'language'
-            submitted_files_list = submission.submitted_files
+            submitted_files_list = submission.files # Changed from submission.submitted_files
             if submitted_files_list is None: # Handle case where relationship might not be loaded or is empty
                 logger.warning(f"[{AGENT_NAME}] No submitted files found for submission {submission_id_val}.")
                 submitted_files_list = []
