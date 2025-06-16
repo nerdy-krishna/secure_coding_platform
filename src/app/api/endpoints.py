@@ -147,7 +147,7 @@ async def get_submission_status(
     return submission
 
 
-@router.get("/results/{submission_id}", response_model=api_models.SubmissionResultResponse)
+@router.get("/result/{submission_id}", response_model=api_models.SubmissionResultResponse) # Changed from /results to /result
 async def get_submission_results(
     submission_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 ):
