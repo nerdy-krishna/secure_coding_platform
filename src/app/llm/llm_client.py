@@ -53,7 +53,7 @@ class LLMClient:
         if provider_name == "openai":
             self.chat_model = ChatOpenAI(api_key=decrypted_api_key, model_name=llm_config.model_name)
         elif provider_name == "anthropic":
-            self.chat_model = ChatAnthropic(api_key=decrypted_api_key, model_name=llm_config.model_name)
+            self.chat_model = ChatAnthropic(api_key=decrypted_api_key, model=llm_config.model_name) # Corrected parameter name
         elif provider_name == "google":
             # For Google, the parameter is 'model', not 'model_name' for ChatGoogleGenerativeAI
             self.chat_model = ChatGoogleGenerativeAI(google_api_key=decrypted_api_key, model=llm_config.model_name)
@@ -78,13 +78,14 @@ class LLMClient:
             # The prompt passed here should be the direct instruction to the LLM.
             # LangChain's with_structured_output handles informing the LLM about the schema
             # and ensuring the output conforms to it.
-            parsed_output = await structured_llm.ainvoke(prompt)
+            # Explicitly type hint parsed_response to T (which is bound to BaseModel)
+            parsed_response: T = await structured_llm.ainvoke(prompt)
             
             # raw_output is not directly available from with_structured_output in a simple way.
             # Token counts for cost are also not directly available without callbacks.
             return AgentLLMResult(
                 raw_output="[Structured output - raw text not directly available]",
-                parsed_output=parsed_output,
+                parsed_output=parsed_response, # Use the explicitly typed variable
                 error=None,
                 cost=cost_estimation.calculate_cost(
                     model_name=self.model_name_for_cost,
