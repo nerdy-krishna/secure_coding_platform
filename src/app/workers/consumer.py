@@ -98,9 +98,12 @@ async def run_graph_task_wrapper(initial_state: WorkerGraphState, delivery_tag: 
             # WorkerGraphState.error should contain any error string from the workflow.
             # WorkerGraphState.result should contain the 'results' dict from CoordinatorState.
             worker_level_error = final_graph_state.get("error")
-            final_status_from_results = final_graph_state.get("result", {}).get(
-                "final_status"
-            )
+            
+            # Safely get final_status_from_results
+            result_dict = final_graph_state.get("result")  # This is Optional[Dict[str, Any]]
+            final_status_from_results = None
+            if result_dict:
+                final_status_from_results = result_dict.get("final_status")
 
             logger.info(
                 f"ASYNC WRAPPER: Graph result for SID {submission_id} - WorkerError: {worker_level_error}, FinalStatusInResult: {final_status_from_results}"
