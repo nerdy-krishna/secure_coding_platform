@@ -102,7 +102,7 @@ class LLMClient:
         self.model_name_for_cost = llm_config.model_name
 
         if self.provider_name == "openai":
-            self.chat_model = ChatOpenAI(api_key=decrypted_api_key, model=llm_config.model_name)
+            self.chat_model = ChatOpenAI(api_key=decrypted_api_key, model_name=llm_config.model_name) # Changed 'model' to 'model_name'
         elif self.provider_name == "anthropic":
             self.chat_model = ChatAnthropic(api_key=decrypted_api_key, model=llm_config.model_name)
         elif self.provider_name == "google":
@@ -126,13 +126,15 @@ class LLMClient:
         token_callback = TokenUsageCallbackHandler(provider_name=self.provider_name)
         
         start_time = time.perf_counter()
-        parsed_response: Optional[T] = None
+        parsed_output_value: Optional[T] = None # Renamed for clarity, holds the final Optional[T]
         error_message: Optional[str] = None
 
         try:
-            parsed_response = await structured_llm.ainvoke(
+            # Explicitly type the result of ainvoke as T
+            invoked_result: T = await structured_llm.ainvoke(
                 prompt, config={"callbacks": [token_callback]}
             )
+            parsed_output_value = invoked_result # Assign T to Optional[T]
         except Exception as e:
             logger.error(f"LLM generation or parsing with LangChain failed: {e}", exc_info=True)
             error_message = str(e)
@@ -148,7 +150,7 @@ class LLMClient:
 
         return AgentLLMResult(
             raw_output="[Structured output - raw text not directly available]",
-            parsed_output=parsed_response,
+            parsed_output=parsed_output_value, # Use the correctly typed variable
             error=error_message,
             cost=cost,
             prompt_tokens=token_callback.prompt_tokens,
