@@ -1,6 +1,7 @@
 # src/app/agents/reporting_agent.py
 import json
 import logging
+import uuid # Added import
 from typing import TypedDict, List, Dict, Any, Optional
 
 from langgraph.graph import StateGraph, END, Pregel
