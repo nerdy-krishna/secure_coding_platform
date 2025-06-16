@@ -16,7 +16,7 @@ from app.graphs.worker_graph import worker_workflow
 # Ensure necessary imports for type hints used in this file
 from pika.adapters.blocking_connection import BlockingChannel # For Pika channel type
 from pika.channel import Channel # Original import, BlockingChannel is more specific here
-from pika.spec import BasicProperties, Deliver # For Pika message properties and delivery info
+from pika.spec import BasicProperties, Basic # For Pika message properties and delivery info (Basic.Deliver)
 from pika.exceptions import AMQPConnectionError # For specific Pika exception handling
 
 logging.basicConfig(
@@ -120,10 +120,11 @@ async def run_graph_task_wrapper(initial_state: WorkerGraphState, delivery_tag: 
             )
             success = False
             # Create a minimal final_graph_state for error reporting to Pika finalize
-            final_graph_state: WorkerGraphState = {
+            # No type re-declaration here, assign to the existing 'final_graph_state'
+            final_graph_state = {
                 "submission_id": submission_id, # submission_id from the current scope
                 "result": None,
-                "error": "Worker workflow returned None",
+                "error": "Worker workflow returned None or unexpected type", # Clarified error message
             }
 
     except Exception as e:
@@ -137,13 +138,25 @@ async def run_graph_task_wrapper(initial_state: WorkerGraphState, delivery_tag: 
             final_graph_state is None
         ):  # If error happened before final_graph_state was set
             # Create a new WorkerGraphState for error reporting
-            final_graph_state: WorkerGraphState = {
+            # No type re-declaration here, assign to the existing 'final_graph_state'
+            final_graph_state = {
                 "submission_id": submission_id, # submission_id from the current scope
                 "result": None,
                 "error": str(e),
             }
         else: # final_graph_state exists, just update the error
-            final_graph_state["error"] = str(e)
+            # Ensure final_graph_state is a dict before trying to set a key
+            if isinstance(final_graph_state, dict):
+                final_graph_state["error"] = str(e)
+            else:
+                # This case should ideally not be reached if logic is correct,
+                # but as a fallback, create a new error state.
+                logger.warning(f"ASYNC WRAPPER: final_graph_state was not None but also not a dict in exception handler. Type: {type(final_graph_state)}. Re-creating.")
+                final_graph_state = {
+                    "submission_id": submission_id,
+                    "result": None,
+                    "error": str(e),
+                }
 
 
     # Safely schedule Pika operations on Pika's I/O loop thread
@@ -215,7 +228,7 @@ def schedule_task_on_async_loop(target_coroutine_func: Callable, *args, **kwargs
 
 def pika_message_callback( # pyright: ignore[reportGeneralTypeIssues]
     ch: BlockingChannel, # Changed from Channel
-    method: Deliver, # Changed from Basic.Deliver
+    method: Basic.Deliver, # Changed from Deliver to Basic.Deliver
     properties: BasicProperties, # Changed from pika.spec.BasicProperties
     body: bytes,
 ):
