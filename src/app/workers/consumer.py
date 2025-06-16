@@ -82,27 +82,34 @@ async def run_graph_task_wrapper(initial_state: WorkerGraphState, delivery_tag: 
         )
 
         if final_graph_state:
-            db_status = final_graph_state.get("db_save_status")
-            graph_error = final_graph_state.get("error_message")
-            logger.info(
-                f"ASYNC WRAPPER: Graph result for SID {submission_id} - DB_Status: {db_status}, Error: {graph_error}"
+            # Assuming final_graph_state is WorkerGraphState
+            # WorkerGraphState.error should contain any error string from the workflow.
+            # WorkerGraphState.result should contain the 'results' dict from CoordinatorState.
+            worker_level_error = final_graph_state.get("error")
+            final_status_from_results = final_graph_state.get("result", {}).get(
+                "final_status"
             )
-            if db_status == "Success" and not graph_error:
+
+            logger.info(
+                f"ASYNC WRAPPER: Graph result for SID {submission_id} - WorkerError: {worker_level_error}, FinalStatusInResult: {final_status_from_results}"
+            )
+
+            if not worker_level_error and final_status_from_results == "Analysis complete.":
                 success = True
+                logger.info(f"ASYNC WRAPPER: Graph processing for SID {submission_id} successful.")
             else:
                 logger.error(
-                    f"ASYNC WRAPPER: Graph processing for SID {submission_id} reported issues. DB Status: {db_status}, Error: {graph_error}"
+                    f"ASYNC WRAPPER: Graph processing for SID {submission_id} reported issues. WorkerError: {worker_level_error}, FinalStatusInResult: {final_status_from_results}"
                 )
-                success = False  # Ensure success is false if db_status is not "Success" or error exists
+                success = False
         else:
             logger.error(
                 f"ASYNC WRAPPER: worker_workflow returned None for SID {submission_id}."
             )
             success = False
             # Create a minimal final_graph_state for error reporting to Pika finalize
-            final_graph_state = initial_state.copy()  # Start with initial state
-            final_graph_state["error_message"] = "Worker workflow returned None"
-            final_graph_state["db_save_status"] = "Failed"
+            final_graph_state = initial_state.copy() if initial_state else {"submission_id": submission_id} # Ensure it's a dict
+            final_graph_state["error"] = "Worker workflow returned None" # Use 'error' key from WorkerGraphState
 
     except Exception as e:
         logger.error(
@@ -114,9 +121,8 @@ async def run_graph_task_wrapper(initial_state: WorkerGraphState, delivery_tag: 
         if (
             final_graph_state is None
         ):  # If error happened before final_graph_state was set
-            final_graph_state = initial_state.copy()
-        final_graph_state["error_message"] = str(e)  # Store the exception message
-        final_graph_state["db_save_status"] = "Failed due to exception"
+            final_graph_state = initial_state.copy() if initial_state else {"submission_id": submission_id}
+        final_graph_state["error"] = str(e)  # Use 'error' key from WorkerGraphState
 
     # Safely schedule Pika operations on Pika's I/O loop thread
     if (
@@ -135,8 +141,9 @@ async def run_graph_task_wrapper(initial_state: WorkerGraphState, delivery_tag: 
                     if _pika_channel and _pika_channel.is_open:
                         _pika_channel.basic_ack(delivery_tag=delivery_tag)
                 else:
+                    # Get error reason from the 'error' field of WorkerGraphState
                     error_info = (
-                        final_graph_state.get("error_message", "Processing failed")
+                        final_graph_state.get("error", "Processing failed (error key missing)")
                         if final_graph_state
                         else "Processing failed (no final state)"
                     )
@@ -212,14 +219,15 @@ def pika_message_callback(
         logger.info(
             f"PIKA CB: Processing submission_id: {submission_id}. Scheduling async task wrapper."
         )
-        initial_state = WorkerGraphState(
-            submission_id=submission_id,
-            final_report=None,
-            db_save_status=None,
-            error_message=None,
-            files_data=None,
-            primary_language=None,
-        )
+        # Ensure initial_state conforms to WorkerGraphState TypedDict
+        # 'result' and 'error' are Optional but part of the type, so they should be initialized.
+        initial_state: WorkerGraphState = {
+            "submission_id": submission_id,
+            "result": None, # Initialize result field
+            "error": None,  # Initialize error field
+        }
+        # The other keys (final_report, db_save_status, etc.) are not in WorkerGraphState
+        # and were likely causing issues or being ignored.
 
         # Schedule run_graph_task_wrapper to be executed on the asyncio loop
         schedule_task_on_async_loop(
