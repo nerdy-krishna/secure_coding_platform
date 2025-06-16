@@ -63,7 +63,14 @@ async def assess_vulnerabilities_node(state: SpecializedAgentState) -> Dict[str,
 
     Identify architectural security vulnerabilities and respond with a structured list of findings. If no vulnerabilities are found, return an empty list.
     """
-    llm_client = get_llm_client()
+    llm_config_id = state.get("llm_config_id")
+    if not llm_config_id:
+        return {"error": f"[{AGENT_NAME}] LLM configuration ID not provided."}
+
+    llm_client = await get_llm_client(llm_config_id=llm_config_id)
+    if not llm_client:
+        return {"error": f"[{AGENT_NAME}] Failed to initialize LLM client with config ID {llm_config_id}."}
+
     llm_response: AgentLLMResult = await llm_client.generate_structured_output(
         prompt, AnalysisResult
     )
@@ -127,7 +134,17 @@ async def generate_fixes_node(state: SpecializedAgentState) -> Dict[str, Any]:
         Your task is to provide a secure code replacement for the vulnerable part.
         Respond with a structured JSON object containing a brief description of the fix and the secure code snippet.
         """
-        llm_response: AgentLLMResult = await llm_client.generate_structured_output(
+        llm_config_id = state.get("llm_config_id")
+        if not llm_config_id:
+            logger.warning(f"[{AGENT_NAME}] LLM configuration ID not provided for fix generation. Skipping.")
+            return {"fixes": []}
+
+        fixer_llm_client = await get_llm_client(llm_config_id=llm_config_id)
+        if not fixer_llm_client:
+            logger.warning(f"[{AGENT_NAME}] Failed to initialize LLM client for fix generation with config ID {llm_config_id}. Skipping.")
+            return {"fixes": []}
+            
+        llm_response: AgentLLMResult = await fixer_llm_client.generate_structured_output(
             prompt, FixSuggestion
         )
 
