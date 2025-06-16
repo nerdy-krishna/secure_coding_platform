@@ -62,6 +62,7 @@ class SpecializedAgentState(TypedDict):
     """Represents the state of any specialized agent's workflow."""
 
     submission_id: uuid.UUID  # Changed from int
+    llm_config_id: Optional[uuid.UUID] # ID for the LLM configuration
     filename: str
     code_snippet: str
     findings: List[VulnerabilityFinding]
