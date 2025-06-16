@@ -8,10 +8,13 @@ import threading
 import time  # For sleep in retry logic and initial loop spin-up
 from typing import Any, Callable, Dict, Optional, TypedDict, cast
 
+import uuid # Import uuid
 from dotenv import load_dotenv
 
-# Import the worker graph and its state (though worker_workflow isn't called in this test version)
+# Import the worker graph and its state
 from app.graphs.worker_graph import worker_workflow
+# Import CoordinatorState for type hinting and state preparation
+from app.agents.coordinator_agent import CoordinatorState 
 
 # Ensure necessary imports for type hints used in this file
 from pika.adapters.blocking_connection import BlockingChannel # For Pika channel type
@@ -50,117 +53,101 @@ _pika_channel: Optional[BlockingChannel] = None # Changed to BlockingChannel
 
 _stop_event = threading.Event()  # For signaling threads to stop
 
-class WorkerGraphState(TypedDict):
-    """Overall state for the worker graph, used by the consumer."""
-    submission_id: str
-    result: Optional[Dict[str, Any]]
-    error: Optional[str]
+# WorkerGraphState TypedDict is removed as we will use CoordinatorState directly.
 
 # --- Asyncio Task Execution ---
-async def run_graph_task_wrapper(initial_state: WorkerGraphState, delivery_tag: int):
+async def run_graph_task_wrapper(initial_state: CoordinatorState, delivery_tag: int): # Changed type hint
     """
     This coroutine runs in the asyncio event loop.
-    It executes the worker_workflow and then schedules Pika ACK/NACK.
+    It executes the worker_workflow (which uses CoordinatorState)
+    and then schedules Pika ACK/NACK.
     """
     global _pika_channel, _pika_connection  # Ensure globals are accessible if not already
-    submission_id = initial_state.get("submission_id", "N/A_IN_ASYNC_WRAPPER")
+    # initial_state is now CoordinatorState, submission_id is uuid.UUID
+    submission_id_uuid = initial_state.get("submission_id", uuid.uuid4()) # Get UUID, fallback for safety
+    submission_id_str_log = str(submission_id_uuid) # For logging
     logger.info(
-        f"ASYNC WRAPPER: Starting actual worker_workflow for submission_id: {submission_id}, delivery_tag: {delivery_tag}"
+        f"ASYNC WRAPPER: Starting actual worker_workflow for submission_id: {submission_id_str_log}, delivery_tag: {delivery_tag}"
     )
 
     success = False
-    final_graph_state: Optional[WorkerGraphState] = (
-        None  # To store the result from the graph
+    final_graph_state: Optional[CoordinatorState] = ( # Changed type hint
+        None  # To store the result from the graph (which is CoordinatorState)
     )
 
     try:
         # === CALL THE ACTUAL WORKER GRAPH ===
         logger.info(
-            f"ASYNC WRAPPER: Invoking worker_workflow for SID: {submission_id}..."
+            f"ASYNC WRAPPER: Invoking worker_workflow for SID: {submission_id_str_log}..."
         )
-        # Cast the result to the expected type
+        # worker_workflow.ainvoke takes and returns CoordinatorState
         invoked_state = await worker_workflow.ainvoke(initial_state)
         if isinstance(invoked_state, dict):
-            final_graph_state = cast(WorkerGraphState, invoked_state)
+            final_graph_state = cast(CoordinatorState, invoked_state)
         elif invoked_state is None:
-            final_graph_state = None
+            # This case should ideally result in an error state that conforms to CoordinatorState
+            logger.error(f"ASYNC WRAPPER: worker_workflow returned None for SID {submission_id_str_log}.")
+            final_graph_state = { # Create a valid CoordinatorState for error reporting
+                "submission_id": submission_id_uuid,
+                "submission": None,
+                "code_snippets_and_paths": [],
+                "relevant_agents": {},
+                "results": {"final_status": "Error: Worker workflow returned None"},
+                "error": "Worker workflow returned None",
+            }
         else:
-            # Handle unexpected type from ainvoke if necessary, or assume it's WorkerGraphState | None
             logger.error(f"ASYNC WRAPPER: Unexpected type from worker_workflow.ainvoke: {type(invoked_state)}")
-            final_graph_state = None # Or handle as an error state
-
+            final_graph_state = { # Create a valid CoordinatorState for error reporting
+                "submission_id": submission_id_uuid,
+                "submission": None,
+                "code_snippets_and_paths": [],
+                "relevant_agents": {},
+                "results": {"final_status": f"Error: Unexpected type {type(invoked_state)}"},
+                "error": f"Unexpected type from worker_workflow.ainvoke: {type(invoked_state)}",
+            }
+            
         logger.info(
-            f"ASYNC WRAPPER: worker_workflow completed for SID: {submission_id}."
+            f"ASYNC WRAPPER: worker_workflow completed for SID: {submission_id_str_log}."
         )
 
-        if final_graph_state:
-            # Assuming final_graph_state is WorkerGraphState
-            # WorkerGraphState.error should contain any error string from the workflow.
-            # WorkerGraphState.result should contain the 'results' dict from CoordinatorState.
+        if final_graph_state: # final_graph_state should always be set now
             worker_level_error = final_graph_state.get("error")
             
-            # Safely get final_status_from_results
-            result_dict = final_graph_state.get("result")  # This is Optional[Dict[str, Any]]
+            # Safely get final_status from the "results" dictionary (plural)
+            results_dict = final_graph_state.get("results") 
             final_status_from_results = None
-            if result_dict:
-                final_status_from_results = result_dict.get("final_status")
+            if results_dict and isinstance(results_dict, dict): # Ensure results_dict is a dict
+                final_status_from_results = results_dict.get("final_status")
 
             logger.info(
-                f"ASYNC WRAPPER: Graph result for SID {submission_id} - WorkerError: {worker_level_error}, FinalStatusInResult: {final_status_from_results}"
+                f"ASYNC WRAPPER: Graph result for SID {submission_id_str_log} - WorkerError: {worker_level_error}, FinalStatusInResult: {final_status_from_results}"
             )
 
             if not worker_level_error and final_status_from_results == "Analysis complete.":
                 success = True
-                logger.info(f"ASYNC WRAPPER: Graph processing for SID {submission_id} successful.")
+                logger.info(f"ASYNC WRAPPER: Graph processing for SID {submission_id_str_log} successful.")
             else:
                 logger.error(
-                    f"ASYNC WRAPPER: Graph processing for SID {submission_id} reported issues. WorkerError: {worker_level_error}, FinalStatusInResult: {final_status_from_results}"
+                    f"ASYNC WRAPPER: Graph processing for SID {submission_id_str_log} reported issues. WorkerError: {worker_level_error}, FinalStatusInResult: {final_status_from_results}"
                 )
                 success = False
-        else:
-            logger.error(
-                f"ASYNC WRAPPER: worker_workflow returned None for SID {submission_id}."
-            )
-            success = False
-            # Create a minimal final_graph_state for error reporting to Pika finalize
-            # No type re-declaration here, assign to the existing 'final_graph_state'
-            final_graph_state = {
-                "submission_id": submission_id, # submission_id from the current scope
-                "result": None,
-                "error": "Worker workflow returned None or unexpected type", # Clarified error message
-            }
+        # 'else' case for final_graph_state being None is handled by initialization above
 
     except Exception as e:
         logger.error(
-            f"ASYNC WRAPPER: Exception during worker_workflow invocation for SID {submission_id}: {e}",
+            f"ASYNC WRAPPER: Exception during worker_workflow invocation for SID {submission_id_str_log}: {e}",
             exc_info=True,
         )
         success = False
-        # Create a minimal final_graph_state for error reporting
-        if (
-            final_graph_state is None
-        ):  # If error happened before final_graph_state was set
-            # Create a new WorkerGraphState for error reporting
-            # No type re-declaration here, assign to the existing 'final_graph_state'
-            final_graph_state = {
-                "submission_id": submission_id, # submission_id from the current scope
-                "result": None,
-                "error": str(e),
-            }
-        else: # final_graph_state exists, just update the error
-            # Ensure final_graph_state is a dict before trying to set a key
-            if isinstance(final_graph_state, dict):
-                final_graph_state["error"] = str(e)
-            else:
-                # This case should ideally not be reached if logic is correct,
-                # but as a fallback, create a new error state.
-                logger.warning(f"ASYNC WRAPPER: final_graph_state was not None but also not a dict in exception handler. Type: {type(final_graph_state)}. Re-creating.")
-                final_graph_state = {
-                    "submission_id": submission_id,
-                    "result": None,
-                    "error": str(e),
-                }
-
+        # Ensure final_graph_state is a valid CoordinatorState for error reporting
+        final_graph_state = {
+            "submission_id": submission_id_uuid, # Use the UUID from initial_state
+            "submission": None,
+            "code_snippets_and_paths": [],
+            "relevant_agents": {},
+            "results": {"final_status": f"Error during invocation: {str(e)}"},
+            "error": str(e),
+        }
 
     # Safely schedule Pika operations on Pika's I/O loop thread
     if (
@@ -174,19 +161,19 @@ async def run_graph_task_wrapper(initial_state: WorkerGraphState, delivery_tag: 
             try:
                 if success:
                     logger.info(
-                        f"PIKA FINALIZE (via threadsafe_cb): ACK delivery_tag {delivery_tag} for SID {submission_id}"
+                        f"PIKA FINALIZE (via threadsafe_cb): ACK delivery_tag {delivery_tag} for SID {submission_id_str_log}"
                     )
                     if _pika_channel and _pika_channel.is_open:
                         _pika_channel.basic_ack(delivery_tag=delivery_tag)
                 else:
-                    # Get error reason from the 'error' field of WorkerGraphState
+                    # Get error reason from the 'error' field of CoordinatorState
                     error_info = (
                         final_graph_state.get("error", "Processing failed (error key missing)")
-                        if final_graph_state
+                        if final_graph_state # Should always be true here
                         else "Processing failed (no final state)"
                     )
                     logger.error(
-                        f"PIKA FINALIZE (via threadsafe_cb): NACK delivery_tag {delivery_tag} for SID {submission_id}. Reason: {error_info}"
+                        f"PIKA FINALIZE (via threadsafe_cb): NACK delivery_tag {delivery_tag} for SID {submission_id_str_log}. Reason: {error_info}"
                     )
                     if _pika_channel and _pika_channel.is_open:
                         _pika_channel.basic_nack(
@@ -194,7 +181,7 @@ async def run_graph_task_wrapper(initial_state: WorkerGraphState, delivery_tag: 
                         )
             except Exception as e_pika_finalize:
                 logger.error(
-                    f"PIKA FINALIZE (via threadsafe_cb): Exception for SID {submission_id}, delivery_tag {delivery_tag}: {e_pika_finalize}",
+                    f"PIKA FINALIZE (via threadsafe_cb): Exception for SID {submission_id_str_log}, delivery_tag {delivery_tag}: {e_pika_finalize}",
                     exc_info=True,
                 )
 
@@ -236,40 +223,50 @@ def pika_message_callback( # pyright: ignore[reportGeneralTypeIssues]
     body: bytes,
 ):
     """Pika callback for received messages."""
-    submission_id_str = "N/A (before parse)"
+    submission_id_str_log = "N/A (before parse)" # For logging in case of early failure
     logger.info(
         f"PIKA CB: Received message. Delivery Tag: {method.delivery_tag}. Body (first 100): {body[:100]}"
     )
 
     try:
         message_data = json.loads(body.decode("utf-8"))
-        submission_id = message_data.get("submission_id")
-        submission_id_str = str(submission_id)
-
-        if submission_id is None:
+        submission_id_from_msg_str = message_data.get("submission_id") # This is a string
+        
+        if submission_id_from_msg_str is None:
             logger.error(
                 f"PIKA CB: Invalid message - no submission_id. Body: {body.decode('utf-8')}"
             )
             if ch.is_open:
                 ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
+        
+        submission_id_str_log = str(submission_id_from_msg_str) # For logging before UUID conversion
+
+        try:
+            submission_uuid = uuid.UUID(submission_id_from_msg_str)
+        except ValueError:
+            logger.error(f"PIKA CB: Invalid submission_id format (not a UUID): {submission_id_from_msg_str}. NACKing.")
+            if ch.is_open:
+                ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            return
 
         logger.info(
-            f"PIKA CB: Processing submission_id: {submission_id}. Scheduling async task wrapper."
+            f"PIKA CB: Processing submission_id: {submission_uuid}. Scheduling async task wrapper."
         )
-        # Ensure initial_state conforms to WorkerGraphState TypedDict
-        # 'result' and 'error' are Optional but part of the type, so they should be initialized.
-        initial_state: WorkerGraphState = {
-            "submission_id": submission_id,
-            "result": None, # Initialize result field
-            "error": None,  # Initialize error field
+        
+        # Prepare initial_state as CoordinatorState
+        initial_coordinator_state: CoordinatorState = {
+            "submission_id": submission_uuid,
+            "submission": None, # Will be populated by retrieve_submission_node
+            "code_snippets_and_paths": [], # Will be populated by retrieve_submission_node
+            "relevant_agents": {}, # Will be populated by initial_analysis_and_routing_node
+            "results": {}, # Will be populated by various agent nodes and finalize_analysis_node
+            "error": None, # Will be set if errors occur within the graph
         }
-        # The other keys (final_report, db_save_status, etc.) are not in WorkerGraphState
-        # and were likely causing issues or being ignored.
 
         # Schedule run_graph_task_wrapper to be executed on the asyncio loop
         schedule_task_on_async_loop(
-            run_graph_task_wrapper, initial_state, method.delivery_tag
+            run_graph_task_wrapper, initial_coordinator_state, method.delivery_tag
         )
 
     except json.JSONDecodeError:
