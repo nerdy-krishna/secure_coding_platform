@@ -1,5 +1,6 @@
 # src/app/agents/context_analysis_agent.py
 import logging
+import uuid  # Added import
 from typing import Dict, Any, TypedDict, Optional, List
 
 from langgraph.graph import StateGraph, END
@@ -76,7 +77,7 @@ class ContextAnalysisAgentState(TypedDict):
     This is the state that will be passed between the nodes of its graph.
     """
 
-    submission_id: int
+    submission_id: uuid.UUID  # Changed from int
     filename: str
     code_snippet: str
     language: str
