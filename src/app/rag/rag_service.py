@@ -99,7 +99,7 @@ class RAGService:
         return [] # Ensures all paths return List[Dict[str, Any]]
 
 
-def get_rag_service() -> RAGService:
+def get_rag_service() -> Optional[RAGService]: # Changed return type hint
     """
     Factory function to get the singleton instance of RAGService.
     """
