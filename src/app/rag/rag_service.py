@@ -3,7 +3,7 @@ import chromadb
 import os
 import logging
 from typing import List, Dict, Any, Optional # Ensure Optional is imported
-from chromadb.api.client import ClientAPI # Added import
+from chromadb.api import ClientAPI # Corrected import path
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ class RAGService:
     _instance = None
     _initialization_attempted = False
     _initialization_succeeded = False
-    client: ClientAPI = None  # Instance attribute, changed type hint
+    client: Optional[ClientAPI] = None  # Instance attribute, changed type hint to Optional
     asvs_collection = None  # Instance attribute, will be chromadb.api.models.Collection.Collection
 
     def __new__(cls):
