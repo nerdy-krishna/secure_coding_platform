@@ -1,7 +1,9 @@
 # src/app/llm/llm_client.py
-import logging
-import json
-import uuid
+# src/app/llm/llm_client.py                                                                                                                                                                                        
+import logging                                                                                                                                                                                                     
+import json                                                                                                                                                                                                        
+import uuid                                                                                                                                                                                                        
+import re # Added import for regular expressions                                                                                                                                                                   
 from typing import Type, TypeVar, Optional, NamedTuple, Dict, Any
 
 from pydantic import BaseModel
@@ -57,23 +59,61 @@ class LLMClient:
         else:
             raise ValueError(f"Unsupported LLM provider: {provider_name}")
 
-        logger.info(f"LLMClient initialized with provider: {provider_name} for model {model_name}")
-
-    def _extract_json_from_text(self, text: str) -> Optional[Dict]:
-        # This utility function remains the same
-        try:
-            # Look for the first '{' to start, and the last '}' to end
-            json_start = text.find("{")
-            json_end = text.rfind("}")
-            if json_start == -1 or json_end == -1 or json_end < json_start:
-                return None
-            
-            json_str = text[json_start : json_end + 1]
-            return json.loads(json_str)
-        except (json.JSONDecodeError, Exception) as e:
-            logger.error(f"Could not extract or parse JSON from text: {e}")
-            return None
-
+        logger.info(f"LLMClient initialized with provider: {provider_name} for model {model_name}")                                                                                                                
+                                                                                                                                                                                                                   
+    def _extract_json_from_text(self, text: str) -> Optional[Dict[str, Any]]:                                                                                                                                      
+        """                                                                                                                                                                                                        
+        Extracts a JSON object from a string.                                                                                                                                                                      
+        It first looks for a ```json ... ``` markdown block.                                                                                                                                                       
+        If not found or if parsing that fails, it falls back to finding the first '{' and last '}'.                                                                                                                
+        """                                                                                                                                                                                                        
+        # Try to extract from ```json ... ``` code block                                                                                                                                                           
+        # This regex handles optional whitespace and newlines around the JSON content                                                                                                                              
+        match = re.search(r"```json\s*(\{[\s\S]*?\})\s*```", text, re.DOTALL)                                                                                                                                      
+        if match:                                                                                                                                                                                                  
+            json_str = match.group(1)                                                                                                                                                                              
+            try:                                                                                                                                                                                                   
+                return json.loads(json_str)                                                                                                                                                                        
+            except json.JSONDecodeError as e:                                                                                                                                                                      
+                logger.error(                                                                                                                                                                                      
+                    f"Failed to parse JSON from ```json``` block: {e}. Content: '{json_str[:200]}...'"                                                                                                             
+                )                                                                                                                                                                                                  
+                # If the explicit block is found but malformed, we might not want to fall back,                                                                                                                    
+                # as it indicates the LLM tried but failed to follow the format.                                                                                                                                   
+                # However, for robustness, we can still try the fallback.                                                                                                                                          
+                # For now, let's return None to indicate this specific extraction failed.                                                                                                                          
+                # If issues persist, consider removing the fallback or making it more conditional.                                                                                                                 
+                # return None # Option 1: Strict: if ```json is there, it must be valid.                                                                                                                           
+                                                                                                                                                                                                                   
+        # Fallback or if ```json block not found: Look for the first '{' to start, and the last '}' to end                                                                                                         
+        # This is less reliable.                                                                                                                                                                                   
+        if not match: # Only try fallback if ```json block was not found                                                                                                                                           
+            logger.warning(                                                                                                                                                                                        
+                "Could not find ```json ... ``` block, attempting fallback {...} extraction."                                                                                                                      
+            )                                                                                                                                                                                                      
+                                                                                                                                                                                                                   
+        try:                                                                                                                                                                                                       
+            json_start = text.find("{")                                                                                                                                                                            
+            json_end = text.rfind("}")                                                                                                                                                                             
+            if json_start != -1 and json_end != -1 and json_end > json_start:                                                                                                                                      
+                json_str_fallback = text[json_start : json_end + 1]                                                                                                                                                
+                return json.loads(json_str_fallback)                                                                                                                                                               
+            else:                                                                                                                                                                                                  
+                # This log will now only appear if neither ```json nor {...} is found.                                                                                                                             
+                logger.error(                                                                                                                                                                                      
+                    f"No JSON-like structure (neither ```json``` nor {{...}}) found in text. Text (first 500 chars): {text[:500]}"                                                                                 
+                )                                                                                                                                                                                                  
+                return None                                                                                                                                                                                        
+        except json.JSONDecodeError as e:                                                                                                                                                                          
+            # This error now specifically relates to the fallback or if the primary regex failed and we retried.                                                                                                   
+            logger.error(                                                                                                                                                                                          
+                f"Failed to parse JSON using fallback or after primary extraction: {e}. Text (first 500 chars): '{text[:500]}...'"                                                                                 
+            )                                                                                                                                                                                                      
+            return None                                                                                                                                                                                            
+        except Exception as e: # Catch any other unexpected errors during string manipulation                                                                                                                      
+            logger.error(f"Unexpected error during JSON extraction: {e}. Text (first 500 chars): '{text[:500]}...'" )                                                                                              
+            return None                                                                                                                                                                                            
+                                                                                                                                                                                                                   
     async def generate_structured_output(
         self, prompt: str, response_model: Type[T]
     ) -> "AgentLLMResult":
