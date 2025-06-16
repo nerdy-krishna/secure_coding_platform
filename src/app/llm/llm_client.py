@@ -1,5 +1,4 @@
 # src/app/llm/llm_client.py
-# src/app/llm/llm_client.py
 import logging
 import uuid
 import time # For latency measurement
@@ -103,7 +102,7 @@ class LLMClient:
         self.model_name_for_cost = llm_config.model_name
 
         if self.provider_name == "openai":
-            self.chat_model = ChatOpenAI(api_key=decrypted_api_key, model_name=llm_config.model_name)
+            self.chat_model = ChatOpenAI(api_key=decrypted_api_key, model=llm_config.model_name)
         elif self.provider_name == "anthropic":
             self.chat_model = ChatAnthropic(api_key=decrypted_api_key, model=llm_config.model_name)
         elif self.provider_name == "google":
