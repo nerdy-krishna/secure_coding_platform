@@ -1,7 +1,7 @@
 // secure-code-ui/src/services/llmConfigService.ts
 import {
-    type LLMConfiguration,
-    type LLMConfigurationCreate,
+  type LLMConfiguration,
+  type LLMConfigurationCreate,
 } from "../types/api";
 import apiClient from "./apiClient";
 

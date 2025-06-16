@@ -19,9 +19,8 @@ from app.db import crud
 from app.db.database import get_db
 from app.db import models as db_models
 from app.api import models as api_models
-
-# CORRECTED IMPORT: Changed 'get_current_active_user' to 'current_active_user'
 from app.auth.core import current_active_user, current_superuser
+from app.utils import rabbitmq_utils
 
 # Create two routers: one for general endpoints, one for admin-level LLM configs
 router = APIRouter()
@@ -79,7 +78,6 @@ async def delete_llm_configuration(
 
 @router.post("/submit", response_model=api_models.SubmissionResponse)
 async def submit_code(
-    # CORRECTED DEPENDENCY
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[db_models.User, Depends(current_active_user)],
     main_llm_config_id: Annotated[uuid.UUID, Form(...)],
@@ -129,8 +127,8 @@ async def submit_code(
         specialized_llm_config_id=specialized_llm_config_id,
     )
 
-    # await rabbitmq_utils.publish_submission(str(submission.id))
-    # logger.info(f"Published submission {submission.id} to RabbitMQ.")
+    rabbitmq_utils.publish_submission(str(submission.id))
+    logger.info(f"Published submission {submission.id} to RabbitMQ.")
 
     return {
         "submission_id": submission.id,
@@ -149,9 +147,7 @@ async def get_submission_status(
     return submission
 
 
-@router.get(
-    "/results/{submission_id}", response_model=api_models.SubmissionResultResponse
-)
+@router.get("/results/{submission_id}", response_model=api_models.SubmissionResultResponse)
 async def get_submission_results(
     submission_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 ):
@@ -167,3 +163,14 @@ async def get_submission_results(
         )
 
     return submission
+
+@router.get("/history", response_model=List[api_models.SubmissionHistoryItem])
+async def get_submission_history(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[db_models.User, Depends(current_active_user)],
+):
+    """
+    Retrieves the submission history for the currently authenticated user.
+    """
+    history = await crud.get_submission_history(db, user_id=current_user.id)
+    return history

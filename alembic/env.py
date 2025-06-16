@@ -23,6 +23,7 @@ try:
     from app.core.config import settings
 
     log.info("Successfully imported Base and settings.")
+    import app.db.models
 
     log.info("Successfully loaded all models from app.db.models.")
 

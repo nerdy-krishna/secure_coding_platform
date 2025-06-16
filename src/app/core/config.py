@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     RABBITMQ_DEFAULT_PASS: str
     RABBITMQ_HOST: str
     RABBITMQ_URL: Optional[str] = None
+    CODE_QUEUE: str = "code_analysis_queue"
 
     @field_validator("RABBITMQ_URL", mode="before")
     def assemble_rabbitmq_connection(cls, v, info):

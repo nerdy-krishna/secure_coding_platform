@@ -18,12 +18,11 @@ from fastapi_users.db import SQLAlchemyBaseUserTable
 class User(SQLAlchemyBaseUserTable[int], Base):
     __tablename__ = "user"
 
-    # --- START: THE FINAL FIX ---
-    # Explicitly define the 'id' column to ensure SQLAlchemy's mapper
-    # can identify it as the primary key.
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    # --- END: THE FINAL FIX ---
-
+    email: Mapped[str] = mapped_column(
+        String(length=320), unique=True, index=True, nullable=False
+    )
+    
     submissions: Mapped[List["CodeSubmission"]] = relationship(
         "CodeSubmission", back_populates="user"
     )
@@ -51,7 +50,6 @@ class CodeSubmission(Base):
     )
     # This foreign key now correctly points to an integer column.
     user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), nullable=False)
-    # ... rest of the CodeSubmission model ...
     repo_url: Mapped[Optional[str]] = mapped_column(String)
     status: Mapped[str] = mapped_column(String, default="Pending")
     submitted_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -73,9 +71,6 @@ class CodeSubmission(Base):
     llm_interactions: Mapped[List["LLMInteraction"]] = relationship(
         "LLMInteraction", back_populates="submission"
     )
-
-
-# ... The rest of your models remain exactly the same ...
 
 
 class SubmittedFile(Base):

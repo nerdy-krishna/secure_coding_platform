@@ -7,17 +7,13 @@ const API_BASE_URL =
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
-  headers: {
-    "Content-Type": "application/json",
-  },
-  withCredentials: true, // Important for HttpOnly refresh cookies
+  withCredentials: true, // Let Axios handle the Content-Type header per request
 });
 
 // Request Interceptor
 apiClient.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem("accessToken");
-    console.log("3. [apiClient] Interceptor reading from localStorage. Token found:", token);
     if (token && config.headers) {
       config.headers.Authorization = `Bearer ${token}`;
     }

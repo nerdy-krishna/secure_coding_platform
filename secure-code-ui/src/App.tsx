@@ -22,18 +22,12 @@ import RegisterPage from "./pages/auth/RegisterPage";
 import DashboardPage from "./pages/dashboard/DashboardPage";
 import LLMSettingsPage from "./pages/dashboard/LLMSettingsPage";
 import SettingsPage from "./pages/dashboard/SettingsPage";
+import SubmissionHistoryPage from "./pages/dashboard/SubmissionHistoryPage";
 import UserProfilePage from "./pages/dashboard/UserProfilePage";
 import ResultsPage from "./pages/ResultsPage";
 import SubmitCodePage from "./pages/SubmitCodePage";
 
 // Placeholder Pages
-const SubmissionHistoryPage: React.FC = () => (
-  <div>
-    <h2>Submission History</h2>
-    <p>Your past submissions will appear here.</p>
-  </div>
-);
-
 const NotFoundPage: React.FC = () => (
   <div style={{ textAlign: "center", marginTop: "50px", padding: "20px" }}>
     <h1>404 - Page Not Found</h1>
