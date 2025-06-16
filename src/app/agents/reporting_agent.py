@@ -1,6 +1,7 @@
 # src/app/agents/reporting_agent.py
 import json
 import logging
+import uuid # Added import
 from typing import TypedDict, List, Dict, Any, Optional
 
 from langgraph.graph import StateGraph, END, Pregel
@@ -107,13 +108,24 @@ async def fetch_submission_data_node(state: ReportingAgentState) -> Dict[str, An
     submission_id = state["submission_id"]
     logger.info(f"[{AGENT_NAME}] Fetching data for submission ID: {submission_id}")
 
-    async with get_db() as db:
-        submission = await crud.get_submission(db, submission_id)
+    async with AsyncSessionLocal() as db: # Use AsyncSessionLocal directly
+        # Ensure submission_id is UUID for crud.get_submission
+        submission_uuid = uuid.UUID(str(submission_id)) if not isinstance(submission_id, uuid.UUID) else submission_id
+        submission = await crud.get_submission(db, submission_id=submission_uuid)
         if not submission:
-            return {"error": f"Submission {submission_id} not found."}
+            logger.error(f"[{AGENT_NAME}] Submission {submission_uuid} not found in fetch_submission_data_node.")
+            return {"error": f"Submission {submission_uuid} not found."}
 
-        files = await crud.get_submission_files(db, submission_id)
-        original_code = {file.file_path: file.content for file in files}
+        # Use the newly added crud.get_submitted_files_for_submission
+        submitted_files_db = await crud.get_submitted_files_for_submission(db, submission_id=submission_uuid)
+        original_code = {
+            file.file_path: file.content 
+            for file in submitted_files_db 
+            if file.content is not None
+        }
+        if not original_code and submitted_files_db:
+             logger.warning(f"[{AGENT_NAME}] All files for submission {submission_uuid} had no content.")
+
 
     return {"submission_data": submission, "original_code": original_code}
 

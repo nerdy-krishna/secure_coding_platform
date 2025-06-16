@@ -234,10 +234,27 @@ def should_continue(state: CoordinatorState) -> str:
 
 async def run_specialized_agents_node(state: CoordinatorState) -> Dict[str, Any]:
     submission_id = state["submission_id"]
+    submission = state.get("submission") # Get the full submission object
     relevant_agents = state["relevant_agents"]
     logger.info(
         f"[{AGENT_NAME}] Beginning specialized agent runs for submission {submission_id}"
     )
+
+    if not submission:
+        logger.error(f"[{AGENT_NAME}] Submission object is missing in state for run_specialized_agents_node. Cannot proceed with specialized agents.")
+        # Return a structure that includes 'results' to avoid downstream errors if this path is taken.
+        return {"results": {"findings": [], "fixes": [], "error": "Submission object missing"}}
+
+    # Get the specialized LLM config ID from the submission
+    specialized_llm_id = getattr(submission, 'specialized_llm_config_id', None)
+
+    if not specialized_llm_id:
+        logger.error(f"[{AGENT_NAME}] Specialized LLM configuration ID not found in submission {submission_id}. Cannot run specialized agents that require an LLM.")
+        # Depending on desired behavior, you might still proceed for agents that don't need an LLM,
+        # or return an error. For now, we'll proceed but agents requiring it will fail gracefully.
+        # Alternatively, to stop entirely:
+        # return {"results": {"findings": [], "fixes": [], "error": "Specialized LLM config ID missing"}}
+        pass # Allow proceeding, specialized agents will handle missing llm_config_id
 
     code_map = {item["path"]: item["code"] for item in state["code_snippets_and_paths"]}
     tasks = []
@@ -261,6 +278,7 @@ async def run_specialized_agents_node(state: CoordinatorState) -> Dict[str, Any]
 
             initial_agent_state: SpecializedAgentState = {
                 "submission_id": submission_id,
+                "llm_config_id": specialized_llm_id,  # Pass the specialized LLM config ID
                 "filename": file_path,
                 "code_snippet": code_snippet,
                 "findings": [],
