@@ -1,17 +1,19 @@
 # src/app/agents/reporting_agent.py
-import json
-import logging
-import uuid # Added import
-from typing import TypedDict, List, Dict, Any, Optional
-
-from langgraph.graph import StateGraph, END, Pregel
-from pydantic import BaseModel
-
-from app.db import crud
-from app.db.database import get_db, AsyncSessionLocal
-from app.llm.llm_client import get_llm_client, AgentLLMResult
-from app.db.models import CodeSubmission
-from app.api.models import VulnerabilityFindingResponse
+import json                                                                                                                                                                                                        
+import logging                                                                                                                                                                                                     
+from typing import TypedDict, List, Dict, Any, Optional, cast
+import uuid                                                                                                                                                                                           
+                                                                                                                                                                                                                   
+from langgraph.graph import StateGraph, END                                                                                                                                                                        
+from langgraph.pregel import Pregel                                                                                                                                             
+from pydantic import BaseModel                                                                                                                                                                                     
+                                                                                                                                                                                                                   
+from app.db import crud                                                                                                                                                                                            
+from app.db.database import AsyncSessionLocal                                                                                                                
+from app.llm.llm_client import get_llm_client, AgentLLMResult                                                                                                                                                      
+from app.db.models import CodeSubmission                                                                                                                                                                           
+from app.api.models import VulnerabilityFindingResponse                                                                                                                                                            
+from app.agents.schemas import LLMInteraction # Added LLMInteraction
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -30,8 +32,9 @@ class ReportSummary(BaseModel):
 
 
 class ReportingAgentState(TypedDict):
-    submission_id: int
-    submission_data: Optional[CodeSubmission]
+    submission_id: uuid.UUID # Changed from int to uuid.UUID                                                                                                                                                       
+    llm_config_id: Optional[uuid.UUID] # Added for LLM client                                                                                                                                                      
+    submission_data: Optional[CodeSubmission]                                                                                                                                                                      
     original_code: Dict[str, str]
     summary_text: Optional[str]
     sarif_report: Optional[Dict[str, Any]]
@@ -105,51 +108,61 @@ def _create_sarif_report(
 
 async def fetch_submission_data_node(state: ReportingAgentState) -> Dict[str, Any]:
     """Fetches all necessary data for the report from the database."""
-    submission_id = state["submission_id"]
-    logger.info(f"[{AGENT_NAME}] Fetching data for submission ID: {submission_id}")
-
-    async with AsyncSessionLocal() as db: # Use AsyncSessionLocal directly
-        # Ensure submission_id is UUID for crud.get_submission
-        submission_uuid = uuid.UUID(str(submission_id)) if not isinstance(submission_id, uuid.UUID) else submission_id
-        submission = await crud.get_submission(db, submission_id=submission_uuid)
-        if not submission:
-            logger.error(f"[{AGENT_NAME}] Submission {submission_uuid} not found in fetch_submission_data_node.")
-            return {"error": f"Submission {submission_uuid} not found."}
-
-        # Use the newly added crud.get_submitted_files_for_submission
-        submitted_files_db = await crud.get_submitted_files_for_submission(db, submission_id=submission_uuid)
-        original_code = {
-            file.file_path: file.content 
-            for file in submitted_files_db 
-            if file.content is not None
-        }
-        if not original_code and submitted_files_db:
-             logger.warning(f"[{AGENT_NAME}] All files for submission {submission_uuid} had no content.")
-
-
+    submission_id = state["submission_id"]                                                                                                                                                                         
+    logger.info(f"[{AGENT_NAME}] Fetching data for submission ID: {submission_id}")                                                                                                                                
+                                                                                                                                                                                                                   
+    async with AsyncSessionLocal() as db: # Use AsyncSessionLocal directly                                                                                                                                         
+        # Ensure submission_id is UUID for crud.get_submission                                                                                                                                                     
+        submission_uuid = uuid.UUID(str(submission_id)) if not isinstance(submission_id, uuid.UUID) else submission_id                                                                                             
+        submission = await crud.get_submission(db, submission_id=submission_uuid)                                                                                                                                  
+        if not submission:                                                                                                                                                                                         
+            logger.error(f"[{AGENT_NAME}] Submission {submission_uuid} not found in fetch_submission_data_node.")                                                                                                  
+            return {"error": f"Submission {submission_uuid} not found."}                                                                                                                                           
+                                                                                                                                                                                                                   
+        # Use the newly added crud.get_submitted_files_for_submission                                                                                                                                              
+        submitted_files_db = await crud.get_submitted_files_for_submission(db, submission_id=submission_uuid)                                                                                                      
+        original_code = {                                                                                                                                                                                          
+            file.file_path: file.content                                                                                                                                                                           
+            for file in submitted_files_db                                                                                                                                                                         
+            if file.content is not None                                                                                                                                                                            
+        }                                                                                                                                                                                                          
+        if not original_code and submitted_files_db:                                                                                                                                                               
+             logger.warning(f"[{AGENT_NAME}] All files for submission {submission_uuid} had no content.")                                                                                                          
+                                                                                                                                                                                                                   
+                                                                                                                                                                                                                   
     return {"submission_data": submission, "original_code": original_code}
 
 
 async def generate_summary_node(state: ReportingAgentState) -> Dict[str, Any]:
     """Generates a high-level summary of the findings using an LLM."""
-    submission = state.get("submission_data")
-    if not submission or not submission.findings:
-        return {"summary_text": "No findings were identified in the submission."}
-
-    logger.info(f"[{AGENT_NAME}] Generating summary for submission {submission.id}")
-
-    # Create a simplified list of findings for the prompt
-    findings_for_prompt = [
-        {
-            "severity": f.severity,
-            "description": f.description,
-            "cwe": f.cwe,
-        }
-        for f in submission.findings
-    ]
-
-    llm_client = get_llm_client()
-    prompt = f"""
+    submission = state.get("submission_data")                                                                                                                                                                      
+    llm_config_id = state.get("llm_config_id")                                                                                                                                                                     
+                                                                                                                                                                                                                   
+    if not submission or not submission.findings:                                                                                                                                                                  
+        return {"summary_text": "No findings were identified in the submission."}                                                                                                                                  
+                                                                                                                                                                                                                   
+    if not llm_config_id:                                                                                                                                                                                          
+        logger.error(f"[{AGENT_NAME}] LLM configuration ID not found in state for summary generation.")                                                                                                            
+        return {"summary_text": "Failed to generate AI summary due to missing LLM configuration."}                                                                                                                 
+                                                                                                                                                                                                                   
+    logger.info(f"[{AGENT_NAME}] Generating summary for submission {submission.id}")                                                                                                                               
+                                                                                                                                                                                                                   
+    # Create a simplified list of findings for the prompt                                                                                                                                                          
+    findings_for_prompt = [                                                                                                                                                                                        
+        {                                                                                                                                                                                                          
+            "severity": f.severity,                                                                                                                                                                                
+            "description": f.description,                                                                                                                                                                          
+            "cwe": f.cwe,                                                                                                                                                                                          
+        }                                                                                                                                                                                                          
+        for f in submission.findings                                                                                                                                                                               
+    ]                                                                                                                                                                                                              
+                                                                                                                                                                                                                   
+    llm_client = await get_llm_client(llm_config_id=llm_config_id)                                                                                                                                                 
+    if not llm_client:                                                                                                                                                                                             
+        logger.error(f"[{AGENT_NAME}] Failed to get LLM client for config ID: {llm_config_id}")                                                                                                                    
+        return {"summary_text": "Failed to generate AI summary due to LLM client initialization failure."}                                                                                                         
+                                                                                                                                                                                                                   
+    prompt = f"""                                                                                                                                                                                                  
     You are a principal security analyst delivering a report to a development team.
     Based on the following JSON list of findings, write a concise, high-level summary.
     - Start with an executive summary of the security posture.
@@ -165,29 +178,34 @@ async def generate_summary_node(state: ReportingAgentState) -> Dict[str, Any]:
     Provide only the summary text in a `summary_text` field.
     """
 
-    llm_response: AgentLLMResult = await llm_client.generate_structured_output(
-        prompt, ReportSummary
-    )
-
-    async with AsyncSessionLocal() as db:
-        await crud.save_llm_interaction(
-            db,
-            submission_id=submission.id,
-            agent_name=AGENT_NAME,
-            prompt=prompt,
-            raw_response=llm_response.raw_output,
-            parsed_output=llm_response.parsed_output.dict()
-            if llm_response.parsed_output
-            else None,
-            error=llm_response.error,
-            file_path="N/A (Report Summary)",
-            cost=llm_response.cost,
-        )
-
-    if llm_response.error or not llm_response.parsed_output:
-        return {"summary_text": "Failed to generate AI summary."}
-
-    return {"summary_text": llm_response.parsed_output.summary_text}
+    llm_response: AgentLLMResult = await llm_client.generate_structured_output(                                                                                                                                    
+        prompt, ReportSummary                                                                                                                                                                                      
+    )                                                                                                                                                                                                              
+                                                                                                                                                                                                                   
+    parsed_output_dict = None                                                                                                                                                                                      
+    if llm_response.parsed_output:                                                                                                                                                                                 
+        # Assuming llm_response.parsed_output is a Pydantic model (ReportSummary instance)                                                                                                                         
+        parsed_output_dict = llm_response.parsed_output.dict()                                                                                                                                                     
+                                                                                                                                                                                                                   
+    interaction = LLMInteraction(                                                                                                                                                                                  
+        submission_id=submission.id, # submission.id is already UUID                                                                                                                                               
+        agent_name=AGENT_NAME,                                                                                                                                                                                     
+        prompt=prompt,                                                                                                                                                                                             
+        raw_response=llm_response.raw_output,                                                                                                                                                                      
+        parsed_output=parsed_output_dict,                                                                                                                                                                          
+        error=llm_response.error,                                                                                                                                                                                  
+        file_path="N/A (Report Summary)", # Specific to this interaction                                                                                                                                           
+        cost=llm_response.cost,                                                                                                                                                                                    
+    )                                                                                                                                                                                                              
+    async with AsyncSessionLocal() as db:                                                                                                                                                                          
+        await crud.save_llm_interaction(db, interaction_data=interaction)                                                                                                                                          
+                                                                                                                                                                                                                   
+    if llm_response.error or not llm_response.parsed_output:                                                                                                                                                       
+        return {"summary_text": "Failed to generate AI summary."}                                                                                                                                                  
+                                                                                                                                                                                                                   
+    # Cast parsed_output to ReportSummary for Pylance                                                                                                                                                              
+    report_summary = cast(ReportSummary, llm_response.parsed_output)                                                                                                                                               
+    return {"summary_text": report_summary.summary_text}
 
 
 async def generate_sarif_node(state: ReportingAgentState) -> Dict[str, Any]:
