@@ -2,7 +2,7 @@
 import logging
 import uuid
 import time # For latency measurement
-from typing import Type, TypeVar, Optional, NamedTuple, Any, Dict
+from typing import Type, TypeVar, Optional, NamedTuple, Any, Dict, cast
 
 from pydantic import BaseModel
 from app.db import crud
@@ -130,11 +130,11 @@ class LLMClient:
         error_message: Optional[str] = None
 
         try:
-            # Explicitly type the result of ainvoke as T
-            invoked_result: T = await structured_llm.ainvoke(
+            # Use cast to assure Pylance of the type returned by ainvoke
+            invoked_result = cast(T, await structured_llm.ainvoke(
                 prompt, config={"callbacks": [token_callback]}
-            )
-            parsed_output_value = invoked_result # Assign T to Optional[T]
+            ))
+            parsed_output_value = invoked_result
         except Exception as e:
             logger.error(f"LLM generation or parsing with LangChain failed: {e}", exc_info=True)
             error_message = str(e)
