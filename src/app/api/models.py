@@ -200,11 +200,11 @@ class OverallRiskScoreResponse(BaseModel):
 class SubmittedFileReportItem(BaseModel):
     file_path: str
     findings: List[VulnerabilityFindingResponse] = []
-    # Optional fields from db_models.SubmittedFile if needed later:
-    # language: Optional[str] = None
-    # analysis_summary: Optional[str] = None
-    # identified_components: Optional[List[str]] = None
-    # asvs_analysis: Optional[Dict[str, Any]] = None
+    # Optional fields from db_models.SubmittedFile, now included:
+    language: Optional[str] = None
+    analysis_summary: Optional[str] = None
+    identified_components: Optional[List[str]] = None
+    asvs_analysis: Optional[Dict[str, Any]] = None
 
     class Config:
         from_attributes = True

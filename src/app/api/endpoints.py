@@ -186,8 +186,11 @@ async def get_submission_results(
         files_analyzed_report_items.append(
             api_models.SubmittedFileReportItem(
                 file_path=file_db.file_path,
-                findings=file_findings_response
-                # language=file_db.language, # Populate if needed by frontend here
+                findings=file_findings_response,
+                language=file_db.language,
+                analysis_summary=file_db.analysis_summary,
+                identified_components=file_db.identified_components,
+                asvs_analysis=file_db.asvs_analysis,
             )
         )
 
