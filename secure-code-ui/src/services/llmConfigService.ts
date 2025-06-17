@@ -14,6 +14,7 @@ export const llmConfigService = {
     const response = await apiClient.get<LLMConfiguration[]>(
       "/admin/llm-configs/",
     );
+    console.log("llmConfigService - Raw API response for getLlmConfigs:", response.data);
     return response.data;
   },
 
