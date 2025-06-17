@@ -26,6 +26,8 @@ class LLMConfigurationCreate(LLMConfigurationBase):
 
 class LLMConfigurationRead(LLMConfigurationBase):
     id: uuid.UUID
+    created_at: datetime  # Added created_at
+    updated_at: datetime  # Added updated_at
 
     class Config:
         from_attributes = True
