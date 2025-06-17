@@ -1,7 +1,7 @@
 import { CheckCircleOutlined, ClockCircleOutlined, ExclamationCircleOutlined } from "@ant-design/icons";
 import { useQuery } from "@tanstack/react-query";
 import { Alert, Button, Space, Spin, Table, Tag, Typography } from "antd";
-import React, { useMemo } from "react";
+import React, { useMemo, useCallback } from "react"; // Added useCallback
 import { Link } from "react-router-dom";
 import { submissionService } from "../../services/submissionService";
 import type { SubmissionHistoryItem } from "../../types/api";
@@ -19,19 +19,19 @@ const statusMap: { [key: string]: { color: string; icon: React.ReactNode } } = {
 };
 
 const SubmissionHistoryPage: React.FC = () => {
-  const getTimeDisplayPreference = (): TimeDisplayPreference => {
+  const getTimeDisplayPreference = useCallback((): TimeDisplayPreference => {
     return (localStorage.getItem(TIME_DISPLAY_PREFERENCE_KEY) as TimeDisplayPreference) || "local";
-  };
+  }, []);
 
-  const formatDisplayDate = (dateString: string | null): string => {
+  const formatDisplayDate = useCallback((dateString: string | null): string => {
     if (!dateString) return "N/A";
     const date = new Date(dateString);
-    const preference = getTimeDisplayPreference();
+    const preference = getTimeDisplayPreference(); // Calls memoized version
     if (preference === "utc") {
       return date.toUTCString();
     }
     return date.toLocaleString();
-  };
+  }, [getTimeDisplayPreference]); // Depends on memoized getTimeDisplayPreference
 
   const { data, isLoading, isError, error } = useQuery<
     SubmissionHistoryItem[],
@@ -95,7 +95,7 @@ const SubmissionHistoryPage: React.FC = () => {
         );
       },
     },
-  ], [getTimeDisplayPreference]); // Re-memoize if formatting preference changes, though localStorage is outside React state.
+  ], [formatDisplayDate]); // Now depends on the memoized formatDisplayDate
                                  // For a more reactive approach, preference could be in context or Zustand/Redux.
 
   if (isLoading && !data) { // Show main spinner only on initial load without data
