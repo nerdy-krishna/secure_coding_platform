@@ -90,9 +90,7 @@ const LLMSettingsPage: React.FC = () => {
   };
 
   const formatDisplayDate = useCallback((dateString: string | null | undefined): string => {
-    console.log("LLMSettingsPage - formatDisplayDate - input dateString:", dateString);
     const date = parseAsUTCDate(dateString);
-    console.log("LLMSettingsPage - formatDisplayDate - parsed date object:", date);
     return date ? date.toLocaleString() : "Invalid Date";
   }, []);
 
