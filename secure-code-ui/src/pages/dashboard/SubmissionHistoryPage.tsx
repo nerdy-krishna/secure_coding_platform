@@ -5,10 +5,9 @@ import React, { useMemo, useCallback } from "react"; // Added useCallback
 import { Link } from "react-router-dom";
 import { submissionService } from "../../services/submissionService";
 import type { SubmissionHistoryItem } from "../../types/api";
-import type { TimeDisplayPreference } from "./SettingsPage"; // Import the type
+// Removed import of TimeDisplayPreference and TIME_DISPLAY_PREFERENCE_KEY
 
 const { Title } = Typography;
-const TIME_DISPLAY_PREFERENCE_KEY = "timeDisplayPreference";
 
 const statusMap: { [key: string]: { color: string; icon: React.ReactNode } } = {
     Pending: { color: "gold", icon: <ClockCircleOutlined /> },
@@ -19,19 +18,11 @@ const statusMap: { [key: string]: { color: string; icon: React.ReactNode } } = {
 };
 
 const SubmissionHistoryPage: React.FC = () => {
-  const getTimeDisplayPreference = useCallback((): TimeDisplayPreference => {
-    return (localStorage.getItem(TIME_DISPLAY_PREFERENCE_KEY) as TimeDisplayPreference) || "local";
-  }, []);
-
   const formatDisplayDate = useCallback((dateString: string | null): string => {
     if (!dateString) return "N/A";
     const date = new Date(dateString);
-    const preference = getTimeDisplayPreference(); // Calls memoized version
-    if (preference === "utc") {
-      return date.toUTCString();
-    }
-    return date.toLocaleString();
-  }, [getTimeDisplayPreference]); // Depends on memoized getTimeDisplayPreference
+    return date.toLocaleString(); // Always use system's local time formatting
+  }, []); // No dependencies needed as it's self-contained now
 
   const { data, isLoading, isError, error } = useQuery<
     SubmissionHistoryItem[],
