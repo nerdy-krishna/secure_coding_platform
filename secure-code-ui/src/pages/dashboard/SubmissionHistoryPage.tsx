@@ -1,6 +1,6 @@
 import { CheckCircleOutlined, ClockCircleOutlined, ExclamationCircleOutlined } from "@ant-design/icons";
 import { useQuery } from "@tanstack/react-query";
-import { Alert, Button, Space, Table, Tag, Typography } from "antd";
+import { Alert, Button, Space, Spin, Table, Tag, Typography } from "antd";
 import React from "react";
 import { Link } from "react-router-dom";
 import { submissionService } from "../../services/submissionService";
@@ -66,6 +66,14 @@ const SubmissionHistoryPage: React.FC = () => {
       ),
     },
   ];
+
+  if (isLoading) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 'calc(100vh - 200px)' /* Adjust height as needed */ }}>
+        <Spin tip="Loading submission history..." size="large" />
+      </div>
+    );
+  }
 
   if (isError) {
     return (
