@@ -24,14 +24,6 @@ const SubmissionHistoryPage: React.FC = () => {
     queryFn: submissionService.getSubmissionHistory,
   });
 
-  // For debugging: log the state of the query
-  console.log("Submission History Query State:", {
-    data,
-    isLoading,
-    isError,
-    error,
-  });
-
   const columns = [
     {
       title: "Submission ID",
