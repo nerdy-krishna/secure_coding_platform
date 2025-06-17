@@ -45,9 +45,12 @@ async def prepare_and_validate_input_node(state: ApiGraphState) -> Dict[str, Any
         f"API Graph Node: prepare_and_validate_input_node for user {state['user_id']}"
     )
     files_to_save: List[Dict[str, str]] = []
-    primary_language = state.get("language")
-
+    
+    # Get optional values from state more explicitly for type checking
+    input_code_val = state.get("input_code")
+    primary_language_val = state.get("language")
     input_files_list = state.get("input_files")
+
     if input_files_list:
         logger.info(f"Processing {len(input_files_list)} input files.")
         for file_obj in input_files_list:
@@ -62,14 +65,17 @@ async def prepare_and_validate_input_node(state: ApiGraphState) -> Dict[str, Any
             files_to_save.append(
                 {"filename": file_name, "content": file_content}
             )
-        if not primary_language and files_to_save:
+        # If primary language wasn't provided alongside files, primary_language_val remains None.
+        # The 'if not primary_language_val and files_to_save:' block handles this scenario.
+        if not primary_language_val and files_to_save:
             # Simple heuristic: use language of first file if not provided,
             # or enhance with detection later. For now, language is user-provided or None.
             pass
-    elif state.get("input_code") and primary_language:
+    elif input_code_val and primary_language_val:
         logger.info("Processing single code snippet.")
+        # Both input_code_val and primary_language_val are confirmed str here by the condition
         files_to_save.append(
-            {"filename": f"snippet.{primary_language}", "content": state["input_code"]}
+            {"filename": f"snippet.{primary_language_val}", "content": input_code_val}
         )
     else:
         logger.error("No valid input (code+language or files) provided to API graph.")
@@ -77,7 +83,7 @@ async def prepare_and_validate_input_node(state: ApiGraphState) -> Dict[str, Any
             "db_error": "Invalid input: Must provide code with language or a list of files."
         }
 
-    return {"files_to_save": files_to_save, "language": primary_language}
+    return {"files_to_save": files_to_save, "language": primary_language_val}
 
 
 async def save_submission_to_db_node(state: ApiGraphState) -> Dict[str, Any]:
