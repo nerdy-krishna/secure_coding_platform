@@ -20,9 +20,13 @@ const statusMap: { [key: string]: { color: string; icon: React.ReactNode } } = {
 const SubmissionHistoryPage: React.FC = () => {
   const formatDisplayDate = useCallback((dateString: string | null): string => {
     if (!dateString) return "N/A";
-    const date = new Date(dateString);
-    // For debugging:
-    console.log(`Original dateString: ${dateString}, Parsed Date object: ${date.toString()}, LocaleString: ${date.toLocaleString()}`);
+    // Ensure the date string is treated as UTC if it doesn't have timezone info
+    let utcDateString = dateString;
+    // Regex to check if the string ends with Z or has a +/- offset like +00:00
+    if (!/Z|[+-]\d{2}:\d{2}$/.test(dateString)) {
+      utcDateString += "Z";
+    }
+    const date = new Date(utcDateString);
     return date.toLocaleString(); // Always use system's local time formatting
   }, []); // No dependencies needed as it's self-contained now
 
@@ -94,7 +98,7 @@ const SubmissionHistoryPage: React.FC = () => {
   if (isLoading && !data) { // Show main spinner only on initial load without data
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 'calc(100vh - 200px)' /* Adjust height as needed */ }}>
-        <Spin tip="Loading submission history..." size="large" />
+        <Spin size="large" /> 
       </div>
     );
   }
