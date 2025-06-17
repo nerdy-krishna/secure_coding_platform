@@ -1,5 +1,6 @@
 // secure-code-ui/src/pages/dashboard/SettingsPage.tsx
-import { Card, Divider, Radio, RadioChangeEvent, Space, Typography } from "antd";
+import { Card, Divider, Radio, Space, Typography } from "antd";
+import type { RadioChangeEvent } from "antd"; // Import RadioChangeEvent as a type
 import React, { useEffect, useState } from "react";
 
 const { Title, Paragraph } = Typography;
