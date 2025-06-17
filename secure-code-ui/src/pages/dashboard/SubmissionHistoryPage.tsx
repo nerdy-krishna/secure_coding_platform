@@ -1,30 +1,55 @@
 import { CheckCircleOutlined, ClockCircleOutlined, ExclamationCircleOutlined } from "@ant-design/icons";
 import { useQuery } from "@tanstack/react-query";
 import { Alert, Button, Space, Spin, Table, Tag, Typography } from "antd";
-import React from "react";
+import React, { useMemo } from "react";
 import { Link } from "react-router-dom";
 import { submissionService } from "../../services/submissionService";
 import type { SubmissionHistoryItem } from "../../types/api";
+import type { TimeDisplayPreference } from "./SettingsPage"; // Import the type
 
 const { Title } = Typography;
+const TIME_DISPLAY_PREFERENCE_KEY = "timeDisplayPreference";
 
 const statusMap: { [key: string]: { color: string; icon: React.ReactNode } } = {
     Pending: { color: "gold", icon: <ClockCircleOutlined /> },
     Processing: { color: "blue", icon: <ClockCircleOutlined /> },
     Completed: { color: "green", icon: <CheckCircleOutlined /> },
     Failed: { color: "red", icon: <ExclamationCircleOutlined /> },
+    // Add other statuses if necessary
 };
 
 const SubmissionHistoryPage: React.FC = () => {
+  const getTimeDisplayPreference = (): TimeDisplayPreference => {
+    return (localStorage.getItem(TIME_DISPLAY_PREFERENCE_KEY) as TimeDisplayPreference) || "local";
+  };
+
+  const formatDisplayDate = (dateString: string | null): string => {
+    if (!dateString) return "N/A";
+    const date = new Date(dateString);
+    const preference = getTimeDisplayPreference();
+    if (preference === "utc") {
+      return date.toUTCString();
+    }
+    return date.toLocaleString();
+  };
+
   const { data, isLoading, isError, error } = useQuery<
     SubmissionHistoryItem[],
     Error
   >({
     queryKey: ["submissionHistory"],
     queryFn: submissionService.getSubmissionHistory,
+    refetchInterval: (query) => {
+      // Check if any item is still pending or processing
+      const shouldPoll = query.state.data?.some(
+        (item) => item.status === "Pending" || item.status === "Processing"
+      );
+      return shouldPoll ? 5000 : false; // Poll every 5 seconds if needed
+    },
+    refetchIntervalInBackground: true,
   });
 
-  const columns = [
+  const columns = useMemo(() => [
     {
       title: "Submission ID",
       dataIndex: "id",
@@ -48,26 +73,32 @@ const SubmissionHistoryPage: React.FC = () => {
       title: "Submitted At",
       dataIndex: "submitted_at",
       key: "submitted_at",
-      render: (text: string) => new Date(text).toLocaleString(),
+      render: (text: string) => formatDisplayDate(text),
     },
     {
       title: "Completed At",
       dataIndex: "completed_at",
       key: "completed_at",
-      render: (text: string | null) => text ? new Date(text).toLocaleString() : "N/A",
+      render: (text: string | null) => formatDisplayDate(text),
     },
     {
       title: "Action",
       key: "action",
-      render: (_: unknown, record: SubmissionHistoryItem) => (
-        <Link to={`/results/${record.id}`}>
-          <Button type="primary">View Results</Button>
-        </Link>
-      ),
+      render: (_: unknown, record: SubmissionHistoryItem) => {
+        const isCompleted = record.status === "Completed";
+        return (
+          <Link to={`/results/${record.id}`} onClick={(e) => !isCompleted && e.preventDefault()}>
+            <Button type="primary" disabled={!isCompleted}>
+              View Results
+            </Button>
+          </Link>
+        );
+      },
     },
-  ];
+  ], [getTimeDisplayPreference]); // Re-memoize if formatting preference changes, though localStorage is outside React state.
+                                 // For a more reactive approach, preference could be in context or Zustand/Redux.
 
-  if (isLoading) {
+  if (isLoading && !data) { // Show main spinner only on initial load without data
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 'calc(100vh - 200px)' /* Adjust height as needed */ }}>
         <Spin tip="Loading submission history..." size="large" />
