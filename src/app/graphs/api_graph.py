@@ -46,16 +46,20 @@ async def prepare_and_validate_input_node(state: ApiGraphState) -> Dict[str, Any
     files_to_save: List[Dict[str, str]] = []
     primary_language = state.get("language")
 
-    if state.get("input_files"):
-        logger.info(f"Processing {len(state['input_files'])} input files.")
-        for file_obj in state["input_files"]:
+    input_files_list = state.get("input_files")
+    if input_files_list:
+        logger.info(f"Processing {len(input_files_list)} input files.")
+        for file_obj in input_files_list:
+            file_name = file_obj.filename
+            file_content = file_obj.content
             # Basic validation (can be enhanced)
-            if not file_obj.filename or not file_obj.content:
+            if not file_name or not file_content: # Check for None or empty string
                 return {
                     "db_error": "Invalid file data: filename and content are required."
                 }
+            # At this point, file_name and file_content are known to be non-empty strings.
             files_to_save.append(
-                {"filename": file_obj.filename, "content": file_obj.content}
+                {"filename": file_name, "content": file_content}
             )
         if not primary_language and files_to_save:
             # Simple heuristic: use language of first file if not provided,
@@ -170,7 +174,7 @@ def route_after_db_save(state: ApiGraphState) -> Literal["publish_to_mq", "__end
         # Populate final_message if not already set by an error node
         if not state.get("final_message"):
             state["final_message"] = "Failed to save submission to database."
-        return END  # Using LangGraph's predefined END node name
+        return "__end__"  # Explicitly return the string literal for __end__
     logger.info("DB save successful, routing to publish_to_mq.")
     return "publish_to_mq"
 
