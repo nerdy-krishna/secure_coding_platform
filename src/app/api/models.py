@@ -52,6 +52,11 @@ class SubmissionRequest(BaseModel):
         ..., description="ID of the LLM config for specialized agents."
     )
 
+# --- Individual File Model (NEW - for graph input) ---
+class CodeFile(BaseModel):
+    filename: str = Field(..., description="The name/path of the file.")
+    content: str = Field(..., description="The content of the file.")
+
 
 class SecurityQueryCreate(BaseModel):
     query_name: str
