@@ -227,7 +227,7 @@ const ResultsPage: React.FC = () => {
               <Descriptions.Item label="Identified Components">
                 {file.identified_components &&
                 file.identified_components.length > 0
-                  ? file.identified_components.map((comp) => (
+                  ? file.identified_components.map((comp: string) => (
                       <Tag key={comp}>{comp}</Tag>
                     ))
                   : "N/A"}
@@ -295,7 +295,7 @@ const ResultsPage: React.FC = () => {
                       <Descriptions.Item label="References">
                         {finding.references && finding.references.length > 0 ? (
                           <ul>
-                            {finding.references.map((ref, i) => (
+                            {finding.references.map((ref: string, i: number) => (
                               <li key={i}>
                                 <a
                                   href={ref}
@@ -331,7 +331,7 @@ const ResultsPage: React.FC = () => {
                         style={{ marginTop: 10 }}
                       >
                         <Collapse>
-                          {finding.fixes.map((fix, fixIndex) => (
+                          {finding.fixes.map((fix: { description?: string; suggested_fix?: string }, fixIndex: number) => (
                             <Panel
                               header={fix.description || `Suggested Fix ${fixIndex + 1}`}
                               key={`${file.file_path}-finding-${index}-fix-${fixIndex}`}
