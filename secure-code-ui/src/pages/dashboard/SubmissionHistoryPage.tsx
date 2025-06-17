@@ -21,6 +21,8 @@ const SubmissionHistoryPage: React.FC = () => {
   const formatDisplayDate = useCallback((dateString: string | null): string => {
     if (!dateString) return "N/A";
     const date = new Date(dateString);
+    // For debugging:
+    console.log(`Original dateString: ${dateString}, Parsed Date object: ${date.toString()}, LocaleString: ${date.toLocaleString()}`);
     return date.toLocaleString(); // Always use system's local time formatting
   }, []); // No dependencies needed as it's self-contained now
 
