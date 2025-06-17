@@ -13,9 +13,10 @@ from langgraph.graph import StateGraph, END
 from app.db.database import AsyncSessionLocal
 from app.db.models import CodeSubmission, SubmittedFile
 from app.api.models import CodeFile  # Pydantic model for input files
+from app.core.config import settings # For RabbitMQ queue name
 
 # RabbitMQ import
-from app.utils.rabbitmq_utils import publish_to_rabbitmq, CODE_QUEUE
+from app.utils.rabbitmq_utils import publish_submission
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ class ApiGraphState(TypedDict):
     user_id: uuid.UUID  # User ID is mandatory
 
     # Intermediate state
-    submission_id: Optional[int]
+    submission_id: Optional[uuid.UUID] # Changed from int to uuid.UUID
     db_error: Optional[str]
     publish_error: Optional[str]
     final_message: Optional[str]
@@ -137,25 +138,19 @@ async def publish_to_mq_node(state: ApiGraphState) -> Dict[str, Any]:
             "final_message": "Internal error: Submission ID not available for MQ.",
         }
 
-    message_payload = {"submission_id": submission_id}
     try:
-        json_payload_string = json.dumps(message_payload)
         # Run synchronous pika publish in a threadpool to avoid blocking asyncio loop
-        await run_in_threadpool(publish_to_rabbitmq, json_payload_string)
+        # publish_submission expects a string submission_id
+        await run_in_threadpool(publish_submission, str(submission_id))
         logger.info(
-            f"Successfully published submission_id {submission_id} to queue '{CODE_QUEUE}'."
+            f"Successfully published submission_id {submission_id} to queue '{settings.CODE_QUEUE}'."
         )
         return {
             "publish_error": None,
             "final_message": f"Submission {submission_id} accepted and queued for analysis.",
         }
-    except json.JSONDecodeError as json_err:
-        logger.error(f"Error serializing MQ payload: {json_err}", exc_info=True)
-        return {
-            "publish_error": "JSON serialization error for MQ.",
-            "final_message": "Internal error with MQ.",
-        }
-    except Exception as e:  # Catch errors from publish_to_rabbitmq
+    # Removed JSONDecodeError catch as json.dumps is now handled within publish_submission
+    except Exception as e:  # Catch errors from publish_submission
         logger.error(
             f"Error publishing submission_id {submission_id} to MQ: {e}", exc_info=True
         )
