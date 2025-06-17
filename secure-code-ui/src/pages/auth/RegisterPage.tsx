@@ -22,7 +22,7 @@ const RegisterPage: React.FC = () => {
     try {
       await register(values);
       message.success(
-        "Registration successful! Please check your email to verify your account. Redirecting to login...",
+        "Registration successful! Redirecting to login...",
       );
       setTimeout(() => {
         navigate("/login");
