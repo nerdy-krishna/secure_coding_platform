@@ -29,7 +29,7 @@ const LoginPage: React.FC = () => {
 
   React.useEffect(() => {
     clearError();
-  }, [clearError]);
+  }, []); // Ensures clearError is called only on initial mount
 
   const onFinish = async (values: UserLoginData) => {
     try {
