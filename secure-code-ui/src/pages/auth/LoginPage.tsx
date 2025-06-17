@@ -1,12 +1,12 @@
 // secure-code-ui/src/pages/auth/LoginPage.tsx
 import { LockOutlined, UserOutlined } from "@ant-design/icons";
 import {
-  Alert,
   Button,
   Checkbox,
   Col,
   Form,
   Input,
+  message, // Added message
   Row,
   Typography,
 } from "antd";
@@ -27,19 +27,30 @@ const LoginPage: React.FC = () => {
   const navigate = useNavigate();
   const [form] = Form.useForm();
 
-  React.useEffect(() => {
-    clearError();
-  }, []); // Ensures clearError is called only on initial mount
+  // Removed useEffect for clearError
 
   const onFinish = async (values: UserLoginData) => {
     try {
       await login(values);
       navigate("/dashboard");
-    } catch (err) {
-      console.error(
-        "LoginPage: Login attempt failed in component's onFinish:",
-        err,
-      );
+    } catch (err: any) { // Catch specific error types if known, else 'any' or 'unknown'
+      console.error("LoginPage: Login attempt failed:", err);
+      let errorMessage = "Login failed. Please check your credentials and try again.";
+      if (err && err.message) {
+        // Prefer a message from the error object if available and user-friendly
+        // This depends on what `useAuth().login` throws.
+        // For now, we use a generic one, but if `authError` from useAuth is reliable,
+        // we could potentially use that, or err.response.data.detail for Axios errors.
+        // Example: if (err.response?.data?.detail) errorMessage = err.response.data.detail;
+      }
+      // If authError from useAuth hook is updated reliably by the login function, use it.
+      // Otherwise, use the error caught here.
+      // For now, let's assume authError from the hook is the source of truth if set.
+      if (authError) {
+        message.error(authError);
+      } else {
+        message.error(errorMessage);
+      }
     }
   };
 
@@ -77,16 +88,7 @@ const LoginPage: React.FC = () => {
           >
             Login
           </Title>
-          {authError && (
-            <Alert
-              message={authError}
-              type="error"
-              showIcon
-              closable
-              onClose={clearError}
-              style={{ marginBottom: "20px" }}
-            />
-          )}
+          {/* Alert removed, messages will be shown via antd message API */}
           <Form
             form={form}
             name="login"

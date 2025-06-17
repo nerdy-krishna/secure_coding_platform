@@ -1,8 +1,8 @@
 import { LockOutlined, MailOutlined } from "@ant-design/icons";
-import { Alert, Button, Col, Form, Input, Row, Typography } from "antd";
+import { Button, Col, Form, Input, message, Row, Typography } from "antd"; // Added message
 import { AxiosError } from "axios";
 import React from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom"; // Added useNavigate
 import { useAuth } from "../../hooks/useAuth";
 import { type UserRegisterData } from "../../types/api";
 
@@ -10,22 +10,23 @@ const { Title, Paragraph } = Typography;
 
 const RegisterPage: React.FC = () => {
   const { register } = useAuth();
+  const navigate = useNavigate(); // Added useNavigate
   const [form] = Form.useForm();
   const [loading, setLoading] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = React.useState<string | null>(
-    null,
-  );
+  // Removed local error and successMessage states
 
   const onFinish = async (values: UserRegisterData) => {
     setLoading(true);
-    setError(null);
-    setSuccessMessage(null);
+    // setError(null); // Removed
+    // setSuccessMessage(null); // Removed
     try {
       await register(values);
-      setSuccessMessage(
-        "Registration successful! Please check your email to verify your account.",
+      message.success(
+        "Registration successful! Please check your email to verify your account. Redirecting to login...",
       );
+      setTimeout(() => {
+        navigate("/login");
+      }, 3000); // 3-second delay
     } catch (err) {
       let errorMessage = "Registration failed. Please try again.";
       if (err instanceof AxiosError && err.response) {
@@ -55,7 +56,7 @@ const RegisterPage: React.FC = () => {
       } else if (err instanceof Error) {
         errorMessage = err.message;
       }
-      setError(errorMessage);
+      message.error(errorMessage); // Use message.error
     } finally {
       setLoading(false);
     }
@@ -69,7 +70,7 @@ const RegisterPage: React.FC = () => {
 
   const onFinishFailed = (errorInfo: AntDValidationError) => {
     console.log("Failed:", errorInfo);
-    setError("Please correct the highlighted errors.");
+    message.error("Please correct the highlighted errors."); // Use message.error
   };
 
   return (
@@ -96,26 +97,11 @@ const RegisterPage: React.FC = () => {
           <Paragraph style={{ textAlign: "center", marginBottom: "30px" }}>
             Join the Secure Code Platform.
           </Paragraph>
-          {error && (
-            <Alert
-              message={error}
-              type="error"
-              showIcon
-              style={{ marginBottom: "20px" }}
-            />
-          )}
-          {successMessage && (
-            <Alert
-              message={successMessage}
-              type="success"
-              showIcon
-              style={{ marginBottom: "20px" }}
-            />
-          )}
-          {!successMessage && (
-            <Form
-              form={form}
-              name="register"
+          {/* Removed Alert components for error and successMessage */}
+          {/* Form is no longer conditionally rendered based on successMessage */}
+          <Form
+            form={form}
+            name="register"
               onFinish={onFinish}
               onFinishFailed={onFinishFailed}
               layout="vertical"
@@ -191,14 +177,7 @@ const RegisterPage: React.FC = () => {
                 Already have an account? <Link to="/login">Log in</Link>
               </div>
             </Form>
-          )}
-          {successMessage && (
-            <div style={{ textAlign: "center", marginTop: "20px" }}>
-              <Link to="/login">
-                <Button type="primary">Proceed to Login</Button>
-              </Link>
-            </div>
-          )}
+          {/* Removed conditional rendering for success button, navigation is now automatic */}
         </div>
       </Col>
     </Row>
