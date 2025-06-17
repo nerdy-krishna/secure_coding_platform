@@ -94,11 +94,30 @@ export interface Finding {
   code_snippet?: string;
   description?: string;
   remediation?: string;
+  confidence?: string; // Added
+  references?: string[]; // Added
+  fixes?: SuggestedFix[]; // Added
+  // cwe_id is already present as cwe_id, but ResultsPage.tsx uses finding.cwe.
+  // Let's assume cwe_id is the correct one from backend and ResultsPage needs to align,
+  // or if backend sends 'cwe', then it should be added here.
+  // For now, I'll add 'cwe' as per ResultsPage.tsx usage.
+  cwe?: string; // Added based on ResultsPage.tsx usage
+}
+
+// New interface for suggested fixes
+export interface SuggestedFix {
+  description?: string;
+  suggested_fix?: string;
+  // Add any other properties a fix object might have
 }
 
 export interface SubmittedFile {
   file_path: string;
   findings: Finding[];
+  language?: string; // Added
+  analysis_summary?: string; // Added
+  identified_components?: string[]; // Added
+  asvs_analysis?: Record<string, any>; // Added (use a more specific type if known)
 }
 
 export interface SeverityCounts {
