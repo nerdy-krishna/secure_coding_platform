@@ -15,7 +15,7 @@ import {
   Typography,
   type TableProps, // <-- FIX 1: Import TableProps for explicit typing
 } from "antd";
-import React from "react";
+import React, { useCallback, useMemo } from "react"; // Added useCallback and useMemo
 import { llmConfigService } from "../../services/llmConfigService";
 // FIX 2: Use a type-only import
 import { AxiosError } from "axios";
@@ -77,12 +77,33 @@ const LLMSettingsPage: React.FC = () => {
     createMutation.mutate(values);
   };
 
-  const handleDelete = (configId: string) => {
-    deleteMutation.mutate(configId);
+  // Helper function to parse date strings as UTC
+  const parseAsUTCDate = (dateString: string | null | undefined): Date | null => {
+    if (!dateString) return null;
+    let utcDateString = dateString;
+    if (!/Z|[+-]\d{2}:\d{2}$/.test(dateString)) {
+      utcDateString += "Z";
+    }
+    const date = new Date(utcDateString);
+    // Check if the date is valid after parsing
+    return isNaN(date.getTime()) ? null : date;
   };
 
-  // FIX 3: Explicitly type the 'columns' constant
-  const columns: TableProps<LLMConfiguration>["columns"] = [
+  const formatDisplayDate = useCallback((dateString: string | null | undefined): string => {
+    const date = parseAsUTCDate(dateString);
+    return date ? date.toLocaleString() : "Invalid Date";
+  }, []);
+
+  const handleDelete = useCallback(
+    (configId: string) => {
+      deleteMutation.mutate(configId);
+    },
+    [deleteMutation], // deleteMutation.mutate is stable, but deleteMutation itself is fine
+  );
+
+  // FIX 3: Explicitly type the 'columns' constant and memoize it
+  const columns: TableProps<LLMConfiguration>["columns"] = useMemo(
+    () => [
     {
       title: "Name",
       dataIndex: "name",
@@ -106,9 +127,15 @@ const LLMSettingsPage: React.FC = () => {
       title: "Created At",
       dataIndex: "created_at",
       key: "created_at",
-      render: (text) => new Date(text).toLocaleString(),
-      sorter: (a, b) =>
-        new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+      render: (text: string) => formatDisplayDate(text),
+      sorter: (a, b) => {
+        const dateA = parseAsUTCDate(a.created_at);
+        const dateB = parseAsUTCDate(b.created_at);
+        if (dateA && dateB) {
+          return dateA.getTime() - dateB.getTime();
+        }
+        return 0; // Handle cases where dates might be invalid
+      },
     },
     {
       title: "Action",
@@ -133,7 +160,9 @@ const LLMSettingsPage: React.FC = () => {
         </Popconfirm>
       ),
     },
-  ];
+  ],
+  [formatDisplayDate, handleDelete],
+  );
 
   if (isError) {
     message.error(`Error fetching configurations: ${error.message}`);
