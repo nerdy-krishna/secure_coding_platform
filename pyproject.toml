@@ -8,6 +8,7 @@ readme = "README.md"
 packages = [{ include = "app", from = "src" }]
 
 [tool.poetry.dependencies]
+# This project requires Python 3.12.x
 python = "~3.12"
 fastapi = ">=0.115.9,<0.116.0"
 fastapi-users = {extras = ["sqlalchemy"], version = "^14.0.1"}
