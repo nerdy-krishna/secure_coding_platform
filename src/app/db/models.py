@@ -3,9 +3,10 @@ import uuid
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 
-from sqlalchemy import String, Text, DateTime, ForeignKey, Integer, JSON, Float
+from sqlalchemy import String, Text, DateTime, ForeignKey, Integer, JSON, Float, func
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import relationship, Mapped, mapped_column
+from sqlalchemy.dialects.postgresql import JSONB
 
 from app.db.database import Base
 
@@ -145,4 +146,20 @@ class LLMInteraction(Base):
 
     submission: Mapped["CodeSubmission"] = relationship(
         "CodeSubmission", back_populates="llm_interactions"
+    )
+
+class RepositoryMapCache(Base):
+    __tablename__ = "repository_map_cache"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    
+    # A hash representing the state of all files in the submission.
+    # We'll use this as the cache key.
+    codebase_hash: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    
+    # The generated RepositoryMap, stored as a JSON object.
+    repository_map: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
     )
