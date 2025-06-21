@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime
 
 from langgraph.graph import StateGraph, END
+from langgraph.pregel import Pregel
 from sqlalchemy import create_engine, update
 
 # Agents and services
@@ -16,35 +17,22 @@ from app.agents.impact_reporting_agent import build_impact_reporting_agent_graph
 from app.agents.schemas import WorkflowMode, VulnerabilityFinding, FinalReport
 from app.db.database import get_db
 from app.db import crud, models as db_models
-from langgraph.checkpoint.sqlite import AioSqliteSaver
-from sqlalchemy.ext.asyncio import create_async_engine
+from langgraph.checkpoint.postgres import PostgresSaver
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# --- Updated master state for the entire worker workflow ---
-
 class WorkerState(TypedDict):
-    """
-    The complete state for the asynchronous worker graph.
-    """
+    # ... (state definition is unchanged)
     submission_id: uuid.UUID
     llm_config_id: Optional[uuid.UUID]
     files: Optional[Dict[str, str]]
     workflow_mode: WorkflowMode
-    
-    # Context Analysis Outputs
     repository_map: Optional[Any]
     asvs_analysis: Optional[Dict[str, Any]]
-    
-    # Coordinator Agent Outputs
     analysis_results: Dict[str, Any]
-    
-    # Impact Reporting Agent Inputs/Outputs
     findings: List[VulnerabilityFinding]
     final_report: Optional[FinalReport]
-
-    # Error handling
     error_message: Optional[str]
 
 
@@ -128,21 +116,20 @@ def should_continue(state: WorkerState) -> str:
     """Conditional edge to check for errors before continuing."""
     return "handle_error" if state.get("error_message") else "continue"
 
-# --- Build the final, runnable workflow ---
-
 def _build_and_compile_workflow():
-    """Constructs and compiles the full worker workflow with a database checkpointer."""
+    """Constructs and compiles the full worker workflow with the sync PostgreSQL checkpointer."""
     logger.debug("Building the main worker workflow graph...")
     
-    # --- Checkpointer Setup ---
-    # FIX: Add a check to ensure the database URL is configured
     if not settings.ASYNC_DATABASE_URL:
-        raise ValueError("ASYNC_DATABASE_URL must be configured in settings to use a checkpointer.")
+        raise ValueError("ASYNC_DATABASE_URL must be configured to use a checkpointer.")
 
-    # AioSqliteSaver works with any async SQLAlchemy engine, including PostgreSQL
-    engine = create_async_engine(settings.ASYNC_DATABASE_URL)
-    checkpointer = AioSqliteSaver(conn=engine)
+    # Convert the async URL to a standard sync DSN for psycopg
+    sync_db_url = settings.ASYNC_DATABASE_URL.replace("postgresql+asyncpg", "postgresql")
     
+    # Instantiate the checkpointer. It will manage its own connections internally.
+    checkpointer = PostgresSaver.from_conn_string(sync_db_url)
+    
+    # --- The rest of the graph construction is the same ---
     context_analysis_graph = build_context_analysis_agent_graph()
     coordinator_graph = build_coordinator_graph()
     impact_reporting_graph = build_impact_reporting_agent_graph()
@@ -150,10 +137,10 @@ def _build_and_compile_workflow():
     workflow = StateGraph(WorkerState)
 
     workflow.add_node("retrieve_submission_data", retrieve_submission_data)
-    workflow.add_node("context_analysis", context_analysis_graph) # type: ignore
-    workflow.add_node("coordinator", coordinator_graph) # type: ignore
+    workflow.add_node("context_analysis", context_analysis_graph)
+    workflow.add_node("coordinator", coordinator_graph)
     workflow.add_node("prepare_report_input", prepare_report_input)
-    workflow.add_node("impact_reporting", impact_reporting_graph) # type: ignore
+    workflow.add_node("impact_reporting", impact_reporting_graph)
     workflow.add_node("save_final_report", save_final_report_node)
     workflow.add_node("handle_error", handle_error_node)
 
@@ -167,12 +154,9 @@ def _build_and_compile_workflow():
     workflow.add_edge("save_final_report", END)
     workflow.add_edge("handle_error", END)
     
-    logger.debug("Compiling the main worker graph with checkpointer...")
-    # Compile the graph with the checkpointer
+    logger.debug("Compiling the main worker graph with PostgreSQL checkpointer...")
     return workflow.compile(checkpointer=checkpointer)
 
-
-
-# Create the final, runnable graph object
+# This is now a synchronous operation and can be defined at the module level
 worker_workflow = _build_and_compile_workflow()
 logger.info("Main worker workflow graph compiled and ready.")

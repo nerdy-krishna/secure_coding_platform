@@ -14,8 +14,11 @@ from app.api.endpoints import router as api_router, llm_router
 
 # --- Authentication Imports ---
 from app.auth.core import fastapi_users
+from app.core.config import settings
 from app.auth.backend import auth_backend
 from app.auth.schemas import UserRead, UserCreate, UserUpdate
+
+from langgraph.checkpoint.postgres import PostgresSaver
 
 # Import the centralized settings object for CORS configuration
 
@@ -28,13 +31,26 @@ logging.basicConfig(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Handles application startup and shutdown events.
-    The init_db() call has been removed, as database schema is now
-    managed exclusively by Alembic migrations.
-    """
-    logger.info("Application startup.")
+    # This code runs on application startup
+    logger.info("Application startup...")
+    
+    if settings.ASYNC_DATABASE_URL:
+        logger.info("Setting up database checkpointer tables...")
+        try:
+            # The checkpointer needs a sync connection string
+            sync_db_url = settings.ASYNC_DATABASE_URL.replace("postgresql+asyncpg", "postgresql")
+            
+            # Use the .from_conn_string() class method to handle connection and setup
+            checkpointer = PostgresSaver.from_conn_string(sync_db_url)
+            checkpointer.setup() # This is a synchronous call
+            logger.info("Checkpointer tables setup complete.")
+        except Exception as e:
+            logger.error(f"Failed to setup checkpointer tables on startup: {e}", exc_info=True)
+    else:
+        logger.warning("Database URL not set, skipping checkpointer setup.")
+    
     yield
+    # This code runs on shutdown
     logger.info("Application shutdown.")
 
 
