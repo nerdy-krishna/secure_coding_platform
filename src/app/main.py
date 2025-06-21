@@ -14,8 +14,11 @@ from app.api.endpoints import router as api_router, llm_router
 
 # --- Authentication Imports ---
 from app.auth.core import fastapi_users
+from app.core.config import settings
 from app.auth.backend import auth_backend
 from app.auth.schemas import UserRead, UserCreate, UserUpdate
+
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 # Import the centralized settings object for CORS configuration
 
@@ -28,15 +31,26 @@ logging.basicConfig(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Handles application startup and shutdown events.
-    The init_db() call has been removed, as database schema is now
-    managed exclusively by Alembic migrations.
-    """
-    logger.info("Application startup.")
+    # This code runs on application startup
+    logger.info("Application startup...")
+    
+    if settings.ASYNC_DATABASE_URL:
+        logger.info("Setting up database checkpointer tables...")
+        try:
+            # FIX: Convert the SQLAlchemy URL to a standard psycopg/asyncpg URL
+            conn_str = settings.ASYNC_DATABASE_URL.replace("postgresql+asyncpg", "postgresql")
+            
+            async with AsyncPostgresSaver.from_conn_string(conn_str) as checkpointer:
+                await checkpointer.setup()
+            logger.info("Checkpointer tables setup complete.")
+        except Exception as e:
+            logger.error(f"Failed to setup checkpointer tables on startup: {e}", exc_info=True)
+    else:
+        logger.warning("Database URL not set, skipping checkpointer setup.")
+    
     yield
+    # This code runs on shutdown
     logger.info("Application shutdown.")
-
 
 app = FastAPI(
     title="Secure Coding Platform API",

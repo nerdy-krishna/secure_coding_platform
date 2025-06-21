@@ -1,95 +1,116 @@
 # src/app/agents/communication_agent.py
+
 import logging
-from typing import Dict, Any, cast
+from typing import Dict, Any, cast, List
 
 from langgraph.graph import StateGraph, END
+from pydantic import BaseModel, Field
 
 from app.db import crud
 from app.db.database import AsyncSessionLocal
 from app.llm.llm_client import get_llm_client, AgentLLMResult
 from app.rag.rag_service import get_rag_service
 from app.agents.schemas import (
-    AnalysisResult,
-    FixSuggestion,
-    FixResult,
     SpecializedAgentState,
-    LLMInteraction, # Added import
+    LLMInteraction,
+    RemediationResult,
+    FixResult,
+    VulnerabilityFinding
 )
 
-# Agent-specific configuration
+# --- Agent-specific Configuration ---
 AGENT_NAME = "CommunicationAgent"
-AGENT_DOMAIN_QUERY = "secure communication, TLS, SSL, HTTPS, certificate validation, weak ciphers, cleartext data transmission, data in transit protection, HSTS"
+AGENT_PROMPT_NAME = "Secure Communication"
+AGENT_DOMAIN_QUERY = "secure communication, TLS, SSL, HTTPS, certificate validation, weak ciphers, transport layer security, data in transit, network security protocols"
 logger = logging.getLogger(__name__)
 
 
-# --- Agent Nodes ---
+# --- Pydantic models for structured LLM responses ---
+
+class RemediateResponse(BaseModel):
+    """The expected output when running in 'remediate' mode."""
+    results: List[RemediationResult] = Field(description="A list of vulnerability findings and their corresponding fixes.")
+
+class AuditResponse(BaseModel):
+    """The expected output when running in 'audit' mode."""
+    findings: List[VulnerabilityFinding] = Field(description="A list of vulnerability findings without any fixes.")
 
 
-async def assess_vulnerabilities_node(state: SpecializedAgentState) -> Dict[str, Any]:
+async def analysis_node(state: SpecializedAgentState) -> Dict[str, Any]:
     """
-    Queries the RAG for relevant guidelines and uses the LLM to find secure communication vulnerabilities.
+    A single, unified node that performs analysis based on the workflow_mode.
+    It can either run a read-only audit or find and fix vulnerabilities.
     """
     submission_id = state["submission_id"]
     filename = state["filename"]
-    code_snippet = state["code_snippet"]
-    logger.info(f"[{AGENT_NAME}] Assessing vulnerabilities for: {filename}")
+    code_bundle = state["code_snippet"]
+    mode = state["workflow_mode"]
+    
+    logger.info(f"[{AGENT_NAME}] Assessing '{filename}' in '{mode}' mode.")
 
     rag_service = get_rag_service()
     if not rag_service:
         return {"error": "Failed to get RAG service."}
 
-    retrieved_guidelines = rag_service.query_asvs(
-        query_texts=[AGENT_DOMAIN_QUERY], n_results=10
-    )
-    context_str = (
-        "\n".join(res["document"] for res in retrieved_guidelines[0]["results"])
-        if retrieved_guidelines
-        else "No specific guidelines retrieved."
-    )
+    retrieved_guidelines = rag_service.query_asvs(query_texts=[AGENT_DOMAIN_QUERY], n_results=10)
+    context_str = "\n".join(res["document"] for res in retrieved_guidelines[0]["results"]) if retrieved_guidelines else "No relevant security guidelines found."
 
-    prompt = f"""
-    You are a security expert specializing in {AGENT_NAME}. Analyze the following code snippet for vulnerabilities related to network communication.
-    Focus on issues like use of insecure protocols (e.g., HTTP instead of HTTPS), missing or weak TLS configurations, improper certificate validation, or transmission of sensitive data in cleartext.
-    Use the provided OWASP ASVS security guidelines for your analysis. For each vulnerability found, provide a detailed finding.
+    # Select the appropriate prompt and response model based on the workflow mode
+    if mode == "audit":
+        prompt = f"""
+        You are a security expert specializing in {AGENT_PROMPT_NAME}. 
+        Your task is to perform a read-only audit of the provided code bundle.
+        Analyze the code for vulnerabilities related to your domain, using the provided security guidelines.
+        For each vulnerability found, provide a detailed finding. Do NOT suggest code fixes.
 
-    SECURITY GUIDELINES (OWASP ASVS):
-    ---
-    {context_str}
-    ---
+        <SECURITY_GUIDELINES>
+        {context_str}
+        </SECURITY_GUIDELINES>
 
-    CODE SNIPPET (File: {filename}):
-    ```
-    {code_snippet}
-    ```
+        <CODE_BUNDLE>
+        {code_bundle}
+        </CODE_BUNDLE>
 
-    Identify secure communication vulnerabilities and respond with a structured list of findings. If no vulnerabilities are found, return an empty list.
-    """
+        Respond ONLY with a valid JSON object that conforms to the specified schema.
+        """
+        response_model = AuditResponse
+    else:  # mode == "remediate"
+        prompt = f"""
+        You are a security expert specializing in {AGENT_PROMPT_NAME}.
+        Your task is to find vulnerabilities and provide complete, secure code replacements.
+        Analyze the code in the <CODE_BUNDLE> using the provided <SECURITY_GUIDELINES>. 
+        For each vulnerability you identify:
+        1.  Provide a detailed 'finding' object.
+        2.  Provide a 'suggestion' object that includes the 'original_snippet' of code to be replaced and the new 'code' that fixes the vulnerability.
+
+        <SECURITY_GUIDELINES>
+        {context_str}
+        </SECURITY_GUIDELINES>
+
+        <CODE_BUNDLE>
+        {code_bundle}
+        </CODE_BUNDLE>
+
+        Respond ONLY with a valid JSON object that conforms to the specified schema. Each result must contain both the finding and the suggestion.
+        """
+        response_model = RemediateResponse
+
     llm_config_id = state.get("llm_config_id")
     if not llm_config_id:
-        return {"error": f"[{AGENT_NAME}] LLM configuration ID not provided."}
+        return {"error": f"LLM configuration ID not provided."}
 
     llm_client = await get_llm_client(llm_config_id=llm_config_id)
     if not llm_client:
-        return {"error": f"[{AGENT_NAME}] Failed to initialize LLM client with config ID {llm_config_id}."}
+        return {"error": f"Failed to initialize LLM client."}
+        
+    llm_response: AgentLLMResult = await llm_client.generate_structured_output(prompt, response_model)
 
-    llm_response: AgentLLMResult = await llm_client.generate_structured_output(
-        prompt, AnalysisResult
-    )
-
-    parsed_output_dict = None
-    if llm_response.parsed_output:
-        # Assuming llm_response.parsed_output is a Pydantic model (AnalysisResult instance)
-        parsed_output_dict = llm_response.parsed_output.dict()
-
+    # Log the entire interaction for traceability
+    parsed_output_dict = llm_response.parsed_output.model_dump() if llm_response.parsed_output else None
     interaction = LLMInteraction(
-        submission_id=submission_id,
-        agent_name=AGENT_NAME,
-        prompt=prompt,
-        raw_response=llm_response.raw_output,
-        parsed_output=parsed_output_dict,
-        error=llm_response.error,
-        file_path=filename,
-        cost=llm_response.cost,
+        submission_id=submission_id, agent_name=AGENT_NAME, prompt=prompt,
+        raw_response=llm_response.raw_output, parsed_output=parsed_output_dict,
+        error=llm_response.error, file_path=filename, cost=llm_response.cost
     )
     async with AsyncSessionLocal() as db:
         await crud.save_llm_interaction(db, interaction_data=interaction)
@@ -97,100 +118,28 @@ async def assess_vulnerabilities_node(state: SpecializedAgentState) -> Dict[str,
     if llm_response.error or not llm_response.parsed_output:
         return {"error": f"LLM failed to produce valid analysis: {llm_response.error}"}
 
-    # Cast parsed_output to AnalysisResult for Pylance
-    analysis_result = cast(AnalysisResult, llm_response.parsed_output)
-    for finding in analysis_result.findings:
-        finding.file_path = filename
-
-    return {"findings": analysis_result.findings}
-
-
-async def generate_fixes_node(state: SpecializedAgentState) -> Dict[str, Any]:
-    """
-    For each vulnerability found, generates a secure code fix.
-    """
-    findings = state.get("findings", [])
-    if not findings:
-        return {"fixes": []}
-
-    submission_id = state["submission_id"]
-    filename = state["filename"]
-    code_snippet = state["code_snippet"]
-    logger.info(
-        f"[{AGENT_NAME}] Generating fixes for {len(findings)} findings in: {filename}"
-    )
-
-    all_fixes = []
-
-    for finding in findings:
-        llm_config_id = state.get("llm_config_id")
-        if not llm_config_id:
-            logger.warning(f"[{AGENT_NAME}] LLM configuration ID not provided for fix generation for finding: {finding.description}. Skipping this fix.")
-            continue
-
-        fixer_llm_client = await get_llm_client(llm_config_id=llm_config_id)
-        if not fixer_llm_client:
-            logger.warning(f"[{AGENT_NAME}] Failed to initialize LLM client for fix generation with config ID {llm_config_id} for finding: {finding.description}. Skipping this fix.")
-            continue
-        prompt = f"""
-        A security vulnerability has been identified in the following code snippet from file '{filename}'.
-
-        VULNERABLE CODE:
-        ```
-        {code_snippet}
-        ```
-
-        VULNERABILITY DETAILS:
-        - Description: {finding.description}
-        - Line Number: {finding.line_number}
-        - CWE: {finding.cwe}
-
-        Your task is to provide a secure code replacement for the vulnerable part. This may involve forcing HTTPS, using a secure networking library, or properly configuring TLS settings.
-        Respond with a structured JSON object containing a brief description of the fix and the secure code snippet.
-        """
-        llm_response: AgentLLMResult = await fixer_llm_client.generate_structured_output(
-            prompt, FixSuggestion
-        )
-
-        parsed_output_dict = None
-        if llm_response.parsed_output:
-            # Assuming llm_response.parsed_output is a Pydantic model (FixSuggestion instance)
-            parsed_output_dict = llm_response.parsed_output.dict()
-
-        interaction = LLMInteraction(
-            submission_id=submission_id,
-            agent_name=f"{AGENT_NAME}-Fixer",
-            prompt=prompt,
-            raw_response=llm_response.raw_output,
-            parsed_output=parsed_output_dict,
-            error=llm_response.error,
-            file_path=filename,
-            cost=llm_response.cost,
-        )
-        async with AsyncSessionLocal() as db:
-            await crud.save_llm_interaction(db, interaction_data=interaction)
-
-        if not llm_response.error and llm_response.parsed_output:
-            # Cast parsed_output to FixSuggestion for Pylance
-            fix_suggestion = cast(FixSuggestion, llm_response.parsed_output)
-            all_fixes.append(
-                FixResult(finding=finding, suggestion=fix_suggestion)
-            )
-
-    return {"fixes": all_fixes}
-
-
-# --- Graph Builder ---
+    # Process the response based on the mode
+    findings = []
+    fixes = []
+    if mode == "audit":
+        audit_result = cast(AuditResponse, llm_response.parsed_output)
+        for finding in audit_result.findings:
+            finding.file_path = filename
+            findings.append(finding)
+    else: # mode == "remediate"
+        remediate_result = cast(RemediateResponse, llm_response.parsed_output)
+        for result in remediate_result.results:
+            result.finding.file_path = filename
+            findings.append(result.finding)
+            fixes.append(FixResult(finding=result.finding, suggestion=result.suggestion))
+    
+    return {"findings": findings, "fixes": fixes}
 
 
 def build_specialized_agent_graph():
-    """Builds the LangGraph workflow for the Communication Agent."""
+    """Builds the simplified, single-step graph for the specialized agent."""
     workflow = StateGraph(SpecializedAgentState)
-    workflow.add_node("assess_vulnerabilities", assess_vulnerabilities_node)
-    workflow.add_node("generate_fixes", generate_fixes_node)
-
-    workflow.set_entry_point("assess_vulnerabilities")
-    workflow.add_edge("assess_vulnerabilities", "generate_fixes")
-    workflow.add_edge("generate_fixes", END)
-
+    workflow.add_node("analysis_node", analysis_node)
+    workflow.set_entry_point("analysis_node")
+    workflow.add_edge("analysis_node", END)
     return workflow.compile()

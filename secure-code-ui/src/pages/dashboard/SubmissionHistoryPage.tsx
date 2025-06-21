@@ -1,131 +1,142 @@
-import { CheckCircleOutlined, ClockCircleOutlined, ExclamationCircleOutlined } from "@ant-design/icons";
+// src/pages/dashboard/SubmissionHistoryPage.tsx
+
+import { CheckCircleOutlined, ClockCircleOutlined, ExclamationCircleOutlined, StopOutlined, SyncOutlined } from "@ant-design/icons";
 import { useQuery } from "@tanstack/react-query";
 import { Alert, Button, Space, Spin, Table, Tag, Typography } from "antd";
-import React, { useMemo, useCallback } from "react"; // Added useCallback
+import React, { useCallback, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { submissionService } from "../../services/submissionService";
 import type { SubmissionHistoryItem } from "../../types/api";
-// Removed import of TimeDisplayPreference and TIME_DISPLAY_PREFERENCE_KEY
 
-const { Title } = Typography;
+// Import the new component we created
+import CostApproval from '../../components/CostApproval';
 
-const statusMap: { [key: string]: { color: string; icon: React.ReactNode } } = {
-    Pending: { color: "gold", icon: <ClockCircleOutlined /> },
-    Processing: { color: "blue", icon: <ClockCircleOutlined /> },
-    Completed: { color: "green", icon: <CheckCircleOutlined /> },
-    Failed: { color: "red", icon: <ExclamationCircleOutlined /> },
-    // Add other statuses if necessary
+const { Title, Text } = Typography;
+
+// Expanded status map to include our new workflow statuses
+const statusMap: { [key: string]: { color: string; icon: React.ReactNode; text: string } } = {
+    'Pending': { color: 'default', icon: <ClockCircleOutlined />, text: 'Queued' },
+    'Processing': { color: 'processing', icon: <SyncOutlined spin />, text: 'Processing' },
+    'Pending Cost Approval': { color: 'warning', icon: <ExclamationCircleOutlined />, text: 'Pending Approval' },
+    'Approved - Queued': { color: 'processing', icon: <SyncOutlined spin />, text: 'Queued for Analysis' },
+    'Completed': { color: 'success', icon: <CheckCircleOutlined />, text: 'Completed' },
+    'Failed': { color: 'error', icon: <StopOutlined />, text: 'Failed' },
 };
 
 const SubmissionHistoryPage: React.FC = () => {
-  const formatDisplayDate = useCallback((dateString: string | null): string => {
-    if (!dateString) return "N/A";
-    // Ensure the date string is treated as UTC if it doesn't have timezone info
-    let utcDateString = dateString;
-    // Regex to check if the string ends with Z or has a +/- offset like +00:00
-    if (!/Z|[+-]\d{2}:\d{2}$/.test(dateString)) {
-      utcDateString += "Z";
+    // Preserved your self-contained date formatting function
+    const formatDisplayDate = useCallback((dateString: string | null): string => {
+        if (!dateString) return "N/A";
+        let utcDateString = dateString;
+        if (!/Z|[+-]\d{2}:\d{2}$/.test(dateString)) {
+            utcDateString += "Z";
+        }
+        const date = new Date(utcDateString);
+        return date.toLocaleString(); // Use system's local time formatting
+    }, []);
+
+    // Updated to destructure `refetch` for the approval callback
+    const { data, isLoading, isError, error, refetch } = useQuery<
+        SubmissionHistoryItem[],
+        Error
+    >({
+        queryKey: ["submissionHistory"],
+        queryFn: submissionService.getSubmissionHistory,
+        // Preserved and updated your smart polling logic
+        refetchInterval: (query) => {
+            const shouldPoll = query.state.data?.some(
+                (item) => ["Pending", "Processing", "Approved - Queued"].includes(item.status)
+            );
+            return shouldPoll ? 5000 : false;
+        },
+        refetchIntervalInBackground: true,
+    });
+
+    const columns = useMemo(() => [
+        {
+            title: "Submission ID",
+            dataIndex: "id",
+            key: "id",
+            render: (id: string) => <Text copyable={{ tooltips: ['Copy', 'Copied'] }} style={{ fontFamily: 'monospace' }}>{id.substring(0, 8)}...</Text>,
+        },
+        {
+            title: "Status",
+            dataIndex: "status",
+            key: "status",
+            render: (status: string) => {
+                const statusInfo = statusMap[status] || { color: "default", icon: <ClockCircleOutlined />, text: status };
+                return (
+                    <Tag color={statusInfo.color} icon={statusInfo.icon}>
+                        {statusInfo.text}
+                    </Tag>
+                );
+            },
+        },
+        {
+            title: "Submitted At",
+            dataIndex: "submitted_at",
+            key: "submitted_at",
+            render: (text: string) => formatDisplayDate(text),
+        },
+        {
+            title: "Action",
+            key: "action",
+            render: (_: unknown, record: SubmissionHistoryItem) => {
+                const isCompleted = record.status === "Completed";
+                return (
+                    <Link to={`/results/${record.id}`} onClick={(e) => !isCompleted && e.preventDefault()}>
+                        <Button type="primary" disabled={!isCompleted}>
+                            View Report
+                        </Button>
+                    </Link>
+                );
+            },
+        },
+    ], [formatDisplayDate]);
+
+    // This function determines what to render when a row is expanded.
+    const expandedRowRender = (record: SubmissionHistoryItem) => {
+        if (record.status === 'Pending Cost Approval' && record.estimated_cost) {
+            // We pass the `refetch` function so the child component can trigger a data refresh
+            return <CostApproval submission={record} onApprovalSuccess={() => refetch()} />;
+        }
+        return <Text type="secondary">No further actions available for this submission.</Text>;
+    };
+
+    // This function determines if a row should have an expand icon.
+    const rowExpandable = (record: SubmissionHistoryItem) => {
+        return record.status === 'Pending Cost Approval';
+    };
+
+    if (isLoading && !data) {
+        return (
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 'calc(100vh - 200px)' }}>
+                <Spin size="large" />
+            </div>
+        );
     }
-    const date = new Date(utcDateString);
-    return date.toLocaleString(); // Always use system's local time formatting
-  }, []); // No dependencies needed as it's self-contained now
 
-  const { data, isLoading, isError, error } = useQuery<
-    SubmissionHistoryItem[],
-    Error
-  >({
-    queryKey: ["submissionHistory"],
-    queryFn: submissionService.getSubmissionHistory,
-    refetchInterval: (query) => {
-      // Check if any item is still pending or processing
-      const shouldPoll = query.state.data?.some(
-        (item) => item.status === "Pending" || item.status === "Processing"
-      );
-      return shouldPoll ? 5000 : false; // Poll every 5 seconds if needed
-    },
-    refetchIntervalInBackground: true,
-  });
+    if (isError) {
+        return <Alert message="Error" description={`Could not fetch submission history: ${error.message}`} type="error" showIcon />;
+    }
 
-  const columns = useMemo(() => [
-    {
-      title: "Submission ID",
-      dataIndex: "id",
-      key: "id",
-      render: (id: string) => <code>{id}</code>,
-    },
-    {
-      title: "Status",
-      dataIndex: "status",
-      key: "status",
-      render: (status: string) => {
-        const statusInfo = statusMap[status] || { color: "default", icon: null };
-        return (
-          <Tag color={statusInfo.color} icon={statusInfo.icon}>
-            {status}
-          </Tag>
-        );
-      },
-    },
-    {
-      title: "Submitted At",
-      dataIndex: "submitted_at",
-      key: "submitted_at",
-      render: (text: string) => formatDisplayDate(text),
-    },
-    {
-      title: "Completed At",
-      dataIndex: "completed_at",
-      key: "completed_at",
-      render: (text: string | null) => formatDisplayDate(text),
-    },
-    {
-      title: "Action",
-      key: "action",
-      render: (_: unknown, record: SubmissionHistoryItem) => {
-        const isCompleted = record.status === "Completed";
-        return (
-          <Link to={`/results/${record.id}`} onClick={(e) => !isCompleted && e.preventDefault()}>
-            <Button type="primary" disabled={!isCompleted}>
-              View Results
-            </Button>
-          </Link>
-        );
-      },
-    },
-  ], [formatDisplayDate]); // Now depends on the memoized formatDisplayDate
-                                 // For a more reactive approach, preference could be in context or Zustand/Redux.
-
-  if (isLoading && !data) { // Show main spinner only on initial load without data
     return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 'calc(100vh - 200px)' /* Adjust height as needed */ }}>
-        <Spin size="large" /> 
-      </div>
+        <Space direction="vertical" style={{ width: "100%" }} size="large">
+            <Title level={2}>Submission History</Title>
+            <Table
+                columns={columns}
+                dataSource={data}
+                loading={isLoading}
+                rowKey="id"
+                pagination={{ pageSize: 10 }}
+                // ADDED: The expandable prop to integrate the CostApproval component
+                expandable={{
+                    expandedRowRender,
+                    rowExpandable,
+                }}
+            />
+        </Space>
     );
-  }
-
-  if (isError) {
-    return (
-      <Alert
-        message="Error"
-        description={`Could not fetch submission history: ${error.message}`}
-        type="error"
-        showIcon
-      />
-    );
-  }
-
-  return (
-    <Space direction="vertical" style={{ width: "100%" }} size="large">
-      <Title level={2}>Submission History</Title>
-      <Table
-        columns={columns}
-        dataSource={data}
-        loading={isLoading}
-        rowKey="id"
-        pagination={{ pageSize: 10 }}
-      />
-    </Space>
-  );
 };
 
 export default SubmissionHistoryPage;

@@ -2,7 +2,7 @@
 
 import logging
 import uuid
-from typing import List, Optional, Annotated, Dict
+from typing import List, Optional, Annotated, Dict, Any
 
 from fastapi import (
     APIRouter,
@@ -12,6 +12,7 @@ from fastapi import (
     File,
     Form,
     Response,
+    status,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +22,7 @@ from app.db import models as db_models
 from app.api import models as api_models
 from app.auth.core import current_active_user, current_superuser
 from app.utils import rabbitmq_utils
+from app.core.config import settings # <-- ADDED THIS IMPORT
 
 # Create two routers: one for general endpoints, one for admin-level LLM configs
 router = APIRouter()
@@ -35,7 +37,6 @@ logger = logging.getLogger(__name__)
 async def create_llm_configuration(
     config: api_models.LLMConfigurationCreate,
     db: AsyncSession = Depends(get_db),
-    # CORRECTED DEPENDENCY
     user: db_models.User = Depends(current_superuser),
 ):
     """
@@ -47,7 +48,6 @@ async def create_llm_configuration(
 @llm_router.get("/", response_model=List[api_models.LLMConfigurationRead])
 async def read_llm_configurations(
     db: AsyncSession = Depends(get_db),
-    # CORRECTED DEPENDENCY
     user: db_models.User = Depends(current_active_user),
 ):
     """
@@ -61,7 +61,6 @@ async def read_llm_configurations(
 async def delete_llm_configuration(
     config_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    # CORRECTED DEPENDENCY
     user: db_models.User = Depends(current_superuser),
 ):
     """
@@ -136,6 +135,54 @@ async def submit_code(
     }
 
 
+@router.post(
+    "/submissions/{submission_id}/approve",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Approve a pending analysis for a submission",
+    response_model=Dict[str, str],
+)
+async def approve_submission_analysis(
+    submission_id: uuid.UUID,
+    user: db_models.User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Approves a submission that is in the 'Pending Cost Approval' state.
+    This endpoint sends a message to the worker queue to resume the analysis.
+    """
+    submission = await crud.get_submission(db, submission_id)
+    if not submission:
+        raise HTTPException(status_code=404, detail="Submission not found")
+
+    if submission.user_id != user.id and not user.is_superuser:
+        raise HTTPException(status_code=403, detail="Not authorized to approve this submission")
+
+    if submission.status != "Pending Cost Approval":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Submission is not pending approval. Current status: {submission.status}",
+        )
+    
+    message = {
+        "submission_id": str(submission.id),
+        "action": "resume_analysis" 
+    }
+    
+    # This line will now work correctly
+    queue_name = settings.RABBITMQ_APPROVAL_QUEUE
+    published = rabbitmq_utils.publish_message(queue_name, message)
+    
+    if not published:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to send approval message to the processing queue. Please try again later."
+        )
+    
+    await crud.update_submission_status(db, submission_id, "Approved - Queued")
+
+    return {"message": "Analysis approved and queued for processing."}
+
+
 @router.get("/status/{submission_id}", response_model=api_models.SubmissionStatus)
 async def get_submission_status(
     submission_id: uuid.UUID, db: AsyncSession = Depends(get_db)
@@ -151,38 +198,39 @@ async def get_submission_status(
 async def get_submission_results(
     submission_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 ):
-    """Retrieves the full analysis results for a completed submission."""
+    """
+    Retrieves the full analysis results for a completed submission, including
+    the new impact and SARIF reports.
+    """
+    # Step 1: Fetch the submission object. The 'get_submission' function should be configured
+    # to eager-load related findings and files.
     submission_db = await crud.get_submission(db, submission_id)
     if not submission_db:
         raise HTTPException(status_code=404, detail="Submission not found")
 
+    # Step 2: Ensure the analysis is actually complete. This is still crucial.
     if submission_db.status != "Completed":
-        # Log this attempt or handle as per application's error strategy
         logger.warning(
             f"Attempt to access results for non-completed submission {submission_id} with status {submission_db.status}"
         )
         raise HTTPException(
-            status_code=400, # Consider 425 (Too Early) or 202 (Accepted) with status info
+            status_code=400,
             detail=f"Submission analysis is not yet completed. Current status: '{submission_db.status}'.",
         )
-
-    # Group all database findings by file_path for efficient lookup
+    
+    # Step 3 (Optional but preserved): Build the detailed summary report for the UI.
+    # This logic remains useful for UIs that need a granular breakdown.
     all_findings_db: List[db_models.VulnerabilityFinding] = submission_db.findings
     findings_by_file: Dict[str, List[db_models.VulnerabilityFinding]] = {}
     for finding_db_item in all_findings_db:
         findings_by_file.setdefault(finding_db_item.file_path, []).append(finding_db_item)
 
-    # Prepare files_analyzed part for the report
     files_analyzed_report_items: List[api_models.SubmittedFileReportItem] = []
-    for file_db in submission_db.files:  # Iterate over db_models.SubmittedFile
-        # Get findings for the current file from the grouped dictionary
+    for file_db in submission_db.files:
         current_file_findings_db = findings_by_file.get(file_db.file_path, [])
-        
-        # Convert DB finding models to API response models
         file_findings_response: List[api_models.VulnerabilityFindingResponse] = [
             api_models.VulnerabilityFindingResponse.from_orm(f) for f in current_file_findings_db
         ]
-        
         files_analyzed_report_items.append(
             api_models.SubmittedFileReportItem(
                 file_path=file_db.file_path,
@@ -194,7 +242,6 @@ async def get_submission_results(
             )
         )
 
-    # Calculate severity_counts
     sev_counts_obj = api_models.SeverityCountsResponse()
     for finding_db_item in all_findings_db:
         sev = finding_db_item.severity.upper()
@@ -209,20 +256,17 @@ async def get_submission_results(
         files_analyzed_count=len(submission_db.files),
         severity_counts=sev_counts_obj
     )
-
-    # Determine project_name (e.g., from repo_url or a dedicated field if added later)
+    
     project_name = submission_db.repo_url or "N/A"
     if submission_db.repo_url:
         try:
             project_name = submission_db.repo_url.split('/')[-1].replace('.git', '')
         except Exception:
-            project_name = submission_db.repo_url # fallback to full repo_url if parsing fails
+            project_name = submission_db.repo_url
 
-    # Determine primary_language (heuristic: language of the first file or most common)
     primary_language = "N/A"
     if submission_db.files and submission_db.files[0].language:
         primary_language = submission_db.files[0].language
-    # More sophisticated primary language detection could be added here if needed
 
     summary_report_response_obj = api_models.SummaryReportResponse(
         submission_id=submission_db.id,
@@ -232,22 +276,15 @@ async def get_submission_results(
         analysis_timestamp=submission_db.completed_at,
         summary=summary_response_obj,
         files_analyzed=files_analyzed_report_items,
-        # overall_risk_score will use default from Pydantic model for now
     )
     
-    # Placeholder for other report parts if they are stored on submission_db or related models
-    # sarif_report_data = getattr(submission_db, "sarif_report_json_blob", None)
-    # text_report_data = getattr(submission_db, "text_report_blob", None)
-    # original_code_map_data = getattr(submission_db, "original_code_map_json_blob", None)
-    # fixed_code_map_data = getattr(submission_db, "fixed_code_map_json_blob", None)
-
+    # Step 4: Assemble the final response, now including the new direct report fields.
     return api_models.AnalysisResultDetailResponse(
+        impact_report=submission_db.impact_report,
+        sarif_report=submission_db.sarif_report,
         summary_report=summary_report_response_obj
-        # sarif_report=sarif_report_data,
-        # text_report=text_report_data,
-        # original_code_map=original_code_map_data,
-        # fixed_code_map=fixed_code_map_data,
     )
+
 
 @router.get("/history", response_model=List[api_models.SubmissionHistoryItem])
 async def get_submission_history(
