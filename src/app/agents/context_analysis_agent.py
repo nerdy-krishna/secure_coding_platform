@@ -1,12 +1,17 @@
 # src/app/agents/context_analysis_agent.py
+
 import logging
 import uuid
-from typing import Dict, Any, TypedDict, Optional, List, cast # Added cast
+import hashlib
+from typing import Dict, Any, TypedDict, Optional, List, cast
 
 from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
 
+from ..analysis.repository_map import RepositoryMappingEngine, RepositoryMap
 from ..llm.llm_client import get_llm_client
+from ..db.database import AsyncSessionLocal
+from ..db import crud
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -61,7 +66,7 @@ class FullContextAnalysis(BaseModel):
     """The complete structured output for the context analysis agent."""
 
     analysis_summary: str = Field(
-        description="A brief, one-paragraph summary of the code's functionality."
+        description="A brief, one-paragraph summary of the entire project's functionality based on the repository map."
     )
     identified_components: List[str] = Field(
         description="A list of key components, frameworks, or libraries used (e.g., 'FastAPI', 'SQLAlchemy')."
@@ -70,54 +75,101 @@ class FullContextAnalysis(BaseModel):
         description="The relevance analysis for each security agent based on the code."
     )
 
-
 class ContextAnalysisAgentState(TypedDict):
     """
     Defines the state for the Context Analysis Agent's workflow.
     """
-    # Added: A field to receive the ID of the LLM config to use
     llm_config_id: uuid.UUID
-    
     submission_id: uuid.UUID
-    filename: str
-    code_snippet: str
-    language: str
+    files: Dict[str, str]
+    repository_map: Optional[RepositoryMap]
     analysis_summary: Optional[str]
     identified_components: Optional[List[str]]
     asvs_analysis: Optional[Dict[str, Any]]
     error_message: Optional[str]
 
 
-async def analyze_code_context_node(state: ContextAnalysisAgentState) -> Dict[str, Any]:
+# --- Updated Node with Caching Logic ---
+async def create_repository_map_node(state: ContextAnalysisAgentState) -> Dict[str, Any]:
     """
-    Analyzes the code snippet to provide a summary, identify components, and determine
-    which specialized security agents are relevant for a deeper scan.
+    Creates a repository map. It first checks for a cached version based on
+    a hash of the codebase. If not found, it generates a new map and saves
+    it to the cache.
     """
-    filename = state['filename']
-    llm_config_id = state['llm_config_id'] # Get the config ID from the state
-    logger.info(f"[{AGENT_NAME}] Starting context analysis for file: {filename}")
+    logger.info(f"[{AGENT_NAME}] Starting repository map creation for submission {state['submission_id']}.")
+    files = state["files"]
+    if not files:
+        return {"error_message": "No files provided to create repository map."}
+
+    # 1. Calculate codebase hash
+    # Sorting by file path ensures the hash is consistent regardless of file order
+    sorted_files = sorted(files.items())
+    hasher = hashlib.sha256()
+    for _, content in sorted_files:
+        hasher.update(content.encode('utf-8'))
+    codebase_hash = hasher.hexdigest()
     
-    # Corrected: Get a configured LLM client using the new factory function
-    llm_client = await get_llm_client(llm_config_id)
+    logger.info(f"[{AGENT_NAME}] Calculated codebase_hash: {codebase_hash}")
+
+    async with AsyncSessionLocal() as db:
+        try:
+            # 2. Check for cached repository map
+            cached_map = await crud.get_repository_map_from_cache(db, codebase_hash)
+            if cached_map:
+                logger.info(f"[{AGENT_NAME}] Cache hit! Using cached repository map for hash {codebase_hash}.")
+                return {"repository_map": cached_map}
+
+            # 3. Cache miss: Generate a new map
+            logger.info(f"[{AGENT_NAME}] Cache miss. Generating new repository map.")
+            mapping_engine = RepositoryMappingEngine()
+            repository_map = mapping_engine.create_map(files)
+            
+            # 4. Save the new map to the cache
+            await crud.create_repository_map_cache(db, codebase_hash, repository_map)
+            logger.info(f"[{AGENT_NAME}] New repository map saved to cache.")
+            
+            return {"repository_map": repository_map}
+        except Exception as e:
+            error_msg = f"Failed during repository map creation/caching: {e}"
+            logger.error(f"[{AGENT_NAME}] {error_msg}")
+            return {"error_message": error_msg}
+
+
+async def analyze_repository_context_node(state: ContextAnalysisAgentState) -> Dict[str, Any]:
+    """
+    Analyzes the complete repository map to provide a summary, identify components,
+    and determine which specialized security agents are relevant.
+    """
+    submission_id = state['submission_id']
+    llm_config_id = state['llm_config_id']
+    repository_map = state['repository_map']
+
+    if not repository_map:
+        return {"error_message": "Cannot analyze context, repository map is missing."}
+        
+    logger.info(f"[{AGENT_NAME}] Starting repository context analysis for submission: {submission_id}")
+
+    llm_client = await get_llm_client(cast(uuid.UUID, llm_config_id))
     if not llm_client:
         error_msg = f"Failed to initialize LLM Client for config ID {llm_config_id}."
         logger.error(f"[{AGENT_NAME}] {error_msg}")
         return {"error_message": error_msg}
 
-    code_snippet = state["code_snippet"]
+    repo_map_json = repository_map.model_dump_json(indent=2)
+
     prompt = f"""
-    You are an expert security architect. Your task is to analyze the provided code snippet.
-    
-    First, provide a brief, one-paragraph summary of the code's functionality in `analysis_summary`.
-    Second, identify key components, frameworks, or libraries and list them in `identified_components`.
-    Third, for each security agent in the `asvs_analysis` object, determine if its security domain is relevant for a detailed vulnerability scan of the given code, and provide your reasoning.
+    You are an expert security architect. Your task is to analyze the provided repository map, which outlines the structure, files, imports, and symbols of an entire codebase.
+
+    First, provide a brief, one-paragraph summary of the project's overall functionality in `analysis_summary`.
+    Second, identify key components, frameworks, or libraries from the imports and file structures and list them in `identified_components`.
+    Third, for each security agent in the `asvs_analysis` object, determine if its security domain is relevant for a detailed vulnerability scan of the entire project, and provide your reasoning.
 
     AGENT DESCRIPTIONS:
     {AGENT_DESCRIPTIONS}
 
-    CODE SNIPPET:
-    ```
-    {code_snippet}
+    REPOSITORY MAP:
+    ```json
+    {repo_map_json}
     ```
 
     Respond with a single, valid JSON object that strictly adheres to the provided schema.
@@ -133,21 +185,19 @@ async def analyze_code_context_node(state: ContextAnalysisAgentState) -> Dict[st
             or "Failed to get a valid structured response from the LLM."
         )
         logger.error(
-            f"[{AGENT_NAME}] Failed to get full context analysis from LLM for file {filename}: {error_msg}"
+            f"[{AGENT_NAME}] Failed to get full context analysis from LLM for submission {submission_id}: {error_msg}"
         )
         return {"error_message": error_msg}
 
-    # After the check, llm_response.parsed_output is known to be not None.
-    # Cast to the specific Pydantic model type.
     parsed_output = cast(FullContextAnalysis, llm_response.parsed_output)
     logger.info(
-        f"[{AGENT_NAME}] Context analysis complete for file {filename}."
+        f"[{AGENT_NAME}] Repository context analysis complete for submission {submission_id}."
     )
 
     return {
         "analysis_summary": parsed_output.analysis_summary,
         "identified_components": parsed_output.identified_components,
-        "asvs_analysis": parsed_output.asvs_analysis.model_dump(), # Use model_dump() for Pydantic v2
+        "asvs_analysis": parsed_output.asvs_analysis.model_dump(),
         "error_message": None,
     }
 
@@ -155,7 +205,12 @@ async def analyze_code_context_node(state: ContextAnalysisAgentState) -> Dict[st
 def build_context_analysis_agent_graph():
     """Builds the graph for the context analysis agent."""
     workflow = StateGraph(ContextAnalysisAgentState)
-    workflow.add_node("analyze_code_context", analyze_code_context_node)
-    workflow.set_entry_point("analyze_code_context")
-    workflow.add_edge("analyze_code_context", END)
+    
+    workflow.add_node("create_repository_map", create_repository_map_node)
+    workflow.add_node("analyze_repository_context", analyze_repository_context_node)
+
+    workflow.set_entry_point("create_repository_map")
+    workflow.add_edge("create_repository_map", "analyze_repository_context")
+    workflow.add_edge("analyze_repository_context", END)
+    
     return workflow.compile()

@@ -1,3 +1,5 @@
+# src/app/db/crud.py
+
 import logging
 import uuid
 from typing import List, Dict, Optional, Any
@@ -11,6 +13,7 @@ from app.db import models as db_models
 from app.api import models as api_models
 from app.agents import schemas as agent_schemas
 from app.utils.encryption import FernetEncrypt
+from app.analysis.repository_map import RepositoryMap
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +54,6 @@ async def get_llm_configs(
         .offset(skip)
         .limit(limit)
     )
-    # Corrected: Explicitly convert the Sequence to a List
     return list(result.scalars().all())
 
 
@@ -203,7 +205,7 @@ async def save_llm_interaction(
 
 async def save_findings(
     db: AsyncSession,
-    submission_id: uuid.UUID,  # Changed from int
+    submission_id: uuid.UUID,
     findings: List[agent_schemas.VulnerabilityFinding],
 ) -> List[db_models.VulnerabilityFinding]:
     """Saves a list of vulnerability findings and returns the persisted objects."""
@@ -245,10 +247,51 @@ async def save_fix_suggestion(
     await db.commit()
 
 async def get_submission_history(db: AsyncSession, user_id: int) -> List[db_models.CodeSubmission]:
-    """Retrieves a list of all submissions for a specific user."""
+    """Retrievis a list of all submissions for a specific user."""
     result = await db.execute(
         select(db_models.CodeSubmission)
         .filter(db_models.CodeSubmission.user_id == user_id)
         .order_by(db_models.CodeSubmission.submitted_at.desc())
     )
     return list(result.scalars().all())
+
+async def get_files_by_submission_id(db: AsyncSession, submission_id: uuid.UUID) -> List[db_models.SubmittedFile]:
+    """
+    Retrieves all submitted files associated with a given submission ID.
+    """
+    # FIX: Use the correct 'db_models' alias
+    result = await db.execute(
+        select(db_models.SubmittedFile).where(db_models.SubmittedFile.submission_id == submission_id)
+    )
+    # FIX: Explicitly convert Sequence to List to match type hint
+    return list(result.scalars().all())
+
+# === Repository Map Cache CRUD ===
+
+async def get_repository_map_from_cache(db: AsyncSession, codebase_hash: str) -> Optional[RepositoryMap]:
+    """
+    Retrieves a cached RepositoryMap by the codebase hash.
+    """
+    result = await db.execute(
+        select(db_models.RepositoryMapCache).filter(db_models.RepositoryMapCache.codebase_hash == codebase_hash)
+    )
+    cache_entry = result.scalars().first()
+    if cache_entry:
+        # Re-validate the JSON data back into our Pydantic model
+        return RepositoryMap.model_validate(cache_entry.repository_map)
+    return None
+
+
+async def create_repository_map_cache(db: AsyncSession, codebase_hash: str, repository_map: RepositoryMap) -> db_models.RepositoryMapCache:
+    """
+    Saves a new RepositoryMap to the cache.
+    """
+    # Convert the Pydantic model to a dictionary for JSONB storage
+    db_cache_entry = db_models.RepositoryMapCache(
+        codebase_hash=codebase_hash,
+        repository_map=repository_map.model_dump()
+    )
+    db.add(db_cache_entry)
+    await db.commit()
+    await db.refresh(db_cache_entry)
+    return db_cache_entry
