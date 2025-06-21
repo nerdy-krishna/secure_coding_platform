@@ -40,9 +40,9 @@ async def lifespan(app: FastAPI):
             # The checkpointer needs a sync connection string
             sync_db_url = settings.ASYNC_DATABASE_URL.replace("postgresql+asyncpg", "postgresql")
             
-            # Use the .from_conn_string() class method to handle connection and setup
-            checkpointer = PostgresSaver.from_conn_string(sync_db_url)
-            checkpointer.setup() # This is a synchronous call
+            # Use the context manager properly to get the actual PostgresSaver instance
+            with PostgresSaver.from_conn_string(sync_db_url) as checkpointer:
+                checkpointer.setup() # This is a synchronous call
             logger.info("Checkpointer tables setup complete.")
         except Exception as e:
             logger.error(f"Failed to setup checkpointer tables on startup: {e}", exc_info=True)

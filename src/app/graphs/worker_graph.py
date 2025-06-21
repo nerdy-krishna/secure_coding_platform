@@ -126,36 +126,35 @@ def _build_and_compile_workflow():
     # Convert the async URL to a standard sync DSN for psycopg
     sync_db_url = settings.ASYNC_DATABASE_URL.replace("postgresql+asyncpg", "postgresql")
     
-    # Instantiate the checkpointer. It will manage its own connections internally.
-    checkpointer = PostgresSaver.from_conn_string(sync_db_url)
-    
-    # --- The rest of the graph construction is the same ---
-    context_analysis_graph = build_context_analysis_agent_graph()
-    coordinator_graph = build_coordinator_graph()
-    impact_reporting_graph = build_impact_reporting_agent_graph()
+    # Use the context manager to get the actual PostgresSaver instance
+    with PostgresSaver.from_conn_string(sync_db_url) as checkpointer:
+        # --- The rest of the graph construction is the same ---
+        context_analysis_graph = build_context_analysis_agent_graph()
+        coordinator_graph = build_coordinator_graph()
+        impact_reporting_graph = build_impact_reporting_agent_graph()
 
-    workflow = StateGraph(WorkerState)
+        workflow = StateGraph(WorkerState)
 
-    workflow.add_node("retrieve_submission_data", retrieve_submission_data)
-    workflow.add_node("context_analysis", context_analysis_graph)
-    workflow.add_node("coordinator", coordinator_graph)
-    workflow.add_node("prepare_report_input", prepare_report_input)
-    workflow.add_node("impact_reporting", impact_reporting_graph)
-    workflow.add_node("save_final_report", save_final_report_node)
-    workflow.add_node("handle_error", handle_error_node)
+        workflow.add_node("retrieve_submission_data", retrieve_submission_data)
+        workflow.add_node("context_analysis", context_analysis_graph)
+        workflow.add_node("coordinator", coordinator_graph)
+        workflow.add_node("prepare_report_input", prepare_report_input)
+        workflow.add_node("impact_reporting", impact_reporting_graph)
+        workflow.add_node("save_final_report", save_final_report_node)
+        workflow.add_node("handle_error", handle_error_node)
 
-    workflow.set_entry_point("retrieve_submission_data")
-    
-    workflow.add_conditional_edges("retrieve_submission_data", should_continue, {"continue": "context_analysis", "handle_error": "handle_error"})
-    workflow.add_conditional_edges("context_analysis", should_continue, {"continue": "coordinator", "handle_error": "handle_error"})
-    workflow.add_conditional_edges("coordinator", should_continue, {"continue": "prepare_report_input", "handle_error": "handle_error"})
-    workflow.add_edge("prepare_report_input", "impact_reporting")
-    workflow.add_conditional_edges("impact_reporting", should_continue, {"continue": "save_final_report", "handle_error": "handle_error"})
-    workflow.add_edge("save_final_report", END)
-    workflow.add_edge("handle_error", END)
-    
-    logger.debug("Compiling the main worker graph with PostgreSQL checkpointer...")
-    return workflow.compile(checkpointer=checkpointer)
+        workflow.set_entry_point("retrieve_submission_data")
+        
+        workflow.add_conditional_edges("retrieve_submission_data", should_continue, {"continue": "context_analysis", "handle_error": "handle_error"})
+        workflow.add_conditional_edges("context_analysis", should_continue, {"continue": "coordinator", "handle_error": "handle_error"})
+        workflow.add_conditional_edges("coordinator", should_continue, {"continue": "prepare_report_input", "handle_error": "handle_error"})
+        workflow.add_edge("prepare_report_input", "impact_reporting")
+        workflow.add_conditional_edges("impact_reporting", should_continue, {"continue": "save_final_report", "handle_error": "handle_error"})
+        workflow.add_edge("save_final_report", END)
+        workflow.add_edge("handle_error", END)
+        
+        logger.debug("Compiling the main worker graph with PostgreSQL checkpointer...")
+        return workflow.compile(checkpointer=checkpointer)
 
 # This is now a synchronous operation and can be defined at the module level
 worker_workflow = _build_and_compile_workflow()
