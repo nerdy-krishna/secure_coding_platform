@@ -145,18 +145,20 @@ async def publish_to_mq_node(state: ApiGraphState) -> Dict[str, Any]:
         }
 
     try:
-        # Run synchronous pika publish in a threadpool to avoid blocking asyncio loop
-        # publish_submission expects a string submission_id
+        # The publish_submission function now correctly uses the new setting internally.
+        # We just need to update the log message here for accurate reporting.
         await run_in_threadpool(publish_submission, str(submission_id))
+        
+        # Use the new, correct setting name for the log message
+        queue_name = settings.RABBITMQ_SUBMISSION_QUEUE
         logger.info(
-            f"Successfully published submission_id {submission_id} to queue '{settings.CODE_QUEUE}'."
+            f"Successfully published submission_id {submission_id} to queue '{queue_name}'."
         )
         return {
             "publish_error": None,
             "final_message": f"Submission {submission_id} accepted and queued for analysis.",
         }
-    # Removed JSONDecodeError catch as json.dumps is now handled within publish_submission
-    except Exception as e:  # Catch errors from publish_submission
+    except Exception as e:
         logger.error(
             f"Error publishing submission_id {submission_id} to MQ: {e}", exc_info=True
         )

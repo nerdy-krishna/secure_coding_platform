@@ -5,7 +5,7 @@ import uuid
 from pydantic import UUID4, BaseModel, Field
 from typing import List, Optional, Dict, Any
 
-# === LLM Configuration Schemas (NEW) ===
+# === LLM Configuration Schemas (UPDATED) ===
 
 
 class LLMConfigurationBase(BaseModel):
@@ -18,6 +18,20 @@ class LLMConfigurationBase(BaseModel):
     model_name: str = Field(
         ..., description="The specific model name (e.g., 'gpt-4o', 'gemini-1.5-pro')."
     )
+    # --- ADDED: New fields for dynamic configuration ---
+    tokenizer_encoding: str = Field(
+        default="cl100k_base",
+        description="The name of the tiktoken tokenizer for this model (e.g., 'cl100k_base')."
+    )
+    input_cost_per_million: float = Field(
+        default=0.0,
+        description="Cost per 1 million input tokens in USD."
+    )
+    output_cost_per_million: float = Field(
+        default=0.0,
+        description="Cost per 1 million output tokens in USD."
+    )
+    # --- End of added fields ---
 
 
 class LLMConfigurationCreate(LLMConfigurationBase):
@@ -26,8 +40,8 @@ class LLMConfigurationCreate(LLMConfigurationBase):
 
 class LLMConfigurationRead(LLMConfigurationBase):
     id: uuid.UUID
-    created_at: datetime  # Added created_at
-    updated_at: datetime  # Added updated_at
+    created_at: datetime
+    updated_at: datetime
 
     class Config:
         from_attributes = True
@@ -43,7 +57,6 @@ class SubmissionRequest(BaseModel):
     repo_url: Optional[str] = Field(
         None, description="URL of the Git repository to analyze."
     )
-    # NEW fields based on our plan
     frameworks: List[str] = Field(
         ..., description="List of security frameworks to analyze against."
     )
@@ -80,12 +93,12 @@ class SecurityQueryUpdate(BaseModel):
 
 
 class SubmissionResponse(BaseModel):
-    submission_id: uuid.UUID  # Corrected from int to uuid
+    submission_id: uuid.UUID
     message: str
 
 
 class FixSuggestionResponse(BaseModel):
-    id: int  # Assuming this remains an integer as it might not be a primary table
+    id: int
     description: str
     suggested_fix: str
 
@@ -110,7 +123,7 @@ class VulnerabilityFindingResponse(BaseModel):
 
 
 class SubmissionResultResponse(BaseModel):
-    id: uuid.UUID  # Corrected from int to uuid
+    id: uuid.UUID
     status: str
     submitted_at: datetime
     completed_at: Optional[datetime] = None
@@ -121,10 +134,14 @@ class SubmissionResultResponse(BaseModel):
 
 
 class SubmissionStatus(BaseModel):
-    submission_id: uuid.UUID  # Corrected from int to uuid
+    submission_id: uuid.UUID
     status: str
     submitted_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
+    estimated_cost: Optional[Dict[str, Any]] = None
+
+    class Config:
+        from_attributes = True
 
 
 class SecurityQueryResponse(BaseModel):
@@ -161,20 +178,15 @@ class DashboardStats(BaseModel):
 
 class SubmissionHistoryItem(BaseModel):
     id: UUID4
-    # project_name: Optional[str] = None # Frontend expects this, but not in DB model or current API model
-    # primary_language: Optional[str] = None # Frontend expects this, but not in DB model or current API model
     status: str
     submitted_at: datetime
     completed_at: Optional[datetime] = None
-    # total_findings: Optional[int] = None # Frontend expects this, consider adding if available
+    estimated_cost: Optional[Dict[str, Any]] = None
 
     class Config:
         from_attributes = True
 
 # --- Detailed Analysis Result Models (NEW - for /result/{submission_id}) ---
-
-# Re-uses VulnerabilityFindingResponse for individual findings within a file.
-# Re-uses FixSuggestionResponse.
 
 class SeverityCountsResponse(BaseModel):
     CRITICAL: int = 0
@@ -207,7 +219,6 @@ class OverallRiskScoreResponse(BaseModel):
 class SubmittedFileReportItem(BaseModel):
     file_path: str
     findings: List[VulnerabilityFindingResponse] = []
-    # Optional fields from db_models.SubmittedFile, now included:
     language: Optional[str] = None
     analysis_summary: Optional[str] = None
     identified_components: Optional[List[str]] = None
@@ -232,9 +243,9 @@ class SummaryReportResponse(BaseModel):
 
 
 class AnalysisResultDetailResponse(BaseModel):
+    impact_report: Optional[Dict[str, Any]] = None
+    sarif_report: Optional[Dict[str, Any]] = None
     summary_report: Optional[SummaryReportResponse] = None
-    # Optional fields based on frontend's AnalysisResultResponse type:
-    sarif_report: Optional[Dict] = None # SARIFLog is typically a JSON object
     text_report: Optional[str] = None
     original_code_map: Optional[Dict[str, str]] = None
     fixed_code_map: Optional[Dict[str, str]] = None

@@ -36,12 +36,15 @@ class Settings(BaseSettings):
         values = info.data
         return f"postgresql+asyncpg://{values.get('POSTGRES_USER')}:{values.get('POSTGRES_PASSWORD')}@{values.get('POSTGRES_HOST_ALEMBIC')}:{values.get('POSTGRES_PORT')}/{values.get('POSTGRES_DB')}"
 
-    # --- RabbitMQ Configuration ---
+    # --- RabbitMQ Configuration (UPDATED) ---
     RABBITMQ_DEFAULT_USER: str
     RABBITMQ_DEFAULT_PASS: str
     RABBITMQ_HOST: str
     RABBITMQ_URL: Optional[str] = None
-    CODE_QUEUE: str = "code_analysis_queue"
+    
+    # Renamed CODE_QUEUE for clarity and added the new approval queue
+    RABBITMQ_SUBMISSION_QUEUE: str = "code_submission_queue"
+    RABBITMQ_APPROVAL_QUEUE: str = "analysis_approved_queue"
 
     @field_validator("RABBITMQ_URL", mode="before")
     def assemble_rabbitmq_connection(cls, v, info):
@@ -57,16 +60,11 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_LIFETIME_SECONDS: int = 60 * 30  # 30 minutes
     REFRESH_TOKEN_LIFETIME_SECONDS: int = 60 * 60 * 24 * 7  # 7 days
 
-    # Pydantic V2 tries to auto-parse list-like fields from JSON.
-    # To handle a simple comma-separated string from the .env file,
-    # we read it into a string field with an alias...
     ALLOWED_ORIGINS_STR: str = Field(alias="ALLOWED_ORIGINS")
 
-    # ...and then provide a property for the application to use, which
-    # contains the correctly parsed list of strings.
     @property
     def ALLOWED_ORIGINS(self) -> List[str]:
         return [origin.strip() for origin in self.ALLOWED_ORIGINS_STR.split(",")]
 
 
-settings = Settings()  # type: ignore
+settings = Settings() # type: ignore

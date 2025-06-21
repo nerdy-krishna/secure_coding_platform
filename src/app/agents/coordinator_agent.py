@@ -14,8 +14,9 @@ from app.agents.schemas import (
     SpecializedAgentState,
     VulnerabilityFinding as VulnerabilityFindingModel,
     FixResult as FixResultModel,
-    WorkflowMode,  # This import will now work correctly
+    WorkflowMode,
 )
+from app.utils import cost_estimation # Import the whole module
 # --- End New/Updated Imports ---
 
 from app.agents.access_control_agent import build_specialized_agent_graph as build_access_control_agent
@@ -52,9 +53,7 @@ AGENT_BUILDER_MAP = {
 
 
 class CoordinatorState(TypedDict):
-    """
-    The state for the coordinator, aligned with the new architecture.
-    """
+    """ The state for the coordinator, aligned with the new architecture. """
     # Inputs from Worker Graph
     submission_id: uuid.UUID
     llm_config_id: Optional[uuid.UUID]
@@ -66,6 +65,7 @@ class CoordinatorState(TypedDict):
     # Generated within this agent
     context_bundles: Optional[List[ContextBundle]]
     relevant_agents: Dict[str, List[str]]
+    estimated_cost: Optional[Dict[str, float]] # ADDED
     
     # Outputs
     results: Dict[str, Any]
@@ -73,9 +73,7 @@ class CoordinatorState(TypedDict):
 
 
 def determine_relevant_agents_node(state: CoordinatorState) -> Dict[str, Any]:
-    """
-    Determines which specialized agents are relevant based on the project-wide context analysis.
-    """
+    """ Determines which specialized agents are relevant based on the project-wide context analysis. """
     logger.info(f"[{AGENT_NAME}] Determining relevant agents from ASVS analysis.")
     asvs_analysis = state.get("asvs_analysis", {})
     relevant_agents: Dict[str, List[str]] = {}
@@ -91,9 +89,7 @@ def determine_relevant_agents_node(state: CoordinatorState) -> Dict[str, Any]:
 
 
 def create_context_bundles_node(state: CoordinatorState) -> Dict[str, Any]:
-    """
-    Uses the ContextBundlingEngine to create dependency-aware bundles for analysis.
-    """
+    """ Uses the ContextBundlingEngine to create dependency-aware bundles for analysis. """
     logger.info(f"[{AGENT_NAME}] Creating context bundles.")
     repository_map = state.get("repository_map")
     files = state.get("files")
@@ -111,13 +107,65 @@ def create_context_bundles_node(state: CoordinatorState) -> Dict[str, Any]:
         return {"error": f"Failed to create context bundles: {e}"}
 
 
+# --- NEW NODE FOR COST ESTIMATION ---
+async def estimate_cost_node(state: CoordinatorState) -> Dict[str, Any]:
+    """
+    Estimates the cost of the analysis and pauses the workflow for approval.
+    """
+    logger.info(f"[{AGENT_NAME}] Preparing to estimate cost for submission {state['submission_id']}.")
+    bundles = state.get("context_bundles")
+    llm_config_id = state.get("llm_config_id")
+    submission_id = state["submission_id"]
+
+    if not bundles or not llm_config_id:
+        return {"error": "Bundles or LLM config ID missing, cannot estimate cost."}
+
+    async with async_session_factory() as db:
+        try:
+            llm_config = await crud.get_llm_config(db, llm_config_id)
+            if not llm_config:
+                return {"error": f"LLM Configuration with ID {llm_config_id} not found."}
+
+            total_input_tokens = 0
+            # We estimate cost based on the number of agent runs needed
+            agent_runs = sum(len(files) for files in state.get("relevant_agents", {}).values())
+            
+            # Simple token estimation: sum of all bundled content multiplied by agent runs
+            # A more advanced approach could be more granular.
+            full_bundle_text = ""
+            for bundle in bundles:
+                for content in bundle.context_files.values():
+                    full_bundle_text += content
+
+            total_input_tokens = cost_estimation.count_tokens(full_bundle_text, llm_config.tokenizer_encoding)
+            
+            logger.info(f"[{AGENT_NAME}] Total estimated input tokens for analysis: {total_input_tokens}")
+
+            cost_details = cost_estimation.estimate_cost_for_prompt(
+                config=llm_config,
+                input_tokens=total_input_tokens
+            )
+            
+            # Save cost and update status
+            await crud.update_submission_cost_and_status(
+                db, 
+                submission_id, 
+                "Pending Cost Approval", 
+                cost_details
+            )
+            logger.info(f"[{AGENT_NAME}] Submission {submission_id} paused. Estimated cost: {cost_details['total_estimated_cost']:.6f} USD.")
+
+            return {"estimated_cost": cost_details}
+        except Exception as e:
+            logger.error(f"[{AGENT_NAME}] Failed to estimate cost: {e}", exc_info=True)
+            return {"error": f"Failed to estimate cost: {e}"}
+
+
 def should_continue(state: CoordinatorState) -> str:
-    """Conditional router logic."""
     if state.get("error"):
-        return "end"
-    if not state.get("relevant_agents"):
-        return "finalize_analysis"
-    return "run_specialized_agents"
+        return "end_with_error"
+    # This node is now only for routing after bundling
+    return "estimate_cost"
 
 
 async def run_specialized_agents_node(state: CoordinatorState) -> Dict[str, Any]:
@@ -219,21 +267,35 @@ async def finalize_analysis_node(state: CoordinatorState) -> Dict[str, Any]:
 
 
 def build_coordinator_graph():
-    """Builds the main coordinator graph, aligned with the new architecture."""
+    """Builds the coordinator graph with the new cost estimation and pause step."""
     workflow = StateGraph(CoordinatorState)
 
     workflow.add_node("determine_relevant_agents", determine_relevant_agents_node)
     workflow.add_node("create_context_bundles", create_context_bundles_node)
+    workflow.add_node("estimate_cost", estimate_cost_node)
+    
+    # These nodes are declared but will only be used in the "resume" part of the workflow,
+    # which will be triggered by a separate message after user approval.
     workflow.add_node("run_specialized_agents", run_specialized_agents_node)
     workflow.add_node("finalize_analysis", finalize_analysis_node)
+    workflow.add_node("end_with_error", lambda s: s) # Simple error endpoint
 
     workflow.set_entry_point("determine_relevant_agents")
     workflow.add_edge("determine_relevant_agents", "create_context_bundles")
     
     workflow.add_conditional_edges(
-        "create_context_bundles", should_continue,
-        {"run_specialized_agents": "run_specialized_agents", "finalize_analysis": "finalize_analysis"})
-    workflow.add_edge("run_specialized_agents", "finalize_analysis")
-    workflow.add_edge("finalize_analysis", END)
+        "create_context_bundles",
+        # This routing logic ensures we proceed to cost estimation only if bundling is successful
+        lambda s: "estimate_cost" if not s.get("error") else "end_with_error",
+        {
+            "estimate_cost": "estimate_cost",
+            "end_with_error": "end_with_error" # Route to a defined error endpoint
+        }
+    )
+    
+    # After estimation, the workflow pauses by reaching an end state.
+    # The 'resume' logic will be handled by a new entry point in the worker.
+    workflow.add_edge("estimate_cost", END)
+    workflow.add_edge("end_with_error", END)
 
-    return workflow
+    return workflow.compile()

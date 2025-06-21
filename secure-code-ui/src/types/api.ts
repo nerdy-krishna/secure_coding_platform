@@ -16,11 +16,11 @@ export interface AuthContextType {
   accessToken: string | null;
   isLoading: boolean;
   initialAuthChecked: boolean;
-  error: string | null; // Added
+  error: string | null;
   login: (loginData: UserLoginData) => Promise<void>;
   logout: () => Promise<void>;
-  register: (registerData: UserRegisterData) => Promise<UserRead>; // Corrected return type
-  clearError: () => void; // Added
+  register: (registerData: UserRegisterData) => Promise<UserRead>;
+  clearError: () => void;
 }
 
 export interface TokenResponse {
@@ -46,6 +46,8 @@ export interface UserRead {
   is_verified: boolean;
 }
 
+// --- LLM CONFIGURATION (UPDATED) ---
+
 // For reading LLM configurations (API key is not sent)
 export interface LLMConfiguration {
   id: string; // UUID as string
@@ -54,6 +56,10 @@ export interface LLMConfiguration {
   model_name: string;
   created_at: string; // ISO date-time string
   updated_at: string; // ISO date-time string
+  // ADDED: New fields for dynamic configuration
+  tokenizer_encoding: string;
+  input_cost_per_million: number;
+  output_cost_per_million: number;
 }
 
 // For creating a new LLM configuration (includes the API key)
@@ -62,7 +68,14 @@ export interface LLMConfigurationCreate {
   provider: string;
   model_name: string;
   api_key: string;
+  // ADDED: New fields for dynamic configuration
+  tokenizer_encoding: string;
+  input_cost_per_million: number;
+  output_cost_per_million: number;
 }
+
+// --- END LLM CONFIGURATION ---
+
 
 // For Code Submission
 export interface FileForSubmission {
@@ -94,30 +107,25 @@ export interface Finding {
   code_snippet?: string;
   description?: string;
   remediation?: string;
-  confidence?: string; // Added
-  references?: string[]; // Added
-  fixes?: SuggestedFix[]; // Added
-  // cwe_id is already present as cwe_id, but ResultsPage.tsx uses finding.cwe.
-  // Let's assume cwe_id is the correct one from backend and ResultsPage needs to align,
-  // or if backend sends 'cwe', then it should be added here.
-  // For now, I'll add 'cwe' as per ResultsPage.tsx usage.
-  cwe?: string; // Added based on ResultsPage.tsx usage
+  confidence?: string;
+  references?: string[];
+  fixes?: SuggestedFix[];
+  cwe?: string;
 }
 
-// New interface for suggested fixes
 export interface SuggestedFix {
   description?: string;
   suggested_fix?: string;
-  // Add any other properties a fix object might have
 }
 
 export interface SubmittedFile {
   file_path: string;
   findings: Finding[];
-  language?: string; // Added
-  analysis_summary?: string; // Added
-  identified_components?: string[]; // Added
-  asvs_analysis?: Record<string, any>; // Added (use a more specific type if known)
+  language?: string;
+  analysis_summary?: string;
+  identified_components?: string[];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  asvs_analysis?: Record<string, any>;
 }
 
 export interface SeverityCounts {
@@ -150,14 +158,12 @@ export interface SummaryReport {
   overall_risk_score?: OverallRiskScore;
 }
 
-// --- Detailed SARIF Interfaces ---
-// Based on SARIF v2.1.0. These can be expanded further as needed.
+// --- DETAILED SARIF INTERFACES (PRESERVED) ---
 
 export interface SARIFMessage {
   text?: string;
   markdown?: string;
   id?: string;
-  // arguments?: any[]; // For parameterized messages
 }
 
 export interface SARIFArtifactLocation {
@@ -177,14 +183,12 @@ export interface SARIFRegion {
   snippet?: {
     text: string;
   };
-  // ... and other region properties
 }
 
 export interface SARIFPhysicalLocation {
   artifactLocation: SARIFArtifactLocation;
   region?: SARIFRegion;
   contextRegion?: SARIFRegion;
-  // ... and other physical location properties
 }
 
 export interface SARIFLocation {
@@ -194,13 +198,11 @@ export interface SARIFLocation {
     name: string;
     kind?: string;
     fullyQualifiedName?: string;
-  }[]; // Simplified
+  }[];
   message?: SARIFMessage;
-  // ... and other location properties
 }
 
 export interface SARIFReportingDescriptor {
-  // This represents a "rule"
   id: string;
   guid?: string;
   name?: string;
@@ -211,67 +213,52 @@ export interface SARIFReportingDescriptor {
   properties?: {
     tags?: string[];
     precision?: "very-high" | "high" | "medium" | "low";
-    severity?: string; // Can be mapped from level
-    // ... other custom properties
+    severity?: string;
   };
-  // ... and other descriptor properties
 }
 
 export interface SARIFResult {
-  ruleId?: string; // Corresponds to SARIFReportingDescriptor.id
+  ruleId?: string;
   ruleIndex?: number;
-  message: SARIFMessage; // SARIF mandates message for each result
+  message: SARIFMessage;
   locations?: SARIFLocation[];
   level?: "none" | "note" | "warning" | "error";
-  kind?:
-    | "fail"
-    | "pass"
-    | "open"
-    | "review"
-    | "informational"
-    | "notApplicable";
+  kind?: "fail" | "pass" | "open" | "review" | "informational" | "notApplicable";
   hostedViewerUri?: string;
   relatedLocations?: SARIFLocation[];
-  // ... and other result properties
 }
 
 export interface SARIFToolComponent {
-  // Represents the driver or extensions
   name: string;
   version?: string;
   guid?: string;
   organization?: string;
-  rules?: SARIFReportingDescriptor[]; // Rules are defined within the tool component (driver)
-  // ... and other tool component properties
+  rules?: SARIFReportingDescriptor[];
 }
 
 export interface SARIFTool {
-  driver: SARIFToolComponent; // The 'driver' is the primary analysis tool
-  extensions?: SARIFToolComponent[]; // Other tools or plugins
+  driver: SARIFToolComponent;
+  extensions?: SARIFToolComponent[];
 }
 
 export interface SARIFInvocation {
   exitCode?: number;
   executionSuccessful: boolean;
   commandLine?: string;
-  startTimeUtc?: string; // ISO 8601 date-time
-  endTimeUtc?: string; // ISO 8601 date-time
-  toolExecutionNotifications?: SARIFNotification[]; // Defined below
-  // ... other invocation properties
+  startTimeUtc?: string;
+  endTimeUtc?: string;
+  toolExecutionNotifications?: SARIFNotification[];
 }
 
 export interface SARIFNotification {
-  // Used by Invocation and ReportingDescriptor
   message: SARIFMessage;
   level?: "none" | "note" | "warning" | "error";
-  // ... other notification properties
 }
 
 export interface SARIFVersionControlDetails {
   repositoryUri: string;
   revisionId?: string;
   branch?: string;
-  // ... other version control properties
 }
 
 export interface SARIFRun {
@@ -283,27 +270,42 @@ export interface SARIFRun {
   }[];
   invocations?: SARIFInvocation[];
   versionControlProvenance?: SARIFVersionControlDetails[];
-  // ... and other run properties
 }
 
 export interface SARIFLog {
-  version: "2.1.0"; // SARIF version
-  $schema?: string; // URI of the SARIF schema
-  runs: SARIFRun[]; // Uses the more specific SARIFRun interface
+  version: "2.1.0";
+  $schema?: string;
+  runs: SARIFRun[];
 }
 
-// --- End Detailed SARIF Interfaces ---
+// --- END DETAILED SARIF INTERFACES ---
 
+
+// --- ADDED: New type for the AI-generated impact report ---
+export interface ImpactReport {
+  executive_summary: string;
+  vulnerability_categories: string[];
+  estimated_remediation_effort: string;
+  required_architectural_changes: string[];
+}
+// --- END NEW TYPE ---
+
+
+// --- UPDATED: Main response for analysis results ---
 export interface AnalysisResultResponse {
   submission_id: string;
   status: string;
   summary_report?: SummaryReport;
-  sarif_report?: SARIFLog; // Now uses the detailed SARIFLog
+  sarif_report?: SARIFLog;
   text_report?: string;
   original_code_map?: { [filePath: string]: string };
   fixed_code_map?: { [filePathFixed: string]: string };
   error_message?: string;
+  // ADDED: New field for the AI-generated impact report
+  impact_report?: ImpactReport;
 }
+// --- END UPDATED RESPONSE ---
+
 
 // For submission history list
 export interface SubmissionHistoryItem {
@@ -314,4 +316,12 @@ export interface SubmissionHistoryItem {
   submitted_at: string; // ISO date string
   completed_at: string | null; // ISO date string
   total_findings?: number; // Optional
+  estimated_cost?: EstimatedCost;
+}
+
+export interface EstimatedCost {
+  input_cost: number;
+  predicted_output_cost: number;
+  total_estimated_cost: number;
+  predicted_output_tokens: number;
 }
