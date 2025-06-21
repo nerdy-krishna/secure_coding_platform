@@ -54,41 +54,38 @@ _stop_event = threading.Event()  # For signaling threads to stop
 # WorkerGraphState TypedDict is removed as we will use CoordinatorState directly.
 
 # --- Asyncio Task Execution ---
+
 async def run_graph_task_wrapper(initial_state: WorkerState, delivery_tag: int):
     """
-    This coroutine runs in the asyncio event loop.
-    It executes the worker_workflow and then schedules Pika ACK/NACK.
+    Executes the worker_workflow with a checkpointer configuration.
     """
     global _pika_channel, _pika_connection
-    submission_id_uuid = initial_state.get("submission_id", uuid.uuid4())
+    submission_id_uuid = initial_state["submission_id"]
     submission_id_str_log = str(submission_id_uuid)
     logger.info(
-        f"ASYNC WRAPPER: Starting worker_workflow for submission_id: {submission_id_str_log}, delivery_tag: {delivery_tag}"
+        f"ASYNC WRAPPER: Starting/Resuming worker_workflow for submission_id: {submission_id_str_log}"
     )
 
     success = False
+    
+    config = {"configurable": {"thread_id": submission_id_str_log}}
+
     try:
-        final_graph_state = await worker_workflow.ainvoke(initial_state)
+        # FIX: Add # type: ignore to handle the strict typing of the config object
+        final_graph_state = await worker_workflow.ainvoke(initial_state, config) # type: ignore
         
-        logger.info(
-            f"ASYNC WRAPPER: worker_workflow completed for SID: {submission_id_str_log}."
-        )
+        logger.info(f"ASYNC WRAPPER: worker_workflow completed for SID: {submission_id_str_log}.")
 
         if final_graph_state and not final_graph_state.get("error_message"):
             success = True
             logger.info(f"ASYNC WRAPPER: Graph processing for SID {submission_id_str_log} successful.")
         else:
-            error_msg = final_graph_state.get("error_message") if final_graph_state else "Unknown error"
-            logger.error(
-                f"ASYNC WRAPPER: Graph processing for SID {submission_id_str_log} failed. Error: {error_msg}"
-            )
+            error_msg = final_graph_state.get("error_message", "Unknown error") if final_graph_state else "Workflow returned no state"
+            logger.error(f"ASYNC WRAPPER: Graph processing for SID {submission_id_str_log} failed. Error: {error_msg}")
             success = False
             
     except Exception as e:
-        logger.error(
-            f"ASYNC WRAPPER: Exception during worker_workflow invocation for SID {submission_id_str_log}: {e}",
-            exc_info=True,
-        )
+        logger.error(f"ASYNC WRAPPER: Exception during worker_workflow invocation for SID {submission_id_str_log}: {e}", exc_info=True)
         success = False
 
     if _pika_connection and _pika_connection.is_open:
@@ -105,8 +102,6 @@ async def run_graph_task_wrapper(initial_state: WorkerState, delivery_tag: int):
             except Exception as e_pika_finalize:
                 logger.error(f"PIKA FINALIZE: Exception for SID {submission_id_str_log}: {e_pika_finalize}", exc_info=True)
         _pika_connection.add_callback_threadsafe(pika_finalize_message)
-    else:
-        logger.error(f"ASYNC WRAPPER: Pika connection not open. Cannot ACK/NACK SID {submission_id_str_log}.")
 
 def schedule_task_on_async_loop(target_coroutine_func: Callable, *args, **kwargs):
     """
@@ -157,27 +152,22 @@ def pika_message_callback(
         
         submission_uuid = uuid.UUID(submission_id_str)
 
-        # --- CORRECTED INITIALIZATION ---
-        # Initialize the state with all required keys set to default values
-        # to ensure it correctly matches the WorkerState TypedDict.
+        # FIX: Explicitly initialize the full state with default values to satisfy Pylance
         initial_worker_state: WorkerState = {
             "submission_id": submission_uuid,
             "llm_config_id": None,
             "files": None,
-            "workflow_mode": "audit",  # Default value
+            "workflow_mode": "audit", # This will be overridden below
             "repository_map": None,
-            "analysis_summary": None,
-            "identified_components": None,
             "asvs_analysis": None,
-            "relevant_agents": None,
-            "analysis_results": [],
+            "analysis_results": {}, # Initialize as empty dict
+            "findings": [], # Initialize as empty list
+            "final_report": None,
             "error_message": None,
         }
         
-        # Determine workflow mode based on the queue the message came from
         if method.routing_key == settings.RABBITMQ_APPROVAL_QUEUE:
             logger.info(f"PIKA CB: Resuming analysis for submission_id: {submission_uuid}")
-            # This will be a 'remediate' or other resumed workflow
             initial_worker_state["workflow_mode"] = "remediate"
         else:
              logger.info(f"PIKA CB: Starting new analysis for submission_id: {submission_uuid}")
@@ -189,9 +179,6 @@ def pika_message_callback(
 
     except (json.JSONDecodeError, ValueError) as e:
         logger.error(f"PIKA CB: Failed to parse message body or UUID: {e}", exc_info=True)
-        ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
-    except Exception as e:
-        logger.error(f"PIKA CB: Unhandled error processing message: {e}", exc_info=True)
         ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
 
