@@ -1,8 +1,11 @@
 # src/app/agents/schemas.py
-from typing import Dict, List, TypedDict, Optional
+from typing import Dict, List, TypedDict, Optional, Literal # Added Literal
 import uuid
 
 from pydantic import BaseModel, Field
+
+# --- ADDED: New Type for Workflow Mode ---
+WorkflowMode = Literal["audit", "remediate"]
 
 
 class VulnerabilityFinding(BaseModel):
@@ -27,7 +30,7 @@ class VulnerabilityFinding(BaseModel):
     references: List[str] = Field(
         description="A list of URLs or reference links for the vulnerability."
     )
-    file_path: str  # This will be added programmatically by the agent
+    file_path: str
 
 
 class AnalysisResult(BaseModel):
@@ -61,10 +64,15 @@ class FixResult(BaseModel):
 class SpecializedAgentState(TypedDict):
     """Represents the state of any specialized agent's workflow."""
 
-    submission_id: uuid.UUID  # Changed from int
-    llm_config_id: Optional[uuid.UUID] # ID for the LLM configuration
+    submission_id: uuid.UUID
+    llm_config_id: Optional[uuid.UUID]
     filename: str
     code_snippet: str
+    
+    # --- ADDED: The new field to control agent behavior ---
+    workflow_mode: WorkflowMode
+
+    # Outputs
     findings: List[VulnerabilityFinding]
     fixes: List[FixResult]
     error: Optional[str]

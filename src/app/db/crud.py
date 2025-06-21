@@ -60,13 +60,21 @@ async def get_llm_configs(
 async def create_llm_config(
     db: AsyncSession, config: api_models.LLMConfigurationCreate
 ) -> db_models.LLMConfiguration:
-    """Creates a new LLM configuration, encrypting the API key before storage."""
+    """
+    Creates a new LLM configuration, encrypting the API key and saving all fields.
+    """
     encrypted_key = FernetEncrypt.encrypt(config.api_key)
+    
+    # Create the database model instance with all fields from the API model
     db_config = db_models.LLMConfiguration(
         name=config.name,
         provider=config.provider,
         model_name=config.model_name,
         encrypted_api_key=encrypted_key,
+        # --- ADDED: Save the new dynamic fields to the database ---
+        tokenizer_encoding=config.tokenizer_encoding,
+        input_cost_per_million=config.input_cost_per_million,
+        output_cost_per_million=config.output_cost_per_million,
     )
     db.add(db_config)
     await db.commit()
@@ -295,3 +303,40 @@ async def create_repository_map_cache(db: AsyncSession, codebase_hash: str, repo
     await db.commit()
     await db.refresh(db_cache_entry)
     return db_cache_entry
+
+async def update_submission_cost_and_status(
+    db: AsyncSession, submission_id: uuid.UUID, status: str, estimated_cost: Dict[str, Any]
+):
+    """Updates the status and estimated_cost of a submission."""
+    stmt = (
+        update(db_models.CodeSubmission)
+        .where(db_models.CodeSubmission.id == submission_id)
+        .values(status=status, estimated_cost=estimated_cost)
+    )
+    await db.execute(stmt)
+    await db.commit()
+
+
+async def save_final_reports_and_status(
+    db: AsyncSession,
+    submission_id: uuid.UUID,
+    status: str,
+    impact_report: Optional[Dict[str, Any]] = None,
+    sarif_report: Optional[Dict[str, Any]] = None,
+):
+    """
+    Updates a submission with the final reports (impact and SARIF) and sets the final status.
+    """
+    values_to_update = {"status": status, "completed_at": datetime.utcnow()}
+    if impact_report:
+        values_to_update["impact_report"] = impact_report
+    if sarif_report:
+        values_to_update["sarif_report"] = sarif_report
+    
+    stmt = (
+        update(db_models.CodeSubmission)
+        .where(db_models.CodeSubmission.id == submission_id)
+        .values(**values_to_update)
+    )
+    await db.execute(stmt)
+    await db.commit()
