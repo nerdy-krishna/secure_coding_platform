@@ -31,6 +31,8 @@ class User(SQLAlchemyBaseUserTable[int], Base):
 
 class LLMConfiguration(Base):
     __tablename__ = "llm_configurations"
+
+    # --- Existing Columns ---
     id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
@@ -38,7 +40,34 @@ class LLMConfiguration(Base):
     provider: Mapped[str] = mapped_column(String, nullable=False)
     model_name: Mapped[str] = mapped_column(String, nullable=False)
     encrypted_api_key: Mapped[str] = mapped_column(String, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    # --- ADDED/UPDATED COLUMNS for Dynamic Costing & Tokenizing ---
+    
+    tokenizer_encoding: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+        server_default="cl100k_base",
+        comment="The name of the tiktoken tokenizer, e.g., 'cl100k_base' or 'o200k_base'.",
+    )
+
+    input_cost_per_million: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+        server_default="0.0",
+        comment="Cost per 1 million input tokens in USD.",
+    )
+    output_cost_per_million: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+        server_default="0.0",
+        comment="Cost per 1 million output tokens in USD.",
+    )
+    
+    # --- End New Columns ---
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
@@ -61,6 +90,22 @@ class CodeSubmission(Base):
     )
     specialized_llm_config_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey("llm_configurations.id")
+    )
+    estimated_cost: Mapped[Optional[Dict[str, Any]]] = mapped_column(
+        JSONB,
+        nullable=True,
+        comment="Stores the estimated cost breakdown for the analysis."
+    )
+    impact_report: Mapped[Optional[Dict[str, Any]]] = mapped_column(
+        JSONB,
+        nullable=True,
+        comment="Stores the JSON output of the AI-generated impact report."
+    )
+    
+    sarif_report: Mapped[Optional[Dict[str, Any]]] = mapped_column(
+        JSONB,
+        nullable=True,
+        comment="Stores the generated SARIF report as a JSON object."
     )
     user: Mapped["User"] = relationship(back_populates="submissions")
     files: Mapped[List["SubmittedFile"]] = relationship(
@@ -163,3 +208,4 @@ class RepositoryMapCache(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+

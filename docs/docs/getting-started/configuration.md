@@ -67,7 +67,7 @@ ENCRYPTION_KEY=your-super-secret-generated-key-goes-here
 | `RABBITMQ_HOST` | RabbitMQ host (internal) | `rabbitmq` |
 | `RABBITMQ_PORT` | AMQP port | `5672` |
 | `RABBITMQ_MANAGEMENT_PORT` | Port for RabbitMQ UI | `15672` |
-| `CODE_QUEUE` | Queue name for analysis tasks | `code_analysis_queue` |
+| `RABBITMQ_SUBMISSION_QUEUE` | Queue name for analysis tasks | `code_analysis_queue` |
 
 ---
 
