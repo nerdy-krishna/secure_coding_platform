@@ -198,11 +198,17 @@ async def get_submission_status(
 async def get_submission_results(
     submission_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 ):
-    """Retrieves the full analysis results for a completed submission."""
+    """
+    Retrieves the full analysis results for a completed submission, including
+    the new impact and SARIF reports.
+    """
+    # Step 1: Fetch the submission object. The 'get_submission' function should be configured
+    # to eager-load related findings and files.
     submission_db = await crud.get_submission(db, submission_id)
     if not submission_db:
         raise HTTPException(status_code=404, detail="Submission not found")
 
+    # Step 2: Ensure the analysis is actually complete. This is still crucial.
     if submission_db.status != "Completed":
         logger.warning(
             f"Attempt to access results for non-completed submission {submission_id} with status {submission_db.status}"
@@ -212,6 +218,8 @@ async def get_submission_results(
             detail=f"Submission analysis is not yet completed. Current status: '{submission_db.status}'.",
         )
     
+    # Step 3 (Optional but preserved): Build the detailed summary report for the UI.
+    # This logic remains useful for UIs that need a granular breakdown.
     all_findings_db: List[db_models.VulnerabilityFinding] = submission_db.findings
     findings_by_file: Dict[str, List[db_models.VulnerabilityFinding]] = {}
     for finding_db_item in all_findings_db:
@@ -270,7 +278,10 @@ async def get_submission_results(
         files_analyzed=files_analyzed_report_items,
     )
     
+    # Step 4: Assemble the final response, now including the new direct report fields.
     return api_models.AnalysisResultDetailResponse(
+        impact_report=submission_db.impact_report,
+        sarif_report=submission_db.sarif_report,
         summary_report=summary_report_response_obj
     )
 

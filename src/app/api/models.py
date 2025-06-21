@@ -138,6 +138,10 @@ class SubmissionStatus(BaseModel):
     status: str
     submitted_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
+    estimated_cost: Optional[Dict[str, Any]] = None
+
+    class Config:
+        from_attributes = True
 
 
 class SecurityQueryResponse(BaseModel):
@@ -177,6 +181,7 @@ class SubmissionHistoryItem(BaseModel):
     status: str
     submitted_at: datetime
     completed_at: Optional[datetime] = None
+    estimated_cost: Optional[Dict[str, Any]] = None
 
     class Config:
         from_attributes = True
@@ -238,8 +243,9 @@ class SummaryReportResponse(BaseModel):
 
 
 class AnalysisResultDetailResponse(BaseModel):
+    impact_report: Optional[Dict[str, Any]] = None
+    sarif_report: Optional[Dict[str, Any]] = None
     summary_report: Optional[SummaryReportResponse] = None
-    sarif_report: Optional[Dict] = None
     text_report: Optional[str] = None
     original_code_map: Optional[Dict[str, str]] = None
     fixed_code_map: Optional[Dict[str, str]] = None

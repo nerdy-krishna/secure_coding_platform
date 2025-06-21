@@ -45,3 +45,19 @@ export const submissionService = {
     return response.data;
   },
 };
+
+/**
+ * Sends an approval request for a submission pending cost confirmation.
+ * @param submissionId The ID of the submission to approve.
+ * @returns A promise that resolves with the server's confirmation message.
+ */
+export const approveSubmission = async (submissionId: string): Promise<{ message: string }> => {
+  try {
+    const response = await apiClient.post<{ message: string }>(`/submissions/${submissionId}/approve`);
+    return response.data;
+  } catch (error) {
+    // Axios errors can be handled here or in the calling component
+    console.error(`Error approving submission ${submissionId}:`, error);
+    throw error;
+  }
+};

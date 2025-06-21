@@ -274,7 +274,8 @@ def build_coordinator_graph():
     workflow.add_node("create_context_bundles", create_context_bundles_node)
     workflow.add_node("estimate_cost", estimate_cost_node)
     
-    # We will add run_specialized_agents and finalize_analysis back in when we implement the "resume" logic
+    # These nodes are declared but will only be used in the "resume" part of the workflow,
+    # which will be triggered by a separate message after user approval.
     workflow.add_node("run_specialized_agents", run_specialized_agents_node)
     workflow.add_node("finalize_analysis", finalize_analysis_node)
     workflow.add_node("end_with_error", lambda s: s) # Simple error endpoint
@@ -284,15 +285,17 @@ def build_coordinator_graph():
     
     workflow.add_conditional_edges(
         "create_context_bundles",
-        # This routing logic might need refinement later
+        # This routing logic ensures we proceed to cost estimation only if bundling is successful
         lambda s: "estimate_cost" if not s.get("error") else "end_with_error",
         {
             "estimate_cost": "estimate_cost",
-            "end_with_error": END
+            "end_with_error": "end_with_error" # Route to a defined error endpoint
         }
     )
     
-    # After estimation, the workflow pauses.
+    # After estimation, the workflow pauses by reaching an end state.
+    # The 'resume' logic will be handled by a new entry point in the worker.
     workflow.add_edge("estimate_cost", END)
+    workflow.add_edge("end_with_error", END)
 
-    return workflow
+    return workflow.compile()
