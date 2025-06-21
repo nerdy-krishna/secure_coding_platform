@@ -16,7 +16,7 @@ from app.agents.impact_reporting_agent import build_impact_reporting_agent_graph
 from app.agents.schemas import WorkflowMode, VulnerabilityFinding, FinalReport
 from app.db.database import get_db
 from app.db import crud, models as db_models
-from langgraph.checkpoint.aiosqlite import AioSqliteSaver
+from langgraph.checkpoint.sqlite import AioSqliteSaver
 from sqlalchemy.ext.asyncio import create_async_engine
 from app.core.config import settings
 
