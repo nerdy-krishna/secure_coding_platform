@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 
 from langgraph.graph import StateGraph, END
-from sqlalchemy import update
+from sqlalchemy import create_engine, update
 
 # Agents and services
 from app.agents.context_analysis_agent import build_context_analysis_agent_graph
@@ -16,6 +16,9 @@ from app.agents.impact_reporting_agent import build_impact_reporting_agent_graph
 from app.agents.schemas import WorkflowMode, VulnerabilityFinding, FinalReport
 from app.db.database import get_db
 from app.db import crud, models as db_models
+from langgraph.checkpoint.aiosqlite import AioSqliteSaver
+from sqlalchemy.ext.asyncio import create_async_engine
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -128,8 +131,17 @@ def should_continue(state: WorkerState) -> str:
 # --- Build the final, runnable workflow ---
 
 def _build_and_compile_workflow():
-    """Constructs and compiles the full worker workflow, orchestrating all agents."""
+    """Constructs and compiles the full worker workflow with a database checkpointer."""
     logger.debug("Building the main worker workflow graph...")
+    
+    # --- Checkpointer Setup ---
+    # FIX: Add a check to ensure the database URL is configured
+    if not settings.ASYNC_DATABASE_URL:
+        raise ValueError("ASYNC_DATABASE_URL must be configured in settings to use a checkpointer.")
+
+    # AioSqliteSaver works with any async SQLAlchemy engine, including PostgreSQL
+    engine = create_async_engine(settings.ASYNC_DATABASE_URL)
+    checkpointer = AioSqliteSaver(conn=engine)
     
     context_analysis_graph = build_context_analysis_agent_graph()
     coordinator_graph = build_coordinator_graph()
@@ -138,7 +150,6 @@ def _build_and_compile_workflow():
     workflow = StateGraph(WorkerState)
 
     workflow.add_node("retrieve_submission_data", retrieve_submission_data)
-    # FIX: Add # type: ignore to suppress Pylance error for sub-graph nodes
     workflow.add_node("context_analysis", context_analysis_graph) # type: ignore
     workflow.add_node("coordinator", coordinator_graph) # type: ignore
     workflow.add_node("prepare_report_input", prepare_report_input)
@@ -151,16 +162,15 @@ def _build_and_compile_workflow():
     workflow.add_conditional_edges("retrieve_submission_data", should_continue, {"continue": "context_analysis", "handle_error": "handle_error"})
     workflow.add_conditional_edges("context_analysis", should_continue, {"continue": "coordinator", "handle_error": "handle_error"})
     workflow.add_conditional_edges("coordinator", should_continue, {"continue": "prepare_report_input", "handle_error": "handle_error"})
-    
     workflow.add_edge("prepare_report_input", "impact_reporting")
-    
     workflow.add_conditional_edges("impact_reporting", should_continue, {"continue": "save_final_report", "handle_error": "handle_error"})
-
     workflow.add_edge("save_final_report", END)
     workflow.add_edge("handle_error", END)
     
-    logger.debug("Compiling the main worker graph...")
-    return workflow.compile(checkpointer=None)
+    logger.debug("Compiling the main worker graph with checkpointer...")
+    # Compile the graph with the checkpointer
+    return workflow.compile(checkpointer=checkpointer)
+
 
 
 # Create the final, runnable graph object
