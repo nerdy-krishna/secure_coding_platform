@@ -117,7 +117,7 @@ def should_continue(state: WorkerState) -> str:
     return "handle_error" if state.get("error_message") else "continue"
 
 
-async def check_approval_status_node(state: WorkerState) -> Dict[str, Any]:
+async def check_approval_status_node(state: WorkerState) -> Dict[str, Any]: # type: ignore
     """Fetches the current submission status from the DB to decide on pausing."""
     submission_id = state['submission_id']
     logger.info(f"[WorkerGraph] Checking approval status for submission {submission_id} after coordinator.")

@@ -82,6 +82,33 @@ async def create_llm_config(
     await db.refresh(db_config)
     return db_config
 
+async def update_llm_config(                                                                                                                                                                                       
+    db: AsyncSession, config_id: uuid.UUID, config_update: api_models.LLMConfigurationUpdate                                                                                                                       
+) -> Optional[db_models.LLMConfiguration]:                                                                                                                                                                         
+    """Updates an existing LLM configuration.                                                                                                                                                                      
+    Assumes config_update contains fields like 'input_cost_per_million',                                                                                                                                           
+    'output_cost_per_million', 'tokenizer_encoding' if they are to be updated.                                                                                                                                     
+    """                                                                                                                                                                                                            
+    db_config = await get_llm_config(db, config_id)                                                                                                                                                                
+    if not db_config:                                                                                                                                                                                              
+        return None                                                                                                                                                                                                
+                                                                                                                                                                                                                   
+    update_data = config_update.model_dump(exclude_unset=True)                                                                                                                                                     
+                                                                                                                                                                                                                   
+    for key, value in update_data.items():                                                                                                                                                                         
+        if key == "api_key":                                                                                                                                                                                       
+            if value:  # Only update if a new, non-empty key is provided                                                                                                                                           
+                db_config.encrypted_api_key = FernetEncrypt.encrypt(value)                                                                                                                                         
+        elif hasattr(db_config, key):                                                                                                                                                                              
+            setattr(db_config, key, value)                                                                                                                                                                         
+        # Note: If Pydantic model field names (e.g., 'input_token_cost') were different                                                                                                                            
+        # from DB model field names (e.g., 'input_cost_per_million'),                                                                                                                                              
+        # explicit mapping would be needed here.                                                                                                                                                                   
+        # However, create_llm_config suggests Pydantic models use DB-like names.                                                                                                                                   
+                                                                                                                                                                                                                   
+    await db.commit()                                                                                                                                                                                              
+    await db.refresh(db_config)                                                                                                                                                                                    
+    return db_config
 
 async def delete_llm_config(
     db: AsyncSession, config_id: uuid.UUID
@@ -343,3 +370,4 @@ async def save_final_reports_and_status(
     )
     await db.execute(stmt)
     await db.commit()
+
