@@ -57,7 +57,11 @@ const LLMSettingsPage: React.FC = () => {
     if (editingConfig) {
       form.setFieldsValue({
         ...editingConfig,
-        api_key: "",
+        // Ensure field names match the form items and the LLMConfiguration type
+        input_cost_per_million: editingConfig.input_cost_per_million, 
+        output_cost_per_million: editingConfig.output_cost_per_million,
+        tokenizer_encoding: editingConfig.tokenizer_encoding,
+        api_key: "", // Clear API key for editing
       });
     } else {
       form.resetFields();
@@ -117,10 +121,13 @@ const LLMSettingsPage: React.FC = () => {
   });
 
   const handleSubmit = (values: LLMConfigurationCreate) => {
+    // Ensure field names here match what the backend expects (LLMConfigurationUpdate)
+    // and what the form provides.
     const payload = {
       ...values,
-      input_token_cost: Number(values.input_token_cost),
-      output_token_cost: Number(values.output_token_cost),
+      input_cost_per_million: Number(values.input_cost_per_million),
+      output_cost_per_million: Number(values.output_cost_per_million),
+      // tokenizer_encoding is already a string from the form
     };
 
     if (editingConfig) {
@@ -169,9 +176,9 @@ const LLMSettingsPage: React.FC = () => {
       { title: "Name", dataIndex: "name", key: "name", sorter: (a, b) => a.name.localeCompare(b.name) },
       { title: "Provider", dataIndex: "provider", key: "provider", render: (provider) => <Tag>{provider.toUpperCase()}</Tag>, filters: LLM_PROVIDERS.map((p) => ({ text: p.toUpperCase(), value: p })), onFilter: (value, record) => record.provider === value },
       { title: "Model Name", dataIndex: "model_name", key: "model_name" },
-      { title: "Input Cost ($/1M)", dataIndex: "input_token_cost", key: "input_token_cost", render: (cost) => <Text>${cost ? cost.toFixed(6) : "0.00"}</Text>, sorter: (a, b) => a.input_token_cost - b.input_token_cost },
-      { title: "Output Cost ($/1M)", dataIndex: "output_token_cost", key: "output_token_cost", render: (cost) => <Text>${cost ? cost.toFixed(6) : "0.00"}</Text>, sorter: (a, b) => a.output_token_cost - b.output_token_cost },
-      { title: "Tokenizer", dataIndex: "tokenizer_name", key: "tokenizer_name", render: (name) => (name ? <Tag color="blue">{name}</Tag> : <Text type="secondary">Default</Text>) },
+      { title: "Input Cost ($/1M)", dataIndex: "input_cost_per_million", key: "input_cost_per_million", render: (cost) => <Text>${cost ? cost.toFixed(6) : "0.00"}</Text>, sorter: (a, b) => a.input_cost_per_million - b.input_cost_per_million },
+      { title: "Output Cost ($/1M)", dataIndex: "output_cost_per_million", key: "output_cost_per_million", render: (cost) => <Text>${cost ? cost.toFixed(6) : "0.00"}</Text>, sorter: (a, b) => a.output_cost_per_million - b.output_cost_per_million },
+      { title: "Tokenizer", dataIndex: "tokenizer_encoding", key: "tokenizer_encoding", render: (name) => (name ? <Tag color="blue">{name}</Tag> : <Text type="secondary">Default</Text>) },
       { title: "Created At", dataIndex: "created_at", key: "created_at", render: (text) => formatDisplayDate(text), sorter: (a, b) => (parseAsUTCDate(a.created_at)?.getTime() || 0) - (parseAsUTCDate(b.created_at)?.getTime() || 0) },
       { title: "Action", key: "action", render: (_, record) => (
           <Space>
@@ -207,17 +214,17 @@ const LLMSettingsPage: React.FC = () => {
         <Paragraph type="secondary">{editingConfig ? "Update the details for this configuration." : "Add a new Large Language Model provider configuration."}</Paragraph>
         <Form form={form} layout="vertical" onFinish={handleSubmit}>
           <Row gutter={24}><Col xs={24} sm={12}><Form.Item name="name" label="Configuration Name" rules={[{ required: true, message: "Please enter a unique name." }]}><Input placeholder="e.g., OpenAI GPT-4o Mini" /></Form.Item></Col><Col xs={24} sm={12}><Form.Item name="provider" label="Provider" rules={[{ required: true, message: "Please select a provider." }]}><Select placeholder="Select a provider">{LLM_PROVIDERS.map((p) => (<Option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</Option>))}</Select></Form.Item></Col></Row>
-          <Row gutter={24}><Col xs={24} sm={12}><Form.Item name="model_name" label="Model Name" rules={[{ required: true, message: "Please enter the model name." }]}><Input placeholder="e.g., gpt-4o-mini" /></Form.Item></Col><Col xs={24} sm={12}><Form.Item name="tokenizer_name" label="Tokenizer Name (Optional)" tooltip="e.g., 'cl100k_base'. Leave blank for default."><Input placeholder="e.g., cl100k_base" /></Form.Item></Col></Row>
+          <Row gutter={24}><Col xs={24} sm={12}><Form.Item name="model_name" label="Model Name" rules={[{ required: true, message: "Please enter the model name." }]}><Input placeholder="e.g., gpt-4o-mini" /></Form.Item></Col><Col xs={24} sm={12}><Form.Item name="tokenizer_encoding" label="Tokenizer Encoding (Optional)" tooltip="e.g., 'cl100k_base'. Leave blank for default."><Input placeholder="e.g., cl100k_base" /></Form.Item></Col></Row>
           <Row gutter={24}>
             <Col xs={24} sm={12}>
               {/* --- UPDATED: Using the custom validator --- */}
-              <Form.Item name="input_token_cost" label="Input Cost per 1,000,000 Tokens ($)" rules={[{ required: true, message: "Input cost is required." }, { validator: costValidator }]}>
+              <Form.Item name="input_cost_per_million" label="Input Cost per 1,000,000 Tokens ($)" rules={[{ required: true, message: "Input cost is required." }, { validator: costValidator }]}>
                 <InputNumber style={{ width: "100%" }} placeholder="e.g., 0.15" step="0.01" stringMode />
               </Form.Item>
             </Col>
             <Col xs={24} sm={12}>
               {/* --- UPDATED: Using the custom validator --- */}
-              <Form.Item name="output_token_cost" label="Output Cost per 1,000,000 Tokens ($)" rules={[{ required: true, message: "Output cost is required." }, { validator: costValidator }]}>
+              <Form.Item name="output_cost_per_million" label="Output Cost per 1,000,000 Tokens ($)" rules={[{ required: true, message: "Output cost is required." }, { validator: costValidator }]}>
                 <InputNumber style={{ width: "100%" }} placeholder="e.g., 0.60" step="0.01" stringMode />
               </Form.Item>
             </Col>
