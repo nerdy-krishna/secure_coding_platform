@@ -17,7 +17,7 @@ const { Title, Text } = Typography;
 const statusMap: { [key: string]: { color: string; icon: React.ReactNode; text: string } } = {
     'Pending': { color: 'default', icon: <ClockCircleOutlined />, text: 'Queued' },
     'Processing': { color: 'processing', icon: <SyncOutlined spin />, text: 'Processing' },
-    'Pending Cost Approval': { color: 'warning', icon: <ExclamationCircleOutlined />, text: 'Pending Approval' },
+    'PENDING_COST_APPROVAL': { color: 'warning', icon: <ExclamationCircleOutlined />, text: 'Pending Approval' }, // Updated key
     'Approved - Queued': { color: 'processing', icon: <SyncOutlined spin />, text: 'Queued for Analysis' },
     'Completed': { color: 'success', icon: <CheckCircleOutlined />, text: 'Completed' },
     'Failed': { color: 'error', icon: <StopOutlined />, text: 'Failed' },
@@ -96,7 +96,7 @@ const SubmissionHistoryPage: React.FC = () => {
 
     // This function determines what to render when a row is expanded.
     const expandedRowRender = (record: SubmissionHistoryItem) => {
-        if (record.status === 'Pending Cost Approval' && record.estimated_cost) {
+        if (record.status === 'PENDING_COST_APPROVAL' && record.estimated_cost) { // Updated status check
             // We pass the `refetch` function so the child component can trigger a data refresh
             return <CostApproval submission={record} onApprovalSuccess={() => refetch()} />;
         }
@@ -105,7 +105,7 @@ const SubmissionHistoryPage: React.FC = () => {
 
     // This function determines if a row should have an expand icon.
     const rowExpandable = (record: SubmissionHistoryItem) => {
-        return record.status === 'Pending Cost Approval';
+        return record.status === 'PENDING_COST_APPROVAL'; // Updated status check
     };
 
     if (isLoading && !data) {

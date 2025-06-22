@@ -176,7 +176,7 @@ async def approve_submission_analysis(
     if submission.user_id != user.id and not user.is_superuser:
         raise HTTPException(status_code=403, detail="Not authorized to approve this submission")
 
-    if submission.status != "Pending Cost Approval":
+    if submission.status != "PENDING_COST_APPROVAL": # Updated status check
         raise HTTPException(
             status_code=400,
             detail=f"Submission is not pending approval. Current status: {submission.status}",
