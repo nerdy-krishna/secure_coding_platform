@@ -41,6 +41,10 @@ logger = logging.getLogger(__name__)
 
 AGENT_NAME = "CoordinatorAgent"
 
+# Define status constants for clarity within this agent
+STATUS_PENDING_APPROVAL = "PENDING_COST_APPROVAL"
+STATUS_COST_APPROVED = "COST_APPROVED" # This status should be set by your API upon user approval
+
 AGENT_BUILDER_MAP = {
     "AccessControlAgent": build_access_control_agent, "ApiSecurityAgent": build_api_security_agent,
     "ArchitectureAgent": build_architecture_agent, "AuthenticationAgent": build_authentication_agent,
@@ -65,7 +69,9 @@ class CoordinatorState(TypedDict):
     # Generated within this agent
     context_bundles: Optional[List[ContextBundle]]
     relevant_agents: Dict[str, List[str]]
-    estimated_cost: Optional[Dict[str, float]] # ADDED
+    estimated_cost: Optional[Dict[str, float]]
+    cost_approval_met: bool = False # Default to False
+    current_submission_status: Optional[str] = None
     
     # Outputs
     results: Dict[str, Any]
@@ -110,62 +116,86 @@ def create_context_bundles_node(state: CoordinatorState) -> Dict[str, Any]:
 # --- NEW NODE FOR COST ESTIMATION ---
 async def estimate_cost_node(state: CoordinatorState) -> Dict[str, Any]:
     """
-    Estimates the cost of the analysis and pauses the workflow for approval.
+    Estimates the cost of the analysis and determines if the workflow should pause.
     """
-    logger.info(f"[{AGENT_NAME}] Preparing to estimate cost for submission {state['submission_id']}.")
-    bundles = state.get("context_bundles")
-    llm_config_id = state.get("llm_config_id")
     submission_id = state["submission_id"]
-
-    if not bundles or not llm_config_id:
-        return {"error": "Bundles or LLM config ID missing, cannot estimate cost."}
-
+    logger.info(f"[{AGENT_NAME}] Evaluating cost and approval status for submission {submission_id}.")
+    
     async with async_session_factory() as db:
+        submission = await crud.get_submission(db, submission_id)
+        if not submission:
+            logger.error(f"[{AGENT_NAME}] Submission {submission_id} not found during cost evaluation.")
+            return {"error": f"Submission {submission_id} not found.", "current_submission_status": "ERROR_NO_SUBMISSION"}
+
+        current_status = submission.status
+        estimated_cost_from_db = submission.estimated_cost
+
+        # If cost is already approved, signal to proceed.
+        if current_status == STATUS_COST_APPROVED:
+            logger.info(f"[{AGENT_NAME}] Cost for submission {submission_id} is already approved ({STATUS_COST_APPROVED}). Proceeding.")
+            return {"cost_approval_met": True, "current_submission_status": current_status, "estimated_cost": estimated_cost_from_db}
+
+        # If it's currently pending approval, it means we are re-invoked while waiting.
+        # The coordinator should end, and the worker graph will handle the pause.
+        if current_status == STATUS_PENDING_APPROVAL:
+            logger.info(f"[{AGENT_NAME}] Submission {submission_id} is still {STATUS_PENDING_APPROVAL}. Waiting for external approval.")
+            return {"cost_approval_met": False, "current_submission_status": current_status, "estimated_cost": estimated_cost_from_db}
+
+        # If none of the above, it's a new estimation.
+        logger.info(f"[{AGENT_NAME}] Performing new cost estimation for submission {submission_id}.")
+        bundles = state.get("context_bundles")
+        llm_config_id = state.get("llm_config_id")
+
+        if not bundles or not llm_config_id:
+            logger.error(f"[{AGENT_NAME}] Bundles or LLM config ID missing for submission {submission_id}.")
+            return {"error": "Bundles or LLM config ID missing, cannot estimate cost.", "current_submission_status": current_status}
+        
         try:
             llm_config = await crud.get_llm_config(db, llm_config_id)
             if not llm_config:
-                return {"error": f"LLM Configuration with ID {llm_config_id} not found."}
+                logger.error(f"[{AGENT_NAME}] LLM Config {llm_config_id} not found for submission {submission_id}.")
+                return {"error": f"LLM Configuration with ID {llm_config_id} not found.", "current_submission_status": current_status}
 
-            total_input_tokens = 0
-            # We estimate cost based on the number of agent runs needed
-            agent_runs = sum(len(files) for files in state.get("relevant_agents", {}).values())
-            
-            # Simple token estimation: sum of all bundled content multiplied by agent runs
-            # A more advanced approach could be more granular.
             full_bundle_text = ""
             for bundle in bundles:
                 for content in bundle.context_files.values():
                     full_bundle_text += content
-
-            total_input_tokens = cost_estimation.count_tokens(full_bundle_text, llm_config.tokenizer_encoding)
             
-            logger.info(f"[{AGENT_NAME}] Total estimated input tokens for analysis: {total_input_tokens}")
+            total_input_tokens = cost_estimation.count_tokens(full_bundle_text, llm_config.tokenizer_encoding or "cl100k_base")
+            logger.info(f"[{AGENT_NAME}] Total estimated input tokens for {submission_id}: {total_input_tokens}")
 
             cost_details = cost_estimation.estimate_cost_for_prompt(
                 config=llm_config,
                 input_tokens=total_input_tokens
             )
             
-            # Save cost and update status
             await crud.update_submission_cost_and_status(
                 db, 
                 submission_id, 
-                "PENDING_COST_APPROVAL", 
+                STATUS_PENDING_APPROVAL, 
                 cost_details
             )
-            logger.info(f"[{AGENT_NAME}] Submission {submission_id} status set to PENDING_COST_APPROVAL. Estimated cost: {cost_details['total_estimated_cost']:.6f} USD.")
-
-            return {"estimated_cost": cost_details}
+            logger.info(f"[{AGENT_NAME}] Submission {submission_id} status set to {STATUS_PENDING_APPROVAL}. Estimated cost: {cost_details['total_estimated_cost']:.6f} USD.")
+            return {"estimated_cost": cost_details, "cost_approval_met": False, "current_submission_status": STATUS_PENDING_APPROVAL}
         except Exception as e:
-            logger.error(f"[{AGENT_NAME}] Failed to estimate cost: {e}", exc_info=True)
-            return {"error": f"Failed to estimate cost: {e}"}
+            logger.error(f"[{AGENT_NAME}] Failed to estimate cost for {submission_id}: {e}", exc_info=True)
+            return {"error": f"Failed to estimate cost: {e}", "current_submission_status": current_status}
 
 
-def should_continue(state: CoordinatorState) -> str:
+def route_after_cost_estimation(state: CoordinatorState) -> str:
+    """Routes based on whether cost approval is met or an error occurred."""
     if state.get("error"):
+        logger.error(f"[{AGENT_NAME}] Error in coordinator state after cost estimation: {state['error']}")
         return "end_with_error"
-    # This node is now only for routing after bundling
-    return "estimate_cost"
+    
+    if state.get("cost_approval_met"): # True if status was COST_APPROVED
+        logger.info(f"[{AGENT_NAME}] Cost approval met for submission {state['submission_id']}. Proceeding to specialized agents.")
+        return "run_specialized_agents"
+    
+    # If cost_approval_met is False (i.e., status is PENDING_COST_APPROVAL or it's a new estimation)
+    # The coordinator sub-graph ends. The worker graph will decide to pause.
+    logger.info(f"[{AGENT_NAME}] Cost approval not met (status: {state.get('current_submission_status')}) for {state['submission_id']}. Coordinator ending.")
+    return END
 
 
 async def run_specialized_agents_node(state: CoordinatorState) -> Dict[str, Any]:
@@ -285,17 +315,24 @@ def build_coordinator_graph():
     
     workflow.add_conditional_edges(
         "create_context_bundles",
-        # This routing logic ensures we proceed to cost estimation only if bundling is successful
         lambda s: "estimate_cost" if not s.get("error") else "end_with_error",
         {
             "estimate_cost": "estimate_cost",
-            "end_with_error": "end_with_error" # Route to a defined error endpoint
+            "end_with_error": "end_with_error"
         }
     )
     
-    # After estimation, the workflow pauses by reaching an end state.
-    # The 'resume' logic will be handled by a new entry point in the worker.
-    workflow.add_edge("estimate_cost", END)
+    workflow.add_conditional_edges(
+        "estimate_cost",
+        route_after_cost_estimation,
+        {
+            "run_specialized_agents": "run_specialized_agents",
+            END: END,  # Ends this sub-graph if pending or error during estimation
+            "end_with_error": "end_with_error"
+        }
+    )
+    workflow.add_edge("run_specialized_agents", "finalize_analysis") # This runs if cost_approval_met was true
+    workflow.add_edge("finalize_analysis", END)
     workflow.add_edge("end_with_error", END)
 
     return workflow.compile()
