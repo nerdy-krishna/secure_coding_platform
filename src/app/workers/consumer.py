@@ -165,6 +165,7 @@ def pika_message_callback(
             "findings": [], # Initialize as empty list
             "final_report": None,
             "error_message": None,
+            "current_submission_status": None, # Add missing required field
         }
         
         if method.routing_key == settings.RABBITMQ_APPROVAL_QUEUE:
