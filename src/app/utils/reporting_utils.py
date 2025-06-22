@@ -55,7 +55,7 @@ def create_sarif_report(findings: List[VulnerabilityFinding]) -> Dict[str, Any]:
             {
                 "tool": {
                     "driver": {
-                        "name": "6th Secure Coding Platform AI Analyzer",
+                        "name": "Secure Coding Platform SARIF Report",
                         "rules": list(rules.values()),
                     }
                 },
