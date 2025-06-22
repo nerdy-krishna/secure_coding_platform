@@ -89,11 +89,13 @@ class LLMClient:
     chat_model: BaseChatModel
     model_name_for_cost: str
     provider_name: str # To help callback handler
+    db_llm_config: DB_LLMConfiguration # Added type hint for the stored config
 
     def __init__(self, llm_config: DB_LLMConfiguration):
         """
         Initializes the LLMClient with a specific configuration using LangChain models.
         """
+        self.db_llm_config = llm_config # Store the config object
         self.provider_name = llm_config.provider.lower()
         decrypted_api_key = getattr(llm_config, 'decrypted_api_key', None)
         if not decrypted_api_key:
@@ -120,7 +122,7 @@ class LLMClient:
         Uses LangChain's .with_structured_output() for robust parsing.
         Includes token usage and latency measurement via callbacks.
         """
-        logger.debug(f"Generating structured output for model: {self.config.model_name}, response_model: {response_model.__name__}")
+        logger.debug(f"Generating structured output for model: {self.db_llm_config.model_name}, response_model: {response_model.__name__}")
         
         # This logic using with_structured_output is preserved
         structured_llm = self.chat_model.with_structured_output(response_model)
@@ -146,7 +148,7 @@ class LLMClient:
         # Call the correctly named 'calculate_actual_cost' function and pass the full config object
         # which contains the dynamic pricing data.
         cost = cost_estimation.calculate_actual_cost(
-            config=self.config,
+            config=self.db_llm_config,
             prompt_tokens=token_callback.prompt_tokens,
             completion_tokens=token_callback.completion_tokens,
         )
