@@ -48,19 +48,25 @@ class WorkerState(TypedDict):
 # --- Node Functions ---
 
 async def retrieve_submission_data(state: WorkerState) -> Dict[str, Any]:
-    # This function remains the same as your provided code
     submission_id = state['submission_id']
     logger.info(f"[WorkerGraph] Retrieving data for submission_id: {submission_id}")
+    
+    # Default return in case the async for loop doesn't run or an early exit occurs without a specific error.
+    # This ensures a Dict[str, Any] is always returned.
+    return_value: Dict[str, Any] = {"error_message": f"Failed to retrieve data for submission {submission_id}."}
+
     try:
         files_map: Dict[str, str] = {}
         async for db in get_db():
             submission = await crud.get_submission(db, submission_id)
             if not submission:
-                return {"error_message": f"Submission with ID {submission_id} not found."}
+                return_value = {"error_message": f"Submission with ID {submission_id} not found."}
+                break # Exit loop, will return default or this specific error
 
             submitted_files = await crud.get_submitted_files_for_submission(db, submission_id)
             if not submitted_files:
-                return {"error_message": f"No files found for submission ID {submission_id}."}
+                return_value = {"error_message": f"No files found for submission ID {submission_id}."}
+                break # Exit loop
 
             for f in submitted_files:
                 files_map[f.file_path] = f.content
@@ -69,7 +75,10 @@ async def retrieve_submission_data(state: WorkerState) -> Dict[str, Any]:
             if state.get("workflow_mode") == "remediate":
                 llm_id_to_use = submission.specialized_llm_config_id
 
-            return {"files": files_map, "llm_config_id": llm_id_to_use, "error_message": None}
+            return_value = {"files": files_map, "llm_config_id": llm_id_to_use, "error_message": None}
+            break # Successfully processed, exit loop
+
+        return return_value
     except Exception as e:
         logger.error(f"[WorkerGraph] Error retrieving data for submission {submission_id}: {e}", exc_info=True)
         return {"error_message": str(e)}
@@ -80,10 +89,14 @@ async def run_impact_reporting(state: WorkerState) -> Dict[str, Any]:
     logger.info(f"[WorkerGraph] Preparing inputs and running ImpactReportingAgent for {state['submission_id']}.")
 
     # **FIX 1: Pass the findings from the main state into the sub-graph's input**
+    # Ensure all required fields for ImpactReportingAgentState are present.
     reporting_input_state: ImpactReportingAgentState = {
         "submission_id": state["submission_id"],
         "llm_config_id": state["llm_config_id"],
         "findings": state.get("findings", []),
+        "impact_report": None,  # Initialize as None, will be populated by the agent
+        "sarif_report": None,   # Initialize as None, will be populated by the agent
+        "error": None,          # Initialize as None
     }
 
     reporting_graph = build_impact_reporting_agent_graph()
