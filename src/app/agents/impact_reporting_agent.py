@@ -12,7 +12,7 @@ from app.db import crud
 from app.db.database import AsyncSessionLocal
 from app.llm.llm_client import get_llm_client, AgentLLMResult
 from app.agents.schemas import LLMInteraction, VulnerabilityFinding
-from app.utils.reporting_utils import create_sarif_report # Import our new utility
+from app.utils.reporting_utils import create_sarif_report
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -20,46 +20,37 @@ AGENT_NAME = "ImpactReportingAgent"
 
 
 # --- Pydantic Models ---
-
 class ImpactReport(BaseModel):
     executive_summary: str = Field(description="A high-level overview of the project's security posture.")
     vulnerability_categories: List[str] = Field(description="A list of the main categories of vulnerabilities found.")
     estimated_remediation_effort: str = Field(description="A qualitative estimate of the effort to fix the findings (e.g., 'Low', 'Medium', 'High').")
     required_architectural_changes: List[str] = Field(description="A list of any significant architectural changes required.")
 
-class FinalReport(BaseModel):
-    """The final assembled report containing all components."""
-    impact_analysis: ImpactReport
-    sarif_report: Dict[str, Any]
-
 
 # --- Agent State ---
-
+# SIMPLIFIED: We only need fields for inputs and outputs.
+# The parent graph will be responsible for the final 'FinalReport' object.
 class ImpactReportingAgentState(TypedDict):
     submission_id: uuid.UUID
     llm_config_id: Optional[uuid.UUID]
     findings: List[VulnerabilityFinding]
     
-    # Outputs from parallel nodes
-    impact_report: Optional[ImpactReport]
+    # Outputs to be passed back to the parent graph
+    impact_report: Optional[Dict[str, Any]]
     sarif_report: Optional[Dict[str, Any]]
-    
-    # Final combined output
-    final_report: Optional[FinalReport]
     error: Optional[str]
 
 
 # --- Agent Nodes ---
-
 async def generate_impact_report_node(state: ImpactReportingAgentState) -> Dict[str, Any]:
     """Generates the AI-powered high-level impact summary."""
-    # This node's logic remains the same as before
     submission_id = state["submission_id"]
     llm_config_id = state["llm_config_id"]
     findings = state["findings"]
     
-    logger.info(f"[{AGENT_NAME}] Generating LLM impact summary.")
+    logger.info(f"[{AGENT_NAME}] Generating LLM impact summary with {len(findings)} findings.")
 
+    # This check is now crucial. It receives the findings from the worker graph.
     if not findings:
         report = ImpactReport(
             executive_summary="No vulnerabilities were identified during the analysis.",
@@ -67,7 +58,7 @@ async def generate_impact_report_node(state: ImpactReportingAgentState) -> Dict[
             estimated_remediation_effort="N/A",
             required_architectural_changes=[],
         )
-        return {"impact_report": report}
+        return {"impact_report": report.model_dump()}
 
     if not llm_config_id:
         return {"error": "LLM config ID not provided for impact report."}
@@ -108,54 +99,37 @@ async def generate_impact_report_node(state: ImpactReportingAgentState) -> Dict[
     if llm_response.error or not llm_response.parsed_output:
         return {"error": f"LLM failed to generate a valid impact report: {llm_response.error}"}
 
-    return {"impact_report": cast(ImpactReport, llm_response.parsed_output)}
+    # Return as a dictionary, not a Pydantic model, for state consistency
+    return {"impact_report": llm_response.parsed_output.model_dump()}
 
 
 def generate_sarif_node(state: ImpactReportingAgentState) -> Dict[str, Any]:
-    """Generates a SARIF report from the findings using the utility function."""
+    """Generates a SARIF report from the findings."""
     logger.info(f"[{AGENT_NAME}] Generating SARIF report.")
     findings = state.get("findings", [])
     if not findings:
-        return {"sarif_report": {}} # Return empty SARIF if no findings
+        logger.warning(f"[{AGENT_NAME}] No findings available to generate SARIF report.")
+        # Create a valid, empty SARIF report if there are no findings
+        return {"sarif_report": create_sarif_report([])} 
     
     sarif_report = create_sarif_report(findings)
     return {"sarif_report": sarif_report}
 
 
-def assemble_final_report_node(state: ImpactReportingAgentState) -> Dict[str, Any]:
-    """Assembles the final report from all generated components."""
-    logger.info(f"[{AGENT_NAME}] Assembling final report.")
-    impact_report = state.get("impact_report")
-    sarif_report = state.get("sarif_report")
-
-    if not impact_report or not sarif_report:
-        return {"error": "Cannot assemble final report, one or more components are missing."}
-        
-    final_report = FinalReport(
-        impact_analysis=impact_report,
-        sarif_report=sarif_report
-    )
-    return {"final_report": final_report}
-
-
 # --- Graph Builder ---
-
 def build_impact_reporting_agent_graph():
-    """Builds the graph for the Impact Reporting Agent with parallel branches."""
+    """Builds the graph for the Impact Reporting Agent."""
     workflow = StateGraph(ImpactReportingAgentState)
 
+    # The nodes are independent and can be thought of as parallel
     workflow.add_node("generate_summary", generate_impact_report_node)
     workflow.add_node("generate_sarif", generate_sarif_node)
-    workflow.add_node("assemble_report", assemble_final_report_node)
 
-    # Set the entry point, which will now trigger the parallel execution
+    # We set up parallel branches from the entry point
     workflow.set_entry_point("generate_summary")
-    # We can't add a direct edge from an entry point to two nodes.
-    # We will run them sequentially for simplicity, but they are logically parallel.
-    # For true parallelism, a conditional entry or a pre-node would be needed.
-    # Let's keep it simple and effective.
     workflow.add_edge("generate_summary", "generate_sarif")
-    workflow.add_edge("generate_sarif", "assemble_report")
-    workflow.add_edge("assemble_report", END)
+    # After SARIF generation, the graph ends. LangGraph automatically collects
+    # the state from all executed nodes.
+    workflow.add_edge("generate_sarif", END)
 
     return workflow.compile()
