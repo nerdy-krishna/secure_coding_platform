@@ -38,6 +38,36 @@ class LLMConfigurationCreate(LLMConfigurationBase):
     api_key: str = Field(..., description="The API key for the provider.")
 
 
+class LLMConfigurationUpdate(BaseModel):
+    name: Optional[str] = Field(
+        None, description="A unique, user-friendly name for the LLM configuration."
+    )
+    provider: Optional[str] = Field(
+        None, description="The LLM provider (e.g., 'openai', 'google', 'anthropic')."
+    )
+    model_name: Optional[str] = Field(
+        None, description="The specific model name (e.g., 'gpt-4o', 'gemini-1.5-pro')."
+    )
+    api_key: Optional[str] = Field(
+        None, description="The API key for the provider. If provided, it will be updated and re-encrypted."
+    )
+    tokenizer_encoding: Optional[str] = Field(
+        None,
+        description="The name of the tiktoken tokenizer for this model (e.g., 'cl100k_base')."
+    )
+    input_cost_per_million: Optional[float] = Field(
+        None,
+        description="Cost per 1 million input tokens in USD."
+    )
+    output_cost_per_million: Optional[float] = Field(
+        None,
+        description="Cost per 1 million output tokens in USD."
+    )
+
+    class Config:
+        from_attributes = True
+
+
 class LLMConfigurationRead(LLMConfigurationBase):
     id: uuid.UUID
     created_at: datetime
