@@ -46,36 +46,38 @@ export interface UserRead {
   is_verified: boolean;
 }
 
-// --- LLM CONFIGURATION (UPDATED) ---
-
-// For reading LLM configurations (API key is not sent)
+// --- CORRECTED LLM INTERFACES ---
 export interface LLMConfiguration {
-  id: string; // UUID as string
+  id: string;
   name: string;
   provider: string;
   model_name: string;
-  created_at: string; // ISO date-time string
-  updated_at: string; // ISO date-time string
-  // ADDED: New fields for dynamic configuration
-  tokenizer_encoding: string;
-  input_cost_per_million: number;
-  output_cost_per_million: number;
+  input_cost_per_million: number; // Renamed from input_token_cost
+  output_cost_per_million: number; // Renamed from output_token_cost
+  tokenizer_encoding: string | null; // Renamed from tokenizer_name
+  created_at: string;
+  updated_at: string;
 }
 
-// For creating a new LLM configuration (includes the API key)
 export interface LLMConfigurationCreate {
   name: string;
   provider: string;
   model_name: string;
   api_key: string;
-  // ADDED: New fields for dynamic configuration
-  tokenizer_encoding: string;
-  input_cost_per_million: number;
-  output_cost_per_million: number;
+  input_cost_per_million: number; // Renamed from input_token_cost
+  output_cost_per_million: number; // Renamed from output_token_cost
+  tokenizer_encoding?: string | null; // Renamed from tokenizer_name
+}
+// --- END CORRECTED LLM INTERFACES ---
+
+export interface TokenData {
+  access_token: string;
+  token_type: string;
 }
 
-// --- END LLM CONFIGURATION ---
-
+export interface Message {
+  message: string;
+}
 
 // For Code Submission
 export interface FileForSubmission {
@@ -280,7 +282,6 @@ export interface SARIFLog {
 
 // --- END DETAILED SARIF INTERFACES ---
 
-
 // --- ADDED: New type for the AI-generated impact report ---
 export interface ImpactReport {
   executive_summary: string;
@@ -289,7 +290,6 @@ export interface ImpactReport {
   required_architectural_changes: string[];
 }
 // --- END NEW TYPE ---
-
 
 // --- UPDATED: Main response for analysis results ---
 export interface AnalysisResultResponse {
@@ -305,7 +305,6 @@ export interface AnalysisResultResponse {
   impact_report?: ImpactReport;
 }
 // --- END UPDATED RESPONSE ---
-
 
 // For submission history list
 export interface SubmissionHistoryItem {
