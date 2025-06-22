@@ -1,27 +1,36 @@
-// secure-code-ui/src/pages/dashboard/LLMSettingsPage.tsx
-import { DeleteOutlined, PlusOutlined } from "@ant-design/icons";
+import {
+  ClearOutlined,
+  DeleteOutlined,
+  EditOutlined,
+  PlusOutlined,
+} from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Button,
   Card,
+  Col,
   Form,
   Input,
+  InputNumber,
   message,
   Popconfirm,
+  Row,
   Select,
   Space,
   Table,
   Tag,
   Typography,
-  type TableProps, // <-- FIX 1: Import TableProps for explicit typing
+  type TableProps,
 } from "antd";
-import React, { useCallback, useMemo } from "react"; // Added useCallback and useMemo
-import { llmConfigService } from "../../services/llmConfigService";
-// FIX 2: Use a type-only import
 import { AxiosError } from "axios";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  llmConfigService,
+  type LLMConfigurationUpdate,
+} from "../../services/llmConfigService";
 import type { LLMConfiguration, LLMConfigurationCreate } from "../../types/api";
 
-const { Title, Paragraph } = Typography;
+const { Title, Paragraph, Text } = Typography;
 const { Option } = Select;
 
 const LLM_PROVIDERS = ["openai", "google", "anthropic"];
@@ -29,6 +38,9 @@ const LLM_PROVIDERS = ["openai", "google", "anthropic"];
 const LLMSettingsPage: React.FC = () => {
   const [form] = Form.useForm();
   const queryClient = useQueryClient();
+  const [editingConfig, setEditingConfig] = useState<LLMConfiguration | null>(
+    null,
+  );
 
   const {
     data: llmConfigs,
@@ -39,6 +51,32 @@ const LLMSettingsPage: React.FC = () => {
     queryKey: ["llmConfigs"],
     queryFn: llmConfigService.getLlmConfigs,
   });
+
+  useEffect(() => {
+    if (editingConfig) {
+      form.setFieldsValue({
+        ...editingConfig,
+        api_key: "",
+      });
+    } else {
+      form.resetFields();
+    }
+  }, [editingConfig, form]);
+
+  const handleApiError = (
+    err: AxiosError,
+    action: "create" | "update" | "delete",
+  ) => {
+    const errorDetail =
+      (err.response?.data as { detail?: string | { msg: string }[] })
+        ?.detail || "An unknown error occurred.";
+    if (Array.isArray(errorDetail)) {
+      const messages = errorDetail.map((d) => d.msg).join(", ");
+      message.error(`Failed to ${action} configuration: ${messages}`);
+    } else {
+      message.error(`Failed to ${action} configuration: ${errorDetail}`);
+    }
+  };
 
   const createMutation = useMutation<
     LLMConfiguration,
@@ -51,12 +89,21 @@ const LLMSettingsPage: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ["llmConfigs"] });
       form.resetFields();
     },
-    onError: (err) => {
-      const errorDetail =
-        (err.response?.data as { detail?: string })?.detail ||
-        "An unknown error occurred.";
-      message.error(`Failed to create configuration: ${errorDetail}`);
+    onError: (err) => handleApiError(err, "create"),
+  });
+
+  const updateMutation = useMutation<
+    LLMConfiguration,
+    AxiosError,
+    { id: string; data: LLMConfigurationUpdate }
+  >({
+    mutationFn: ({ id, data }) => llmConfigService.updateLlmConfig(id, data),
+    onSuccess: () => {
+      message.success("LLM configuration updated successfully!");
+      queryClient.invalidateQueries({ queryKey: ["llmConfigs"] });
+      setEditingConfig(null);
     },
+    onError: (err) => handleApiError(err, "update"),
   });
 
   const deleteMutation = useMutation<void, AxiosError, string>({
@@ -65,186 +112,129 @@ const LLMSettingsPage: React.FC = () => {
       message.success("LLM configuration deleted successfully!");
       queryClient.invalidateQueries({ queryKey: ["llmConfigs"] });
     },
-    onError: (err) => {
-      const errorDetail =
-        (err.response?.data as { detail?: string })?.detail ||
-        "An unknown error occurred.";
-      message.error(`Failed to delete configuration: ${errorDetail}`);
-    },
+    onError: (err) => handleApiError(err, "delete"),
   });
 
-  const handleCreate = (values: LLMConfigurationCreate) => {
-    createMutation.mutate(values);
+  const handleSubmit = (values: LLMConfigurationCreate) => {
+    const payload = {
+      ...values,
+      input_token_cost: Number(values.input_token_cost),
+      output_token_cost: Number(values.output_token_cost),
+    };
+
+    if (editingConfig) {
+      if (!payload.api_key) {
+        delete (payload as Partial<LLMConfigurationCreate>).api_key;
+      }
+      updateMutation.mutate({ id: editingConfig.id, data: payload });
+    } else {
+      createMutation.mutate(payload);
+    }
   };
 
-  // Helper function to parse date strings as UTC
-  const parseAsUTCDate = (dateString: string | null | undefined): Date | null => {
+  const handleCancelEdit = () => {
+    setEditingConfig(null);
+  };
+
+  const parseAsUTCDate = (
+    dateString: string | null | undefined,
+  ): Date | null => {
     if (!dateString) return null;
     let utcDateString = dateString;
     if (!/Z|[+-]\d{2}:\d{2}$/.test(dateString)) {
       utcDateString += "Z";
     }
     const date = new Date(utcDateString);
-    // Check if the date is valid after parsing
     return isNaN(date.getTime()) ? null : date;
   };
 
-  const formatDisplayDate = useCallback((dateString: string | null | undefined): string => {
-    const date = parseAsUTCDate(dateString);
-    return date ? date.toLocaleString() : "Invalid Date";
-  }, []);
+  const formatDisplayDate = useCallback(
+    (dateString: string | null | undefined): string => {
+      const date = parseAsUTCDate(dateString);
+      return date ? date.toLocaleString() : "N/A";
+    },
+    [],
+  );
 
   const handleDelete = useCallback(
     (configId: string) => {
       deleteMutation.mutate(configId);
     },
-    [deleteMutation], // deleteMutation.mutate is stable, but deleteMutation itself is fine
+    [deleteMutation],
   );
 
-  // FIX 3: Explicitly type the 'columns' constant and memoize it
   const columns: TableProps<LLMConfiguration>["columns"] = useMemo(
     () => [
-    {
-      title: "Name",
-      dataIndex: "name",
-      key: "name",
-      sorter: (a, b) => a.name.localeCompare(b.name),
-    },
-    {
-      title: "Provider",
-      dataIndex: "provider",
-      key: "provider",
-      render: (provider) => <Tag>{provider.toUpperCase()}</Tag>,
-      filters: LLM_PROVIDERS.map((p) => ({ text: p.toUpperCase(), value: p })),
-      onFilter: (value, record) => record.provider === value,
-    },
-    {
-      title: "Model Name",
-      dataIndex: "model_name",
-      key: "model_name",
-    },
-    {
-      title: "Created At",
-      dataIndex: "created_at",
-      key: "created_at",
-      render: (text: string) => formatDisplayDate(text),
-      sorter: (a, b) => {
-        const dateA = parseAsUTCDate(a.created_at);
-        const dateB = parseAsUTCDate(b.created_at);
-        if (dateA && dateB) {
-          return dateA.getTime() - dateB.getTime();
-        }
-        return 0; // Handle cases where dates might be invalid
+      { title: "Name", dataIndex: "name", key: "name", sorter: (a, b) => a.name.localeCompare(b.name) },
+      { title: "Provider", dataIndex: "provider", key: "provider", render: (provider) => <Tag>{provider.toUpperCase()}</Tag>, filters: LLM_PROVIDERS.map((p) => ({ text: p.toUpperCase(), value: p })), onFilter: (value, record) => record.provider === value },
+      { title: "Model Name", dataIndex: "model_name", key: "model_name" },
+      { title: "Input Cost ($/1M)", dataIndex: "input_token_cost", key: "input_token_cost", render: (cost) => <Text>${cost ? cost.toFixed(6) : "0.00"}</Text>, sorter: (a, b) => a.input_token_cost - b.input_token_cost },
+      { title: "Output Cost ($/1M)", dataIndex: "output_token_cost", key: "output_token_cost", render: (cost) => <Text>${cost ? cost.toFixed(6) : "0.00"}</Text>, sorter: (a, b) => a.output_token_cost - b.output_token_cost },
+      { title: "Tokenizer", dataIndex: "tokenizer_name", key: "tokenizer_name", render: (name) => (name ? <Tag color="blue">{name}</Tag> : <Text type="secondary">Default</Text>) },
+      { title: "Created At", dataIndex: "created_at", key: "created_at", render: (text) => formatDisplayDate(text), sorter: (a, b) => (parseAsUTCDate(a.created_at)?.getTime() || 0) - (parseAsUTCDate(b.created_at)?.getTime() || 0) },
+      { title: "Action", key: "action", render: (_, record) => (
+          <Space>
+            <Button icon={<EditOutlined />} onClick={() => setEditingConfig(record)} disabled={editingConfig?.id === record.id}>Edit</Button>
+            <Popconfirm title="Delete this configuration?" description="This action cannot be undone." onConfirm={() => handleDelete(record.id)} okText="Yes" cancelText="No">
+              <Button danger icon={<DeleteOutlined />} loading={deleteMutation.isPending && deleteMutation.variables === record.id}>Delete</Button>
+            </Popconfirm>
+          </Space>
+        ),
       },
-    },
-    {
-      title: "Action",
-      key: "action",
-      render: (_value, record) => (
-        <Popconfirm
-          title="Delete this configuration?"
-          description="This action cannot be undone."
-          onConfirm={() => handleDelete(record.id)}
-          okText="Yes"
-          cancelText="No"
-        >
-          <Button
-            danger
-            icon={<DeleteOutlined />}
-            loading={
-              deleteMutation.isPending && deleteMutation.variables === record.id
-            }
-          >
-            Delete
-          </Button>
-        </Popconfirm>
-      ),
-    },
-  ],
-  [formatDisplayDate, handleDelete],
+    ],
+    [formatDisplayDate, handleDelete, deleteMutation, editingConfig],
   );
 
   if (isError) {
     message.error(`Error fetching configurations: ${error.message}`);
   }
 
+  const isMutating = createMutation.isPending || updateMutation.isPending;
+  
+  // --- NEW: Custom validator for cost fields ---
+  const costValidator = (_: any, value: string) => {
+    if (value && (isNaN(parseFloat(value)) || parseFloat(value) < 0)) {
+        return Promise.reject(new Error("Please enter a valid positive number."));
+    }
+    return Promise.resolve();
+  };
+
   return (
     <Space direction="vertical" size="large" style={{ display: "flex" }}>
       <Card>
-        <Title level={3}>Create New LLM Configuration</Title>
-        <Paragraph type="secondary">
-          Add a new Large Language Model provider configuration that can be used
-          for analysis.
-        </Paragraph>
-        <Form
-          form={form}
-          layout="vertical"
-          onFinish={handleCreate}
-          style={{ maxWidth: 600 }}
-        >
-          <Form.Item
-            name="name"
-            label="Configuration Name"
-            rules={[
-              {
-                required: true,
-                message: "Please enter a unique name for this configuration.",
-              },
-            ]}
-          >
-            <Input placeholder="e.g., OpenAI GPT-4o Mini" />
-          </Form.Item>
-          <Form.Item
-            name="provider"
-            label="Provider"
-            rules={[{ required: true, message: "Please select a provider." }]}
-          >
-            <Select placeholder="Select a provider">
-              {LLM_PROVIDERS.map((p) => (
-                <Option key={p} value={p}>
-                  {p.charAt(0).toUpperCase() + p.slice(1)}
-                </Option>
-              ))}
-            </Select>
-          </Form.Item>
-          <Form.Item
-            name="model_name"
-            label="Model Name"
-            rules={[
-              { required: true, message: "Please enter the model name." },
-            ]}
-          >
-            <Input placeholder="e.g., gpt-4o-mini" />
-          </Form.Item>
-          <Form.Item
-            name="api_key"
-            label="API Key"
-            rules={[{ required: true, message: "Please enter the API key." }]}
-          >
-            <Input.Password placeholder="Enter secret API key" />
+        <Title level={3}>{editingConfig ? `Edit: ${editingConfig.name}` : "Create New LLM Configuration"}</Title>
+        <Paragraph type="secondary">{editingConfig ? "Update the details for this configuration." : "Add a new Large Language Model provider configuration."}</Paragraph>
+        <Form form={form} layout="vertical" onFinish={handleSubmit}>
+          <Row gutter={24}><Col xs={24} sm={12}><Form.Item name="name" label="Configuration Name" rules={[{ required: true, message: "Please enter a unique name." }]}><Input placeholder="e.g., OpenAI GPT-4o Mini" /></Form.Item></Col><Col xs={24} sm={12}><Form.Item name="provider" label="Provider" rules={[{ required: true, message: "Please select a provider." }]}><Select placeholder="Select a provider">{LLM_PROVIDERS.map((p) => (<Option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</Option>))}</Select></Form.Item></Col></Row>
+          <Row gutter={24}><Col xs={24} sm={12}><Form.Item name="model_name" label="Model Name" rules={[{ required: true, message: "Please enter the model name." }]}><Input placeholder="e.g., gpt-4o-mini" /></Form.Item></Col><Col xs={24} sm={12}><Form.Item name="tokenizer_name" label="Tokenizer Name (Optional)" tooltip="e.g., 'cl100k_base'. Leave blank for default."><Input placeholder="e.g., cl100k_base" /></Form.Item></Col></Row>
+          <Row gutter={24}>
+            <Col xs={24} sm={12}>
+              {/* --- UPDATED: Using the custom validator --- */}
+              <Form.Item name="input_token_cost" label="Input Cost per 1,000,000 Tokens ($)" rules={[{ required: true, message: "Input cost is required." }, { validator: costValidator }]}>
+                <InputNumber style={{ width: "100%" }} placeholder="e.g., 0.15" step="0.01" stringMode />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12}>
+              {/* --- UPDATED: Using the custom validator --- */}
+              <Form.Item name="output_token_cost" label="Output Cost per 1,000,000 Tokens ($)" rules={[{ required: true, message: "Output cost is required." }, { validator: costValidator }]}>
+                <InputNumber style={{ width: "100%" }} placeholder="e.g., 0.60" step="0.01" stringMode />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item name="api_key" label="API Key" rules={[{ required: !editingConfig, message: "API key is required for new configurations." }]}>
+            <Input.Password placeholder={editingConfig ? "Leave blank to keep existing key" : "Enter secret API key"} />
           </Form.Item>
           <Form.Item>
-            <Button
-              type="primary"
-              htmlType="submit"
-              icon={<PlusOutlined />}
-              loading={createMutation.isPending}
-            >
-              Create Configuration
-            </Button>
+            <Space>
+              <Button type="primary" htmlType="submit" icon={editingConfig ? <EditOutlined /> : <PlusOutlined />} loading={isMutating}>{editingConfig ? "Update Configuration" : "Create Configuration"}</Button>
+              {editingConfig && (<Button icon={<ClearOutlined />} onClick={handleCancelEdit}>Cancel</Button>)}
+            </Space>
           </Form.Item>
         </Form>
       </Card>
-
       <Card>
         <Title level={3}>Existing LLM Configurations</Title>
-        <Table
-          columns={columns}
-          dataSource={llmConfigs}
-          loading={isLoading}
-          rowKey="id"
-          pagination={{ pageSize: 10 }}
-        />
+        <Table columns={columns} dataSource={llmConfigs} loading={isLoading} rowKey="id" pagination={{ pageSize: 10, showSizeChanger: true }} scroll={{ x: true }} />
       </Card>
     </Space>
   );
