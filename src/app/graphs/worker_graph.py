@@ -93,7 +93,7 @@ async def run_impact_reporting(state: WorkerState) -> Dict[str, Any]:
     reporting_input_state: ImpactReportingAgentState = {
         "submission_id": state["submission_id"],
         "llm_config_id": state["llm_config_id"],
-        "findings": state.get("results", {}).get("findings", []), # Correctly access findings from coordinator's output
+        "findings": state.get("findings", []), # Access top-level findings populated by CoordinatorAgent
         "impact_report": None,  # Initialize as None, will be populated by the agent
         "sarif_report": None,   # Initialize as None, will be populated by the agent
         "error": None,          # Initialize as None
