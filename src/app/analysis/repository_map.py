@@ -182,8 +182,12 @@ class RepositoryMappingEngine:
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
 
+
     def _get_language_handler(self, file_path: str) -> Tuple[Optional[str], Optional[Language]]:
-        """Determines the tree-sitter language based on the file extension."""
+        """
+        Determines the tree-sitter language based on the file extension.
+        This version is simplified to be more robust.
+        """
         lang_map = {
             ".py": "python", ".java": "java", ".js": "javascript", ".mjs": "javascript",
             ".cs": "c_sharp", ".sql": "sql", ".ts": "typescript", ".go": "go",
@@ -198,16 +202,12 @@ class RepositoryMappingEngine:
         if not lang_name:
             return None, None
 
-        if lang_name not in self.supported_languages:
-            try:
-                language = get_language(lang_name)
-                self.supported_languages[lang_name] = language
-                self.logger.info(f"Successfully loaded grammar for '{lang_name}'.")
-            except Exception as e:
-                self.logger.warning(f"Could not load grammar for '{lang_name}': {e}")
-                return lang_name, None
-        
-        return lang_name, self.supported_languages.get(lang_name)
+        try:
+            language = get_language(lang_name)
+            return lang_name, language
+        except Exception as e:
+            self.logger.warning(f"Could not load grammar for language '{lang_name}': {e}")
+            return lang_name, None
 
     def _execute_query(self, tree: Tree, language: Language, lang_name: str, query_name: str) -> List[Tuple[Node, str]]:
         """Executes a named tree-sitter query and returns the captures."""
