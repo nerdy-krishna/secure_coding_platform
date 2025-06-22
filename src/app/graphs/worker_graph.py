@@ -34,7 +34,7 @@ class WorkerState(TypedDict):
     findings: List[VulnerabilityFinding]
     final_report: Optional[FinalReport]
     error_message: Optional[str]
-    current_submission_status: Optional[str] = None # To store status for routing
+    current_submission_status: Optional[str] # To store status for routing
 
 # --- Node Functions for the Worker Graph ---
 
@@ -77,7 +77,7 @@ def prepare_report_input(state: WorkerState) -> Dict[str, Any]:
     findings = state.get("analysis_results", {}).get("findings", [])
     return {"findings": findings}
 
-async def save_final_report_node(state: WorkerState) -> Dict[str, Any]:
+async def save_final_report_node(state: WorkerState) -> Dict[str, Any]: # type: ignore
     """Saves the generated reports to the database and marks the submission as 'Completed'."""
     submission_id = state["submission_id"]
     final_report = state.get("final_report")
