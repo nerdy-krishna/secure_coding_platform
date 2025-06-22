@@ -21,6 +21,7 @@ import {
   Tag,
   Typography,
   type TableProps,
+  type RuleObject,
 } from "antd";
 import { AxiosError } from "axios";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
@@ -192,7 +193,7 @@ const LLMSettingsPage: React.FC = () => {
   const isMutating = createMutation.isPending || updateMutation.isPending;
   
   // --- NEW: Custom validator for cost fields ---
-  const costValidator = (_: any, value: string) => {
+  const costValidator = (_: RuleObject, value: string) => {
     if (value && (isNaN(parseFloat(value)) || parseFloat(value) < 0)) {
         return Promise.reject(new Error("Please enter a valid positive number."));
     }
