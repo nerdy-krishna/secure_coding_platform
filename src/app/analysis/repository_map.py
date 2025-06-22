@@ -299,8 +299,12 @@ class RepositoryMappingEngine:
                 file_summary = self._parse_file(file_path, content)
                 repo_map.files[file_path] = file_summary
             except GrammarLoadingError as e:
-                self.logger.error(f"Critical error during repository mapping for {file_path}, halting process: {e}", exc_info=True)
-                raise # Re-raise to stop the entire mapping process
+                # Log as warning and skip the file, but continue with others.
+                self.logger.warning(f"Skipping file due to GrammarLoadingError: {file_path}. Error: {e}")
+                summary = FileSummary(path=file_path)
+                summary.errors.append(f"Skipped due to missing language grammar: {str(e)}")
+                repo_map.files[file_path] = summary
+                # Continue with other files
             except Exception as e: # Catch other unexpected errors during _parse_file for this specific file
                 self.logger.error(f"Unexpected error parsing file {file_path}, skipping this file: {e}", exc_info=True)
                 summary = FileSummary(path=file_path)
