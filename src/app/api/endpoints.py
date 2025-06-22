@@ -3,6 +3,7 @@
 import logging
 import uuid
 from typing import List, Optional, Annotated, Dict, Any
+# Removed tempfile, os, shutil, git imports as they are now in git_utils
 
 from fastapi import (
     APIRouter,
@@ -23,6 +24,7 @@ from app.api import models as api_models
 from app.auth.core import current_active_user, current_superuser
 from app.utils import rabbitmq_utils
 from app.core.config import settings # <-- ADDED THIS IMPORT
+from app.utils.git_utils import clone_repo_and_get_files, get_language_from_filename # <-- ADDED THIS IMPORT
 
 # Create two routers: one for general endpoints, one for admin-level LLM configs
 router = APIRouter()
@@ -125,15 +127,47 @@ async def submit_code(
 
     files_data = []
     if files:
-        for file in files:
-            content = await file.read()
+        for file_upload in files:
+            content_bytes = await file_upload.read()
+            try:
+                content_str = content_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                logger.warning(f"Could not decode file {file_upload.filename} as UTF-8, attempting latin-1.")
+                try:
+                    content_str = content_bytes.decode("latin-1") # Fallback encoding
+                except UnicodeDecodeError:
+                    logger.error(f"Failed to decode file {file_upload.filename} with UTF-8 and latin-1.")
+                    # Skip file or raise error, for now skipping
+                    continue 
+            
+            language = get_language_from_filename(file_upload.filename or "")
             files_data.append(
                 {
-                    "path": file.filename,
-                    "content": content.decode("utf-8"),
-                    "language": "python",
+                    "path": file_upload.filename or "unknown_file",
+                    "content": content_str,
+                    "language": language or "unknown",
                 }
             )
+    elif repo_url:
+        try:
+            files_data = clone_repo_and_get_files(repo_url)
+            if not files_data: # If cloning succeeded but no files were extracted (e.g. empty repo)
+                raise HTTPException(
+                    status_code=400,
+                    detail="Repository cloned, but no processable files were found."
+                )
+        except HTTPException: # Re-raise HTTPExceptions from clone_repo_and_get_files
+            raise
+        except Exception as e: # Catch any other unexpected errors
+            logger.error(f"Unhandled error during repository processing for {repo_url}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="An unexpected error occurred while processing the repository.")
+
+
+    if not files_data: # This check is now after attempting to populate from repo_url too
+        raise HTTPException(
+            status_code=400,
+            detail="No files were provided or found in the repository for analysis."
+        )
 
     submission = await crud.create_submission(
         db=db,

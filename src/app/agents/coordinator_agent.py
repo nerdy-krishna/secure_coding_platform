@@ -74,7 +74,9 @@ class CoordinatorState(TypedDict):
     current_submission_status: Optional[str]
     
     # Outputs
-    results: Dict[str, Any]
+    findings: List[VulnerabilityFindingModel] # Changed from nested results
+    fixes: List[FixResultModel]               # Changed from nested results
+    final_status: Optional[str]               # New top-level field for status message
     error: Optional[str]
 
 
@@ -243,11 +245,13 @@ async def run_specialized_agents_node(state: CoordinatorState) -> Dict[str, Any]
             tasks.append(agent_graph.ainvoke(initial_agent_state))
 
     if not tasks:
-        return {"results": {"findings": [], "fixes": []}}
+        # Ensure fields are initialized even if no tasks run
+        return {"findings": [], "fixes": []}
 
     agent_results = await asyncio.gather(*tasks, return_exceptions=True)
     
-    all_findings, all_fixes = [], []
+    all_findings: List[VulnerabilityFindingModel] = []
+    all_fixes: List[FixResultModel] = []
     for result in agent_results:
         if isinstance(result, dict):
             all_findings.extend(result.get("findings", []))
@@ -256,17 +260,19 @@ async def run_specialized_agents_node(state: CoordinatorState) -> Dict[str, Any]
             logger.error(f"[{AGENT_NAME}] An agent task failed: {result}", exc_info=result)
 
     logger.info(f"[{AGENT_NAME}] Collated {len(all_findings)} findings and {len(all_fixes)} fixes.")
-    return {"results": {"findings": all_findings, "fixes": all_fixes}}
+    # Return findings and fixes at the top level
+    return {"findings": all_findings, "fixes": all_fixes}
 
 
 async def finalize_analysis_node(state: CoordinatorState) -> Dict[str, Any]:
     """
     Saves all findings and their associated fixes, then updates the submission status.
+    Returns findings, fixes, and a final status message at the top level.
     """
     submission_id = state["submission_id"]
-    results = state.get("results", {})
-    findings_to_save = results.get("findings", [])
-    fixes_to_save = results.get("fixes", [])
+    # Read findings and fixes from the top level of the state
+    findings_to_save = state.get("findings", [])
+    fixes_to_save = state.get("fixes", [])
 
     logger.info(f"[{AGENT_NAME}] Finalizing analysis for submission {submission_id}.")
 
@@ -287,13 +293,20 @@ async def finalize_analysis_node(state: CoordinatorState) -> Dict[str, Any]:
                     logger.info(f"[{AGENT_NAME}] Saved {len(fixes_to_save)} fix suggestions.")
             except Exception as e:
                 logger.error(f"[{AGENT_NAME}] Error saving findings/fixes to DB for {submission_id}: {e}", exc_info=True)
+                # If DB save fails, we should probably signal an error in the state
+                return {"error": f"DB error: {e}", "findings": findings_to_save, "fixes": fixes_to_save}
+
 
     async with async_session_factory() as db:
         await crud.update_submission_status(db, submission_id, "Completed")
     logger.info(f"[{AGENT_NAME}] Updated status to 'Completed' for submission {submission_id}.")
 
-    results["final_status"] = "Analysis complete."
-    return {"results": results}
+    # Return findings, fixes, and final_status at the top level
+    return {
+        "findings": findings_to_save, 
+        "fixes": fixes_to_save, 
+        "final_status": "Analysis complete."
+    }
 
 
 def build_coordinator_graph():

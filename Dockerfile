@@ -14,7 +14,9 @@ ENV POETRY_VERSION=1.8.3
 # build-essential contains compilers like gcc, g++ etc.
 # libpq-dev would be for psycopg2 if not using binary, but we use psycopg2-binary
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        git \
     # Add other system dependencies here if needed by your Python packages
     && rm -rf /var/lib/apt/lists/*
 
