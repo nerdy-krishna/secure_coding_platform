@@ -1,14 +1,16 @@
-// secure-code-ui/src/services/llmConfigService.ts
 import {
   type LLMConfiguration,
   type LLMConfigurationCreate,
 } from "../types/api";
 import apiClient from "./apiClient";
 
+// Use Partial to make all fields optional for the update payload
+export type LLMConfigurationUpdate = Partial<Omit<LLMConfigurationCreate, 'api_key'>> & { api_key?: string };
+
+
 export const llmConfigService = {
   /**
    * Fetches all available LLM configurations.
-   * API keys are not included in the response.
    */
   getLlmConfigs: async (): Promise<LLMConfiguration[]> => {
     const response = await apiClient.get<LLMConfiguration[]>(
@@ -19,8 +21,6 @@ export const llmConfigService = {
 
   /**
    * Creates a new LLM provider configuration.
-   * Requires superuser privileges.
-   * @param configData The data for the new configuration, including the API key.
    */
   createLlmConfig: async (
     configData: LLMConfigurationCreate,
@@ -33,9 +33,23 @@ export const llmConfigService = {
   },
 
   /**
+   * (NEW) Updates an existing LLM configuration.
+   * @param configId The ID of the configuration to update.
+   * @param configData The data to update. API key is optional.
+   */
+  updateLlmConfig: async (
+    configId: string,
+    configData: LLMConfigurationUpdate,
+  ): Promise<LLMConfiguration> => {
+    const response = await apiClient.patch<LLMConfiguration>(
+      `/admin/llm-configs/${configId}`,
+      configData,
+    );
+    return response.data;
+  },
+
+  /**
    * Deletes an LLM configuration by its ID.
-   * Requires superuser privileges.
-   * @param configId The UUID of the configuration to delete.
    */
   deleteLlmConfig: async (configId: string): Promise<void> => {
     await apiClient.delete(`/admin/llm-configs/${configId}`);
