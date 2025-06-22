@@ -15,6 +15,7 @@ import {
   Form,
   Input,
   Radio, // Import Radio
+  type RadioChangeEvent, // Import RadioChangeEvent
   Row,
   Select,
   Spin,
@@ -63,7 +64,7 @@ const SubmitCodePage: React.FC = () => {
     queryFn: () => llmConfigService.getLlmConfigs(),
   });
 
-  const handleSubmissionModeChange = (e: any) => {
+  const handleSubmissionModeChange = (e: RadioChangeEvent) => {
     const newMode = e.target.value as SubmissionMode;
     setSubmissionMode(newMode);
     // Clear the alternative input's value when switching modes
