@@ -150,10 +150,10 @@ async def estimate_cost_node(state: CoordinatorState) -> Dict[str, Any]:
             await crud.update_submission_cost_and_status(
                 db, 
                 submission_id, 
-                "Pending Cost Approval", 
+                "PENDING_COST_APPROVAL", 
                 cost_details
             )
-            logger.info(f"[{AGENT_NAME}] Submission {submission_id} paused. Estimated cost: {cost_details['total_estimated_cost']:.6f} USD.")
+            logger.info(f"[{AGENT_NAME}] Submission {submission_id} status set to PENDING_COST_APPROVAL. Estimated cost: {cost_details['total_estimated_cost']:.6f} USD.")
 
             return {"estimated_cost": cost_details}
         except Exception as e:
