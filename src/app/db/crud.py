@@ -328,7 +328,9 @@ async def save_final_reports_and_status(
     """
     Updates a submission with the final reports (impact and SARIF) and sets the final status.
     """
-    values_to_update = {"status": status, "completed_at": datetime.datetime.now(datetime.timezone.utc)}
+    # Make the datetime object naive for TIMESTAMP WITHOUT TIME ZONE columns
+    completed_at_naive = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    values_to_update = {"status": status, "completed_at": completed_at_naive}
     if impact_report:
         values_to_update["impact_report"] = impact_report
     if sarif_report:
