@@ -5,8 +5,12 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 
 from pydantic import BaseModel, Field
-from tree_sitter import Language, Node, Parser, Tree
+from tree_sitter import Language, Node, Parser, Tree # Language is important
 from tree_sitter_languages import get_language
+
+# Custom exception for grammar loading issues
+class GrammarLoadingError(Exception):
+    pass
 
 # --- Pydantic Models for Repository Structure ---
 
@@ -183,10 +187,10 @@ class RepositoryMappingEngine:
         self.logger = logging.getLogger(__name__)
 
 
-    def _get_language_handler(self, file_path: str) -> Tuple[Optional[str], Optional[Language]]:
+    def _get_language_handler(self, file_path: str) -> Tuple[str, Language]:
         """
         Determines the tree-sitter language based on the file extension.
-        This version is simplified to be more robust.
+        Raises GrammarLoadingError if the language cannot be loaded.
         """
         lang_map = {
             ".py": "python", ".java": "java", ".js": "javascript", ".mjs": "javascript",
@@ -200,14 +204,17 @@ class RepositoryMappingEngine:
         lang_name = lang_map.get(extension)
 
         if not lang_name:
-            return None, None
+            raise GrammarLoadingError(f"No language configured for file extension '{extension}' (file: {file_path})")
 
         try:
-            language = get_language(lang_name)
+            language = get_language(lang_name) # This is where the original error occurs
+            if language is None: # Defensive check, get_language usually raises on failure
+                raise GrammarLoadingError(f"get_language('{lang_name}') returned None for {file_path}")
             return lang_name, language
         except Exception as e:
-            self.logger.warning(f"Could not load grammar for language '{lang_name}': {e}")
-            return lang_name, None
+            # This catches the original "TypeError: __init__()..." and other loading issues
+            self.logger.error(f"Failed to load grammar for language '{lang_name}' for {file_path}: {e}", exc_info=True)
+            raise GrammarLoadingError(f"Could not load grammar for language '{lang_name}' (file: {file_path}): {e}") from e
 
     def _execute_query(self, tree: Tree, language: Language, lang_name: str, query_name: str) -> List[Tuple[Node, str]]:
         """Executes a named tree-sitter query and returns the captures."""
@@ -229,11 +236,10 @@ class RepositoryMappingEngine:
     def _parse_file(self, file_path: str, content: str) -> FileSummary:
         """Parses a single file and extracts its structure."""
         summary = FileSummary(path=file_path)
+        
+        # _get_language_handler now raises GrammarLoadingError if it fails.
+        # The error will propagate up to create_map if not caught here.
         lang_name, language = self._get_language_handler(file_path)
-
-        if not language or not lang_name:
-            summary.errors.append(f"Unsupported language for file: {file_path}")
-            return summary
 
         self.parser.set_language(language) # type: ignore
         
@@ -269,16 +275,32 @@ class RepositoryMappingEngine:
         return summary
 
     def create_map(self, files: Dict[str, str]) -> RepositoryMap:
-        """Creates a complete repository map from a dictionary of file paths to content."""
+        """
+        Creates a complete repository map from a dictionary of file paths to content.
+        If any file fails critical parsing due to grammar issues, this method
+        will raise a GrammarLoadingError.
+        """
         self.logger.info(f"Starting repository mapping for {len(files)} files.")
         repo_map = RepositoryMap()
         for file_path, content in files.items():
             if not content.strip():
                 self.logger.info(f"Skipping empty file: {file_path}")
+                repo_map.files[file_path] = FileSummary(path=file_path, errors=["Skipped empty file."])
                 continue
             
             self.logger.info(f"Parsing file: {file_path}")
-            repo_map.files[file_path] = self._parse_file(file_path, content)
+            try:
+                file_summary = self._parse_file(file_path, content)
+                repo_map.files[file_path] = file_summary
+            except GrammarLoadingError as e:
+                self.logger.error(f"Critical error during repository mapping for {file_path}, halting process: {e}", exc_info=True)
+                raise # Re-raise to stop the entire mapping process
+            except Exception as e: # Catch other unexpected errors during _parse_file for this specific file
+                self.logger.error(f"Unexpected error parsing file {file_path}, skipping this file: {e}", exc_info=True)
+                summary = FileSummary(path=file_path)
+                summary.errors.append(f"Unexpected error during parsing: {str(e)}")
+                repo_map.files[file_path] = summary
+                # Continue with other files for non-GrammarLoadingError issues
         
         self.logger.info("Repository mapping complete.")
         return repo_map
