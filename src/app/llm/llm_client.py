@@ -120,17 +120,17 @@ class LLMClient:
         Uses LangChain's .with_structured_output() for robust parsing.
         Includes token usage and latency measurement via callbacks.
         """
-        logger.debug(f"Generating structured output for model: {self.model_name_for_cost}, response_model: {response_model.__name__}")
+        logger.debug(f"Generating structured output for model: {self.config.model_name}, response_model: {response_model.__name__}")
         
+        # This logic using with_structured_output is preserved
         structured_llm = self.chat_model.with_structured_output(response_model)
         token_callback = TokenUsageCallbackHandler(provider_name=self.provider_name)
         
         start_time = time.perf_counter()
-        parsed_output_value: Optional[T] = None # Renamed for clarity, holds the final Optional[T]
+        parsed_output_value: Optional[T] = None
         error_message: Optional[str] = None
 
         try:
-            # Use cast to assure Pylance of the type returned by ainvoke
             invoked_result = cast(T, await structured_llm.ainvoke(
                 prompt, config={"callbacks": [token_callback]}
             ))
@@ -142,15 +142,19 @@ class LLMClient:
         end_time = time.perf_counter()
         latency_ms = int((end_time - start_time) * 1000)
 
-        cost = cost_estimation.calculate_cost(
-            model_name=self.model_name_for_cost,
-            input_tokens=token_callback.prompt_tokens,
-            output_tokens=token_callback.completion_tokens,
+        # --- FIX APPLIED HERE ---
+        # Call the correctly named 'calculate_actual_cost' function and pass the full config object
+        # which contains the dynamic pricing data.
+        cost = cost_estimation.calculate_actual_cost(
+            config=self.config,
+            prompt_tokens=token_callback.prompt_tokens,
+            completion_tokens=token_callback.completion_tokens,
         )
+        # --- END FIX ---
 
         return AgentLLMResult(
             raw_output="[Structured output - raw text not directly available]",
-            parsed_output=parsed_output_value, # Use the correctly typed variable
+            parsed_output=parsed_output_value,
             error=error_message,
             cost=cost,
             prompt_tokens=token_callback.prompt_tokens,
