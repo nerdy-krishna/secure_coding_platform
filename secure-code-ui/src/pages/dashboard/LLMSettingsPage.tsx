@@ -21,8 +21,8 @@ import {
   Tag,
   Typography,
   type TableProps,
-  type RuleObject,
 } from "antd";
+import type { RuleObject } from "antd/es/form";
 import { AxiosError } from "axios";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
