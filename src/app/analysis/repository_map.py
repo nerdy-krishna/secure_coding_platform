@@ -211,7 +211,6 @@ class RepositoryMappingEngine:
         try:
             self.logger.info(
                 f"Attempting to load grammar for '{lang_name}'. "
-                f"tree-sitter version: {tree_sitter.__version__}, "
                 f"tree-sitter-languages version: {tree_sitter_languages.__version__}"
             )
             language = get_language(lang_name) # This is where the original error occurs
