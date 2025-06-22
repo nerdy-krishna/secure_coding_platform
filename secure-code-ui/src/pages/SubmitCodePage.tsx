@@ -1,9 +1,9 @@
 import {
-  GithubOutlined, // Added GithubOutlined
+  GithubOutlined,
   InboxOutlined,
   RobotOutlined,
-  SafetyOutlined,
   ToolOutlined,
+  UploadOutlined
 } from "@ant-design/icons";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -13,7 +13,8 @@ import {
   Checkbox,
   Col,
   Form,
-  Input, // Added Input
+  Input,
+  Radio, // Import Radio
   Row,
   Select,
   Spin,
@@ -37,15 +38,20 @@ const { Option } = Select;
 interface SubmissionFormValues {
   main_llm_config_id: string;
   specialized_llm_config_id: string;
-  repo_url?: string; // Added repository URL field
+  repo_url?: string;
   frameworks: string[];
 }
+
+// Define a type for the submission mode
+type SubmissionMode = "upload" | "repo";
 
 const SubmitCodePage: React.FC = () => {
   const [form] = Form.useForm();
   const navigate = useNavigate();
   const [fileList, setFileList] = useState<RcFile[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submissionMode, setSubmissionMode] =
+    useState<SubmissionMode>("upload");
 
   const {
     data: llmConfigs,
@@ -57,17 +63,41 @@ const SubmitCodePage: React.FC = () => {
     queryFn: () => llmConfigService.getLlmConfigs(),
   });
 
-const handleSubmit = async (values: SubmissionFormValues) => {
-    if (fileList.length === 0 && (!values.repo_url || values.repo_url.trim() === "")) {
-      message.error("Please upload files or provide a repository URL.");
+  const handleSubmissionModeChange = (e: any) => {
+    const newMode = e.target.value as SubmissionMode;
+    setSubmissionMode(newMode);
+    // Clear the alternative input's value when switching modes
+    if (newMode === "upload") {
+      form.setFieldsValue({ repo_url: "" });
+    } else {
+      setFileList([]);
+    }
+  };
+
+  const handleSubmit = async (values: SubmissionFormValues) => {
+    if (submissionMode === "upload" && fileList.length === 0) {
+      message.error("Please upload at least one file to analyze.");
       return;
     }
+    if (
+      submissionMode === "repo" &&
+      (!values.repo_url || values.repo_url.trim() === "")
+    ) {
+      message.error("Please provide a repository URL to analyze.");
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const formData = new FormData();
-      fileList.forEach((file) => {
-        formData.append("files", file);
-      });
+
+      if (submissionMode === "upload") {
+        fileList.forEach((file) => {
+          formData.append("files", file);
+        });
+      } else if (values.repo_url) {
+        formData.append("repo_url", values.repo_url.trim());
+      }
 
       const selectedFrameworks = values.frameworks.filter(Boolean);
       if (selectedFrameworks.length === 0) {
@@ -80,57 +110,48 @@ const handleSubmit = async (values: SubmissionFormValues) => {
       formData.append("main_llm_config_id", values.main_llm_config_id);
       formData.append(
         "specialized_llm_config_id",
-        values.specialized_llm_config_id
+        values.specialized_llm_config_id,
       );
 
-      if (values.repo_url && values.repo_url.trim() !== "") {
-        formData.append("repo_url", values.repo_url.trim());
-      }
-
-      console.log("--- [Frontend] Data being sent: ---");
-      for (const entry of formData.entries()) {
-        // Log each key-value pair. For files, it will log the File object.
-        console.log(`[Frontend] Key: "${entry[0]}", Value:`, entry[1]);
-      }
-      console.log("---------------------------------");
-      
       const response = await submissionService.submitCode(formData);
       message.success(response.message);
-      navigate("/history"); // Changed navigation to /history
+      navigate("/history");
     } catch (error: unknown) {
       console.error("Submission failed:", error);
       let errorMessage = "An unknown error occurred during submission.";
 
-      // --- FIX #2: Enhanced error handling for FastAPI validation errors ---
       if (error instanceof AxiosError && error.response?.data?.detail) {
         const detail = error.response.data.detail;
         if (Array.isArray(detail)) {
-          // This handles the [{ loc: [...], msg: "...", type: "..." }] format
           errorMessage = detail
             .map((err) => `${err.loc.join(".")} - ${err.msg}`)
             .join("; ");
         } else {
-          // Handles simple string details
           errorMessage = detail.toString();
         }
       } else if (error instanceof Error) {
         errorMessage = error.message;
       }
-      message.error(`Submission failed: ${errorMessage}`, 6); // Show for 6 seconds
+      message.error(`Submission failed: ${errorMessage}`, 6);
     } finally {
       setIsSubmitting(false);
     }
-};
+  };
 
   return (
     <Spin spinning={isSubmitting} tip="Submitting your code for analysis...">
       <Card>
         <Title level={2}>Submit Code for Analysis</Title>
         <Paragraph>
-          Upload your source code files to be analyzed for security
-          vulnerabilities based on your selected frameworks and AI models.
+          Select your submission method, choose your frameworks and AI models,
+          and submit your code for a comprehensive security analysis.
         </Paragraph>
-        <Form form={form} layout="vertical" onFinish={handleSubmit} initialValues={{ frameworks: ["OWASP ASVS v5.0"] }}>
+        <Form
+          form={form}
+          layout="vertical"
+          onFinish={handleSubmit}
+          initialValues={{ frameworks: ["OWASP ASVS v5.0"] }}
+        >
           {isLlmError && (
             <Alert
               message="Error"
@@ -151,7 +172,12 @@ const handleSubmit = async (values: SubmissionFormValues) => {
                     Main Analysis LLM
                   </>
                 }
-                rules={[{ required: true, message: "Please select the main analysis LLM." }]}
+                rules={[
+                  {
+                    required: true,
+                    message: "Please select the main analysis LLM.",
+                  },
+                ]}
               >
                 <Select
                   loading={isLoadingLLMs}
@@ -175,7 +201,12 @@ const handleSubmit = async (values: SubmissionFormValues) => {
                     Specialized Agent LLM
                   </>
                 }
-                rules={[{ required: true, message: "Please select the LLM for specialized agents." }]}
+                rules={[
+                  {
+                    required: true,
+                    message: "Please select the LLM for specialized agents.",
+                  },
+                ]}
               >
                 <Select
                   loading={isLoadingLLMs}
@@ -193,36 +224,15 @@ const handleSubmit = async (values: SubmissionFormValues) => {
           </Row>
 
           <Form.Item
-            name="repo_url"
-            label={
-              <>
-                <GithubOutlined style={{ marginRight: 8 }} />
-                Repository URL (Optional)
-              </>
-            }
-            rules={[
-              {
-                type: "url",
-                message: "Please enter a valid URL.",
-              },
-            ]}
-          >
-            <Input placeholder="e.g., https://github.com/user/repo.git" />
-          </Form.Item>
-
-          <Form.Item
-            label={
-              <>
-                <SafetyOutlined style={{ marginRight: 8 }} />
-                Security Framework
-              </>
-            }
+            label="Security Framework"
           >
             <Form.Item
               name={["frameworks", 0]}
               valuePropName="checked"
               noStyle
-              getValueFromEvent={(e) => e.target.checked ? "OWASP ASVS v5.0" : false}
+              getValueFromEvent={(e) =>
+                e.target.checked ? "OWASP ASVS v5.0" : false
+              }
             >
               <Checkbox defaultChecked disabled>
                 OWASP ASVS v5.0
@@ -233,34 +243,72 @@ const handleSubmit = async (values: SubmissionFormValues) => {
             </Text>
           </Form.Item>
 
-          <Form.Item label="Upload Source Code">
-            <Dragger
-              name="files"
-              multiple={true}
-              beforeUpload={(file) => {
-                setFileList((prevList) => [...prevList, file]);
-                return false;
-              }}
-              onRemove={(file) => {
-                setFileList((prevList) =>
-                  prevList.filter((item) => item.uid !== file.uid),
-                );
-              }}
-              fileList={fileList}
+          <Form.Item label="Submission Method" style={{ marginBottom: 0 }}>
+            <Radio.Group
+              onChange={handleSubmissionModeChange}
+              value={submissionMode}
+              optionType="button"
+              buttonStyle="solid"
             >
-              <p className="ant-upload-drag-icon">
-                <InboxOutlined />
-              </p>
-              <p className="ant-upload-text">
-                Click or drag file(s) to this area to upload
-              </p>
-              <p className="ant-upload-hint">
-                Support for a single or bulk upload.
-              </p>
-            </Dragger>
+              <Radio.Button value="upload">
+                <UploadOutlined /> Upload Files
+              </Radio.Button>
+              <Radio.Button value="repo">
+                <GithubOutlined /> Git Repository
+              </Radio.Button>
+            </Radio.Group>
           </Form.Item>
 
-          <Form.Item>
+          {submissionMode === "repo" && (
+            <Form.Item
+              name="repo_url"
+              label="Repository URL"
+              rules={[
+                {
+                  required: true,
+                  message: "Please enter a valid repository URL.",
+                },
+                {
+                  type: "url",
+                  message: "The input is not a valid URL!",
+                },
+              ]}
+              style={{ marginTop: 16 }}
+            >
+              <Input placeholder="e.g., https://github.com/user/repo.git" />
+            </Form.Item>
+          )}
+
+          {submissionMode === "upload" && (
+            <Form.Item label="Upload Source Code" style={{ marginTop: 16 }}>
+              <Dragger
+                name="files"
+                multiple={true}
+                beforeUpload={(file) => {
+                  setFileList((prevList) => [...prevList, file]);
+                  return false; // Prevent auto-upload
+                }}
+                onRemove={(file) => {
+                  setFileList((prevList) =>
+                    prevList.filter((item) => item.uid !== file.uid),
+                  );
+                }}
+                fileList={fileList}
+              >
+                <p className="ant-upload-drag-icon">
+                  <InboxOutlined />
+                </p>
+                <p className="ant-upload-text">
+                  Click or drag file(s) to this area to upload
+                </p>
+                <p className="ant-upload-hint">
+                  Support for a single or bulk upload of your source code files.
+                </p>
+              </Dragger>
+            </Form.Item>
+          )}
+
+          <Form.Item style={{ marginTop: 24 }}>
             <Button
               type="primary"
               htmlType="submit"
