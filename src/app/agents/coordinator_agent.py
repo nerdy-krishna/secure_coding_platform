@@ -70,8 +70,8 @@ class CoordinatorState(TypedDict):
     context_bundles: Optional[List[ContextBundle]]
     relevant_agents: Dict[str, List[str]]
     estimated_cost: Optional[Dict[str, float]]
-    cost_approval_met: bool = False # Default to False
-    current_submission_status: Optional[str] = None
+    cost_approval_met: Optional[bool] 
+    current_submission_status: Optional[str]
     
     # Outputs
     results: Dict[str, Any]
