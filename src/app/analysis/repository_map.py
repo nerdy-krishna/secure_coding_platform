@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 
 from pydantic import BaseModel, Field
+import tree_sitter # Added for version logging
+import tree_sitter_languages # Added for version logging
 from tree_sitter import Language, Node, Parser, Tree # Language is important
 from tree_sitter_languages import get_language
 
@@ -207,6 +209,11 @@ class RepositoryMappingEngine:
             raise GrammarLoadingError(f"No language configured for file extension '{extension}' (file: {file_path})")
 
         try:
+            self.logger.info(
+                f"Attempting to load grammar for '{lang_name}'. "
+                f"tree-sitter version: {tree_sitter.__version__}, "
+                f"tree-sitter-languages version: {tree_sitter_languages.__version__}"
+            )
             language = get_language(lang_name) # This is where the original error occurs
             if language is None: # Defensive check, get_language usually raises on failure
                 raise GrammarLoadingError(f"get_language('{lang_name}') returned None for {file_path}")
