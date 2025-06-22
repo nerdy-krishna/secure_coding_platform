@@ -57,6 +57,25 @@ async def read_llm_configurations(
     return configs
 
 
+@llm_router.patch("/{config_id}", response_model=api_models.LLMConfigurationRead)
+async def update_llm_configuration(
+    config_id: uuid.UUID,
+    config_update: api_models.LLMConfigurationUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: db_models.User = Depends(current_superuser),
+):
+    """
+    Updates an existing LLM configuration. Requires superuser privileges.
+    Partial updates are allowed.
+    """
+    updated_config = await crud.update_llm_config(
+        db=db, config_id=config_id, config_update=config_update
+    )
+    if updated_config is None:
+        raise HTTPException(status_code=404, detail="LLM Configuration not found")
+    return updated_config
+
+
 @llm_router.delete("/{config_id}", status_code=204)
 async def delete_llm_configuration(
     config_id: uuid.UUID,
