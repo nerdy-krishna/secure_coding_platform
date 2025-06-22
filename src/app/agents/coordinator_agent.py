@@ -43,7 +43,7 @@ AGENT_NAME = "CoordinatorAgent"
 
 # Define status constants for clarity within this agent
 STATUS_PENDING_APPROVAL = "PENDING_COST_APPROVAL"
-STATUS_COST_APPROVED = "COST_APPROVED" # This status is set by the API upon user approval
+STATUS_COST_APPROVED = "Approved - Queued" # This status is set by the API upon user approval
 
 AGENT_BUILDER_MAP = {
     "AccessControlAgent": build_access_control_agent, "ApiSecurityAgent": build_api_security_agent,
