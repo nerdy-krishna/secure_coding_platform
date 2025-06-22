@@ -355,6 +355,15 @@ async def save_final_reports_and_status(
     """
     Updates a submission with the final reports (impact and SARIF) and sets the final status.
     """
+    # --- START: DEBUG STATEMENTS TO ADD ---
+    print("\n--- [DEBUG] CRUD.SAVE_FINAL_REPORTS_AND_STATUS ---")
+    print(f"Attempting to save reports for submission_id: {submission_id}")
+    print(f"Is impact_report received? {'Yes' if impact_report else 'No'}")
+    print(f"Is sarif_report received? {'Yes' if sarif_report else 'No'}")
+    print(f"Status to be set: {status}")
+    print("--- [DEBUG] END OF CRUD CHECK ---\n")
+    # --- END: DEBUG STATEMENTS TO ADD ---
+
     # Make the datetime object naive for TIMESTAMP WITHOUT TIME ZONE columns
     completed_at_naive = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
     values_to_update = {"status": status, "completed_at": completed_at_naive}
