@@ -2,7 +2,7 @@ import logging
 import os
 import shutil
 import tempfile
-from typing import List, Dict, Optional
+from typing import List, Dict
 
 from fastapi import HTTPException
 
@@ -10,51 +10,10 @@ from fastapi import HTTPException
 # itself will raise an ImportError with a descriptive message.
 import git
 
+# Import the moved function
+from app.utils.file_utils import get_language_from_filename
+
 logger = logging.getLogger(__name__)
-
-LANGUAGE_EXTENSIONS = {
-    ".py": "python",
-    ".js": "javascript",
-    ".jsx": "javascript",
-    ".ts": "typescript",
-    ".tsx": "typescript",
-    ".java": "java",
-    ".go": "go",
-    ".rb": "ruby",
-    ".php": "php",
-    ".cs": "csharp",
-    ".c": "c",
-    ".h": "c",
-    ".cpp": "cpp",
-    ".hpp": "cpp",
-    ".html": "html",
-    ".css": "css",
-    ".scss": "css",
-    ".json": "json",
-    ".yaml": "yaml",
-    ".yml": "yaml",
-    ".md": "markdown",
-    ".sh": "shell",
-    ".swift": "swift",
-    ".kt": "kotlin",
-    ".kts": "kotlin",
-    ".rs": "rust",
-    ".scala": "scala",
-    ".pl": "perl",
-    ".pm": "perl",
-    ".r": "r",
-    ".lua": "lua",
-    ".sql": "sql",
-    ".xml": "xml",
-    ".dart": "dart",
-    ".vue": "vue",
-    ".svelte": "svelte",
-}
-
-def get_language_from_filename(filename: str) -> Optional[str]:
-    """Infers language from file extension."""
-    ext = os.path.splitext(filename)[1].lower()
-    return LANGUAGE_EXTENSIONS.get(ext)
 
 
 def clone_repo_and_get_files(repo_url: str) -> List[Dict[str, str]]:
