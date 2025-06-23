@@ -1,9 +1,10 @@
 import {
+  FileZipOutlined, // Import FileZipOutlined
   GithubOutlined,
   InboxOutlined,
   RobotOutlined,
   ToolOutlined,
-  UploadOutlined
+  UploadOutlined,
 } from "@ant-design/icons";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -44,12 +45,13 @@ interface SubmissionFormValues {
 }
 
 // Define a type for the submission mode
-type SubmissionMode = "upload" | "repo";
+type SubmissionMode = "upload" | "repo" | "archive"; // Added "archive"
 
 const SubmitCodePage: React.FC = () => {
   const [form] = Form.useForm();
   const navigate = useNavigate();
-  const [fileList, setFileList] = useState<RcFile[]>([]);
+  const [fileList, setFileList] = useState<RcFile[]>([]); // For direct file uploads
+  const [archiveFileList, setArchiveFileList] = useState<RcFile[]>([]); // For archive upload
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submissionMode, setSubmissionMode] =
     useState<SubmissionMode>("upload");
@@ -67,17 +69,24 @@ const SubmitCodePage: React.FC = () => {
   const handleSubmissionModeChange = (e: RadioChangeEvent) => {
     const newMode = e.target.value as SubmissionMode;
     setSubmissionMode(newMode);
-    // Clear the alternative input's value when switching modes
-    if (newMode === "upload") {
-      form.setFieldsValue({ repo_url: "" });
-    } else {
-      setFileList([]);
-    }
+    // Clear other input values when switching modes
+    form.setFieldsValue({ repo_url: "" });
+    setFileList([]);
+    setArchiveFileList([]);
+  };
+
+  const isArchiveFile = (fileName: string): boolean => {
+    const archiveExtensions = /\.(zip|tar\.gz|tgz|tar\.bz2|tbz2|tar\.xz|txz|tar)$/i;
+    return archiveExtensions.test(fileName);
   };
 
   const handleSubmit = async (values: SubmissionFormValues) => {
     if (submissionMode === "upload" && fileList.length === 0) {
-      message.error("Please upload at least one file to analyze.");
+      message.error("Please upload at least one file for direct analysis.");
+      return;
+    }
+    if (submissionMode === "archive" && archiveFileList.length === 0) {
+      message.error("Please upload an archive file.");
       return;
     }
     if (
@@ -94,11 +103,20 @@ const SubmitCodePage: React.FC = () => {
 
       if (submissionMode === "upload") {
         fileList.forEach((file) => {
+          // Double check on submit, though beforeUpload should catch it
+          if (isArchiveFile(file.name)) {
+             message.error(`Archive file '${file.name}' detected in direct file upload. Please use the 'Upload Archive' tab.`);
+             setIsSubmitting(false);
+             throw new Error("Archive file in direct upload"); // Prevent submission
+          }
           formData.append("files", file);
         });
-      } else if (values.repo_url) {
+      } else if (submissionMode === "repo" && values.repo_url) {
         formData.append("repo_url", values.repo_url.trim());
+      } else if (submissionMode === "archive" && archiveFileList.length > 0) {
+        formData.append("archive_file", archiveFileList[0]);
       }
+
 
       const selectedFrameworks = values.frameworks.filter(Boolean);
       if (selectedFrameworks.length === 0) {
@@ -254,6 +272,9 @@ const SubmitCodePage: React.FC = () => {
               <Radio.Button value="upload">
                 <UploadOutlined /> Upload Files
               </Radio.Button>
+              <Radio.Button value="archive">
+                <FileZipOutlined /> Upload Archive
+              </Radio.Button>
               <Radio.Button value="repo">
                 <GithubOutlined /> Git Repository
               </Radio.Button>
@@ -286,6 +307,12 @@ const SubmitCodePage: React.FC = () => {
                 name="files"
                 multiple={true}
                 beforeUpload={(file) => {
+                  if (isArchiveFile(file.name)) {
+                    message.error(
+                      `Archive files like '${file.name}' are not allowed here. Please use the 'Upload Archive' tab.`,
+                    );
+                    return Upload.LIST_IGNORE;
+                  }
                   setFileList((prevList) => [...prevList, file]);
                   return false; // Prevent auto-upload
                 }}
@@ -300,10 +327,45 @@ const SubmitCodePage: React.FC = () => {
                   <InboxOutlined />
                 </p>
                 <p className="ant-upload-text">
-                  Click or drag file(s) to this area to upload
+                  Click or drag source code file(s) to this area to upload
                 </p>
                 <p className="ant-upload-hint">
-                  Support for a single or bulk upload of your source code files.
+                  Upload individual source code files. For .zip or .tar.gz archives, please use the 'Upload Archive' tab.
+                </p>
+              </Dragger>
+            </Form.Item>
+          )}
+
+          {submissionMode === "archive" && (
+            <Form.Item label="Upload Archive File" style={{ marginTop: 16 }}>
+              <Dragger
+                name="archiveFile"
+                multiple={false}
+                maxCount={1}
+                accept=".zip,.tar.gz,.tgz,.tar.bz2,.tbz2,.tar.xz,.txz,.tar"
+                beforeUpload={(file) => {
+                  if (!isArchiveFile(file.name)) {
+                     message.error(
+                      `File '${file.name}' is not a recognized archive type. Accepted types: .zip, .tar.gz, .tgz, etc.`,
+                    );
+                    return Upload.LIST_IGNORE;
+                  }
+                  setArchiveFileList([file]);
+                  return false; // Prevent auto-upload
+                }}
+                onRemove={() => {
+                  setArchiveFileList([]);
+                }}
+                fileList={archiveFileList}
+              >
+                <p className="ant-upload-drag-icon">
+                  <FileZipOutlined />
+                </p>
+                <p className="ant-upload-text">
+                  Click or drag a single archive file (.zip, .tar.gz, etc.) to this area
+                </p>
+                <p className="ant-upload-hint">
+                  The system will extract and analyze the contents of the archive.
                 </p>
               </Dragger>
             </Form.Item>
