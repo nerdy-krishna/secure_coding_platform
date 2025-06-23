@@ -23,8 +23,10 @@ from app.db import models as db_models
 from app.api import models as api_models
 from app.auth.core import current_active_user, current_superuser
 from app.utils import rabbitmq_utils
-from app.core.config import settings # <-- ADDED THIS IMPORT
-from app.utils.git_utils import clone_repo_and_get_files, get_language_from_filename # <-- ADDED THIS IMPORT
+from app.core.config import settings
+from app.utils.git_utils import clone_repo_and_get_files # get_language_from_filename removed
+from app.utils.file_utils import get_language_from_filename # Added import from file_utils
+from app.utils.archive_utils import extract_archive_to_files, is_archive_filename, ALLOWED_ARCHIVE_EXTENSIONS # Added archive_utils imports
 
 # Create two routers: one for general endpoints, one for admin-level LLM configs
 router = APIRouter()
@@ -103,16 +105,26 @@ async def submit_code(
     main_llm_config_id: Annotated[uuid.UUID, Form(...)],
     specialized_llm_config_id: Annotated[uuid.UUID, Form(...)],
     frameworks: Annotated[str, Form(...)],
-    files: Optional[List[UploadFile]] = File(None),
-    repo_url: Optional[str] = Form(None),
+    files: Optional[List[UploadFile]] = File(None), # For direct file uploads
+    repo_url: Optional[str] = Form(None), # For git repository URL
+    archive_file: Optional[UploadFile] = File(None), # For archive file upload
 ):
     """
-    Accepts code submission via file upload or Git repository URL.
+    Accepts code submission via direct file uploads, a Git repository URL, or an archive file.
     """
-    if not files and not repo_url:
+    submission_methods_count = sum(
+        [1 for method in [files, repo_url, archive_file] if method]
+    )
+
+    if submission_methods_count == 0:
         raise HTTPException(
             status_code=400,
-            detail="Either files must be uploaded or a git repository URL must be provided.",
+            detail="No submission method provided. Please upload files, provide a git repository URL, or upload an archive.",
+        )
+    if submission_methods_count > 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Multiple submission methods provided. Please use only one: direct file uploads, a git repository URL, or an archive file.",
         )
 
     main_llm = await crud.get_llm_config(db, main_llm_config_id)
@@ -126,8 +138,21 @@ async def submit_code(
     framework_list = [f.strip() for f in frameworks.split(",")]
 
     files_data = []
-    if files:
+    if files: # Direct file uploads
         for file_upload in files:
+            if not file_upload.filename: # Should not happen with FastAPI UploadFile
+                logger.warning("Received a file upload without a filename.")
+                continue
+            
+            # Server-side check to reject archives in the direct file upload list
+            if is_archive_filename(file_upload.filename):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Archive file '{file_upload.filename}' submitted via direct file upload. "
+                           f"Please use the 'Upload Archive' option for archive files. "
+                           f"Supported archive types: {', '.join(ALLOWED_ARCHIVE_EXTENSIONS)}",
+                )
+
             content_bytes = await file_upload.read()
             try:
                 content_str = content_bytes.decode("utf-8")
@@ -138,35 +163,50 @@ async def submit_code(
                 except UnicodeDecodeError:
                     logger.error(f"Failed to decode file {file_upload.filename} with UTF-8 and latin-1.")
                     # Skip file or raise error, for now skipping
-                    continue 
+                    continue
             
-            language = get_language_from_filename(file_upload.filename or "")
+            # Remove null bytes
+            content_str = content_str.replace("\x00", "")
+            language = get_language_from_filename(file_upload.filename)
             files_data.append(
                 {
-                    "path": file_upload.filename or "unknown_file",
+                    "path": file_upload.filename,
                     "content": content_str,
                     "language": language or "unknown",
                 }
             )
-    elif repo_url:
+    elif repo_url: # Git repository URL
         try:
-            files_data = clone_repo_and_get_files(repo_url)
-            if not files_data: # If cloning succeeded but no files were extracted (e.g. empty repo)
+            files_data = clone_repo_and_get_files(repo_url) # This already handles null bytes
+            if not files_data:
                 raise HTTPException(
                     status_code=400,
                     detail="Repository cloned, but no processable files were found."
                 )
-        except HTTPException: # Re-raise HTTPExceptions from clone_repo_and_get_files
+        except HTTPException:
             raise
-        except Exception as e: # Catch any other unexpected errors
+        except Exception as e:
             logger.error(f"Unhandled error during repository processing for {repo_url}: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail="An unexpected error occurred while processing the repository.")
-
-
-    if not files_data: # This check is now after attempting to populate from repo_url too
+    elif archive_file: # Archive file upload
+        try:
+            if not archive_file.filename or not is_archive_filename(archive_file.filename):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid or unsupported archive file provided. Filename: {archive_file.filename}. "
+                           f"Supported archive types: {', '.join(ALLOWED_ARCHIVE_EXTENSIONS)}",
+                )
+            files_data = extract_archive_to_files(archive_file) # This handles null bytes
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error processing uploaded archive {archive_file.filename}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"An unexpected error occurred while processing the archive: {str(e)}")
+    
+    if not files_data:
         raise HTTPException(
             status_code=400,
-            detail="No files were provided or found in the repository for analysis."
+            detail="No files were successfully processed for analysis from the provided input."
         )
 
     submission = await crud.create_submission(
