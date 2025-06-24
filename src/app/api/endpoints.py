@@ -97,6 +97,40 @@ async def delete_llm_configuration(
 
 # === Submission & Results Endpoints ===
 
+@router.post("/submit/preview-archive", response_model=Dict[str, List[str]])
+async def preview_archive_files(archive_file: UploadFile = File(...)):
+    """
+    Accepts an archive file, extracts it in a temporary location,
+    and returns a list of file paths for frontend preview.
+    """
+    try:
+        files_data = extract_archive_to_files(archive_file)
+        file_paths = [f["path"] for f in files_data]
+        return {"files": file_paths}
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions from the utility function
+    except Exception as e:
+        logger.error(f"Error previewing archive {archive_file.filename}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to preview archive: {str(e)}")
+
+
+@router.post("/submit/preview-git", response_model=Dict[str, List[str]])
+async def preview_git_files(request: api_models.GitRepoPreviewRequest):
+    """
+    Accepts a Git repository URL, clones it to a temporary location,
+    and returns a list of file paths for frontend preview.
+    """
+    try:
+        files_data = clone_repo_and_get_files(request.repo_url)
+        if not files_data:
+            raise HTTPException(status_code=400, detail="Repository cloned, but no processable files were found.")
+        file_paths = [f["path"] for f in files_data]
+        return {"files": file_paths}
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions from the utility function
+    except Exception as e:
+        logger.error(f"Error previewing git repo {request.repo_url}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to preview git repository: {str(e)}")
 
 @router.post("/submit", response_model=api_models.SubmissionResponse)
 async def submit_code(
@@ -105,6 +139,7 @@ async def submit_code(
     main_llm_config_id: Annotated[uuid.UUID, Form(...)],
     specialized_llm_config_id: Annotated[uuid.UUID, Form(...)],
     frameworks: Annotated[str, Form(...)],
+    excluded_files: Optional[str] = Form(None),
     files: Optional[List[UploadFile]] = File(None), # For direct file uploads
     repo_url: Optional[str] = Form(None), # For git repository URL
     archive_file: Optional[UploadFile] = File(None), # For archive file upload
@@ -136,6 +171,7 @@ async def submit_code(
         )
 
     framework_list = [f.strip() for f in frameworks.split(",")]
+    excluded_files_list = [f.strip() for f in excluded_files.split(",")] if excluded_files else []
 
     files_data = []
     if files: # Direct file uploads
@@ -215,6 +251,7 @@ async def submit_code(
         repo_url=repo_url,
         files=files_data,
         frameworks=framework_list,
+        excluded_files=excluded_files_list,
         main_llm_config_id=main_llm_config_id,
         specialized_llm_config_id=specialized_llm_config_id,
     )

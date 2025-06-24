@@ -1,9 +1,11 @@
 # src/app/utils/cost_estimation.py
 
 import logging
-from typing import Dict
+from typing import Dict, Optional
 
 import tiktoken
+import anthropic
+import google.genai as genai
 
 # Import the database model to use for type hinting
 from app.db import models as db_models
@@ -11,25 +13,70 @@ from app.db import models as db_models
 logger = logging.getLogger(__name__)
 
 
-def count_tokens(text: str, tokenizer_encoding: str) -> int:
+async def count_tokens(
+    text: str, 
+    config: db_models.LLMConfiguration, 
+    api_key: Optional[str] = None
+) -> int:
     """
-    Counts the number of tokens in a text string using a dynamically provided
-    tokenizer encoding name.
+    Counts tokens using the provider-specific method for accuracy.
+    - OpenAI: Uses the specified tiktoken encoding.
+    - Anthropic: Uses the official offline tokenizer.
+    - Google: Uses an API call for the most accurate count.
     """
-    if not text or not tokenizer_encoding:
+    if not text:
         return 0
-    
-    try:
-        encoding = tiktoken.get_encoding(tokenizer_encoding)
-    except ValueError:
-        logger.warning(
-            f"Encoding '{tokenizer_encoding}' not found. "
-            "Falling back to default 'cl100k_base'."
-        )
-        encoding = tiktoken.get_encoding("cl100k_base")
 
-    # The disallowed_special=() argument prevents errors with special tokens
-    return len(encoding.encode(text, disallowed_special=()))
+    provider = config.provider.lower()
+
+    try:
+        if provider == "openai":
+            # Try to get encoding for the specific model first, fallback to config or default
+            try:
+                encoding = tiktoken.encoding_for_model(config.model_name)
+            except KeyError:
+                # Model not found, use configured encoding or default
+                encoding = tiktoken.get_encoding(config.tokenizer_encoding or "cl100k_base")
+            return len(encoding.encode(text, disallowed_special=()))
+
+        elif provider == "anthropic":
+            if not api_key:
+                logger.warning("Anthropic API key not provided for token counting. Falling back to tiktoken estimate.")
+                # Use tiktoken as fallback for Anthropic (they use similar tokenization)
+                encoding = tiktoken.get_encoding("cl100k_base")
+                return len(encoding.encode(text, disallowed_special=()))
+            
+            # Use Anthropic's client to count tokens
+            client = anthropic.Anthropic(api_key=api_key)
+            response = client.messages.count_tokens(
+                model=config.model_name,
+                messages=[{"role": "user", "content": text}]
+            )
+            return response.input_tokens
+
+        elif provider == "google":
+            if not api_key:
+                logger.warning("Google API key not provided for token counting. Falling back to a rough estimate (len/4).")
+                return len(text) // 4
+            
+            client = genai.Client(api_key=api_key)
+            response = await client.aio.models.count_tokens(
+                model=config.model_name,
+                contents=text
+            )
+            if response.total_tokens is None:
+                return 0
+            else:
+                return response.total_tokens
+
+        else:
+            logger.warning(f"Unsupported provider '{provider}' for token counting. Falling back to tiktoken.")
+            encoding = tiktoken.get_encoding(config.tokenizer_encoding or "cl100k_base")
+            return len(encoding.encode(text, disallowed_special=()))
+            
+    except Exception as e:
+        logger.error(f"Failed to count tokens for provider {provider} with model {config.model_name}: {e}. Falling back to len/4 estimate.", exc_info=True)
+        return len(text) // 4
 
 
 def estimate_cost_for_prompt(

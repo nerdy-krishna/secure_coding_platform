@@ -82,6 +82,7 @@ class ContextAnalysisAgentState(TypedDict):
     llm_config_id: uuid.UUID
     submission_id: uuid.UUID
     files: Dict[str, str]
+    excluded_files: Optional[List[str]]
     repository_map: Optional[RepositoryMap]
     analysis_summary: Optional[str]
     identified_components: Optional[List[str]]
@@ -95,15 +96,28 @@ async def create_repository_map_node(state: ContextAnalysisAgentState) -> Dict[s
     Creates a repository map. It first checks for a cached version based on
     a hash of the codebase. If not found, it generates a new map and saves
     it to the cache.
+    It now respects the `excluded_files` list.
     """
     logger.info(f"[{AGENT_NAME}] Starting repository map creation for submission {state['submission_id']}.")
-    files = state["files"]
-    if not files:
-        return {"error_message": "No files provided to create repository map."}
+    
+    all_files = state["files"]
+    excluded_files_set = set(state.get("excluded_files") or [])
+    
+    if excluded_files_set:
+        logger.info(f"[{AGENT_NAME}] Excluding {len(excluded_files_set)} files from analysis.")
+        files_to_process = {
+            path: content for path, content in all_files.items() if path not in excluded_files_set
+        }
+        logger.debug(f"[{AGENT_NAME}] Files remaining for analysis: {len(files_to_process)}")
+    else:
+        files_to_process = all_files
+
+    if not files_to_process:
+        return {"error_message": "No files remaining after exclusions."}
 
     # 1. Calculate codebase hash
     # Sorting by file path ensures the hash is consistent regardless of file order
-    sorted_files = sorted(files.items())
+    sorted_files = sorted(files_to_process.items()) # Use the filtered list for hashing
     hasher = hashlib.sha256()
     for _, content in sorted_files:
         hasher.update(content.encode('utf-8'))
@@ -122,7 +136,7 @@ async def create_repository_map_node(state: ContextAnalysisAgentState) -> Dict[s
             # 3. Cache miss: Generate a new map
             logger.info(f"[{AGENT_NAME}] Cache miss. Generating new repository map.")
             mapping_engine = RepositoryMappingEngine()
-            repository_map = mapping_engine.create_map(files)
+            repository_map = mapping_engine.create_map(files_to_process) # Use the filtered list here as well
             
             # 4. Save the new map to the cache
             await crud.create_repository_map_cache(db, codebase_hash, repository_map)

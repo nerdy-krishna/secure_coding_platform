@@ -26,6 +26,30 @@ export const submissionService = {
   },
 
   /**
+   * Fetches the file list from a remote Git repository for preview.
+   */
+  previewGitRepo: async (repoUrl: string): Promise<string[]> => {
+    const response = await apiClient.post<{ files: string[] }>(
+      "/submit/preview-git",
+      { repo_url: repoUrl }
+    );
+    return response.data.files;
+  },
+
+  /**
+   * Fetches the file list from an uploaded archive for preview.
+   */
+  previewArchive: async (archiveFile: File): Promise<string[]> => {
+    const formData = new FormData();
+    formData.append("archive_file", archiveFile);
+    const response = await apiClient.post<{ files: string[] }>(
+      "/submit/preview-archive",
+      formData
+    );
+    return response.data.files;
+  },
+
+  /**
    * Fetches the full analysis result for a given submission.
    */
   getAnalysisResult: async (
