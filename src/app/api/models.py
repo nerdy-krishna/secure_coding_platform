@@ -216,6 +216,9 @@ class SubmissionHistoryItem(BaseModel):
     class Config:
         from_attributes = True
 
+class GitRepoPreviewRequest(BaseModel):
+    repo_url: str
+
 # --- Detailed Analysis Result Models (NEW - for /result/{submission_id}) ---
 
 class SeverityCountsResponse(BaseModel):

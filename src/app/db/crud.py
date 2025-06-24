@@ -138,6 +138,7 @@ async def create_submission(
     repo_url: Optional[str] = None,
     files: Optional[List[Dict[str, Any]]] = None,
     frameworks: Optional[List[str]] = None,
+    excluded_files: Optional[List[str]] = None,
     main_llm_config_id: Optional[uuid.UUID] = None,
     specialized_llm_config_id: Optional[uuid.UUID] = None,
 ) -> db_models.CodeSubmission:
@@ -147,6 +148,7 @@ async def create_submission(
         repo_url=repo_url,
         status="Pending",
         frameworks=frameworks,
+        excluded_files=excluded_files,
         main_llm_config_id=main_llm_config_id,
         specialized_llm_config_id=specialized_llm_config_id,
     )

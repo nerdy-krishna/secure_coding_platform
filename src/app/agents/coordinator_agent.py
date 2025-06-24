@@ -153,7 +153,8 @@ async def estimate_cost_node(state: CoordinatorState) -> Dict[str, Any]:
             return {"error": "Bundles or LLM config ID missing, cannot estimate cost.", "current_submission_status": current_status}
         
         try:
-            llm_config = await crud.get_llm_config(db, llm_config_id)
+            # Fetch the config with the decrypted key to pass to the token counter
+            llm_config = await crud.get_llm_config_with_decrypted_key(db, llm_config_id)
             if not llm_config:
                 logger.error(f"[{AGENT_NAME}] LLM Config {llm_config_id} not found for submission {submission_id}.")
                 return {"error": f"LLM Configuration with ID {llm_config_id} not found.", "current_submission_status": current_status}
@@ -163,7 +164,12 @@ async def estimate_cost_node(state: CoordinatorState) -> Dict[str, Any]:
                 for content in bundle.context_files.values():
                     full_bundle_text += content
             
-            total_input_tokens = cost_estimation.count_tokens(full_bundle_text, llm_config.tokenizer_encoding or "cl100k_base")
+            # Await the new async token counter and pass the full config and key
+            total_input_tokens = await cost_estimation.count_tokens(
+                text=full_bundle_text, 
+                config=llm_config, 
+                api_key=getattr(llm_config, 'decrypted_api_key', None)
+            )
             logger.info(f"[{AGENT_NAME}] Total estimated input tokens for {submission_id}: {total_input_tokens}")
 
             cost_details = cost_estimation.estimate_cost_for_prompt(

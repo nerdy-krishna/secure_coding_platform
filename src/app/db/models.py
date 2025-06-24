@@ -85,6 +85,11 @@ class CodeSubmission(Base):
     submitted_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     frameworks: Mapped[Optional[List[str]]] = mapped_column(JSON)
+    excluded_files: Mapped[Optional[List[str]]] = mapped_column(
+        JSONB,
+        nullable=True,
+        comment="A list of file paths to exclude from the analysis."
+    )
     main_llm_config_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey("llm_configurations.id")
     )

@@ -28,6 +28,7 @@ class WorkerState(TypedDict):
     llm_config_id: Optional[uuid.UUID]
     files: Optional[Dict[str, str]]
     workflow_mode: WorkflowMode
+    excluded_files: Optional[List[str]]
     
     # from context_analysis_agent
     repository_map: Optional[Any]
@@ -75,7 +76,12 @@ async def retrieve_submission_data(state: WorkerState) -> Dict[str, Any]:
             if state.get("workflow_mode") == "remediate":
                 llm_id_to_use = submission.specialized_llm_config_id
 
-            return_value = {"files": files_map, "llm_config_id": llm_id_to_use, "error_message": None}
+            return_value = {
+                "files": files_map, 
+                "llm_config_id": llm_id_to_use, 
+                "excluded_files": submission.excluded_files, # <-- ADDED
+                "error_message": None
+            }
             break # Successfully processed, exit loop
 
         return return_value
