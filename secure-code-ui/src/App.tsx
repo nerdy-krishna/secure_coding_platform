@@ -17,15 +17,15 @@ import AuthLayout from "./layouts/AuthLayout";
 import DashboardLayout from "./layouts/DashboardLayout";
 
 // Page Components
+import DashboardPage from "./pages/account/DashboardPage";
+import LLMSettingsPage from "./pages/account/LLMSettingsPage";
+import SettingsPage from "./pages/account/SettingsPage";
+import SubmissionHistoryPage from "./pages/account/SubmissionHistoryPage";
+import UserProfilePage from "./pages/account/UserProfilePage";
+import ResultsPage from "./pages/analysis/ResultsPage";
 import LoginPage from "./pages/auth/LoginPage";
 import RegisterPage from "./pages/auth/RegisterPage";
-import DashboardPage from "./pages/dashboard/DashboardPage";
-import LLMSettingsPage from "./pages/dashboard/LLMSettingsPage";
-import SettingsPage from "./pages/dashboard/SettingsPage";
-import SubmissionHistoryPage from "./pages/dashboard/SubmissionHistoryPage";
-import UserProfilePage from "./pages/dashboard/UserProfilePage";
-import ResultsPage from "./pages/ResultsPage";
-import SubmitCodePage from "./pages/SubmitCodePage";
+import SubmitCodePage from "./pages/submission/SubmitCodePage";
 
 // Placeholder Pages
 const NotFoundPage: React.FC = () => (
@@ -80,13 +80,12 @@ const AuthRoutesWithLayout: React.FC = () => {
 // Redirector for the root path
 const RootRedirector: React.FC = () => {
   const { accessToken, initialAuthChecked, isLoading } = useAuth();
-
   if (!initialAuthChecked || isLoading) {
     return <div>Loading...</div>;
   }
 
   return accessToken ? (
-    <Navigate to="/dashboard" replace />
+    <Navigate to="/account/dashboard" replace />
   ) : (
     <Navigate to="/login" replace />
   );
@@ -128,17 +127,17 @@ function AppContent() {
 
         {/* Protected routes for regular authenticated users */}
         <Route element={<ProtectedRoutesWithLayout />}>
-          <Route path="/dashboard" element={<DashboardPage />} />
-          <Route path="/submit" element={<SubmitCodePage />} />
-          <Route path="/history" element={<SubmissionHistoryPage />} />
-          <Route path="/results/:submissionId" element={<ResultsPage />} />
-          <Route path="/profile" element={<UserProfilePage />} />
-          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/account/dashboard" element={<DashboardPage />} />
+          <Route path="/submission/submit" element={<SubmitCodePage />} />
+          <Route path="/account/history" element={<SubmissionHistoryPage />} />
+          <Route path="/analysis/results/:submissionId" element={<ResultsPage />} />
+          <Route path="/account/profile" element={<UserProfilePage />} />
+          <Route path="/account/settings" element={<SettingsPage />} />
         </Route>
 
         {/* Protected routes for superusers only */}
         <Route element={<SuperuserRoutesWithLayout />}>
-          <Route path="/settings/llm" element={<LLMSettingsPage />} />
+          <Route path="/account/settings/llm" element={<LLMSettingsPage />} />
         </Route>
 
         {/* Root and wildcard routes */}
