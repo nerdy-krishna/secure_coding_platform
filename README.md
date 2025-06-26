@@ -1,130 +1,36 @@
-# Secure Coding Platform
+# AI-Powered Secure Coding & Compliance Automation Platform
 
-**An open-source, AI-powered platform to build and maintain secure software with confidence.**
+This is an open-source, AI-powered tool designed to help developers and security teams audit code for vulnerabilities and apply intelligent remediations automatically. The platform's "Audit-First, Remediate-Intelligently" approach ensures full control and visibility throughout the security analysis process.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+## Key Features
 
-The Secure Coding Platform assists developers and security teams by providing proactive security guidance, generating secure code, and detecting/remediating vulnerabilities across multiple programming languages and compliance frameworks. It leverages a hybrid AI approach, integrating Large Language Models, specialized security tools, and dynamic Tree-sitter queries.
+* **Comprehensive Code Auditing**: Submit your code by uploading files, providing a Git repository URL, or uploading a project archive (`.zip`, `.tar.gz`). The system performs a deep analysis to identify security vulnerabilities.
+* **Intelligent, AI-Powered Remediation**: Go beyond just finding issues. Select vulnerabilities and let the platform's multi-agent system generate precise code fixes.
+* **Transparent Cost Estimation**: The platform provides a detailed cost estimate for the full, in-depth vulnerability scan, allowing for approval of the major analysis cost upfront. A small, initial analysis is performed using an AI model to understand the code structure and determine which security specialists are needed. The main, intensive scan only proceeds after your explicit approval of the provided estimate.
+* **Selective Scanning**: Use the interactive file tree to include or exclude specific files and folders from the analysis, saving time and reducing costs by focusing only on relevant code.
+* **Downloadable Fixes**: Once remediation is complete, download the entire fixed codebase as a convenient zip archive.
+* **In-Depth Reporting**:
+    * **Executive Summary**: Get a high-level, downloadable PDF summary of the security posture, perfect for stakeholders.
+    * **Detailed Findings**: Explore each vulnerability with details on CWE, severity, and remediation advice.
+    * **Risk Score**: Understand the project's security risk at a glance with a calculated risk score.
+* **Multi-Provider LLM Support**: Choose from a range of Large Language Model providers, including OpenAI, Google, and Anthropic, for analysis needs.
+* **Proactive Security Advisor**: Engage with a built-in chat to get proactive guidance and ask security-related questions about the project.
+* **Test-Validated Remediation (Coming Soon)**: The remediation process will soon integrate with existing test suites to ensure that automated fixes do not break the application's functionality.
 
-## 📚 Documentation
+## How It Works: A Simplified Workflow
 
-**For full, detailed documentation, please visit [Docusaurus Documentation Site](./docs/docs/intro.md).**
+1.  **Submit**: Upload your code and select the files you want to scan.
+2.  **Estimate**: The platform analyzes the code to provide a cost estimate for the audit.
+3.  **Approve**: Review the cost and approve the scan to proceed.
+4.  **Analyze**: AI agents perform a parallel audit to identify vulnerabilities.
+5.  **Review**: Examine the detailed findings and the executive summary report.
+6.  **Remediate**: Select vulnerabilities for automatic fixing.
+7.  **Download**: Download the patched codebase.
 
-## 🌟 Key Features
+## Getting Started
 
-The platform is being built with a "full scope from day one" philosophy and includes:
-
-* **Dynamic LLM Provider Configuration**: Securely manage LLM providers (e.g., OpenAI, Google, Anthropic) and API keys through the admin dashboard instead of `.env` files. Keys are fully encrypted in the database.
-* **Interactive Chat Interfaces**:
-
-  * *Guideline Provision*: Get guidance on development policies for specific scenarios based on selectable security frameworks.
-  * *Secure Code Generation*: AI-driven code generation adhering to selected security frameworks.
-  * *GRC-like Requirement Analysis*: Elicit project details to generate reports on applicable security frameworks and compliance needs.
-* **Comprehensive Code Analysis Portal**:
-
-  * Submit single files, multiple files, or entire projects (via upload or Git).
-  * Multi-path analysis: Contextual AI (LLM with RAG), integrated security tools (Semgrep, Dependency-Check), and custom Tree-sitter queries.
-  * Automated and suggested code remediation with dynamic conflict resolution.
-* **Developer-Focused Tools**:
-
-  * Unit test generation for proposed fixes.
-  * Management of large codebases via "repomap" context and intelligent chunking.
-* **Rich Reporting & Compliance**:
-
-  * Unified, detailed reports mapping findings to code.
-  * Explicit mapping of findings to controls from numerous standards (OWASP Top 10, ASVS, NIST SSDF/CSF, PCI DSS, HIPAA, GDPR, ISO, etc.).
-  * SARIF output, side-by-side diffs, and agent-inserted comments.
-
-## 🛠️ Core Technology Stack
-
-* **Backend**: Python 3.12+, FastAPI, LangGraph, LangChain
-* **Frontend**: React with TypeScript, Vite, Ant Design (AntD)
-* **Agent Framework**: LangGraph
-* **Databases**: PostgreSQL 16 (primary), ChromaDB (vector DB for RAG)
-* **Message Queue**: RabbitMQ
-* **Security & Config**: `pydantic-settings`, `cryptography`
-* **Parsing**: Tree-sitter
-* **Deployment**: Docker, Docker Compose
-* **Documentation**: Docusaurus
-
-## 🚀 Getting Started
-
-Follow these steps to get a local instance of the Secure Coding Platform up and running.
-
-### 1. Initial Setup
-
-First, clone the repository and navigate into the project directory.
-
-### 2. Environment Configuration
-
-The platform is configured via a `.env` file.
-
-**a. Create the `.env` file:**
-Copy the example file to create your local configuration.
-
-```bash
-cp .env.example .env
-```
-
-**b. Generate an Encryption Key:**
-You must generate a secret key to encrypt sensitive data (like LLM API keys) in the database.
-
-```bash
-python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-```
-
-**c. Update your `.env` file:**
-Open the `.env` file and:
-
-1. Paste the key you just generated as the value for `ENCRYPTION_KEY`.
-2. Fill in the other required variables like `POSTGRES_USER`, `POSTGRES_PASSWORD`, etc.
-
-> **Note**: You no longer need to add LLM API keys directly to this file. They are now managed via the application's UI after you log in as a superuser.
-
-### 3. Launch the Platform
-
-**a. Build and run all services:**
-This command will build the Docker images and start the FastAPI app, the worker, the databases, and the message queue.
-
-```bash
-docker-compose up -d --build
-```
-
-**b. Run the Database Migration:**
-After the containers are running, apply the database schema.
-
-```bash
-poetry run alembic upgrade head
-```
-
-### 4. Access the Application
-
-You're all set!
-
-* **Frontend UI**: [http://localhost:5173](http://localhost:5173)
-* **Backend API**: [http://localhost:8000](http://localhost:8000)
-* **API Docs (Swagger UI)**: [http://localhost:8000/docs](http://localhost:8000/docs)
-
-## 📈 Current Status & Progress (Sprint 3: Complete)
-
-This project is being actively developed. Here's a snapshot of recent progress:
-
-**Sprint 1–3: Core Platform, Agent Refactor & LLM Config - COMPLETE**
-
-* ✅ **Full Backend Stability:** Resolved all startup and configuration errors for both the `app` and `worker` services.
-* ✅ **Dynamic LLM Configuration:** Implemented a secure API and database backend for managing LLM providers and encrypted API keys through the UI.
-* ✅ **Agent & Database Refactor:** Consolidated all ORM models into a single source of truth, resolving all circular dependencies and data model inconsistencies.
-* ✅ **Robust Migration System:** The Alembic migration environment is now fully functional and correctly handles the asynchronous, multi-file project structure.
-* ✅ **LangChain Provider Model:** The LLM subsystem has been upgraded to a robust, LangChain-based provider model.
-* ✅ **Authentication & Core Services:** The project includes a complete authentication backbone using FastAPI Users and a working asynchronous task pipeline via RabbitMQ.
-
-## 🤝 Contributing
-
-We welcome contributions from the community! Whether it's reporting bugs, suggesting features, improving documentation, or writing code — your help is appreciated.
-
-Please see [**CONTRIBUTING.md**](./CONTRIBUTING.md) for guidelines.
-We also adhere to a [**CODE\_OF\_CONDUCT.md**](./CODE_OF_CONDUCT.md) to ensure a welcoming and inclusive environment.
-
-## 📄 License
-
-This project is licensed under the MIT License. See the [**LICENSE**](./LICENSE) file for full details.
+1.  **Register**: Create an account on the platform.
+2.  **Configure LLMs**: Navigate to **Admin > LLM Settings** to add your LLM provider configurations. This step requires superuser privileges and must be completed before running a scan. You will need to provide your API key, select the model, and set the token costs.
+3.  **Submit Code**: Once the LLMs are configured, go to the "Submit Code" page.
+4.  **Analyze**: Choose your submission method, select from the configured AI models, and start the analysis.
+5.  **Approve & Review**: Follow the on-screen prompts to approve the cost and review your report.
