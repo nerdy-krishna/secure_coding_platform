@@ -1,72 +1,101 @@
 // src/pages/account/SubmissionHistoryPage.tsx
 import {
-    CheckCircleOutlined,
-    ClockCircleOutlined,
-    CloseCircleOutlined,
-    DollarCircleOutlined,
-    ExclamationCircleOutlined,
-    FileSyncOutlined,
-    StopOutlined,
-    SyncOutlined,
+  CheckCircleOutlined,
+  ClockCircleOutlined,
+  CloseCircleOutlined,
+  DollarCircleOutlined,
+  ExclamationCircleOutlined,
+  FileSyncOutlined,
+  FileTextOutlined,
+  SearchOutlined,
+  StopOutlined,
+  SyncOutlined,
 } from "@ant-design/icons";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-    Alert,
-    Button,
-    Card,
-    Col,
-    message,
-    Row,
-    Space,
-    Spin,
-    Statistic,
-    Steps,
-    Tag,
-    Typography,
+  Alert,
+  Button,
+  Card,
+  Col,
+  message,
+  Row,
+  Space,
+  Spin,
+  Statistic,
+  Steps,
+  Tag,
+  Typography,
 } from "antd";
 import React from "react";
 import { Link } from "react-router-dom";
 import {
-    approveSubmission,
-    cancelSubmission,
-    submissionService,
+  approveSubmission,
+  cancelSubmission,
+  submissionService,
 } from "../../services/submissionService";
 import type { SubmissionHistoryItem } from "../../types/api";
 
 const { Title, Text } = Typography;
 
-// Enhanced status map to power the new timeline view
-const statusDetails: {
-  [key: string]: {
-    step: number;
-    status: "wait" | "process" | "finish" | "error";
-    text: string;
-    icon: React.ReactNode;
-  };
-} = {
-  SUBMITTED: { step: 0, status: "process", text: "Submitted", icon: <ClockCircleOutlined /> },
-  PENDING_COST_APPROVAL: { step: 1, status: "process", text: "Pending Approval", icon: <ExclamationCircleOutlined /> },
-  APPROVED_QUEUED: { step: 2, status: "process", text: "Queued", icon: <SyncOutlined spin /> },
-  ANALYZING: { step: 2, status: "process", text: "Analyzing", icon: <FileSyncOutlined spin /> },
-  REMEDIATING: { step: 2, status: "process", text: "Remediating", icon: <FileSyncOutlined spin /> },
-  COMPLETED: { step: 3, status: "finish", text: "Completed", icon: <CheckCircleOutlined /> },
-  FAILED: { step: 1, status: "error", text: "Failed", icon: <CloseCircleOutlined /> },
-  CANCELLED: { step: 1, status: "error", text: "Cancelled", icon: <StopOutlined /> },
+// --- START: REFINED 6-STEP TIMELINE AND STATUS MAPPING ---
+
+// Type definition for the status object to ensure type safety
+type StatusInfo = {
+  step: number;
+  status: "wait" | "process" | "finish" | "error";
+  text: string;
+  icon?: React.ReactNode;
+};
+
+const timelineSteps = [
+  { title: "Submitted", icon: <FileTextOutlined /> },
+  { title: "Context Analysis", icon: <SearchOutlined /> },
+  { title: "Pending Approval", icon: <ExclamationCircleOutlined /> },
+  { title: "Security Scan", icon: <FileSyncOutlined /> },
+  { title: "Reporting", icon: <CheckCircleOutlined /> },
+  { title: "Completed", icon: <CheckCircleOutlined /> },
+];
+
+const statusDetails: { [key: string]: StatusInfo } = {
+  SUBMITTED: { step: 0, status: "finish", text: "Submitted", icon: <FileTextOutlined /> },
+  ANALYZING_CONTEXT: { step: 1, status: "process", text: "Analyzing Context", icon: <SyncOutlined spin /> },
+  PENDING_COST_APPROVAL: { step: 2, status: "wait", text: "Pending Cost Approval", icon: <ClockCircleOutlined /> },
+  APPROVED_QUEUED: { step: 3, status: "wait", text: "Queued for Scan", icon: <ClockCircleOutlined /> },
+  ANALYZING: { step: 3, status: "process", text: "Security Scan in Progress", icon: <FileSyncOutlined spin /> },
+  REMEDIATING: { step: 3, status: "process", text: "Remediation in Progress", icon: <FileSyncOutlined spin /> },
+  COMPLETED: { step: 5, status: "finish", text: "Completed", icon: <CheckCircleOutlined /> },
+  FAILED: { step: 3, status: "error", text: "Failed", icon: <CloseCircleOutlined /> },
+  CANCELLED: { step: 2, status: "error", text: "Cancelled", icon: <StopOutlined /> },
   DEFAULT: { step: 0, status: "process", text: "Processing", icon: <SyncOutlined spin /> },
 };
 
-const getStatusInfo = (status: string) => {
-  const upperStatus = status.toUpperCase().replace(/[\s-]/g, "_");
-  return statusDetails[upperStatus] || { ...statusDetails.DEFAULT, text: status };
-};
+// This function now accepts the full submission item to make contextual decisions
+const getStatusInfo = (item: SubmissionHistoryItem): StatusInfo => {
+  const upperStatus = item.status.toUpperCase().replace(/[\s-]/g, "_");
 
-const ActionButtons: React.FC<{ record: SubmissionHistoryItem; refetch: () => void }> = ({ record, refetch }) => {
+  // Handle the initial analysis phase before cost estimation is available
+  if (upperStatus === "ANALYZING" && !item.estimated_cost) {
+    return statusDetails.ANALYZING_CONTEXT;
+  }
+  
+  const details = statusDetails[upperStatus];
+  if (details) {
+      return details;
+  }
+
+  // Fallback for any unknown statuses
+  return { ...statusDetails.DEFAULT, text: item.status };
+};
+// --- END: REFINED 6-STEP TIMELINE AND STATUS MAPPING ---
+
+const ActionButtons: React.FC<{ record: SubmissionHistoryItem }> = ({ record }) => {
+  const queryClient = useQueryClient();
 
   const approveMutation = useMutation({
     mutationFn: () => approveSubmission(record.id),
     onSuccess: () => {
       message.success(`Submission approved and queued for analysis.`);
-      refetch();
+      queryClient.invalidateQueries({ queryKey: ["submissionHistory"] });
     },
     onError: (error) => message.error(`Approval failed: ${error.message}`),
   });
@@ -75,7 +104,7 @@ const ActionButtons: React.FC<{ record: SubmissionHistoryItem; refetch: () => vo
     mutationFn: () => cancelSubmission(record.id),
     onSuccess: () => {
       message.success(`Submission has been cancelled.`);
-      refetch();
+      queryClient.invalidateQueries({ queryKey: ["submissionHistory"] });
     },
     onError: (error) => message.error(`Cancellation failed: ${error.message}`),
   });
@@ -115,15 +144,13 @@ const ActionButtons: React.FC<{ record: SubmissionHistoryItem; refetch: () => vo
 };
 
 const SubmissionHistoryPage: React.FC = () => {
-
-  const { data, isLoading, isError, error, refetch } = useQuery<SubmissionHistoryItem[], Error>({
+  const { data, isLoading, isError, error } = useQuery<SubmissionHistoryItem[], Error>({
     queryKey: ["submissionHistory"],
     queryFn: submissionService.getSubmissionHistory,
     refetchInterval: (query) => {
-      const shouldPoll = query.state.data?.some((item) =>
-        ["SUBMITTED", "APPROVED_QUEUED", "ANALYZING", "REMEDIATING"].includes(
-          item.status.toUpperCase().replace(/[\s-]/g, "_"),
-        ),
+      const terminalStates = ["COMPLETED", "FAILED", "CANCELLED"];
+      const shouldPoll = query.state.data?.some(
+        (item) => !terminalStates.includes(item.status.toUpperCase().replace(/[\s-]/g, "_"))
       );
       return shouldPoll ? 5000 : false;
     },
@@ -146,7 +173,7 @@ const SubmissionHistoryPage: React.FC = () => {
       <Title level={2}>Submission History</Title>
       <div className="submission-list">
         {data?.map((item) => {
-          const statusInfo = getStatusInfo(item.status);
+          const statusInfo = getStatusInfo(item);
           const isPendingApproval = item.status === "PENDING_COST_APPROVAL";
           const cardBorderColor = isPendingApproval ? "#faad14" : "#d9d9d9";
 
@@ -166,12 +193,10 @@ const SubmissionHistoryPage: React.FC = () => {
                     <Steps
                       current={statusInfo.step}
                       status={statusInfo.status}
-                      items={[
-                        { title: "Submitted", icon: statusInfo.step === 0 ? statusInfo.icon : undefined },
-                        { title: "Approval", icon: statusInfo.step === 1 ? statusInfo.icon : undefined },
-                        { title: "In Progress", icon: statusInfo.step === 2 ? statusInfo.icon : undefined },
-                        { title: "Completed", icon: statusInfo.step === 3 ? statusInfo.icon : undefined },
-                      ]}
+                      items={timelineSteps.map((step, index) => ({
+                        ...step,
+                        icon: index === statusInfo.step ? statusInfo.icon : step.icon,
+                      }))}
                       size="small"
                       labelPlacement="vertical"
                     />
@@ -200,13 +225,13 @@ const SubmissionHistoryPage: React.FC = () => {
                               />
                             </Col>
                             <Col span={12}>
-                                <Statistic
+                              <Statistic
                                   title={<Text type="secondary">Output Cost (Est.)</Text>}
                                   value={item.estimated_cost.predicted_output_cost}
                                   precision={6}
                                   prefix="$"
                                   valueStyle={{ fontSize: '14px' }}
-                                />
+                              />
                             </Col>
                           </Row>
                         </Space>
@@ -215,7 +240,7 @@ const SubmissionHistoryPage: React.FC = () => {
                       )}
                     </Col>
                     <Col xs={24} lg={8} style={{ textAlign: "right", alignSelf: 'center' }}>
-                      <ActionButtons record={item} refetch={refetch} />
+                      <ActionButtons record={item} />
                     </Col>
                   </Row>
                 </Col>

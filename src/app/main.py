@@ -8,6 +8,7 @@ from fastapi.encoders import jsonable_encoder
 from starlette.responses import JSONResponse
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
+from psycopg.errors import DuplicateColumn
 
 # Import our new routers from the api module
 from app.api.endpoints import router as api_router, llm_router
@@ -43,6 +44,11 @@ async def lifespan(app: FastAPI):
             async with AsyncPostgresSaver.from_conn_string(conn_str) as checkpointer:
                 await checkpointer.setup()
             logger.info("Checkpointer tables setup complete.")
+        except DuplicateColumn as e:
+            logger.warning(
+                f"Checkpointer setup tried to add a column that already exists: {e}. "
+                "This is expected if the database is already migrated. Continuing..."
+            )
         except Exception as e:
             logger.error(f"Failed to setup checkpointer tables on startup: {e}", exc_info=True)
     else:
