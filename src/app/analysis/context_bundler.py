@@ -150,12 +150,12 @@ class ContextBundlingEngine:
 
     def create_bundles(self) -> List[ContextBundle]:
         """
-        Creates a context bundle for each file in the repository.
+        Creates a context bundle for each file in the repository map.
         """
-        logger.info("Creating context bundles for all files.")
+        logger.info("Creating context bundles for all files in the repository map.")
         bundles: List[ContextBundle] = []
 
-        for file_path in self.files:
+        for file_path in self.repository_map.files:
             context_files: Dict[str, str] = {}
             
             # Add the target file itself
