@@ -195,7 +195,7 @@ const SubmitCodePage: React.FC = () => {
 
       const response = await submissionService.submitCode(formData);
       message.success(response.message);
-      navigate("/history");
+      navigate("/account/history");
     } catch (error: unknown) {
       console.error("Submission failed:", error);
       let errorMessage = "An unknown error occurred during submission.";
