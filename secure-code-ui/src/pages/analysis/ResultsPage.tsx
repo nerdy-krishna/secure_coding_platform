@@ -34,17 +34,17 @@ import { AxiosError } from "axios";
 import React, { useCallback, useEffect, useState } from "react";
 import ReactDiffViewer, { DiffMethod } from "react-diff-viewer-continued";
 import { useNavigate, useParams } from "react-router-dom";
-import { submissionService } from "../services/submissionService";
+import { submissionService } from "../../services/submissionService";
 import {
   type AnalysisResultResponse, // This now includes impact_report
   type OverallRiskScore,
   type SubmittedFile,
   type Summary
-} from "../types/api";
-import { SeverityColors, SeverityTags } from "../utils/severityMappings";
+} from "../../types/api";
+import { SeverityColors, SeverityTags } from "../../utils/severityMappings";
 
 // Import our new component
-import ImpactReportDisplay from "../components/ImpactReportDisplay";
+import ImpactReportDisplay from "../../components/ImpactReportDisplay";
 
 const { Content } = Layout;
 const { Title, Text, Paragraph } = Typography;

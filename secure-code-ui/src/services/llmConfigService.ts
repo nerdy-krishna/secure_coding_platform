@@ -1,6 +1,7 @@
 import {
   type LLMConfiguration,
   type LLMConfigurationCreate,
+  type LLMInteractionResponse,
 } from "../types/api";
 import apiClient from "./apiClient";
 
@@ -53,5 +54,10 @@ export const llmConfigService = {
    */
   deleteLlmConfig: async (configId: string): Promise<void> => {
     await apiClient.delete(`/admin/llm-configs/${configId}`);
+  },
+
+  getLlmInteractions: async (): Promise<LLMInteractionResponse[]> => {
+    const response = await apiClient.get<LLMInteractionResponse[]>("/llm-interactions/");
+    return response.data;
   },
 };

@@ -367,8 +367,8 @@ async def save_final_reports_and_status(
     # --- END: DEBUG STATEMENTS TO ADD ---
 
     # Make the datetime object naive for TIMESTAMP WITHOUT TIME ZONE columns
-    completed_at_naive = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
-    values_to_update = {"status": status, "completed_at": completed_at_naive}
+    completed_at_aware = datetime.datetime.now(datetime.timezone.utc)
+    values_to_update = {"status": status, "completed_at": completed_at_aware}
     if impact_report:
         values_to_update["impact_report"] = impact_report
     if sarif_report:
@@ -382,3 +382,15 @@ async def save_final_reports_and_status(
     await db.execute(stmt)
     await db.commit()
 
+async def get_llm_interactions_for_user(db: AsyncSession, user_id: int) -> List[db_models.LLMInteraction]:
+    """
+    Retrieves all LLM interactions for a given user, ordered by most recent.
+    """
+    stmt = (
+        select(db_models.LLMInteraction)
+        .join(db_models.CodeSubmission, db_models.LLMInteraction.submission_id == db_models.CodeSubmission.id)
+        .where(db_models.CodeSubmission.user_id == user_id)
+        .order_by(db_models.LLMInteraction.timestamp.desc())
+    )
+    result = await db.execute(stmt)
+    return list(result.scalars().all())

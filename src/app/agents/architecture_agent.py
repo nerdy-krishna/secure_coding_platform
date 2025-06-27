@@ -109,7 +109,10 @@ async def analysis_node(state: SpecializedAgentState) -> Dict[str, Any]:
     interaction = LLMInteraction(
         submission_id=submission_id, agent_name=AGENT_NAME, prompt=prompt,
         raw_response=llm_response.raw_output, parsed_output=parsed_output_dict,
-        error=llm_response.error, file_path=filename, cost=llm_response.cost
+        error=llm_response.error, file_path=filename, cost=llm_response.cost,
+        input_tokens=llm_response.prompt_tokens,
+        output_tokens=llm_response.completion_tokens,
+        total_tokens=llm_response.total_tokens
     )
     async with AsyncSessionLocal() as db:
         await crud.save_llm_interaction(db, interaction_data=interaction)

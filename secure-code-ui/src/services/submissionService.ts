@@ -85,3 +85,18 @@ export const approveSubmission = async (submissionId: string): Promise<{ message
     throw error;
   }
 };
+
+/**
+ * Sends a cancellation request for a submission.
+ * @param submissionId The ID of the submission to cancel.
+ * @returns A promise that resolves with the server's confirmation message.
+ */
+export const cancelSubmission = async (submissionId: string): Promise<{ message: string }> => {
+  try {
+    const response = await apiClient.post<{ message: string }>(`/submissions/${submissionId}/cancel`);
+    return response.data;
+  } catch (error) {
+    console.error(`Error cancelling submission ${submissionId}:`, error);
+    throw error;
+  }
+};

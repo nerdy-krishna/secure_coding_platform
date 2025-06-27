@@ -324,3 +324,15 @@ export interface EstimatedCost {
   total_estimated_cost: number;
   predicted_output_tokens: number;
 }
+
+export interface LLMInteractionResponse {
+  id: number;
+  submission_id?: string;
+  file_path?: string;
+  agent_name: string;
+  timestamp: string; // ISO date string
+  cost?: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  total_tokens?: number;
+}
