@@ -1,4 +1,5 @@
 # src/app/agents/schemas.py
+from datetime import datetime, timezone
 from typing import Any, Dict, List, TypedDict, Optional, Literal
 import uuid
 
@@ -69,6 +70,7 @@ class LLMInteraction(BaseModel):
     input_tokens: Optional[int] = Field(None, description="Number of input tokens for the interaction.")
     output_tokens: Optional[int] = Field(None, description="Number of output tokens for the interaction.")
     total_tokens: Optional[int] = Field(None, description="Total tokens for the interaction.")
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class ImpactReport(BaseModel):
     """

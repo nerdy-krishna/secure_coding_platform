@@ -43,6 +43,7 @@ const { Option } = Select;
 
 
 interface SubmissionFormValues {
+  project_name: string;
   main_llm_config_id: string;
   specialized_llm_config_id: string;
   repo_url?: string;
@@ -87,6 +88,7 @@ const SubmitCodePage: React.FC = () => {
   const handleSubmissionModeChange = (e: RadioChangeEvent) => {
     const newMode = e.target.value as SubmissionMode;
     setSubmissionMode(newMode);
+    // Do not reset project_name, but reset repo_url
     form.resetFields(['repo_url']);
     setFileList([]);
     setArchiveFileList([]);
@@ -189,6 +191,7 @@ const SubmitCodePage: React.FC = () => {
         setIsSubmitting(false);
         return;
       }
+      formData.append("project_name", values.project_name);
       formData.append("frameworks", selectedFrameworks.join(","));
       formData.append("main_llm_config_id", values.main_llm_config_id);
       formData.append("specialized_llm_config_id", values.specialized_llm_config_id);
@@ -253,8 +256,13 @@ const SubmitCodePage: React.FC = () => {
     return (
         <>
           <Form.Item label="Upload Source Code" style={{ marginTop: 16 }}>
-            <Dragger name="files" multiple={true} directory itemRender={() => null} beforeUpload={(_, newFileList) => { const filtered = newFileList.filter(f => !isArchiveFile(f.name)); if (filtered.length !== newFileList.length) { message.error("Archive files are not allowed here. Use the 'Upload Archive' tab."); } setFileList(prev => [...prev, ...filtered]); return false; }} onRemove={(file) => setFileList(p => p.filter(i => i.uid !== file.uid))}>
-                <p className="ant-upload-drag-icon"><InboxOutlined /></p>
+            <Dragger 
+                name="files" 
+                multiple={true} 
+                itemRender={() => null} 
+                beforeUpload={(_, newFileList) => { const filtered = newFileList.filter(f => !isArchiveFile(f.name)); if (filtered.length !== newFileList.length) { message.error("Archive files are not allowed here. Use the 'Upload Archive' tab."); } setFileList(prev => [...prev, ...filtered]); return false; }} 
+                onRemove={(file) => setFileList(p => p.filter(i => i.uid !== file.uid))}>
+                 <p className="ant-upload-drag-icon"><InboxOutlined /></p>
                 <p className="ant-upload-text">Click or drag files or folders to this area to upload</p>
             </Dragger>
           </Form.Item>
@@ -279,9 +287,17 @@ const SubmitCodePage: React.FC = () => {
           onFinish={handleSubmit}
           initialValues={{ frameworks: ["OWASP ASVS v5.0"] }}
         >
+          <Form.Item
+            name="project_name"
+            label="Project Name"
+            rules={[{ required: true, message: "Please enter a name for your project." }]}
+          >
+            <Input placeholder="e.g., My E-Commerce Website" />
+          </Form.Item>
+
           {isLlmError && (
             <Alert
-              message="Error"
+               message="Error"
               description={`Could not fetch LLM configurations: ${llmError.message}. Please try again later.`}
               type="error"
               showIcon

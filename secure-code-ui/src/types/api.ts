@@ -307,15 +307,33 @@ export interface AnalysisResultResponse {
 // --- END UPDATED RESPONSE ---
 
 // For submission history list
+export interface EstimatedCost {
+  input_cost: number;
+  predicted_output_cost: number;
+  total_estimated_cost: number;
+  predicted_output_tokens: number;
+}
+
+export interface ActualCost {
+  total_cost: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_tokens: number;
+}
+
 export interface SubmissionHistoryItem {
   id: string;
   project_name: string;
-  primary_language: string | null;
   status: string;
   submitted_at: string; // ISO date string
   completed_at: string | null; // ISO date string
-  total_findings?: number; // Optional
-  estimated_cost?: EstimatedCost;
+  estimated_cost: EstimatedCost | null;
+  actual_cost: ActualCost | null;
+}
+
+export interface PaginatedSubmissionHistoryResponse {
+  items: SubmissionHistoryItem[];
+  total: number;
 }
 
 export interface EstimatedCost {

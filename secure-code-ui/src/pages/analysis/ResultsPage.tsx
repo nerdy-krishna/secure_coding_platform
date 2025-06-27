@@ -364,7 +364,7 @@ const ResultsPage: React.FC = () => {
 
   return (
     <Content style={{ padding: "20px 50px", margin: "0 auto", maxWidth: "1200px" }}>
-      <Button icon={<ArrowLeftOutlined />} onClick={() => navigate("/history")} style={{ marginBottom: 20 }}>
+      <Button icon={<ArrowLeftOutlined />} onClick={() => navigate("/account/history")} style={{ marginBottom: 20 }}>
         Back to Submission History
       </Button>
 

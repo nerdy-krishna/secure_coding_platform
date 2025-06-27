@@ -85,12 +85,17 @@ def determine_relevant_agents_node(state: CoordinatorState) -> Dict[str, Any]:
     logger.info(f"[{AGENT_NAME}] Determining relevant agents from ASVS analysis.")
     asvs_analysis = state.get("asvs_analysis", {})
     relevant_agents: Dict[str, List[str]] = {}
-    all_files = list(state.get("files", {}).keys())
-    
+    # The original code incorrectly used all files. This now correctly uses the
+    # already-filtered list of files from the repository map.
+    repository_map = state.get("repository_map")
+    if not repository_map:
+        return {"error": "Repository map is missing, cannot determine agent assignments."}
+    files_to_scan = list(repository_map.files.keys())
+
     for agent_name, details in asvs_analysis.items():
         agent_key = agent_name if agent_name.endswith("Agent") else f"{agent_name}Agent"
         if agent_key in AGENT_BUILDER_MAP and details.get("is_relevant"):
-            relevant_agents[agent_key] = all_files
+            relevant_agents[agent_key] = files_to_scan
 
     logger.info(f"[{AGENT_NAME}] Relevant agents identified: {list(relevant_agents.keys())}")
     return {"relevant_agents": relevant_agents}
@@ -101,6 +106,16 @@ def create_context_bundles_node(state: CoordinatorState) -> Dict[str, Any]:
     logger.info(f"[{AGENT_NAME}] Creating context bundles.")
     repository_map = state.get("repository_map")
     files = state.get("files")
+
+    # --- START: DEBUG STATEMENTS TO ADD ---
+    print("\n--- [DEBUG] COORDINATOR AGENT: BUNDLE CREATION ---")
+    if repository_map:
+        print(f"Files in Repository Map received by Coordinator: {len(repository_map.files)}")
+        # print(f"File paths in map: {list(repository_map.files.keys())}")
+    else:
+        print("Repository Map is MISSING!")
+    print("--- [DEBUG] END OF COORDINATOR BUNDLE CHECK ---\n")
+    # --- END: DEBUG STATEMENTS TO ADD ---
 
     if not repository_map or not files:
         return {"error": "Repository map or files missing, cannot create bundles."}
@@ -212,6 +227,11 @@ async def run_specialized_agents_node(state: CoordinatorState) -> Dict[str, Any]
     and setting the appropriate workflow_mode.
     """
     submission_id = state["submission_id"]
+
+    logger.info(f"[{AGENT_NAME}] Updating submission {submission_id} status to 'Analyzing'.")
+    async with async_session_factory() as db:
+        await crud.update_submission_status(db, submission_id, "Analyzing")
+    
     relevant_agents = state["relevant_agents"]
     context_bundles = state["context_bundles"]
     specialized_llm_id = state.get("llm_config_id")

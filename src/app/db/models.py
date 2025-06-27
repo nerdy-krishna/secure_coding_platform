@@ -79,6 +79,7 @@ class CodeSubmission(Base):
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     # This foreign key now correctly points to an integer column.
+    project_name: Mapped[str] = mapped_column(String, default="Untitled Project")
     user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), nullable=False)
     repo_url: Mapped[Optional[str]] = mapped_column(String)
     status: Mapped[str] = mapped_column(
@@ -118,13 +119,13 @@ class CodeSubmission(Base):
     )
     user: Mapped["User"] = relationship(back_populates="submissions")
     files: Mapped[List["SubmittedFile"]] = relationship(
-        "SubmittedFile", back_populates="submission"
+        "SubmittedFile", back_populates="submission", cascade="all, delete-orphan"
     )
     findings: Mapped[List["VulnerabilityFinding"]] = relationship(
-        "VulnerabilityFinding", back_populates="submission"
+        "VulnerabilityFinding", back_populates="submission", cascade="all, delete-orphan"
     )
     llm_interactions: Mapped[List["LLMInteraction"]] = relationship(
-        "LLMInteraction", back_populates="submission"
+        "LLMInteraction", back_populates="submission", cascade="all, delete-orphan"
     )
 
 

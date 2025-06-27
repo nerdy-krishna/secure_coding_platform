@@ -1,9 +1,8 @@
 // secure-code-ui/src/services/submissionService.ts
 import {
-  // Corrected: Use the type names exported from your api.ts
   type AnalysisResultResponse,
   type CodeSubmissionResponse,
-  type SubmissionHistoryItem,
+  type PaginatedSubmissionHistoryResponse
 } from "../types/api";
 import apiClient from "./apiClient";
 
@@ -64,8 +63,16 @@ export const submissionService = {
   /**
    * Fetches the list of past submissions for the current user.
    */
-  getSubmissionHistory: async (): Promise<SubmissionHistoryItem[]> => { // Corrected: Return type is an array of SubmissionHistoryItem
-    const response = await apiClient.get<SubmissionHistoryItem[]>("/history");
+  getSubmissionHistory: async (
+    page: number,
+    pageSize: number,
+  ): Promise<PaginatedSubmissionHistoryResponse> => {
+    const response = await apiClient.get<PaginatedSubmissionHistoryResponse>("/history", {
+        params: {
+            skip: (page - 1) * pageSize,
+            limit: pageSize,
+        }
+    });
     return response.data;
   },
 };
@@ -99,4 +106,12 @@ export const cancelSubmission = async (submissionId: string): Promise<{ message:
     console.error(`Error cancelling submission ${submissionId}:`, error);
     throw error;
   }
+};
+
+/**
+ * Sends a delete request for a submission. (Superuser only)
+ * @param submissionId The ID of the submission to delete.
+ */
+export const deleteSubmission = async (submissionId: string): Promise<void> => {
+    await apiClient.delete(`/submissions/${submissionId}`);
 };

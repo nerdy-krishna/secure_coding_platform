@@ -9,6 +9,7 @@ from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
+    Query,
     UploadFile,
     File,
     Form,
@@ -136,6 +137,7 @@ async def preview_git_files(request: api_models.GitRepoPreviewRequest):
 async def submit_code(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[db_models.User, Depends(current_active_user)],
+    project_name: Annotated[str, Form(...)],
     main_llm_config_id: Annotated[uuid.UUID, Form(...)],
     specialized_llm_config_id: Annotated[uuid.UUID, Form(...)],
     frameworks: Annotated[str, Form(...)],
@@ -248,6 +250,7 @@ async def submit_code(
     submission = await crud.create_submission(
         db=db,
         user_id=current_user.id,
+        project_name=project_name,
         repo_url=repo_url,
         files=files_data,
         frameworks=framework_list,
@@ -380,26 +383,38 @@ async def get_submission_results(
             detail=f"Submission analysis is not yet completed. Current status: '{submission_db.status}'.",
         )
     
-    # Step 3: Build the detailed summary report for the UI. This logic is now updated
-    # to be robust against duplicate file entries in the database.
-    all_findings_db: List[db_models.VulnerabilityFinding] = submission_db.findings
+    # --- START: NEW FILTERING LOGIC ---
+    # Create a set of excluded file paths for efficient lookup.
+    excluded_files_set = set(submission_db.excluded_files or [])
     
-    # 1. Group all findings by their file_path.
+    # Create new lists containing only the data from non-excluded files.
+    analyzed_files_db = [
+        file for file in submission_db.files if file.file_path not in excluded_files_set
+    ]
+    findings_from_analyzed_files = [
+        finding for finding in submission_db.findings if finding.file_path not in excluded_files_set
+    ]
+    # --- END: NEW FILTERING LOGIC --
+
+    # Step 3: Build the detailed summary report using the FILTERED data.
+    all_findings_db: List[db_models.VulnerabilityFinding] = findings_from_analyzed_files
+    
+    # 1. Group findings by their file_path.
     findings_by_file: Dict[str, List[db_models.VulnerabilityFinding]] = {}
     for finding_db_item in all_findings_db:
         findings_by_file.setdefault(finding_db_item.file_path, []).append(finding_db_item)
 
-    # 2. Create a de-duplicated map of file data for easy lookup.
+    # 2. Create a map of file data for easy lookup, using only analyzed files.
     file_data_map: Dict[str, db_models.SubmittedFile] = {
-        file_db.file_path: file_db for file_db in submission_db.files
+        file_db.file_path: file_db for file_db in analyzed_files_db
     }
     
-    # 3. Get a single, unique set of all file paths from both files and findings.
+    # 3. This union will now correctly only contain paths of analyzed files.
     all_involved_paths = sorted(
         list(set(file_data_map.keys()).union(set(findings_by_file.keys())))
     )
 
-    # 4. Build the final report list by iterating over the unique paths.
+    # 4. Build the final report list. This loop now only iterates over analyzed files.
     files_analyzed_report_items: List[api_models.SubmittedFileReportItem] = []
     for path in all_involved_paths:
         file_info = file_data_map.get(path)
@@ -431,20 +446,15 @@ async def get_submission_results(
 
     summary_response_obj = api_models.SummaryResponse(
         total_findings_count=len(all_findings_db),
-        files_analyzed_count=len(submission_db.files),
+        files_analyzed_count=len(files_analyzed_report_items),
         severity_counts=sev_counts_obj
     )
     
-    project_name = submission_db.repo_url or "N/A"
-    if submission_db.repo_url:
-        try:
-            project_name = submission_db.repo_url.split('/')[-1].replace('.git', '')
-        except Exception:
-            project_name = submission_db.repo_url
+    project_name = submission_db.project_name
 
     primary_language = "N/A"
-    if submission_db.files and submission_db.files[0].language:
-        primary_language = submission_db.files[0].language
+    if analyzed_files_db:
+        primary_language = analyzed_files_db[0].language
 
     summary_report_response_obj = api_models.SummaryReportResponse(
         submission_id=submission_db.id,
@@ -474,13 +484,37 @@ async def read_llm_interactions_for_user(
     interactions = await crud.get_llm_interactions_for_user(db, user_id=current_user.id)
     return interactions
 
-@router.get("/history", response_model=List[api_models.SubmissionHistoryItem])
+@router.get("/history", response_model=api_models.PaginatedSubmissionHistoryResponse)
 async def get_submission_history(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[db_models.User, Depends(current_active_user)],
+    skip: int = Query(0, ge=0, description="Number of records to skip for pagination."),
+    limit: int = Query(10, ge=1, le=100, description="Number of records to return."),
 ):
     """
-    Retrieves the submission history for the currently authenticated user.
+    Retrieves a paginated list of submission history for the currently authenticated user.
     """
-    history = await crud.get_submission_history(db, user_id=current_user.id)
-    return history
+    total = await crud.get_submission_history_count(db, user_id=current_user.id)
+    items_raw = await crud.get_submission_history(db, user_id=current_user.id, skip=skip, limit=limit)
+    
+    return {"items": items_raw, "total": total}
+
+
+@router.delete(
+    "/submissions/{submission_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a submission record",
+)
+async def delete_submission_record(
+    submission_id: uuid.UUID,
+    user: db_models.User = Depends(current_superuser),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Deletes a submission and all its associated data.
+    This action is permanent and requires superuser privileges.
+    """
+    deleted = await crud.delete_submission(db, submission_id)
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Submission not found")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
