@@ -102,12 +102,22 @@ async def create_repository_map_node(state: ContextAnalysisAgentState) -> Dict[s
     
     all_files = state["files"]
     excluded_files_set = set(state.get("excluded_files") or [])
+
+    # --- START: DEBUG STATEMENTS TO ADD ---
+    print("\n--- [DEBUG] CONTEXT ANALYSIS AGENT: FILE FILTERING ---")
+    print(f"Total files received: {len(all_files)}")
+    print(f"Exclusion list received: {excluded_files_set}")
+    # --- END: DEBUG STATEMENTS TO ADD ---
     
     if excluded_files_set:
         logger.info(f"[{AGENT_NAME}] Excluding {len(excluded_files_set)} files from analysis.")
         files_to_process = {
             path: content for path, content in all_files.items() if path not in excluded_files_set
         }
+        # --- START: DEBUG STATEMENTS TO ADD ---
+        print(f"Files remaining after filtering: {len(files_to_process)}")
+        print("--- [DEBUG] END OF CONTEXT ANALYSIS AGENT CHECK ---\n")
+        # --- END: DEBUG STATEMENTS TO ADD ---
         logger.debug(f"[{AGENT_NAME}] Files remaining for analysis: {len(files_to_process)}")
     else:
         files_to_process = all_files

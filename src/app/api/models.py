@@ -209,16 +209,34 @@ class DashboardStats(BaseModel):
     total_findings: int
     high_severity_findings: int
 
+class EstimatedCost(BaseModel):
+    input_cost: float
+    predicted_output_cost: float
+    total_estimated_cost: float
+    predicted_output_tokens: float
+
+class ActualCost(BaseModel):
+    total_cost: float
+    total_input_tokens: int
+    total_output_tokens: int
+    total_tokens: int
+
 class SubmissionHistoryItem(BaseModel):
     id: UUID4
+    project_name: str
     status: str
     submitted_at: datetime
     completed_at: Optional[datetime] = None
-    estimated_cost: Optional[Dict[str, Any]] = None
+    estimated_cost: Optional[EstimatedCost] = None
+    actual_cost: Optional[ActualCost] = None
 
     class Config:
         from_attributes = True
 
+class PaginatedSubmissionHistoryResponse(BaseModel):
+    items: List[SubmissionHistoryItem]
+    total: int
+    
 class GitRepoPreviewRequest(BaseModel):
     repo_url: str
 
