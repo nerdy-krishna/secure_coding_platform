@@ -1,14 +1,20 @@
 // src/pages/account/CostUsagePage.tsx
 import { useQuery } from "@tanstack/react-query";
-import type { TableProps } from "antd";
+import type { TablePaginationConfig, TableProps } from "antd";
 import { Alert, Card, Col, Row, Space, Spin, Statistic, Table, Tag, Typography } from "antd";
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { llmConfigService } from "../../services/llmConfigService";
 import type { LLMInteractionResponse } from "../../types/api";
 
 const { Title, Text } = Typography;
 
 const CostUsagePage: React.FC = () => {
+  
+  const [pagination, setPagination] = useState({
+    current: 1,
+    pageSize: 20,
+  });
+
   const { data, isLoading, isError, error } = useQuery<LLMInteractionResponse[], Error>({
     queryKey: ["llmInteractions"],
     queryFn: llmConfigService.getLlmInteractions,
@@ -119,7 +125,17 @@ const CostUsagePage: React.FC = () => {
                 dataSource={data}
                 loading={isLoading}
                 rowKey="id"
-                pagination={{ pageSize: 20, showSizeChanger: true }}
+                pagination={{
+                    ...pagination,
+                    showSizeChanger: true,
+                    pageSizeOptions: ['10', '20', '50', '100'],
+                  }}
+                onChange={(newPagination: TablePaginationConfig) => {
+                    setPagination({
+                      current: newPagination.current ?? 1,
+                      pageSize: newPagination.pageSize ?? 20,
+                    });
+                }}
                 scroll={{ x: true }}
             />
         </Card>

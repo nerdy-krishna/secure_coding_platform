@@ -20,6 +20,7 @@ import {
   Table,
   Tag,
   Typography,
+  type TablePaginationConfig,
   type TableProps,
 } from "antd";
 import type { RuleObject } from "antd/es/form";
@@ -42,6 +43,11 @@ const LLMSettingsPage: React.FC = () => {
   const [editingConfig, setEditingConfig] = useState<LLMConfiguration | null>(
     null,
   );
+  
+  const [pagination, setPagination] = useState({
+    current: 1,
+    pageSize: 10,
+  });
 
   const {
     data: llmConfigs,
@@ -242,7 +248,23 @@ const LLMSettingsPage: React.FC = () => {
       </Card>
       <Card>
         <Title level={3}>Existing LLM Configurations</Title>
-        <Table columns={columns} dataSource={llmConfigs} loading={isLoading} rowKey="id" pagination={{ pageSize: 10, showSizeChanger: true }} scroll={{ x: true }} />
+        <Table
+          columns={columns}
+          dataSource={llmConfigs}
+          loading={isLoading}
+          rowKey="id"
+          pagination={{
+            ...pagination,
+            showSizeChanger: true,
+            pageSizeOptions: ['10', '20', '50'],
+          }}
+          onChange={(newPagination: TablePaginationConfig) => {
+            setPagination({
+              current: newPagination.current ?? 1,
+              pageSize: newPagination.pageSize ?? 10,
+            });
+          }}
+          scroll={{ x: true }} />
       </Card>
     </Space>
   );

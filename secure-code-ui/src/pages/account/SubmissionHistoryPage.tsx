@@ -1,5 +1,6 @@
 // src/pages/account/SubmissionHistoryPage.tsx
 import {
+  CheckCircleFilled,
   CheckCircleOutlined,
   ClockCircleOutlined,
   CloseCircleOutlined,
@@ -63,7 +64,7 @@ const statusDetails: { [key: string]: StatusInfo } = {
   APPROVED_QUEUED: { step: 3, status: "wait", text: "Queued for Scan", icon: <ClockCircleOutlined /> },
   ANALYZING: { step: 3, status: "process", text: "Security Scan in Progress", icon: <FileSyncOutlined spin /> },
   REMEDIATING: { step: 3, status: "process", text: "Remediation in Progress", icon: <FileSyncOutlined spin /> },
-  COMPLETED: { step: 5, status: "finish", text: "Completed", icon: <CheckCircleOutlined /> },
+  COMPLETED: { step: 5, status: "finish", text: "Completed", icon: <CheckCircleFilled /> },
   FAILED: { step: 3, status: "error", text: "Failed", icon: <CloseCircleOutlined /> },
   CANCELLED: { step: 2, status: "error", text: "Cancelled", icon: <StopOutlined /> },
   DEFAULT: { step: 0, status: "process", text: "Processing", icon: <SyncOutlined spin /> },
@@ -193,18 +194,32 @@ const SubmissionHistoryPage: React.FC = () => {
                     <Steps
                       current={statusInfo.step}
                       status={statusInfo.status}
-                      items={timelineSteps.map((step, index) => ({
-                        ...step,
-                        icon: index === statusInfo.step ? statusInfo.icon : step.icon,
-                      }))}
+                      items={timelineSteps.map((step, index) => {
+                        let stepStatus: "wait" | "process" | "finish" | "error" = "wait";
+                        
+                        if (index < statusInfo.step) {
+                          // Mark all steps before the current one as "finish"
+                          stepStatus = "finish";
+                        } else if (index === statusInfo.step) {
+                          // Use the status for the current step
+                          stepStatus = statusInfo.status;
+                        }
+
+                        return {
+                          ...step,
+                          status: stepStatus,
+                          // Show the icon only for the current step, allowing default icons (like checkmarks) for others
+                          icon: index === statusInfo.step ? statusInfo.icon : undefined,
+                        };
+                      })}
                       size="small"
                       labelPlacement="vertical"
                     />
                   </div>
                 </Col>
                 <Col xs={24} md={14} lg={12}>
-                  <Row gutter={[16, 16]}>
-                    <Col xs={24} lg={16}>
+                  <Row gutter={[16, 16]} align="middle">
+                    <Col xs={24} xl={16}>
                       {item.estimated_cost ? (
                         <Space direction="vertical" style={{ width: "100%" }}>
                            <Statistic
@@ -227,7 +242,7 @@ const SubmissionHistoryPage: React.FC = () => {
                             <Col span={12}>
                               <Statistic
                                   title={<Text type="secondary">Output Cost (Est.)</Text>}
-                                  value={item.estimated_cost.predicted_output_cost}
+                                  value={item.estimated_cost.total_estimated_cost}
                                   precision={6}
                                   prefix="$"
                                   valueStyle={{ fontSize: '14px' }}
@@ -239,7 +254,7 @@ const SubmissionHistoryPage: React.FC = () => {
                         <Tag icon={statusInfo.icon}>{statusInfo.text}</Tag>
                       )}
                     </Col>
-                    <Col xs={24} lg={8} style={{ textAlign: "right", alignSelf: 'center' }}>
+                    <Col xs={24} xl={8} style={{ textAlign: "right", alignSelf: 'center' }}>
                       <ActionButtons record={item} />
                     </Col>
                   </Row>
