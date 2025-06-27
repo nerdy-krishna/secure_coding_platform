@@ -2,6 +2,7 @@
 import {
   BellOutlined,
   DesktopOutlined,
+  DollarOutlined,
   FileTextOutlined,
   LogoutOutlined,
   PieChartOutlined,
@@ -53,19 +54,24 @@ const DashboardLayout: React.FC<{ children?: React.ReactNode }> = ({
   const siderMenuItems = useMemo(() => {
     const items: MenuItem[] = [
       getItem(
-        <Link to="/dashboard">Dashboard</Link>,
+        <Link to="/account/dashboard">Dashboard</Link>,
         "dashboard_overview",
         <PieChartOutlined />,
       ),
       getItem(
-        <Link to="/submit">Submit Code</Link>,
+        <Link to="/submission/submit">Submit Code</Link>,
         "submit_code",
         <FileTextOutlined />,
       ),
       getItem(
-        <Link to="/history">History</Link>,
+        <Link to="/account/history">History</Link>,
         "submission_history",
         <DesktopOutlined />,
+      ),
+      getItem(
+        <Link to="/account/usage">Cost & Usage</Link>,
+        "cost_usage",
+        <DollarOutlined />,
       ),
     ];
 
@@ -74,7 +80,7 @@ const DashboardLayout: React.FC<{ children?: React.ReactNode }> = ({
       items.push(
         getItem("Admin", "admin_section", <ToolOutlined />, [
           getItem(
-            <Link to="/settings/llm">LLM Settings</Link>,
+            <Link to="/account/settings/llm">LLM Settings</Link>,
             "llm_settings_nav",
           ),
           // Future admin links can be added here
@@ -86,19 +92,18 @@ const DashboardLayout: React.FC<{ children?: React.ReactNode }> = ({
     items.push({ type: "divider" });
     items.push(
       getItem(
-        <Link to="/profile">User Profile</Link>,
+        <Link to="/account/profile">User Profile</Link>,
         "user_profile_nav",
         <UserOutlined />,
       ),
       getItem(
-        <Link to="/settings">Settings</Link>,
+        <Link to="/account/settings">Settings</Link>,
         "user_settings_nav",
         <SettingOutlined />,
       ),
     );
-
     return items;
-  }, [user?.is_superuser]); // The dependency array ensures this runs only when user status changes
+  }, [user?.is_superuser]);
 
   const handleLogout = async () => {
     await logout();
@@ -108,7 +113,7 @@ const DashboardLayout: React.FC<{ children?: React.ReactNode }> = ({
     {
       key: "profile",
       label: (
-        <Link to="/profile">
+        <Link to="/account/profile">
           <UserOutlined style={{ marginRight: 8 }} />
           Profile
         </Link>
@@ -117,7 +122,7 @@ const DashboardLayout: React.FC<{ children?: React.ReactNode }> = ({
     {
       key: "settings",
       label: (
-        <Link to="/settings">
+        <Link to="/account/settings">
           <SettingOutlined style={{ marginRight: 8 }} />
           Settings
         </Link>

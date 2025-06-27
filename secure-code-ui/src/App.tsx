@@ -17,6 +17,7 @@ import AuthLayout from "./layouts/AuthLayout";
 import DashboardLayout from "./layouts/DashboardLayout";
 
 // Page Components
+import CostUsagePage from "./pages/account/CostUsagePage";
 import DashboardPage from "./pages/account/DashboardPage";
 import LLMSettingsPage from "./pages/account/LLMSettingsPage";
 import SettingsPage from "./pages/account/SettingsPage";
@@ -130,6 +131,7 @@ function AppContent() {
           <Route path="/account/dashboard" element={<DashboardPage />} />
           <Route path="/submission/submit" element={<SubmitCodePage />} />
           <Route path="/account/history" element={<SubmissionHistoryPage />} />
+          <Route path="/account/usage" element={<CostUsagePage />} />
           <Route path="/analysis/results/:submissionId" element={<ResultsPage />} />
           <Route path="/account/profile" element={<UserProfilePage />} />
           <Route path="/account/settings" element={<SettingsPage />} />

@@ -30,11 +30,11 @@ import { type RcFile } from "antd/es/upload";
 import { AxiosError } from "axios";
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { llmConfigService } from "../services/llmConfigService";
-import { submissionService } from "../services/submissionService";
-import type { LLMConfiguration } from "../types/api";
+import { llmConfigService } from "../../services/llmConfigService";
+import { submissionService } from "../../services/submissionService";
+import type { LLMConfiguration } from "../../types/api";
 
-import FileTree from "../components/FileTree";
+import FileTree from "../../components/FileTree";
 
 const { Dragger } = Upload;
 const { Title, Paragraph, Text } = Typography;

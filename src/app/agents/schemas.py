@@ -66,6 +66,9 @@ class LLMInteraction(BaseModel):
     parsed_output: Optional[Dict] = Field(None, description="The structured output after parsing the response.")
     error: Optional[str] = Field(None, description="Any validation or parsing errors that occurred.")
     cost: Optional[float] = Field(None, description="The estimated cost of the LLM interaction.")
+    input_tokens: Optional[int] = Field(None, description="Number of input tokens for the interaction.")
+    output_tokens: Optional[int] = Field(None, description="Number of output tokens for the interaction.")
+    total_tokens: Optional[int] = Field(None, description="Total tokens for the interaction.")
 
 class ImpactReport(BaseModel):
     """

@@ -66,10 +66,10 @@ class LLMConfiguration(Base):
     # --- End New Columns ---
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow
+        DateTime(timezone=True), server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
 
@@ -81,9 +81,13 @@ class CodeSubmission(Base):
     # This foreign key now correctly points to an integer column.
     user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), nullable=False)
     repo_url: Mapped[Optional[str]] = mapped_column(String)
-    status: Mapped[str] = mapped_column(String, default="Pending")
-    submitted_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    status: Mapped[str] = mapped_column(
+        String,
+        default="Pending",
+        comment="Submission status, e.g., Submitted, Pending Cost Approval, Analyzing, Remediating, Completed, Failed, Cancelled",
+    )
+    submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     frameworks: Mapped[Optional[List[str]]] = mapped_column(JSON)
     excluded_files: Mapped[Optional[List[str]]] = mapped_column(
         JSONB,
@@ -192,7 +196,10 @@ class LLMInteraction(Base):
     parsed_output: Mapped[Optional[Dict]] = mapped_column(JSON)
     error: Mapped[Optional[str]] = mapped_column(Text)
     cost: Mapped[Optional[float]] = mapped_column(Float)
-    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    input_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    output_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    total_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     submission: Mapped["CodeSubmission"] = relationship(
         "CodeSubmission", back_populates="llm_interactions"

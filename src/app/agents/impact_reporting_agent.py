@@ -91,7 +91,10 @@ async def generate_impact_report_node(state: ImpactReportingAgentState) -> Dict[
         submission_id=submission_id, agent_name=AGENT_NAME, prompt=prompt,
         raw_response=llm_response.raw_output, 
         parsed_output=llm_response.parsed_output.model_dump() if llm_response.parsed_output else None,
-        error=llm_response.error, file_path="N/A (Impact Report)", cost=llm_response.cost
+        error=llm_response.error, file_path="N/A (Impact Report)", cost=llm_response.cost,
+        input_tokens=llm_response.prompt_tokens,
+        output_tokens=llm_response.completion_tokens,
+        total_tokens=llm_response.total_tokens
     )
     async with AsyncSessionLocal() as db:
         await crud.save_llm_interaction(db, interaction_data=interaction)

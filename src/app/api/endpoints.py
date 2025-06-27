@@ -312,6 +312,38 @@ async def approve_submission_analysis(
 
     return {"message": "Analysis approved and queued for processing."}
 
+@router.post(
+    "/submissions/{submission_id}/cancel",
+    status_code=status.HTTP_200_OK,
+    response_model=Dict[str, str],
+    summary="Cancel a pending submission",
+)
+async def cancel_submission(
+    submission_id: uuid.UUID,
+    user: db_models.User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Cancels a submission that is in the 'PENDING_COST_APPROVAL' state.
+    """
+    submission = await crud.get_submission(db, submission_id)
+    if not submission:
+        raise HTTPException(status_code=404, detail="Submission not found")
+
+    if submission.user_id != user.id and not user.is_superuser:
+        raise HTTPException(
+            status_code=403, detail="Not authorized to cancel this submission"
+        )
+
+    if submission.status != "PENDING_COST_APPROVAL":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Submission cannot be cancelled. Current status: {submission.status}",
+        )
+
+    await crud.update_submission_status(db, submission_id, "Cancelled")
+    logger.info(f"User {user.id} cancelled submission {submission_id}.")
+    return {"message": "Submission has been successfully cancelled."}
 
 @router.get("/status/{submission_id}", response_model=api_models.SubmissionStatus)
 async def get_submission_status(
@@ -415,6 +447,16 @@ async def get_submission_results(
         summary_report=summary_report_response_obj
     )
 
+@router.get("/llm-interactions/", response_model=List[api_models.LLMInteractionResponse])
+async def read_llm_interactions_for_user(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[db_models.User, Depends(current_active_user)],
+):
+    """
+    Retrieves a history of all LLM interactions for the current user.
+    """
+    interactions = await crud.get_llm_interactions_for_user(db, user_id=current_user.id)
+    return interactions
 
 @router.get("/history", response_model=List[api_models.SubmissionHistoryItem])
 async def get_submission_history(
