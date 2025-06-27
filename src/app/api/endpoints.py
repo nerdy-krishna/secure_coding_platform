@@ -380,27 +380,43 @@ async def get_submission_results(
             detail=f"Submission analysis is not yet completed. Current status: '{submission_db.status}'.",
         )
     
-    # Step 3 (Optional but preserved): Build the detailed summary report for the UI.
-    # This logic remains useful for UIs that need a granular breakdown.
+    # Step 3: Build the detailed summary report for the UI. This logic is now updated
+    # to be robust against duplicate file entries in the database.
     all_findings_db: List[db_models.VulnerabilityFinding] = submission_db.findings
+    
+    # 1. Group all findings by their file_path.
     findings_by_file: Dict[str, List[db_models.VulnerabilityFinding]] = {}
     for finding_db_item in all_findings_db:
         findings_by_file.setdefault(finding_db_item.file_path, []).append(finding_db_item)
 
+    # 2. Create a de-duplicated map of file data for easy lookup.
+    file_data_map: Dict[str, db_models.SubmittedFile] = {
+        file_db.file_path: file_db for file_db in submission_db.files
+    }
+    
+    # 3. Get a single, unique set of all file paths from both files and findings.
+    all_involved_paths = sorted(
+        list(set(file_data_map.keys()).union(set(findings_by_file.keys())))
+    )
+
+    # 4. Build the final report list by iterating over the unique paths.
     files_analyzed_report_items: List[api_models.SubmittedFileReportItem] = []
-    for file_db in submission_db.files:
-        current_file_findings_db = findings_by_file.get(file_db.file_path, [])
-        file_findings_response: List[api_models.VulnerabilityFindingResponse] = [
-            api_models.VulnerabilityFindingResponse.from_orm(f) for f in current_file_findings_db
+    for path in all_involved_paths:
+        file_info = file_data_map.get(path)
+        file_findings = findings_by_file.get(path, [])
+        
+        file_findings_response = [
+            api_models.VulnerabilityFindingResponse.from_orm(f) for f in file_findings
         ]
+
         files_analyzed_report_items.append(
             api_models.SubmittedFileReportItem(
-                file_path=file_db.file_path,
+                file_path=path,
                 findings=file_findings_response,
-                language=file_db.language,
-                analysis_summary=file_db.analysis_summary,
-                identified_components=file_db.identified_components,
-                asvs_analysis=file_db.asvs_analysis,
+                language=file_info.language if file_info else "unknown",
+                analysis_summary=file_info.analysis_summary if file_info else None,
+                identified_components=file_info.identified_components if file_info else [],
+                asvs_analysis=file_info.asvs_analysis if file_info else None,
             )
         )
 
