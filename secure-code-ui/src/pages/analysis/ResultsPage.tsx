@@ -4,13 +4,16 @@ import {
   ArrowLeftOutlined,
   BugOutlined,
   CodeOutlined,
+  DownloadOutlined, // ADDED
   FileTextOutlined,
   InfoCircleOutlined,
   LoadingOutlined,
   ProfileOutlined,
+  RocketOutlined, // ADDED
   SafetyCertificateOutlined,
   ToolOutlined,
 } from "@ant-design/icons";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
   Button,
@@ -31,20 +34,23 @@ import {
   Typography,
 } from "antd";
 import { AxiosError } from "axios";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react"; // useMemo is now used correctly
+// prettier-ignore
 import ReactDiffViewer, { DiffMethod } from "react-diff-viewer-continued";
-import { useNavigate, useParams } from "react-router-dom";
-import { submissionService } from "../../services/submissionService";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { submissionService, triggerRemediation } from "../../services/submissionService";
 import {
-  type AnalysisResultResponse, // This now includes impact_report
+  type AnalysisResultResponse,
+  type Finding,
   type OverallRiskScore,
   type SubmittedFile,
   type Summary
 } from "../../types/api";
 import { SeverityColors, SeverityTags } from "../../utils/severityMappings";
 
-// Import our new component
-import ImpactReportDisplay from "../../components/ImpactReportDisplay";
+// Import our new components
+import RemediationModal from "../../components/RemediationModal";
+import apiClient from '../../services/apiClient';
 
 const { Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
@@ -64,12 +70,17 @@ const getSeverityTagColor = (severity?: string): string => {
 const ResultsPage: React.FC = () => {
   const { submissionId } = useParams<{ submissionId: string }>();
   const navigate = useNavigate();
-  // The result state now can hold the new impact_report field
+  const queryClient = useQueryClient(); // ADDED
+
   const [result, setResult] = useState<AnalysisResultResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeFileKey, setActiveFileKey] = useState<string | undefined>(
-    undefined,
+  const [activeFileKey, setActiveFileKey] = useState<string | undefined>(undefined);
+  const [isRemediationModalVisible, setIsRemediationModalVisible] = useState(false); // ADDED
+
+  const allFindings: Finding[] = useMemo(() => 
+    result?.summary_report?.files_analyzed?.flatMap(file => file.findings) || [],
+    [result]
   );
 
   // Your existing data fetching logic is preserved
@@ -115,6 +126,35 @@ const ResultsPage: React.FC = () => {
     fetchAnalysisResults();
   }, [fetchAnalysisResults]);
 
+  // ADDED: Mutation for triggering remediation
+  const remediationMutation = useMutation({
+    mutationFn: ({ categories }: { categories: string[] }) => {
+        if (!submissionId) {
+            throw new Error("Submission ID is missing");
+        }
+        return triggerRemediation(submissionId, { categories_to_fix: categories });
+    },
+    onSuccess: (data) => {
+        message.success(data.message || "Remediation successfully queued!");
+        setIsRemediationModalVisible(false);
+        // Refetch history to show the new "Queued for Remediation" status
+        queryClient.invalidateQueries({ queryKey: ["submissionHistory"] });
+        // After a short delay, navigate user to the history page
+        setTimeout(() => navigate('/account/history'), 2000);
+    },
+    onError: (err: AxiosError) => {
+        const errorDetail = (err.response?.data as { detail?: string })?.detail || err.message;
+        message.error(`Remediation failed: ${errorDetail}`);
+    }
+  });
+
+   // Your helper functions and render logic for file tabs are preserved
+  const getFindingColor = (severity?: string): string => {
+    if (!severity) return "grey";
+    const upperSeverity = severity.toUpperCase();
+    return (SeverityColors[upperSeverity as keyof typeof SeverityColors] || "grey");
+  };
+
   // Your existing loading, error, and empty states are preserved
   if (loading) {
     return (
@@ -153,18 +193,21 @@ const ResultsPage: React.FC = () => {
     text_report,
     original_code_map,
     fixed_code_map,
-    impact_report, // <-- Destructure the new report data
+    // The impact_report is still available but will be linked to, not displayed directly
   } = result;
   const summary: Summary | undefined = summary_report?.summary;
   const filesAnalyzed: SubmittedFile[] | undefined = summary_report?.files_analyzed;
   const overallRisk: OverallRiskScore | undefined = summary_report?.overall_risk_score;
-
-  // Your helper functions and render logic for file tabs are preserved
-  const getFindingColor = (severity?: string): string => {
-    if (!severity) return "grey";
-    const upperSeverity = severity.toUpperCase();
-    return (SeverityColors[upperSeverity as keyof typeof SeverityColors] || "grey");
+  
+  const handleStartRemediation = () => {
+    setIsRemediationModalVisible(true);
   };
+  
+  const handleRemediationSubmit = (categories: string[]) => {
+    remediationMutation.mutate({ categories });
+  };
+  
+  const downloadUrl = `${apiClient.defaults.baseURL}/submissions/${submissionId}/download`;
 
   const renderFileTabs = () => {
     // ... This entire function remains exactly the same as your existing code ...
@@ -364,16 +407,44 @@ const ResultsPage: React.FC = () => {
 
   return (
     <Content style={{ padding: "20px 50px", margin: "0 auto", maxWidth: "1200px" }}>
-      <Button icon={<ArrowLeftOutlined />} onClick={() => navigate("/account/history")} style={{ marginBottom: 20 }}>
-        Back to Submission History
-      </Button>
+      <Row justify="space-between" align="middle" style={{ marginBottom: 20 }}>
+        <Col>
+            <Button icon={<ArrowLeftOutlined />} onClick={() => navigate("/account/history")}>
+                Back to Submission History
+            </Button>
+        </Col>
+        <Col>
+            <Space>
+                {fixed_code_map && Object.keys(fixed_code_map).length > 0 && (
+                     <a href={downloadUrl} download>
+                        <Button type="default" icon={<DownloadOutlined />}>
+                            Download Fixed Code
+                        </Button>
+                    </a>
+                )}
+                {result.status === "Completed" && (
+                    <Button type="primary" icon={<RocketOutlined />} onClick={handleStartRemediation}>
+                        Begin Remediation
+                    </Button>
+                )}
+            </Space>
+        </Col>
+      </Row>
 
       <Title level={2}><ProfileOutlined /> Analysis Results</Title>
       <Text type="secondary">Submission ID: {submissionId}</Text>
       
-      {/* --- ADDED: Display the new Impact Report at the top --- */}
-      {impact_report && (
-        <ImpactReportDisplay report={impact_report} />
+      {/* --- UPDATED: Display the new Impact Report as a link --- */}
+      {result.impact_report && (
+        <Card size="small" style={{ marginTop: 24, backgroundColor: '#e6f4ff', borderColor: '#91caff' }}>
+            <Space>
+                <InfoCircleOutlined style={{color: '#1677ff', fontSize: '18px'}}/>
+                <Text>An AI-generated executive summary is available for this report.</Text>
+                <Link to={`/analysis/results/${submissionId}/executive-summary`}>
+                    <Button type="primary" size="small">View Full Executive Summary</Button>
+                </Link>
+            </Space>
+        </Card>
       )}
 
       {/* Your existing summary card is preserved */}
@@ -477,6 +548,14 @@ const ResultsPage: React.FC = () => {
           </Card>
         </TabPane>
       </Tabs>
+      {/* ADDED: Render the modal */}
+      <RemediationModal
+        open={isRemediationModalVisible}
+        isLoading={remediationMutation.isPending}
+        findings={allFindings}
+        onCancel={() => setIsRemediationModalVisible(false)}
+        onSubmit={handleRemediationSubmit}
+      />
     </Content>
   );
 };

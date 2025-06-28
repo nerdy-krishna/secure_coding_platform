@@ -3,9 +3,11 @@ import {
   type AnalysisResultResponse,
   type CodeSubmissionResponse,
   type PaginatedResultsResponse,
-  type PaginatedSubmissionHistoryResponse
+  type PaginatedSubmissionHistoryResponse,
+  type RemediationRequest // ADDED
 } from "../types/api";
 import apiClient from "./apiClient";
+
 
 export const submissionService = {
   /**
@@ -99,6 +101,23 @@ export const submissionService = {
     });
     return response.data;
   },
+};
+
+/**
+ * Sends a request to trigger the remediation workflow for a submission.
+ * @param submissionId The ID of the submission to remediate.
+ * @param remediationData The categories to be fixed.
+ * @returns A promise that resolves with the server's confirmation message.
+ */
+export const triggerRemediation = async (
+    submissionId: string,
+    remediationData: RemediationRequest
+): Promise<{ message: string }> => {
+    const response = await apiClient.post<{ message: string }>(
+        `/submissions/${submissionId}/remediate`,
+        remediationData
+    );
+    return response.data;
 };
 
 /**

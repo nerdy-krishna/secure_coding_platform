@@ -1,5 +1,7 @@
 # src/app/api/endpoints.py
 
+import datetime
+import io
 import logging
 import uuid
 from typing import List, Optional, Annotated, Dict, Any
@@ -15,6 +17,7 @@ from fastapi import (
     Response,
     status,
 )
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import crud
@@ -27,7 +30,8 @@ from app.core.config import settings
 from app.core.logging_config import correlation_id_var
 from app.utils.git_utils import clone_repo_and_get_files
 from app.utils.file_utils import get_language_from_filename
-from app.utils.archive_utils import extract_archive_to_files, is_archive_filename, ALLOWED_ARCHIVE_EXTENSIONS # Added archive_utils imports
+from app.utils.archive_utils import extract_archive_to_files, is_archive_filename, ALLOWED_ARCHIVE_EXTENSIONS
+from app.utils.reporting_utils import generate_pdf_from_html
 
 # Create two routers: one for general endpoints, one for admin-level LLM configs
 router = APIRouter()
@@ -36,7 +40,6 @@ llm_router = APIRouter(prefix="/llm-configs", tags=["LLM Configurations"])
 logger = logging.getLogger(__name__)
 
 # === LLM Configuration Endpoints ===
-
 
 @llm_router.post("/", response_model=api_models.LLMConfigurationRead, status_code=201)
 async def create_llm_configuration(
@@ -269,6 +272,60 @@ async def submit_code(
         "message": "Submission received and queued for analysis.",
     }
 
+@router.post(
+    "/submissions/{submission_id}/remediate",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Trigger remediation for a completed submission",
+    response_model=Dict[str, str],
+)
+async def trigger_remediation(
+    submission_id: uuid.UUID,
+    remediation_request: api_models.RemediationRequest,
+    user: db_models.User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Triggers a remediation workflow for a submission that has been audited.
+    This action is asynchronous and will queue the remediation task.
+    """
+    submission = await crud.get_submission(db, submission_id)
+    if not submission:
+        raise HTTPException(status_code=404, detail="Submission not found")
+
+    if submission.user_id != user.id and not user.is_superuser:
+        raise HTTPException(status_code=403, detail="Not authorized to remediate this submission")
+
+    # Allow remediation on 'Completed' or previously failed remediation runs
+    if submission.status not in ["Completed", "Remediation-Failed"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Remediation can only be started for submissions with status 'Completed' or 'Remediation-Failed'. Current status: {submission.status}",
+        )
+
+    message = {
+        "submission_id": str(submission.id),
+        "action": "trigger_remediation",
+        "categories_to_fix": remediation_request.categories_to_fix,
+    }
+    
+    corr_id = correlation_id_var.get()
+    published = rabbitmq_utils.publish_message(
+        queue_name=settings.RABBITMQ_REMEDIATION_QUEUE,
+        message_body=message,
+        correlation_id=corr_id
+    )
+    
+    if not published:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to send remediation request to the processing queue."
+        )
+    
+    # Update status to show it's queued for the next phase
+    await crud.update_submission_status(db, submission_id, "Queued for Remediation")
+
+    return {"message": "Remediation request accepted and queued for processing."}
+
 
 @router.post(
     "/submissions/{submission_id}/approve",
@@ -474,6 +531,83 @@ async def get_submission_results(
         sarif_report=submission_db.sarif_report,
         summary_report=summary_report_response_obj
     )
+
+@router.get("/result/{submission_id}/executive-summary/download")
+async def download_executive_summary_pdf(
+    submission_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+):
+    """
+    Generates and downloads a PDF version of the executive summary report.
+    """
+    submission_db = await crud.get_submission(db, submission_id)
+    if not submission_db or not submission_db.impact_report:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Executive summary report not found for this submission.",
+        )
+
+    report_data = submission_db.impact_report
+
+    # Basic HTML structure for the PDF report
+    html_content = f"""
+    <html>
+        <head>
+            <style>
+                body {{ font-family: sans-serif; line-height: 1.6; }}
+                h1 {{ color: #333; }}
+                h2 {{ color: #555; border-bottom: 1px solid #eee; padding-bottom: 5px; }}
+                ul {{ padding-left: 20px; }}
+                li {{ margin-bottom: 8px; }}
+                .summary {{ background-color: #f7f7f7; padding: 15px; border-radius: 5px; }}
+            </style>
+        </head>
+        <body>
+            <h1>Executive Security Summary</h1>
+            <p><strong>Project:</strong> {submission_db.project_name}</p>
+            <p><strong>Submission ID:</strong> {submission_id}</p>
+            <p><strong>Date:</strong> {datetime.datetime.now().strftime("%Y-%m-%d")}</p>
+            
+            <h2>Executive Summary</h2>
+            <div class="summary">
+                <p>{report_data.get('executive_summary', 'Not available.')}</p>
+            </div>
+
+            <h2>Vulnerability Overview</h2>
+            <p>{report_data.get('vulnerability_overview', 'Not available.')}</p>
+
+            <h2>High-Risk Findings</h2>
+            <ul>
+                {''.join(f"<li>{item}</li>" for item in report_data.get('high_risk_findings_summary', []))}
+            </ul>
+
+            <h2>Remediation Strategy</h2>
+            <p>{report_data.get('remediation_strategy', 'Not available.')}</p>
+
+            <h2>Effort & Architectural Impact</h2>
+            <p><strong>Estimated Remediation Effort:</strong> {report_data.get('estimated_remediation_effort', 'N/A')}</p>
+            <p><strong>Required Architectural Changes:</strong></p>
+            <ul>
+                {''.join(f"<li>{item}</li>" for item in report_data.get('required_architectural_changes', ['None']))}
+            </ul>
+        </body>
+    </html>
+    """
+
+    try:
+        pdf_bytes = generate_pdf_from_html(html_content)
+        return StreamingResponse(
+            io.BytesIO(pdf_bytes),
+            media_type='application/pdf',
+            headers={
+                'Content-Disposition': f'attachment; filename="executive-summary-{submission_id}.pdf"'
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to generate PDF for submission {submission_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate PDF report."
+        )
 
 @router.get("/results", response_model=api_models.PaginatedResultsResponse)
 async def get_all_results(

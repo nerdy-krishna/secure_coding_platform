@@ -1,8 +1,26 @@
 # src/app/utils/reporting_utils.py
 
+import io
 from typing import List, Dict, Any
+from xhtml2pdf import pisa
 
 from app.agents.schemas import VulnerabilityFinding
+
+def generate_pdf_from_html(html_content: str) -> bytes:
+    """
+    Converts an HTML string into a PDF byte stream.
+    """
+    pdf_buffer = io.BytesIO()
+    pisa_status = pisa.CreatePDF(
+        src=io.StringIO(html_content),  # a readable source
+        dest=pdf_buffer,                # a writeable dest
+        encoding='utf-8'
+    )
+    if pisa_status.err: # type: ignore
+        raise IOError(f"PDF generation failed: {pisa_status.err}") # type: ignore
+    
+    pdf_buffer.seek(0)
+    return pdf_buffer.getvalue()
 
 def create_sarif_report(findings: List[VulnerabilityFinding]) -> Dict[str, Any]:
     """

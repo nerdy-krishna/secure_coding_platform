@@ -10,7 +10,7 @@ export interface UserLoginData {
   client_secret?: string;
 }
 
-// Defines the shape of the data and functions in our AuthContext
+// Defines the shape of the data and functions in AuthContext
 export interface AuthContextType {
   user: UserRead | null;
   accessToken: string | null;
@@ -46,7 +46,6 @@ export interface UserRead {
   is_verified: boolean;
 }
 
-// --- CORRECTED LLM INTERFACES ---
 export interface LLMConfiguration {
   id: string;
   name: string;
@@ -68,7 +67,6 @@ export interface LLMConfigurationCreate {
   output_cost_per_million: number; // Renamed from output_token_cost
   tokenizer_encoding?: string | null; // Renamed from tokenizer_name
 }
-// --- END CORRECTED LLM INTERFACES ---
 
 export interface TokenData {
   access_token: string;
@@ -160,7 +158,7 @@ export interface SummaryReport {
   overall_risk_score?: OverallRiskScore;
 }
 
-// --- DETAILED SARIF INTERFACES (PRESERVED) ---
+// --- DETAILED SARIF INTERFACES ---
 
 export interface SARIFMessage {
   text?: string;
@@ -282,16 +280,17 @@ export interface SARIFLog {
 
 // --- END DETAILED SARIF INTERFACES ---
 
-// --- ADDED: New type for the AI-generated impact report ---
 export interface ImpactReport {
   executive_summary: string;
+  vulnerability_overview: string;
+  high_risk_findings_summary: string[];
+  remediation_strategy: string;
   vulnerability_categories: string[];
   estimated_remediation_effort: string;
   required_architectural_changes: string[];
 }
-// --- END NEW TYPE ---
 
-// --- UPDATED: Main response for analysis results ---
+// --- Main response for analysis results ---
 export interface AnalysisResultResponse {
   submission_id: string;
   status: string;
@@ -351,6 +350,10 @@ export interface ResultIndexItem {
 export interface PaginatedResultsResponse {
   items: ResultIndexItem[];
   total: number;
+}
+
+export interface RemediationRequest {
+  categories_to_fix: string[];
 }
 
 export interface EstimatedCost {

@@ -29,6 +29,7 @@ class WorkerState(TypedDict):
     files: Optional[Dict[str, str]]
     workflow_mode: WorkflowMode
     excluded_files: Optional[List[str]]
+    remediation_categories: Optional[List[str]] # ADDED
     
     # from context_analysis_agent
     repository_map: Optional[Any]

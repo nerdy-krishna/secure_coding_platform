@@ -76,7 +76,11 @@ class ImpactReport(BaseModel):
     """
     Defines the structure of the high-level executive summary from the ImpactReportingAgent.
     """
-    executive_summary: str = Field(description="A high-level overview of the project's security posture.")
+    executive_summary: str = Field(description="A high-level overview of the project's security posture, written for a business audience.")
+    vulnerability_overview: str = Field(description="A paragraph summarizing the types and distribution of vulnerabilities found.")
+    high_risk_findings_summary: List[str] = Field(description="A bulleted list summarizing the most critical or high-risk findings.")
+    remediation_strategy: str = Field(description="A paragraph outlining a strategic approach to remediation, such as which categories to prioritize.")
+    # The fields below are kept for backward compatibility but the prompt will focus on the new ones
     vulnerability_categories: List[str] = Field(description="A list of the main categories of vulnerabilities found.")
     estimated_remediation_effort: str = Field(description="A qualitative estimate of the effort to fix the findings (e.g., 'Low', 'Medium', 'High').")
     required_architectural_changes: List[str] = Field(description="A list of any significant architectural changes required.")

@@ -69,19 +69,22 @@ async def generate_impact_report_node(state: ImpactReportingAgentState) -> Dict[
 
     findings_for_prompt = [f.model_dump(include={'cwe', 'description', 'severity'}) for f in findings]
     prompt = f"""
-    You are a Principal Security Architect creating an executive summary.
-    Based on the following JSON list of findings, generate a high-level impact report.
-    Analyze the findings as a whole and provide a strategic overview.
+    You are a Principal Security Architect creating an executive summary for a C-level audience and development team leads.
+    Based on the following JSON list of findings, generate a detailed, multi-section impact report.
+    The tone should be professional, clear, and strategic.
 
     <FINDINGS_DATA>
     {json.dumps(findings_for_prompt, indent=2)}
     </FINDINGS_DATA>
 
-    Generate a report covering these key areas:
-    1. executive_summary: A 2-3 sentence overview of the security posture.
-    2. vulnerability_categories: The primary categories of weaknesses found.
-    3. estimated_remediation_effort: A qualitative estimate (Low, Medium, High) of the effort to fix these issues, with a brief justification.
-    4. required_architectural_changes: A list of any necessary changes beyond simple bug fixes.
+    Generate a report with the following structure:
+    1.  **executive_summary**: A 2-3 sentence high-level overview of the project's security posture, suitable for non-technical stakeholders.
+    2.  **vulnerability_overview**: A paragraph summarizing the types of vulnerabilities discovered (e.g., input validation, access control) and their severity distribution.
+    3.  **high_risk_findings_summary**: A bulleted list of the 2-3 most critical findings. For each, briefly explain the risk in simple terms.
+    4.  **remediation_strategy**: A paragraph outlining a strategic approach to fixing these issues. Suggest which categories of vulnerabilities (e.g., all 'Input Validation' issues) should be prioritized to achieve the biggest risk reduction.
+    5.  **vulnerability_categories**: A simple list of the main ASVS categories of vulnerabilities found (e.g., "Validation", "Cryptography").
+    6.  **estimated_remediation_effort**: A single qualitative estimate (Low, Medium, High) of the overall effort to fix these issues, with a brief justification.
+    7.  **required_architectural_changes**: A bulleted list of any necessary changes that go beyond simple code fixes (e.g., "Implement a centralized authentication service"). List "None" if no such changes are required.
 
     Respond ONLY with a valid JSON object conforming to the schema.
     """

@@ -111,7 +111,16 @@ class CodeSubmission(Base):
         nullable=True,
         comment="Stores the JSON output of the AI-generated impact report."
     )
-    
+    risk_score: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+        comment="Calculated risk score based on finding severity."
+    )
+    fixed_code_map: Mapped[Optional[Dict[str, Any]]] = mapped_column(
+        JSONB,
+        nullable=True,
+        comment="Stores the file content after remediation."
+    )
     sarif_report: Mapped[Optional[Dict[str, Any]]] = mapped_column(
         JSONB,
         nullable=True,
