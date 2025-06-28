@@ -5,7 +5,7 @@ import uuid
 import datetime # Added import
 from typing import List, Dict, Optional, Any
 
-from sqlalchemy import String, cast, func, select, update, or_
+from sqlalchemy import String, case, cast, func, select, update, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, aliased
 
@@ -285,6 +285,95 @@ async def save_fix_suggestion(
     )
     db.add(fix)
     await db.commit()
+
+async def get_paginated_results(db: AsyncSession, user_id: int, skip: int = 0, limit: int = 10, search: Optional[str] = None) -> List[Dict[str, Any]]:
+    """
+    Retrieves a paginated list of completed submissions with aggregated finding counts.
+    Supports searching by project name or submission ID.
+    """
+    # Subquery to count findings per severity for each submission
+    finding_counts_subquery = (
+        select(
+            db_models.VulnerabilityFinding.submission_id,
+            func.count(db_models.VulnerabilityFinding.id).label("total_findings"),
+            func.sum(case((func.upper(db_models.VulnerabilityFinding.severity) == 'CRITICAL', 1), else_=0)).label("critical_findings"),
+            func.sum(case((func.upper(db_models.VulnerabilityFinding.severity) == 'HIGH', 1), else_=0)).label("high_findings"),
+            func.sum(case((func.upper(db_models.VulnerabilityFinding.severity) == 'MEDIUM', 1), else_=0)).label("medium_findings"),
+            func.sum(case((func.upper(db_models.VulnerabilityFinding.severity) == 'LOW', 1), else_=0)).label("low_findings"),
+        )
+        .group_by(db_models.VulnerabilityFinding.submission_id)
+        .subquery()
+    )
+
+    # Main query to select completed submissions
+    stmt = (
+        select(
+            db_models.CodeSubmission,
+            finding_counts_subquery.c.total_findings,
+            finding_counts_subquery.c.critical_findings,
+            finding_counts_subquery.c.high_findings,
+            finding_counts_subquery.c.medium_findings,
+            finding_counts_subquery.c.low_findings,
+        )
+        .outerjoin(finding_counts_subquery, db_models.CodeSubmission.id == finding_counts_subquery.c.submission_id)
+        .where(
+            db_models.CodeSubmission.user_id == user_id,
+            db_models.CodeSubmission.status == "Completed"
+        )
+    )
+
+    if search:
+        project_name_filter = db_models.CodeSubmission.project_name.ilike(f"%{search}%")
+        submission_id_filter = cast(db_models.CodeSubmission.id, String).ilike(f"%{search}%")
+        stmt = stmt.filter(or_(project_name_filter, submission_id_filter))
+    
+    stmt = stmt.order_by(db_models.CodeSubmission.completed_at.desc().nulls_last()).offset(skip).limit(limit)
+    
+    result = await db.execute(stmt)
+    
+    # Process results into a list of dictionaries
+    results_list = []
+    for row in result.all():
+        sub, total, critical, high, medium, low = row
+        
+        # Calculate risk score
+        critical_count = critical or 0
+        high_count = high or 0
+        medium_count = medium or 0
+        low_count = low or 0
+        risk_score = (critical_count * 10) + (high_count * 5) + (medium_count * 2) + (low_count * 1)
+
+        results_list.append({
+            "submission_id": sub.id,
+            "project_name": sub.project_name,
+            "completed_at": sub.completed_at,
+            "total_findings": total or 0,
+            "critical_findings": critical_count,
+            "high_findings": high_count,
+            "medium_findings": medium_count,
+            "low_findings": low_count,
+            "risk_score": risk_score,
+        })
+        
+    return results_list
+
+async def get_paginated_results_count(db: AsyncSession, user_id: int, search: Optional[str] = None) -> int:
+    """Counts the total number of completed submissions for a specific user, with optional search."""
+    stmt = (
+        select(func.count(db_models.CodeSubmission.id))
+        .where(
+            db_models.CodeSubmission.user_id == user_id,
+            db_models.CodeSubmission.status == "Completed"
+        )
+    )
+    if search:
+        project_name_filter = db_models.CodeSubmission.project_name.ilike(f"%{search}%")
+        submission_id_filter = cast(db_models.CodeSubmission.id, String).ilike(f"%{search}%")
+        stmt = stmt.filter(or_(project_name_filter, submission_id_filter))
+
+    result = await db.execute(stmt)
+    count = result.scalar_one_or_none()
+    return count or 0
 
     
 async def get_submission_history(db: AsyncSession, user_id: int, skip: int = 0, limit: int = 10, search: Optional[str] = None) -> List[Dict[str, Any]]:

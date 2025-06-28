@@ -336,6 +336,23 @@ export interface PaginatedSubmissionHistoryResponse {
   total: number;
 }
 
+export interface ResultIndexItem {
+  submission_id: string;
+  project_name: string;
+  completed_at: string | null;
+  total_findings: number;
+  critical_findings: number;
+  high_findings: number;
+  medium_findings: number;
+  low_findings: number;
+  risk_score: number;
+}
+
+export interface PaginatedResultsResponse {
+  items: ResultIndexItem[];
+  total: number;
+}
+
 export interface EstimatedCost {
   input_cost: number;
   predicted_output_cost: number;

@@ -236,6 +236,24 @@ class SubmissionHistoryItem(BaseModel):
 class PaginatedSubmissionHistoryResponse(BaseModel):
     items: List[SubmissionHistoryItem]
     total: int
+
+class ResultIndexItem(BaseModel):
+    submission_id: uuid.UUID
+    project_name: str
+    completed_at: Optional[datetime]
+    total_findings: int
+    critical_findings: int
+    high_findings: int
+    medium_findings: int
+    low_findings: int
+    risk_score: int # We will calculate and add this
+
+    class Config:
+        from_attributes = True
+
+class PaginatedResultsResponse(BaseModel):
+    items: List[ResultIndexItem]
+    total: int
     
 class GitRepoPreviewRequest(BaseModel):
     repo_url: str

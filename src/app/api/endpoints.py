@@ -473,6 +473,22 @@ async def get_submission_results(
         summary_report=summary_report_response_obj
     )
 
+@router.get("/results", response_model=api_models.PaginatedResultsResponse)
+async def get_all_results(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[db_models.User, Depends(current_active_user)],
+    skip: int = Query(0, ge=0, description="Number of records to skip for pagination."),
+    limit: int = Query(10, ge=1, le=100, description="Number of records to return."),
+    search: Optional[str] = Query(None, min_length=1, max_length=100, description="Search term to filter results.")
+):
+    """
+    Retrieves a paginated and searchable list of all completed analysis results for the user.
+    """
+    total = await crud.get_paginated_results_count(db, user_id=current_user.id, search=search)
+    items = await crud.get_paginated_results(db, user_id=current_user.id, skip=skip, limit=limit, search=search)
+    return {"items": items, "total": total}
+
+
 @router.get("/llm-interactions/", response_model=List[api_models.LLMInteractionResponse])
 async def read_llm_interactions_for_user(
     db: Annotated[AsyncSession, Depends(get_db)],

@@ -2,6 +2,7 @@
 import {
   type AnalysisResultResponse,
   type CodeSubmissionResponse,
+  type PaginatedResultsResponse,
   type PaginatedSubmissionHistoryResponse
 } from "../types/api";
 import apiClient from "./apiClient";
@@ -74,6 +75,27 @@ export const submissionService = {
             limit: pageSize,
             search: search || undefined, // Only include search param if it's not empty
         }
+    });
+    return response.data;
+  },
+
+  /**
+   * Fetches a paginated list of all completed analysis results.
+   * @param page The current page number.
+   * @param pageSize The number of items per page.
+   * @param search An optional search term.
+   */
+  getResults: async (
+    page: number,
+    pageSize: number,
+    search?: string,
+  ): Promise<PaginatedResultsResponse> => {
+    const response = await apiClient.get<PaginatedResultsResponse>("/results", {
+      params: {
+        skip: (page - 1) * pageSize,
+        limit: pageSize,
+        search: search || undefined,
+      },
     });
     return response.data;
   },

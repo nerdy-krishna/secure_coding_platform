@@ -6,6 +6,7 @@ import {
   FileTextOutlined,
   LogoutOutlined,
   PieChartOutlined,
+  ProfileOutlined,
   SettingOutlined,
   ToolOutlined, // <-- Ensure ToolOutlined is imported for the Admin menu
   UserOutlined,
@@ -62,6 +63,11 @@ const DashboardLayout: React.FC<{ children?: React.ReactNode }> = ({
         <Link to="/submission/submit">Submit Code</Link>,
         "submit_code",
         <FileTextOutlined />,
+      ),
+      getItem(
+        <Link to="/analysis/results">Analysis Results</Link>,
+        "analysis_results",
+        <ProfileOutlined />,
       ),
       getItem(
         <Link to="/account/history">History</Link>,
