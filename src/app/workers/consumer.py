@@ -2,6 +2,7 @@
 import pika
 import os
 import logging
+import logging.config
 import asyncio
 import json
 import threading
@@ -15,6 +16,8 @@ from dotenv import load_dotenv
 # Import the worker graph and its state
 from app.graphs.worker_graph import get_workflow, WorkerState, close_workflow_resources
 from app.core.config import settings
+# Import the new logging config and context variable
+from app.core.logging_config import LOGGING_CONFIG, correlation_id_var
 
 # Ensure necessary imports for type hints used in this file
 from pika.adapters.blocking_connection import BlockingChannel # For Pika channel type
@@ -29,11 +32,11 @@ logging.basicConfig(
 logger = logging.getLogger(
     __name__
 )  # Gets logger for current module __main__ if run directly
-# or app.workers.consumer if imported.
-# Consider a fixed name if preferred: logging.getLogger("secure_coding_platform.worker")
+
+# Apply the logging configuration at the start of the worker process
+logging.config.dictConfig(LOGGING_CONFIG)
 
 logging.getLogger("pika").setLevel(logging.WARNING)
-logging.getLogger("asyncio").setLevel(logging.WARNING)
 # You can add more libraries here if needed, e.g.:
 # logging.getLogger("aio_pika").setLevel(logging.WARNING) # If you use aio_pika directly and it's noisy
 # logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING) # To quiet SQLAlchemy engine logs
@@ -138,13 +141,20 @@ def pika_message_callback(
     body: bytes,
 ):
     """Pika callback for received messages from all queues."""
-    logger.info(
-        f"PIKA CB: Received message from queue '{method.routing_key}'. Delivery Tag: {method.delivery_tag}."
-    )
-
     try:
         message_data = json.loads(body.decode("utf-8"))
         submission_id_str = message_data.get("submission_id")
+        
+        # --- START: CORRELATION ID HANDLING ---
+        # Extract correlation_id from the message, or create a new one if missing
+        corr_id = message_data.get("correlation_id") or str(uuid.uuid4())
+        # Set it in the context variable for all subsequent logs in this task
+        correlation_id_var.set(corr_id)
+        # --- END: CORRELATION ID HANDLING ---
+
+        logger.info(
+            f"PIKA CB: Received message from queue '{method.routing_key}'. Delivery Tag: {method.delivery_tag}."
+        )
         
         if not submission_id_str:
             logger.error("PIKA CB: Invalid message - no submission_id.")
@@ -159,13 +169,14 @@ def pika_message_callback(
             "llm_config_id": None,
             "files": None,
             "workflow_mode": "audit", # This will be overridden below
+            "excluded_files": None,
             "repository_map": None,
             "asvs_analysis": None,
-            "analysis_results": {}, # Initialize as empty dict
-            "findings": [], # Initialize as empty list
-            "final_report": None,
+            "findings": [],
+            "impact_report": None,
+            "sarif_report": None,
             "error_message": None,
-            "current_submission_status": None, # Add missing required field
+            "current_submission_status": None,
         }
         
         if method.routing_key == settings.RABBITMQ_APPROVAL_QUEUE:

@@ -8,13 +8,13 @@ services:
     container_name: secure_coding_platform_app
     env_file:
       - .env
-    # ADD THIS BLOCK to tell Python where to find the 'app' module
     environment:
       - PYTHONPATH=/app/src
+      - SERVICE_NAME=app
     volumes:
       - ./src:/app/src
     ports:
-      - "${APP_PORT:-8000}:8000" # Corrected internal port to 8000
+      - "${APP_PORT:-8000}:8000"
     depends_on:
       db:
         condition: service_healthy
@@ -22,7 +22,20 @@ services:
         condition: service_healthy
       vector_db:
         condition: service_started
-    # UPDATE THIS COMMAND to align with the new PYTHONPATH
+      # Changed back to service_healthy now that we know Fluentd works
+      fluentd:
+        condition: service_healthy
+    # Added logging driver configuration with retry options
+    logging:
+      driver: "fluentd"
+      options:
+        fluentd-address: localhost:24224
+        tag: docker.app.{{.Name}}
+        fluentd-async: "true"
+        fluentd-retry-wait: "1s"
+        fluentd-max-retries: "30"
+    networks:
+      - scpnetwork
     command: ["poetry", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
   db:
@@ -43,6 +56,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - scpnetwork
 
   rabbitmq:
     image: rabbitmq:3.12-management
@@ -62,6 +77,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - scpnetwork
 
   vector_db: # ChromaDB
     image: chromadb/chroma:0.5.3
@@ -70,34 +87,129 @@ services:
       - IS_PERSISTENT=TRUE
       - ANONYMIZED_TELEMETRY=FALSE
       - CHROMA_SERVER_HOST=0.0.0.0
-      - CHROMA_SERVER_HTTP_PORT=8000 # Corrected internal port to 8000
+      - CHROMA_SERVER_HTTP_PORT=8000
     ports:
       - "${CHROMA_PORT_HOST:-8001}:8000"
     volumes:
       - chroma_data:/chroma
+    networks:
+      - scpnetwork
 
   worker:
     build:
       context: .
-      dockerfile: Dockerfile # Assumes the same Dockerfile as the app
+      dockerfile: Dockerfile
     container_name: secure_coding_platform_worker
     env_file:
       - .env
     volumes:
       - ./src:/app/src
-    # CORRECT THIS to point to the 'src' directory
     environment:
         - PYTHONPATH=/app/src
+        - SERVICE_NAME=worker
     depends_on:
       db:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
-    # UPDATE THIS COMMAND to align with the new PYTHONPATH
+      # Changed back to service_healthy now that we know Fluentd works
+      fluentd:
+        condition: service_healthy
+    # Added logging driver configuration with retry options
+    logging:
+      driver: "fluentd"
+      options:
+        fluentd-address: localhost:24224
+        tag: docker.worker.{{.Name}}
+        fluentd-async: "true"
+        fluentd-retry-wait: "1s"
+        fluentd-max-retries: "30"
+    networks:
+      - scpnetwork
     command: ["poetry", "run", "python", "-m", "app.workers.consumer"]
+  
+  
+  fluentd:
+    build: ./fluentd
+    container_name: secure_coding_platform_fluentd
+    # --- START: FIX ---
+    # Pass credentials into the container so fluent.conf can access them
+    environment:
+      OPENSEARCH_USER: admin
+      OPENSEARCH_PASSWORD: ${OPENSEARCH_INITIAL_ADMIN_PASSWORD}
+    # --- END: FIX ---
+    volumes:
+      - ./fluentd/log:/fluentd/log
+    ports:
+      - "24224:24224"
+      - "24224:24224/udp"
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    # Simple healthcheck that waits for the "fluentd worker is now running" message
+    healthcheck:
+      test: ["CMD", "/bin/sh", "-c", "pgrep -f 'fluentd worker' > /dev/null || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
+    networks:
+      - scpnetwork
+      
+  opensearch:
+    image: opensearchproject/opensearch:2.15.0
+    container_name: secure_coding_platform_opensearch
+    environment:
+      - discovery.type=single-node
+      # --- START: FIX ---
+      # 1. Enable the security plugin
+      - plugins.security.disabled=false
+      # 2. Set the initial admin password. NOTE: This only works on the VERY FIRST RUN when the volume is empty.
+      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=${OPENSEARCH_INITIAL_ADMIN_PASSWORD}
+      # --- END: FIX ---
+      - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
+    ports:
+      - "9200:9200"
+      - "9600:9600"
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    healthcheck:
+      # Updated healthcheck to use credentials
+      test: ["CMD", "curl", "-f", "https://localhost:9200/_cluster/health", "-u", "admin:${OPENSEARCH_INITIAL_ADMIN_PASSWORD}", "--insecure"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    networks:
+      - scpnetwork
+
+  opensearch-dashboards:
+    image: opensearchproject/opensearch-dashboards:2.15.0
+    container_name: secure_coding_platform_dashboards
+    ports:
+      - "5601:5601"
+    environment:
+      # --- START: FIX ---
+      # 1. Update the host to use https
+      OPENSEARCH_HOSTS: '["https://opensearch:9200"]'
+      # 2. Provide the username and password for the dashboard to connect to OpenSearch
+      OPENSEARCH_USERNAME: admin
+      OPENSEARCH_PASSWORD: ${OPENSEARCH_INITIAL_ADMIN_PASSWORD}
+      # 3. Disable SSL verification for the dashboard's internal connection (since we use default self-signed certs)
+      OPENSEARCH_SSL_VERIFICATIONMODE: none
+      # --- END: FIX ---
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    networks:
+      - scpnetwork
 
 
 volumes:
   postgres_data:
   rabbitmq_data:
   chroma_data:
+  opensearch-data:
+
+networks:
+  scpnetwork:
+    driver: bridge

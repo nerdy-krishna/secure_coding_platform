@@ -1,33 +1,32 @@
 # src/app/main.py
 
 import logging
+import logging.config
 import os
-from fastapi import FastAPI, Request, status
-from fastapi.exceptions import RequestValidationError
-from fastapi.encoders import jsonable_encoder
-from starlette.responses import JSONResponse
+import uuid
 from contextlib import asynccontextmanager
+from fastapi import FastAPI, Request, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from psycopg.errors import DuplicateColumn
+from starlette.responses import JSONResponse
 
 # Import our new routers from the api module
 from app.api.endpoints import router as api_router, llm_router
-
-# --- Authentication Imports ---
-from app.auth.core import fastapi_users
-from app.core.config import settings
 from app.auth.backend import auth_backend
-from app.auth.schemas import UserRead, UserCreate, UserUpdate
-
+from app.auth.core import fastapi_users
+from app.auth.schemas import UserCreate, UserRead, UserUpdate
+from app.core.config import settings
+# --- New Logging Imports ---
+from app.core.logging_config import LOGGING_CONFIG, correlation_id_var
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
-# Import the centralized settings object for CORS configuration
+# Apply the logging configuration right at the start
+logging.config.dictConfig(LOGGING_CONFIG)
 
+# Get the logger for this module
 logger = logging.getLogger(__name__)
-
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
 
 
 @asynccontextmanager
@@ -45,9 +44,8 @@ async def lifespan(app: FastAPI):
                 await checkpointer.setup()
             logger.info("Checkpointer tables setup complete.")
         except DuplicateColumn as e:
-            logger.warning(
-                f"Checkpointer setup tried to add a column that already exists: {e}. "
-                "This is expected if the database is already migrated. Continuing..."
+            logger.info(
+                f"Checkpointer tables already exist, which is expected. Details: {e}. Continuing..."
             )
         except Exception as e:
             logger.error(f"Failed to setup checkpointer tables on startup: {e}", exc_info=True)
@@ -64,6 +62,26 @@ app = FastAPI(
     description="API for the Secure Coding Platform, providing analysis, generation, and GRC features.",
     lifespan=lifespan,
 )
+
+# --- START: New Correlation ID Middleware ---
+@app.middleware("http")
+async def correlation_id_middleware(request: Request, call_next):
+    # Check for an existing correlation ID in the header, or create a new one
+    corr_id = request.headers.get("X-Correlation-ID") or str(uuid.uuid4())
+    
+    # Set the ID in the context variable so our logger can access it
+    correlation_id_var.set(corr_id)
+    
+    # Process the request
+    response = await call_next(request)
+    
+    # Add the correlation ID to the response headers
+    response.headers["X-Correlation-ID"] = corr_id
+    
+    logger.info(f"Request to {request.url.path} completed with status {response.status_code}")
+    return response
+# --- END: New Correlation ID Middleware ---
+
 
 # --- CORS Middleware Configuration ---
 # This is crucial for frontend interaction, especially with credentials (cookies).
@@ -88,10 +106,7 @@ app.add_middleware(
     allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
-    # --- START: CORRECTED LINE ---
-    # Cannot use ["*"] when allow_credentials is True. Must be an explicit list.
     allow_headers=["Content-Type", "Authorization"],
-    # --- END: CORRECTED LINE ---
 )
 logger.info(f"CORS middleware configured for origins: {origins}")
 
