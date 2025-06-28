@@ -547,6 +547,31 @@ async def save_final_reports_and_status(
     await db.execute(stmt)
     await db.commit()
 
+async def update_remediated_code_and_status(
+    db: AsyncSession,
+    submission_id: uuid.UUID,
+    status: str,
+    fixed_code_map: Dict[str, Any],
+):
+    """
+    Updates a submission with the final fixed code map and sets the status.
+    This is used after a successful remediation run.
+    """
+    completed_at_aware = datetime.datetime.now(datetime.timezone.utc)
+    values_to_update = {
+        "status": status,
+        "completed_at": completed_at_aware,
+        "fixed_code_map": fixed_code_map,
+    }
+    
+    stmt = (
+        update(db_models.CodeSubmission)
+        .where(db_models.CodeSubmission.id == submission_id)
+        .values(**values_to_update)
+    )
+    await db.execute(stmt)
+    await db.commit()
+
 async def get_llm_interactions_for_user(db: AsyncSession, user_id: int) -> List[db_models.LLMInteraction]:
     """
     Retrieves all LLM interactions for a given user, ordered by most recent.

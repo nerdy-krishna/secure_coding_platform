@@ -258,6 +258,9 @@ class PaginatedResultsResponse(BaseModel):
 class GitRepoPreviewRequest(BaseModel):
     repo_url: str
 
+class RemediationRequest(BaseModel):
+    categories_to_fix: List[str] = Field(..., description="A list of vulnerability categories (agent names) to remediate.")
+
 # --- Detailed Analysis Result Models (NEW - for /result/{submission_id}) ---
 
 class SeverityCountsResponse(BaseModel):

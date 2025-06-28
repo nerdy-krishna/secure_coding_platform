@@ -170,6 +170,7 @@ def pika_message_callback(
             "files": None,
             "workflow_mode": "audit", # This will be overridden below
             "excluded_files": None,
+            "remediation_categories": None, # Initialize new field
             "repository_map": None,
             "asvs_analysis": None,
             "findings": [],
@@ -179,11 +180,20 @@ def pika_message_callback(
             "current_submission_status": None,
         }
         
-        if method.routing_key == settings.RABBITMQ_APPROVAL_QUEUE:
-            logger.info(f"PIKA CB: Resuming analysis for submission_id: {submission_uuid}")
+        # --- UPDATED ROUTING LOGIC ---
+        queue_name = method.routing_key
+        if queue_name == settings.RABBITMQ_REMEDIATION_QUEUE:
+            logger.info(f"PIKA CB: Received REMEDIATION trigger for submission_id: {submission_uuid}")
             initial_worker_state["workflow_mode"] = "remediate"
-        else:
-             logger.info(f"PIKA CB: Starting new analysis for submission_id: {submission_uuid}")
+            # Extract categories from message, default to empty list if not present
+            initial_worker_state["remediation_categories"] = message_data.get("categories_to_fix", [])
+        elif queue_name == settings.RABBITMQ_APPROVAL_QUEUE:
+            logger.info(f"PIKA CB: Resuming ANALYSIS for submission_id: {submission_uuid}")
+            # This is for resuming an audit, so workflow_mode can remain 'audit'
+            # Or be set explicitly depending on desired resume logic. Let's assume it resumes the audit.
+            initial_worker_state["workflow_mode"] = "audit"
+        else: # RABBITMQ_SUBMISSION_QUEUE
+             logger.info(f"PIKA CB: Starting new ANALYSIS for submission_id: {submission_uuid}")
              initial_worker_state["workflow_mode"] = "audit"
 
         schedule_task_on_async_loop(
@@ -282,13 +292,16 @@ def start_worker_consumer():
 
             submission_queue = settings.RABBITMQ_SUBMISSION_QUEUE
             approval_queue = settings.RABBITMQ_APPROVAL_QUEUE
+            remediation_queue = settings.RABBITMQ_REMEDIATION_QUEUE # ADDED
             
             _pika_channel.queue_declare(queue=submission_queue, durable=True)
             _pika_channel.queue_declare(queue=approval_queue, durable=True)
+            _pika_channel.queue_declare(queue=remediation_queue, durable=True) # ADDED
             _pika_channel.basic_qos(prefetch_count=1)
             
             _pika_channel.basic_consume(queue=submission_queue, on_message_callback=pika_message_callback)
             _pika_channel.basic_consume(queue=approval_queue, on_message_callback=pika_message_callback)
+            _pika_channel.basic_consume(queue=remediation_queue, on_message_callback=pika_message_callback) # ADDED
 
             logger.info(f"WORKER: Waiting for messages...")
             _pika_channel.start_consuming()

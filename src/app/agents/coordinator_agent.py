@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from typing import Any, Dict, List, TypedDict, Optional, cast, Coroutine
+from typing import Any, Dict, List, TypedDict, Optional, Coroutine
 import uuid
 
 from langgraph.graph import END, StateGraph
@@ -76,6 +76,7 @@ class CoordinatorState(TypedDict):
     estimated_cost: Optional[Dict[str, float]]
     cost_approval_met: Optional[bool] 
     current_submission_status: Optional[str]
+    live_codebase: Optional[Dict[str, str]] # ADDED: To hold code during remediation
     
     # Outputs
     findings: List[VulnerabilityFindingModel] # Changed from nested results
@@ -110,16 +111,6 @@ def create_context_bundles_node(state: CoordinatorState) -> Dict[str, Any]:
     logger.info(f"[{AGENT_NAME}] Creating context bundles.")
     repository_map = state.get("repository_map")
     files = state.get("files")
-
-    # --- START: DEBUG STATEMENTS TO ADD ---
-    print("\n--- [DEBUG] COORDINATOR AGENT: BUNDLE CREATION ---")
-    if repository_map:
-        print(f"Files in Repository Map received by Coordinator: {len(repository_map.files)}")
-        # print(f"File paths in map: {list(repository_map.files.keys())}")
-    else:
-        print("Repository Map is MISSING!")
-    print("--- [DEBUG] END OF COORDINATOR BUNDLE CHECK ---\n")
-    # --- END: DEBUG STATEMENTS TO ADD ---
 
     if not repository_map or not files:
         return {"error": "Repository map or files missing, cannot create bundles."}
@@ -229,97 +220,169 @@ async def run_specialized_agents_node(state: CoordinatorState) -> Dict[str, Any]
     """
     Runs the identified specialized agents, feeding them the rich context bundles
     and setting the appropriate workflow_mode.
+    NOW handles both parallel 'audit' and sequential 'remediate' modes.
     """
     submission_id = state["submission_id"]
     relevant_agents = state["relevant_agents"]
     context_bundles = state["context_bundles"]
     specialized_llm_id = state.get("llm_config_id")
     workflow_mode = state["workflow_mode"]
+    files = state["files"] # Get original files
 
     logger.info(f"[{AGENT_NAME}] Beginning specialized agent runs in '{workflow_mode}' mode with a concurrency limit of {CONCURRENT_LLM_LIMIT}.")
 
-    if not context_bundles:
-        return {"error": "Context bundles not found, cannot run specialized agents."}
+    if not context_bundles or not files:
+        return {"error": "Context bundles or original files not found, cannot run specialized agents."}
 
-    # --- START: Semaphore Implementation ---
-    semaphore = asyncio.Semaphore(CONCURRENT_LLM_LIMIT)
+    # --- Mode: 'audit' (Parallel Execution) ---
+    if workflow_mode == "audit":
+        semaphore = asyncio.Semaphore(CONCURRENT_LLM_LIMIT)
 
-    async def run_with_semaphore(coro: Coroutine) -> Any:
-        async with semaphore:
-            return await coro
-    # --- END: Semaphore Implementation ---
+        async def run_with_semaphore(coro: Coroutine) -> Any:
+            async with semaphore:
+                return await coro
 
-    bundle_map: Dict[str, ContextBundle] = {b.target_file_path: b for b in context_bundles}
-    tasks = []
+        bundle_map: Dict[str, ContextBundle] = {b.target_file_path: b for b in context_bundles}
+        tasks = []
 
-    for agent_name, file_paths in relevant_agents.items():
-        agent_builder = AGENT_BUILDER_MAP.get(agent_name)
-        if not agent_builder: continue
+        for agent_name, file_paths in relevant_agents.items():
+            agent_builder = AGENT_BUILDER_MAP.get(agent_name)
+            if not agent_builder: continue
 
-        agent_graph = agent_builder()
-        for file_path in file_paths:
-            bundle = bundle_map.get(file_path)
-            if not bundle: continue
+            agent_graph = agent_builder()
+            for file_path in file_paths:
+                bundle = bundle_map.get(file_path)
+                if not bundle: continue
 
-            formatted_bundle_content = ""
-            for path, content in bundle.context_files.items():
-                formatted_bundle_content += f"--- FILE: {path} ---\n{content}\n\n"
+                formatted_bundle_content = ""
+                for path, content in bundle.context_files.items():
+                    formatted_bundle_content += f"--- FILE: {path} ---\n{content}\n\n"
 
-            initial_agent_state: SpecializedAgentState = {
-                "submission_id": submission_id,
-                "llm_config_id": specialized_llm_id,
-                "filename": file_path,
-                "code_snippet": formatted_bundle_content,
-                "workflow_mode": workflow_mode,
-                "findings": [],
-                "fixes": [],
-                "error": None,
-            }
-            # Create the coroutine for the agent run
-            agent_coro = agent_graph.ainvoke(initial_agent_state)
-            # Wrap the coroutine in our semaphore helper to limit concurrency
-            tasks.append(run_with_semaphore(agent_coro))
+                initial_agent_state: SpecializedAgentState = {
+                    "submission_id": submission_id,
+                    "llm_config_id": specialized_llm_id,
+                    "filename": file_path,
+                    "code_snippet": formatted_bundle_content,
+                    "workflow_mode": workflow_mode,
+                    "findings": [],
+                    "fixes": [],
+                    "error": None,
+                }
+                agent_coro = agent_graph.ainvoke(initial_agent_state)
+                tasks.append(run_with_semaphore(agent_coro))
 
-    if not tasks:
-        # Ensure fields are initialized even if no tasks run
-        return {"findings": [], "fixes": []}
+        if not tasks:
+            return {"findings": [], "fixes": []}
 
-    agent_results = await asyncio.gather(*tasks, return_exceptions=True)
-    
-    all_findings: List[VulnerabilityFindingModel] = []
-    all_fixes: List[FixResultModel] = []
-    for result in agent_results:
-        if isinstance(result, dict):
-            all_findings.extend(result.get("findings", []))
-            all_fixes.extend(result.get("fixes", []))
-        elif isinstance(result, Exception):
-            logger.error(f"[{AGENT_NAME}] An agent task failed: {result}", exc_info=result)
+        agent_results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        all_findings: List[VulnerabilityFindingModel] = []
+        all_fixes: List[FixResultModel] = []
+        for result in agent_results:
+            if isinstance(result, dict):
+                all_findings.extend(result.get("findings", []))
+                # Audit mode doesn't produce fixes, but we handle it just in case
+                all_fixes.extend(result.get("fixes", [])) 
+            elif isinstance(result, Exception):
+                logger.error(f"[{AGENT_NAME}] An agent task failed during audit: {result}", exc_info=result)
 
-    logger.info(f"[{AGENT_NAME}] Collated {len(all_findings)} findings and {len(all_fixes)} fixes.")
-    # Return findings and fixes at the top level
-    return {"findings": all_findings, "fixes": all_fixes}
+        logger.info(f"[{AGENT_NAME}] Collated {len(all_findings)} findings from audit.")
+        return {"findings": all_findings, "fixes": all_fixes, "live_codebase": None}
+
+    # --- Mode: 'remediate' (Sequential Execution) ---
+    elif workflow_mode == "remediate":
+        live_codebase = files.copy() # Start with a copy of the original code
+        all_findings: List[VulnerabilityFindingModel] = []
+        all_fixes: List[FixResultModel] = []
+        
+        bundle_map: Dict[str, ContextBundle] = {b.target_file_path: b for b in context_bundles}
+
+        # Sequentially process each file that has been identified for analysis
+        for agent_name, file_paths in relevant_agents.items():
+            agent_builder = AGENT_BUILDER_MAP.get(agent_name)
+            if not agent_builder: continue
+            
+            agent_graph = agent_builder()
+            
+            for file_path in file_paths:
+                bundle = bundle_map.get(file_path)
+                if not bundle: continue
+                
+                # IMPORTANT: For remediation, the context must be the CURRENT state of the codebase
+                formatted_bundle_content = ""
+                for path in bundle.context_files.keys():
+                    # Use the version from live_codebase
+                    current_content = live_codebase.get(path, "")
+                    formatted_bundle_content += f"--- FILE: {path} ---\n{current_content}\n\n"
+                
+                logger.info(f"[{AGENT_NAME}] Sequentially remediating '{file_path}' with '{agent_name}'.")
+
+                initial_agent_state: SpecializedAgentState = {
+                    "submission_id": submission_id,
+                    "llm_config_id": specialized_llm_id,
+                    "filename": file_path,
+                    "code_snippet": formatted_bundle_content,
+                    "workflow_mode": workflow_mode,
+                    "findings": [],
+                    "fixes": [],
+                    "error": None,
+                }
+
+                agent_result = await agent_graph.ainvoke(initial_agent_state)
+
+                if isinstance(agent_result, dict) and not agent_result.get('error'):
+                    findings_from_run = agent_result.get("findings", [])
+                    fixes_from_run = agent_result.get("fixes", [])
+                    
+                    all_findings.extend(findings_from_run)
+                    all_fixes.extend(fixes_from_run)
+                    
+                    # Apply fixes to the live codebase
+                    for fix_result in fixes_from_run:
+                        target_file = fix_result.finding.file_path
+                        original_snippet = fix_result.suggestion.original_snippet
+                        new_code = fix_result.suggestion.code
+                        
+                        if target_file in live_codebase:
+                            file_content = live_codebase[target_file]
+                            if original_snippet in file_content:
+                                # Replace only the first occurrence to avoid unintended changes
+                                live_codebase[target_file] = file_content.replace(original_snippet, new_code, 1)
+                                logger.info(f"Applied fix in '{target_file}'.")
+                            else:
+                                logger.warning(f"Could not find original snippet in '{target_file}' to apply fix. The code may have been changed by a previous fix.")
+                elif isinstance(agent_result, Exception):
+                     logger.error(f"[{AGENT_NAME}] An agent task failed during remediation: {agent_result}", exc_info=agent_result)
+
+
+        logger.info(f"[{AGENT_NAME}] Collated {len(all_findings)} findings and {len(all_fixes)} fixes from remediation.")
+        return {"findings": all_findings, "fixes": all_fixes, "live_codebase": live_codebase}
+
+    else:
+        return {"error": f"Unknown workflow_mode: {workflow_mode}"}
 
 
 async def finalize_analysis_node(state: CoordinatorState) -> Dict[str, Any]:
     """
-    Saves all findings and their associated fixes, then updates the submission status.
-    Returns findings, fixes, and a final status message at the top level.
+    Saves all findings and their associated fixes. If it was a remediation run,
+    it saves the fixed code map. Then updates the submission status.
     """
     submission_id = state["submission_id"]
-    # Read findings and fixes from the top level of the state
     findings_to_save = state.get("findings", [])
     fixes_to_save = state.get("fixes", [])
+    live_codebase = state.get("live_codebase")
+    workflow_mode = state["workflow_mode"]
 
-    logger.info(f"[{AGENT_NAME}] Finalizing analysis for submission {submission_id}.")
+    logger.info(f"[{AGENT_NAME}] Finalizing analysis for submission {submission_id} in '{workflow_mode}' mode.")
 
-    if findings_to_save:
-        async with async_session_factory() as db:
-            try:
+    async with async_session_factory() as db:
+        try:
+            if findings_to_save:
                 persisted_findings = await crud.save_findings(db, submission_id, findings_to_save)
                 logger.info(f"[{AGENT_NAME}] Saved {len(persisted_findings)} findings.")
 
-                finding_map = {(f.file_path, f.line_number, f.cwe): f.id for f in persisted_findings}
                 if fixes_to_save:
+                    finding_map = {(f.file_path, f.line_number, f.cwe): f.id for f in persisted_findings}
                     for fix_result in fixes_to_save:
                         pydantic_finding = fix_result.finding
                         finding_key = (pydantic_finding.file_path, pydantic_finding.line_number, pydantic_finding.cwe)
@@ -327,17 +390,25 @@ async def finalize_analysis_node(state: CoordinatorState) -> Dict[str, Any]:
                         if finding_id:
                             await crud.save_fix_suggestion(db, finding_id, fix_result.suggestion)
                     logger.info(f"[{AGENT_NAME}] Saved {len(fixes_to_save)} fix suggestions.")
-            except Exception as e:
-                logger.error(f"[{AGENT_NAME}] Error saving findings/fixes to DB for {submission_id}: {e}", exc_info=True)
-                # If DB save fails, we should probably signal an error in the state
-                return {"error": f"DB error: {e}", "findings": findings_to_save, "fixes": fixes_to_save}
 
+            # New logic to handle remediation completion
+            if workflow_mode == 'remediate' and live_codebase:
+                await crud.update_remediated_code_and_status(
+                    db,
+                    submission_id,
+                    "Remediation-Completed",
+                    live_codebase
+                )
+                logger.info(f"[{AGENT_NAME}] Saved fixed code map and updated status to 'Remediation-Completed'.")
+            else:
+                # Original logic for audit completion
+                await crud.update_submission_status(db, submission_id, "Completed")
+                logger.info(f"[{AGENT_NAME}] Updated status to 'Completed' for submission {submission_id}.")
 
-    async with async_session_factory() as db:
-        await crud.update_submission_status(db, submission_id, "Completed")
-    logger.info(f"[{AGENT_NAME}] Updated status to 'Completed' for submission {submission_id}.")
+        except Exception as e:
+            logger.error(f"[{AGENT_NAME}] Error saving results to DB for {submission_id}: {e}", exc_info=True)
+            return {"error": f"DB error: {e}", "findings": findings_to_save, "fixes": fixes_to_save}
 
-    # Return findings, fixes, and final_status at the top level
     return {
         "findings": findings_to_save, 
         "fixes": fixes_to_save, 

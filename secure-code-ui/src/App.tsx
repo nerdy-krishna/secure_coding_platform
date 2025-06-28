@@ -24,6 +24,7 @@ import SettingsPage from "./pages/account/SettingsPage";
 import SubmissionHistoryPage from "./pages/account/SubmissionHistoryPage";
 import UserProfilePage from "./pages/account/UserProfilePage";
 import AnalysisResultsIndexPage from "./pages/analysis/AnalysisResultsIndexPage";
+import ExecutiveSummaryPage from "./pages/analysis/ExecutiveSummaryPage";
 import ResultsPage from "./pages/analysis/ResultsPage";
 import LoginPage from "./pages/auth/LoginPage";
 import RegisterPage from "./pages/auth/RegisterPage";
@@ -133,6 +134,7 @@ function AppContent() {
           <Route path="/submission/submit" element={<SubmitCodePage />} />
           <Route path="/analysis/results" element={<AnalysisResultsIndexPage />} />
           <Route path="/analysis/results/:submissionId" element={<ResultsPage />} />
+          <Route path="/analysis/results/:submissionId/executive-summary" element={<ExecutiveSummaryPage />} />
           <Route path="/account/history" element={<SubmissionHistoryPage />} />
           <Route path="/account/usage" element={<CostUsagePage />} />
           <Route path="/analysis/results/:submissionId" element={<ResultsPage />} />
