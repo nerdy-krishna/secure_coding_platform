@@ -5,7 +5,7 @@ import uuid
 import datetime # Added import
 from typing import List, Dict, Optional, Any
 
-from sqlalchemy import func, select, update
+from sqlalchemy import String, cast, func, select, update, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, aliased
 
@@ -286,10 +286,11 @@ async def save_fix_suggestion(
     db.add(fix)
     await db.commit()
 
-async def get_submission_history(db: AsyncSession, user_id: int, skip: int = 0, limit: int = 10) -> List[Dict[str, Any]]:
+    
+async def get_submission_history(db: AsyncSession, user_id: int, skip: int = 0, limit: int = 10, search: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Retrieves a paginated list of all submissions for a specific user,
-    including aggregated actual cost data.
+    including aggregated actual cost data and optional search on project name or submission ID.
     """
     # Alias LLMInteraction to perform aggregation
     llm_interaction_alias = aliased(db_models.LLMInteraction)
@@ -321,10 +322,29 @@ async def get_submission_history(db: AsyncSession, user_id: int, skip: int = 0, 
             db_models.CodeSubmission.id == cost_subquery.c.submission_id,
         )
         .filter(db_models.CodeSubmission.user_id == user_id)
-        .order_by(db_models.CodeSubmission.submitted_at.desc())
-        .offset(skip)
-        .limit(limit)
     )
+
+    if search:
+        # Search against the project name (case-insensitive)
+        project_name_filter = db_models.CodeSubmission.project_name.ilike(f"%{search}%")
+        
+        # Search against the submission ID by casting it to a string
+        submission_id_filter = cast(db_models.CodeSubmission.id, String).ilike(f"%{search}%")
+        
+        stmt = stmt.filter(or_(project_name_filter, submission_id_filter))
+
+    # --- START: DEBUG PRINT ---
+    print("\n--- [DEBUG] CRUD get_submission_history ---")
+    try:
+        # This will compile the SQL query with parameters inlined for easy debugging
+        compiled_sql = stmt.compile(db.bind, compile_kwargs={"literal_binds": True})
+        print(f"Final Compiled SQL:\n{compiled_sql}")
+    except Exception as e:
+        print(f"Could not compile SQL for debugging: {e}")
+    print("--- [DEBUG] END CRUD ---\n")
+    # --- END: DEBUG PRINT ---
+
+    stmt = stmt.order_by(db_models.CodeSubmission.submitted_at.desc()).offset(skip).limit(limit)
 
     result = await db.execute(stmt)
     
@@ -350,13 +370,22 @@ async def get_submission_history(db: AsyncSession, user_id: int, skip: int = 0, 
 
     return results_with_cost
 
-async def get_submission_history_count(db: AsyncSession, user_id: int) -> int:
-    """Counts the total number of submissions for a specific user."""
-    result = await db.execute(
-        select(func.count())
-        .select_from(db_models.CodeSubmission)
-        .where(db_models.CodeSubmission.user_id == user_id)
+async def get_submission_history_count(db: AsyncSession, user_id: int, search: Optional[str] = None) -> int:
+    """Counts the total number of submissions for a specific user, with optional search."""
+    stmt = (
+        select(func.count(db_models.CodeSubmission.id))
+        .filter(db_models.CodeSubmission.user_id == user_id)
     )
+    if search:
+        # Search against the project name (case-insensitive)
+        project_name_filter = db_models.CodeSubmission.project_name.ilike(f"%{search}%")
+        
+        # Search against the submission ID by casting it to a string
+        submission_id_filter = cast(db_models.CodeSubmission.id, String).ilike(f"%{search}%")
+        
+        stmt = stmt.filter(or_(project_name_filter, submission_id_filter))
+
+    result = await db.execute(stmt)
     count = result.scalar_one_or_none()
     return count or 0
 

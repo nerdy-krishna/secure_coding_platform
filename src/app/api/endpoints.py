@@ -490,12 +490,17 @@ async def get_submission_history(
     current_user: Annotated[db_models.User, Depends(current_active_user)],
     skip: int = Query(0, ge=0, description="Number of records to skip for pagination."),
     limit: int = Query(10, ge=1, le=100, description="Number of records to return."),
+    search: Optional[str] = Query(None, min_length=1, max_length=100, description="Search term to filter by project name or submission ID.")
 ):
     """
     Retrieves a paginated list of submission history for the currently authenticated user.
     """
-    total = await crud.get_submission_history_count(db, user_id=current_user.id)
-    items_raw = await crud.get_submission_history(db, user_id=current_user.id, skip=skip, limit=limit)
+    # --- START: DEBUG PRINT ---
+    print(f"\n--- [DEBUG] /history endpoint received search term: '{search}' ---\n")
+    # --- END: DEBUG PRINT ---
+
+    total = await crud.get_submission_history_count(db, user_id=current_user.id, search=search)
+    items_raw = await crud.get_submission_history(db, user_id=current_user.id, skip=skip, limit=limit, search=search)
     
     return {"items": items_raw, "total": total}
 

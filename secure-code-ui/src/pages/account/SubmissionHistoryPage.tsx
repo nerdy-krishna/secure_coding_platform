@@ -12,24 +12,24 @@ import {
   StopOutlined,
   SyncOutlined
 } from "@ant-design/icons";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
   Button,
   Card,
   Col,
   Descriptions,
+  Input,
   List,
   message,
   Popconfirm,
   Row,
   Space,
-  Spin,
   Statistic,
   Steps,
   Typography
 } from "antd";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../../hooks/useAuth";
 import {
@@ -80,7 +80,7 @@ const getStatusInfo = (item: SubmissionHistoryItem): StatusInfo => {
   const upperStatus = item.status.toUpperCase().replace(/[\s-]/g, "_");
 
   // This console log will show you the exact status string being processed for each item
-  console.log(`Processing item ID: ${item.id}, Original Status: "${item.status}", Normalized Status: "${upperStatus}"`);
+  // console.log(`Processing item ID: ${item.id}, Original Status: "${item.status}", Normalized Status: "${upperStatus}"`);
 
   // Handle the initial analysis phase before cost estimation is available
   if (upperStatus === "ANALYZING" && !item.estimated_cost) {
@@ -189,16 +189,39 @@ const ActionButtons: React.FC<{ record: SubmissionHistoryItem }> = ({ record }) 
 
 const SubmissionHistoryPage: React.FC = () => {
   const [pagination, setPagination] = useState({ page: 1, pageSize: 5 });
+  const [searchTerm, setSearchTerm] = useState("");
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
 
-  const { data, isLoading, isError, error } = useQuery<PaginatedSubmissionHistoryResponse, Error>({
-    queryKey: ["submissionHistory", pagination.page, pagination.pageSize],
-    queryFn: () => submissionService.getSubmissionHistory(pagination.page, pagination.pageSize),
+  // Debouncing effect remains the same
+  useEffect(() => {
+    const timer = setTimeout(() => {
+        setDebouncedSearchTerm(searchTerm);
+        setPagination(p => ({...p, page: 1}));
+    }, 500);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [searchTerm]);
+
+  const { data, isLoading, isError, error, isFetching } = useQuery<PaginatedSubmissionHistoryResponse, Error>({
+    queryKey: ["submissionHistory", pagination.page, pagination.pageSize, debouncedSearchTerm],
+    queryFn: () => submissionService.getSubmissionHistory(pagination.page, pagination.pageSize, debouncedSearchTerm),
+    placeholderData: keepPreviousData,
     refetchInterval: (query) => {
+      // Get the latest data and fetch status from the query object argument
+      const currentData = query.state.data;
+      const isCurrentlyFetching = query.state.fetchStatus === 'fetching';
+
+      // Disable polling when a search term is active or while a fetch is in progress.
+      if (debouncedSearchTerm || isCurrentlyFetching) {
+        return false;
+      }
+
       const terminalStates = ["COMPLETED", "FAILED", "CANCELLED"];
-      const shouldPoll = query.state.data?.items.some(
+      const shouldPoll = currentData?.items.some(
         (item) => !terminalStates.includes(item.status.toUpperCase().replace(/[\s-]/g, "_"))
       );
-      // Poll every 5 seconds if there's an active submission
       return shouldPoll ? 5000 : false;
     },
   });
@@ -208,14 +231,6 @@ const SubmissionHistoryPage: React.FC = () => {
     return new Date(dateString).toLocaleString();
   };
 
-  if (isLoading && !data) {
-    return (
-      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "calc(100vh - 200px)" }}>
-        <Spin size="large" />
-      </div>
-    );
-  }
-
   if (isError) {
     return <Alert message="Error" description={`Could not fetch submission history: ${error.message}`} type="error" showIcon />;
   }
@@ -223,8 +238,23 @@ const SubmissionHistoryPage: React.FC = () => {
   return (
     <Space direction="vertical" style={{ width: "100%" }} size="large">
       <Title level={2}>Submission History</Title>
+
+      <Input.Search
+          placeholder="Search by Project Name or Submission ID..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          onSearch={(value) => {
+            setDebouncedSearchTerm(value);
+            setPagination(p => ({...p, page: 1}));
+          }}
+          style={{ width: '100%' }}
+          allowClear
+          enterButton
+          loading={isFetching} // Use isFetching for the subtle background indicator
+        />
+
       <List
-        loading={isLoading}
+        loading={isLoading} // Use isLoading, which is now only true on the initial load
         itemLayout="vertical"
         size="large"
         pagination={{
