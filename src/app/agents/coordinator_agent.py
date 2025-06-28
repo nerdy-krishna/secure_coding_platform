@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from typing import Any, Dict, List, TypedDict, Optional, cast
+from typing import Any, Dict, List, TypedDict, Optional, cast, Coroutine
 import uuid
 
 from langgraph.graph import END, StateGraph
@@ -40,6 +40,10 @@ from app.db.database import AsyncSessionLocal as async_session_factory
 logger = logging.getLogger(__name__)
 
 AGENT_NAME = "CoordinatorAgent"
+
+# The maximum number of specialized agents that can make LLM calls concurrently.
+# This value can be tuned or moved to settings later.
+CONCURRENT_LLM_LIMIT = 5
 
 # Define status constants for clarity within this agent
 STATUS_PENDING_APPROVAL = "PENDING_COST_APPROVAL"
@@ -227,20 +231,23 @@ async def run_specialized_agents_node(state: CoordinatorState) -> Dict[str, Any]
     and setting the appropriate workflow_mode.
     """
     submission_id = state["submission_id"]
-
-    logger.info(f"[{AGENT_NAME}] Updating submission {submission_id} status to 'Analyzing'.")
-    async with async_session_factory() as db:
-        await crud.update_submission_status(db, submission_id, "Analyzing")
-    
     relevant_agents = state["relevant_agents"]
     context_bundles = state["context_bundles"]
     specialized_llm_id = state.get("llm_config_id")
     workflow_mode = state["workflow_mode"]
 
-    logger.info(f"[{AGENT_NAME}] Beginning specialized agent runs in '{workflow_mode}' mode.")
+    logger.info(f"[{AGENT_NAME}] Beginning specialized agent runs in '{workflow_mode}' mode with a concurrency limit of {CONCURRENT_LLM_LIMIT}.")
 
     if not context_bundles:
         return {"error": "Context bundles not found, cannot run specialized agents."}
+
+    # --- START: Semaphore Implementation ---
+    semaphore = asyncio.Semaphore(CONCURRENT_LLM_LIMIT)
+
+    async def run_with_semaphore(coro: Coroutine) -> Any:
+        async with semaphore:
+            return await coro
+    # --- END: Semaphore Implementation ---
 
     bundle_map: Dict[str, ContextBundle] = {b.target_file_path: b for b in context_bundles}
     tasks = []
@@ -268,7 +275,10 @@ async def run_specialized_agents_node(state: CoordinatorState) -> Dict[str, Any]
                 "fixes": [],
                 "error": None,
             }
-            tasks.append(agent_graph.ainvoke(initial_agent_state))
+            # Create the coroutine for the agent run
+            agent_coro = agent_graph.ainvoke(initial_agent_state)
+            # Wrap the coroutine in our semaphore helper to limit concurrency
+            tasks.append(run_with_semaphore(agent_coro))
 
     if not tasks:
         # Ensure fields are initialized even if no tasks run
