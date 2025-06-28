@@ -66,11 +66,13 @@ export const submissionService = {
   getSubmissionHistory: async (
     page: number,
     pageSize: number,
+    search?: string,
   ): Promise<PaginatedSubmissionHistoryResponse> => {
     const response = await apiClient.get<PaginatedSubmissionHistoryResponse>("/history", {
         params: {
             skip: (page - 1) * pageSize,
             limit: pageSize,
+            search: search || undefined, // Only include search param if it's not empty
         }
     });
     return response.data;
