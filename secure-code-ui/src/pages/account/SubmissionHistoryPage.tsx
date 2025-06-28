@@ -240,7 +240,8 @@ const SubmissionHistoryPage: React.FC = () => {
   // Effect to detect status changes and show notifications
   const previousData = usePrevious(data);
   useEffect(() => {
-    if (!previousData || !data || permission !== 'granted') {
+    // The permission check is now removed from here, as the hook handles it.
+    if (!previousData || !data) {
       return;
     }
 
@@ -269,9 +270,8 @@ const SubmissionHistoryPage: React.FC = () => {
             showNotification(notificationTitle, notificationBody);
         }
       }
-      // --- END: MODIFIED LOGIC ---
     });
-  }, [data, previousData, permission, showNotification]);
+  }, [data, previousData, showNotification]);
 
   const formatDate = (dateString: string | null) => {
     if (!dateString) return "N/A";
