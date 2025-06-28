@@ -422,17 +422,6 @@ async def get_submission_history(db: AsyncSession, user_id: int, skip: int = 0, 
         
         stmt = stmt.filter(or_(project_name_filter, submission_id_filter))
 
-    # --- START: DEBUG PRINT ---
-    print("\n--- [DEBUG] CRUD get_submission_history ---")
-    try:
-        # This will compile the SQL query with parameters inlined for easy debugging
-        compiled_sql = stmt.compile(db.bind, compile_kwargs={"literal_binds": True})
-        print(f"Final Compiled SQL:\n{compiled_sql}")
-    except Exception as e:
-        print(f"Could not compile SQL for debugging: {e}")
-    print("--- [DEBUG] END CRUD ---\n")
-    # --- END: DEBUG PRINT ---
-
     stmt = stmt.order_by(db_models.CodeSubmission.submitted_at.desc()).offset(skip).limit(limit)
 
     result = await db.execute(stmt)

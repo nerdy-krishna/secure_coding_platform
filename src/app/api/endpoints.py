@@ -3,7 +3,6 @@
 import logging
 import uuid
 from typing import List, Optional, Annotated, Dict, Any
-# Removed tempfile, os, shutil, git imports as they are now in git_utils
 
 from fastapi import (
     APIRouter,
@@ -25,8 +24,9 @@ from app.api import models as api_models
 from app.auth.core import current_active_user, current_superuser
 from app.utils import rabbitmq_utils
 from app.core.config import settings
-from app.utils.git_utils import clone_repo_and_get_files # get_language_from_filename removed
-from app.utils.file_utils import get_language_from_filename # Added import from file_utils
+from app.core.logging_config import correlation_id_var
+from app.utils.git_utils import clone_repo_and_get_files
+from app.utils.file_utils import get_language_from_filename
 from app.utils.archive_utils import extract_archive_to_files, is_archive_filename, ALLOWED_ARCHIVE_EXTENSIONS # Added archive_utils imports
 
 # Create two routers: one for general endpoints, one for admin-level LLM configs
@@ -259,8 +259,10 @@ async def submit_code(
         specialized_llm_config_id=specialized_llm_config_id,
     )
 
-    rabbitmq_utils.publish_submission(str(submission.id))
-    logger.info(f"Published submission {submission.id} to RabbitMQ.")
+    # Get the correlation ID from the context variable and pass it to the publisher
+    corr_id = correlation_id_var.get()
+    rabbitmq_utils.publish_submission(str(submission.id), correlation_id=corr_id)
+    logger.info(f"Published submission {submission.id} to RabbitMQ.", extra={"correlation_id": corr_id})
 
     return {
         "submission_id": submission.id,
@@ -511,9 +513,6 @@ async def get_submission_history(
     """
     Retrieves a paginated list of submission history for the currently authenticated user.
     """
-    # --- START: DEBUG PRINT ---
-    print(f"\n--- [DEBUG] /history endpoint received search term: '{search}' ---\n")
-    # --- END: DEBUG PRINT ---
 
     total = await crud.get_submission_history_count(db, user_id=current_user.id, search=search)
     items_raw = await crud.get_submission_history(db, user_id=current_user.id, skip=skip, limit=limit, search=search)

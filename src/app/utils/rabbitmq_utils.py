@@ -3,6 +3,8 @@
 import pika
 import logging
 import json
+import uuid
+from typing import Optional
 
 from app.core.config import settings
 from pika.exceptions import AMQPConnectionError
@@ -10,9 +12,9 @@ from pika.exceptions import AMQPConnectionError
 logger = logging.getLogger(__name__)
 
 # This is your existing function, preserved without changes.
-def publish_submission(submission_id: str):
+def publish_submission(submission_id: str, correlation_id: Optional[str] = None):
     """
-    Publishes a submission ID to the specified RabbitMQ queue.
+    Publishes a submission ID and correlation ID to the specified RabbitMQ queue.
     This is a synchronous, blocking function.
     """
     connection = None
@@ -33,12 +35,15 @@ def publish_submission(submission_id: str):
 
         channel.queue_declare(queue=queue_name, durable=True)
 
-        message_body = json.dumps({"submission_id": submission_id})
+        message_body = {
+            "submission_id": submission_id,
+            "correlation_id": correlation_id or str(uuid.uuid4())
+        }
 
         channel.basic_publish(
             exchange="",
             routing_key=queue_name,
-            body=message_body.encode("utf-8"),
+            body=json.dumps(message_body).encode("utf-8"),
             properties=pika.BasicProperties(
                 delivery_mode=2,
             ),
@@ -68,7 +73,7 @@ def publish_submission(submission_id: str):
                 )
 
 # --- ADDED: New generic message publisher ---
-def publish_message(queue_name: str, message_body: dict) -> bool:
+def publish_message(queue_name: str, message_body: dict, correlation_id: Optional[str] = None) -> bool:
     """
     Publishes a generic dictionary message to the specified RabbitMQ queue.
     Adopts the robust connection and error handling from publish_submission.
@@ -93,7 +98,9 @@ def publish_message(queue_name: str, message_body: dict) -> bool:
 
         channel.queue_declare(queue=queue_name, durable=True)
 
-        body_json = json.dumps(message_body)
+        # Add correlation_id to the message body
+        full_message_body = {**message_body, "correlation_id": correlation_id or str(uuid.uuid4())}
+        body_json = json.dumps(full_message_body)
 
         channel.basic_publish(
             exchange="",
