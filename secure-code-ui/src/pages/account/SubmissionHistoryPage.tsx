@@ -29,9 +29,10 @@ import {
   Steps,
   Typography
 } from "antd";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../../hooks/useAuth";
+import { useNotifications } from "../../hooks/useNotifications";
 import {
   approveSubmission,
   cancelSubmission,
@@ -187,10 +188,20 @@ const ActionButtons: React.FC<{ record: SubmissionHistoryItem }> = ({ record }) 
   );
 };
 
+// Custom hook to get the previous value of a prop or state
+function usePrevious<T>(value: T): T | undefined {
+  const ref = useRef<T | undefined>(undefined);
+  useEffect(() => {
+    ref.current = value;
+  });
+  return ref.current;
+}
+
 const SubmissionHistoryPage: React.FC = () => {
   const [pagination, setPagination] = useState({ page: 1, pageSize: 5 });
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
+  const { permission, requestPermission, showNotification } = useNotifications();
 
   // Debouncing effect remains the same
   useEffect(() => {
@@ -226,6 +237,42 @@ const SubmissionHistoryPage: React.FC = () => {
     },
   });
 
+  // Effect to detect status changes and show notifications
+  const previousData = usePrevious(data);
+  useEffect(() => {
+    if (!previousData || !data || permission !== 'granted') {
+      return;
+    }
+
+    const inProgressStates = ["SUBMITTED", "PENDING", "ANALYZING", "APPROVED_QUEUED", "REMEDIATING", "ANALYZING_CONTEXT"];
+    const terminalStates = ["COMPLETED", "FAILED"];
+
+    data.items.forEach(currentItem => {
+      const previousItem = previousData.items.find(p => p.id === currentItem.id);
+      
+      // --- START: MODIFIED LOGIC ---
+      if (previousItem && previousItem.status !== currentItem.status) {
+        const currentStatus = currentItem.status.toUpperCase().replace(/[\s-]/g, "_");
+        const previousStatus = previousItem.status.toUpperCase().replace(/[\s-]/g, "_");
+
+        // Case 1: Notification for Scan Completion
+        if (inProgressStates.includes(previousStatus) && terminalStates.includes(currentStatus)) {
+          const notificationTitle = `Scan ${currentStatus.charAt(0) + currentStatus.slice(1).toLowerCase()}`;
+          const notificationBody = `Your analysis for project "${currentItem.project_name}" has finished.`;
+          showNotification(notificationTitle, notificationBody);
+        }
+
+        // Case 2: Notification for Cost Approval
+        if (currentStatus === "PENDING_COST_APPROVAL") {
+            const notificationTitle = `Action Required`;
+            const notificationBody = `Project "${currentItem.project_name}" requires cost approval before scanning can proceed.`;
+            showNotification(notificationTitle, notificationBody);
+        }
+      }
+      // --- END: MODIFIED LOGIC ---
+    });
+  }, [data, previousData, permission, showNotification]);
+
   const formatDate = (dateString: string | null) => {
     if (!dateString) return "N/A";
     return new Date(dateString).toLocaleString();
@@ -237,7 +284,16 @@ const SubmissionHistoryPage: React.FC = () => {
 
   return (
     <Space direction="vertical" style={{ width: "100%" }} size="large">
-      <Title level={2}>Submission History</Title>
+      <Row justify="space-between" align="middle">
+        <Col>
+          <Title level={2}>Submission History</Title>
+        </Col>
+        <Col>
+          {permission === 'default' && (
+            <Button onClick={requestPermission}>Enable Notifications</Button>
+          )}
+        </Col>
+      </Row>
 
       <Input.Search
           placeholder="Search by Project Name or Submission ID..."
