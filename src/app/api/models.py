@@ -318,6 +318,7 @@ class SummaryReportResponse(BaseModel):
 
 
 class AnalysisResultDetailResponse(BaseModel):
+    status: str
     impact_report: Optional[Dict[str, Any]] = None
     sarif_report: Optional[Dict[str, Any]] = None
     summary_report: Optional[SummaryReportResponse] = None

@@ -527,9 +527,13 @@ async def get_submission_results(
     
     # Step 4: Assemble the final response, now including the new direct report fields.
     return api_models.AnalysisResultDetailResponse(
+        status=submission_db.status,
         impact_report=submission_db.impact_report,
         sarif_report=submission_db.sarif_report,
-        summary_report=summary_report_response_obj
+        summary_report=summary_report_response_obj,
+        # Convert the list of file objects into the required dictionary format
+        original_code_map={file.file_path: file.content for file in submission_db.files},
+        fixed_code_map=submission_db.fixed_code_map
     )
 
 @router.get("/result/{submission_id}/executive-summary/download")
