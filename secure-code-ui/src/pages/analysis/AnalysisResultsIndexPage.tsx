@@ -5,8 +5,8 @@ import { Card, Input, Table, Tag, Tooltip, Typography } from 'antd';
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 
-import { submissionService } from '../../services/submissionService';
-import type { PaginatedResultsResponse, ResultIndexItem } from '../../types/api';
+import { submissionService } from '../../shared/api/submissionService';
+import type { PaginatedResultsResponse, ResultIndexItem } from '../../shared/types/api';
 
 const { Title, Paragraph, Text } = Typography;
 const { Search } = Input;

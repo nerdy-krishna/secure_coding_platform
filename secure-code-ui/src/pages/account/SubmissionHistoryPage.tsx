@@ -1,4 +1,4 @@
-// src/pages/account/SubmissionHistoryPage.tsx
+// src/app/pages/account/SubmissionHistoryPage.tsx
 import {
   CheckCircleFilled,
   CheckCircleOutlined,
@@ -31,15 +31,15 @@ import {
 } from "antd";
 import React, { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { useAuth } from "../../hooks/useAuth";
-import { useNotifications } from "../../hooks/useNotifications";
 import {
   approveSubmission,
   cancelSubmission,
   deleteSubmission,
   submissionService,
-} from "../../services/submissionService";
-import type { PaginatedSubmissionHistoryResponse, SubmissionHistoryItem } from "../../types/api";
+} from "../../shared/api/submissionService";
+import { useAuth } from "../../shared/hooks/useAuth";
+import { useNotifications } from "../../shared/hooks/useNotifications";
+import type { PaginatedSubmissionHistoryResponse, SubmissionHistoryItem } from "../../shared/types/api";
 
 const { Title, Text } = Typography;
 
