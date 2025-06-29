@@ -4,12 +4,12 @@ import {
   ArrowLeftOutlined,
   BugOutlined,
   CodeOutlined,
-  DownloadOutlined, // ADDED
+  DownloadOutlined,
   FileTextOutlined,
   InfoCircleOutlined,
   LoadingOutlined,
   ProfileOutlined,
-  RocketOutlined, // ADDED
+  RocketOutlined,
   SafetyCertificateOutlined,
   ToolOutlined,
 } from "@ant-design/icons";
@@ -36,6 +36,8 @@ import {
 import { AxiosError } from "axios";
 import React, { useCallback, useEffect, useMemo, useState } from "react"; // useMemo is now used correctly
 // prettier-ignore
+import { saveAs } from 'file-saver';
+import JSZip from 'jszip';
 import ReactDiffViewer, { DiffMethod } from "react-diff-viewer-continued";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { submissionService, triggerRemediation } from "../../services/submissionService";
@@ -50,7 +52,6 @@ import { SeverityColors, SeverityTags } from "../../utils/severityMappings";
 
 // Import our new components
 import RemediationModal from "../../components/RemediationModal";
-import apiClient from '../../services/apiClient';
 
 const { Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
@@ -188,6 +189,7 @@ const ResultsPage: React.FC = () => {
 
   // Your existing data destructuring is preserved
   const {
+    status,
     summary_report,
     sarif_report,
     text_report,
@@ -207,7 +209,31 @@ const ResultsPage: React.FC = () => {
     remediationMutation.mutate({ categories });
   };
   
-  const downloadUrl = `${apiClient.defaults.baseURL}/submissions/${submissionId}/download`;
+  const handleDownloadFixedCode = async () => {
+    if (!result?.fixed_code_map) {
+      message.error("No fixed code is available to download.");
+      return;
+    }
+
+    message.loading({ content: 'Preparing download...', key: 'zip' });
+    
+    const zip = new JSZip();
+    for (const [filePath, content] of Object.entries(result.fixed_code_map)) {
+      // Use the content directly
+      if (typeof content === 'string') {
+        zip.file(filePath, content);
+      }
+    }
+
+    try {
+      const zipBlob = await zip.generateAsync({ type: "blob" });
+      saveAs(zipBlob, `fixed-code-${submissionId}.zip`);
+      message.success({ content: 'Download started!', key: 'zip', duration: 2 });
+    } catch (e) {
+      console.error("Failed to generate zip file", e);
+      message.error({ content: 'Failed to generate zip file.', key: 'zip', duration: 2 });
+    }
+  };
 
   const renderFileTabs = () => {
     // ... This entire function remains exactly the same as your existing code ...
@@ -415,14 +441,12 @@ const ResultsPage: React.FC = () => {
         </Col>
         <Col>
             <Space>
-                {fixed_code_map && Object.keys(fixed_code_map).length > 0 && (
-                     <a href={downloadUrl} download>
-                        <Button type="default" icon={<DownloadOutlined />}>
-                            Download Fixed Code
-                        </Button>
-                    </a>
+                {result.fixed_code_map && Object.keys(result.fixed_code_map).length > 0 && (
+                     <Button type="default" icon={<DownloadOutlined />} onClick={handleDownloadFixedCode}>
+                        Download Fixed Code
+                    </Button>
                 )}
-                {result.status === "Completed" && (
+                {status === "Completed" && (
                     <Button type="primary" icon={<RocketOutlined />} onClick={handleStartRemediation}>
                         Begin Remediation
                     </Button>
