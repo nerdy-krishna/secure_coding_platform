@@ -25,12 +25,12 @@ try:
     # This ensures 'from app...' works when running from the project root
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-    from app.db.database import Base
-    from app.core.config import settings
+    from app.infrastructure.database.database import Base
+    from app.config.config import settings
 
     log.info("Successfully imported Base and settings.")
     # Ensure all models are imported so Base.metadata is populated
-    import app.db.models
+    import app.infrastructure.database.models
 
     alembic_db_url = settings.ALEMBIC_DATABASE_URL
     if not alembic_db_url:
@@ -64,6 +64,7 @@ def include_object(object, name, type_, reflected, compare_to):
     else:
         return True
 
+
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""
     url = config.get_main_option("sqlalchemy.url")
@@ -83,7 +84,7 @@ def run_migrations_offline() -> None:
 def do_run_migrations(connection: Connection):
     """Helper function for `run_migrations_online`."""
     context.configure(
-        connection=connection, 
+        connection=connection,
         target_metadata=target_metadata,
         # Add these two lines to ensure correct detection
         include_object=include_object,

@@ -1,8 +1,8 @@
-// secure-code-ui/src/pages/dashboard/UserProfilePage.tsx
+// src/app/pages/dashboard/UserProfilePage.tsx
 import { EditOutlined, UserOutlined } from "@ant-design/icons";
 import { Avatar, Button, Card, Descriptions, Divider, Typography } from "antd";
 import React from "react";
-import { useAuth } from "../../hooks/useAuth"; // Adjust path as needed if it's not in src/hooks/
+import { useAuth } from "../../shared/hooks/useAuth";
 
 const { Title, Text } = Typography; // Removed Paragraph as it wasn't used directly here
 

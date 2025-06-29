@@ -1,4 +1,4 @@
-// secure-code-ui/src/pages/dashboard/SettingsPage.tsx
+// src/app/app/pages/dashboard/SettingsPage.tsx
 import { Card, Divider, Typography } from "antd";
 import React from "react";
 
