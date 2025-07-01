@@ -51,12 +51,10 @@ class TokenUsageCallbackHandler(AsyncCallbackHandler):
             elif self.prompt_tokens:
                 self.total_tokens = self.prompt_tokens
         elif self.provider_name == "google":
-            usage_metadata = llm_output.get("usage_metadata", {})
-            self.prompt_tokens = usage_metadata.get("prompt_token_count", 0)
-            self.completion_tokens = usage_metadata.get("candidates_token_count", 0)
-            self.total_tokens = usage_metadata.get("total_token_count", 0)
-            if not self.total_tokens and self.prompt_tokens and self.completion_tokens:
-                self.total_tokens = self.prompt_tokens + self.completion_tokens
+            usage_metadata = llm_output.get("usage_metadata") or llm_output.get("token_usage") or {}
+            self.prompt_tokens = usage_metadata.get("prompt_token_count") or usage_metadata.get("prompt_tokens") or 0
+            self.completion_tokens = usage_metadata.get("candidates_token_count") or usage_metadata.get("completion_tokens") or 0
+            self.total_tokens = usage_metadata.get("total_token_count") or usage_metadata.get("total_tokens") or (self.prompt_tokens + self.completion_tokens)
 
         logger.debug(
             f"TokenUsageCallback: Provider: {self.provider_name}, "

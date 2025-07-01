@@ -5,7 +5,7 @@ import uuid
 import datetime
 from typing import List, Dict, Optional, Any
 
-from sqlalchemy import String, cast, func, select, update, or_
+from sqlalchemy import String, case, cast, func, select, update, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, aliased
 
@@ -180,6 +180,63 @@ class SubmissionRepository:
         )
         await self.db.execute(stmt)
         await self.db.commit()
+
+    async def get_paginated_results(self, user_id: int, skip: int, limit: int, search: Optional[str]) -> List[Dict[str, Any]]:
+        """
+        Retrieves a paginated list of completed submissions with aggregated finding counts.
+        """
+        finding_counts_subquery = (
+            select(
+                db_models.VulnerabilityFinding.submission_id,
+                func.count(db_models.VulnerabilityFinding.id).label("total_findings"),
+                func.sum(case((func.upper(db_models.VulnerabilityFinding.severity) == 'CRITICAL', 1), else_=0)).label("critical_findings"),
+                func.sum(case((func.upper(db_models.VulnerabilityFinding.severity) == 'HIGH', 1), else_=0)).label("high_findings"),
+                func.sum(case((func.upper(db_models.VulnerabilityFinding.severity) == 'MEDIUM', 1), else_=0)).label("medium_findings"),
+                func.sum(case((func.upper(db_models.VulnerabilityFinding.severity) == 'LOW', 1), else_=0)).label("low_findings"),
+            )
+            .group_by(db_models.VulnerabilityFinding.submission_id).subquery()
+        )
+        stmt = (
+            select(db_models.CodeSubmission, finding_counts_subquery.c.total_findings, finding_counts_subquery.c.critical_findings, finding_counts_subquery.c.high_findings, finding_counts_subquery.c.medium_findings, finding_counts_subquery.c.low_findings)
+            .outerjoin(finding_counts_subquery, db_models.CodeSubmission.id == finding_counts_subquery.c.submission_id)
+            .where(db_models.CodeSubmission.user_id == user_id, db_models.CodeSubmission.status.in_(["Completed", "Remediation-Completed"]))
+        )
+        if search:
+            stmt = stmt.filter(or_(db_models.CodeSubmission.project_name.ilike(f"%{search}%"), cast(db_models.CodeSubmission.id, String).ilike(f"%{search}%")))
+        stmt = stmt.order_by(db_models.CodeSubmission.completed_at.desc().nulls_last()).offset(skip).limit(limit)
+        
+        result = await self.db.execute(stmt)
+        results_list = []
+        for row in result.all():
+            sub, total, critical, high, medium, low = row
+            critical_count, high_count, medium_count, low_count = critical or 0, high or 0, medium or 0, low or 0
+            risk_score = (critical_count * 10) + (high_count * 5) + (medium_count * 2) + (low_count * 1)
+            results_list.append({
+                "submission_id": sub.id, "project_name": sub.project_name, "completed_at": sub.completed_at,
+                "total_findings": total or 0, "critical_findings": critical_count, "high_findings": high_count,
+                "medium_findings": medium_count, "low_findings": low_count, "risk_score": risk_score,
+            })
+        return results_list
+
+    async def get_results_count(self, user_id: int, search: Optional[str] = None) -> int:
+        """Counts the total number of completed submissions for a specific user."""
+        stmt = select(func.count(db_models.CodeSubmission.id))\
+            .where(db_models.CodeSubmission.user_id == user_id, db_models.CodeSubmission.status.in_(["Completed", "Remediation-Completed"]))
+        if search:
+            stmt = stmt.filter(or_(db_models.CodeSubmission.project_name.ilike(f"%{search}%"), cast(db_models.CodeSubmission.id, String).ilike(f"%{search}%")))
+        result = await self.db.execute(stmt)
+        return result.scalar_one() or 0
+
+    async def get_llm_interactions_for_user(self, user_id: int) -> List[db_models.LLMInteraction]:
+        """Retrieves all LLM interactions for a given user, ordered by most recent."""
+        stmt = (
+            select(db_models.LLMInteraction)
+            .join(db_models.CodeSubmission, db_models.LLMInteraction.submission_id == db_models.CodeSubmission.id)
+            .where(db_models.CodeSubmission.user_id == user_id)
+            .order_by(db_models.LLMInteraction.timestamp.desc())
+        )
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
 
     async def get_paginated_history(
         self, user_id: int, skip: int, limit: int, search: Optional[str]

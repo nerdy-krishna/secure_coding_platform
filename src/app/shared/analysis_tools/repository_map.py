@@ -1,12 +1,12 @@
-# src/app/analysis/repository_map.py
+# src/app/shared/analysis_tools/repository_map.py
 
 import logging
 from pathlib import Path
 from typing import Dict, List, Tuple
 
 from pydantic import BaseModel, Field
-import tree_sitter_languages  # Added for version logging
-from tree_sitter import Language, Node, Parser, Tree  # Language is important
+import tree_sitter_languages
+from tree_sitter import Language, Node, Parser, Tree
 from tree_sitter_languages import get_language
 
 
