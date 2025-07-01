@@ -97,7 +97,10 @@ export interface CodeSubmissionResponse {
 
 // For Analysis Results
 export interface Finding {
+  id: number;
   rule_id?: string;
+  file_path: string;
+  title: string;
   cwe_id?: string;
   asvs_categories?: string[];
   attack_name_summary?: string;
@@ -115,6 +118,7 @@ export interface Finding {
 
 export interface SuggestedFix {
   description?: string;
+  original_snippet?: string; // ADDED
   suggested_fix?: string;
 }
 
@@ -298,9 +302,8 @@ export interface AnalysisResultResponse {
   sarif_report?: SARIFLog;
   text_report?: string;
   original_code_map?: { [filePath: string]: string };
-  fixed_code_map?: { [filePathFixed: string]: string };
+  fixed_code_map?: { [filePath: string]: string };
   error_message?: string;
-  // ADDED: New field for the AI-generated impact report
   impact_report?: ImpactReport;
 }
 // --- END UPDATED RESPONSE ---

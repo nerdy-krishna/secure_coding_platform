@@ -57,6 +57,7 @@ async def submit_code(
     specialized_llm_config_id: uuid.UUID = Form(...),
     frameworks: str = Form(...),
     excluded_files: Optional[str] = Form(None),
+    workflow_mode: str = Form("audit"),
     files: Optional[List[UploadFile]] = File(None),
     repo_url: Optional[str] = Form(None),
     archive_file: Optional[UploadFile] = File(None),
@@ -66,6 +67,7 @@ async def submit_code(
         "frameworks": [f.strip() for f in frameworks.split(",")],
         "excluded_files": [f.strip() for f in excluded_files.split(",")] if excluded_files else [],
         "main_llm_id": main_llm_config_id, "specialized_llm_id": specialized_llm_config_id,
+        "workflow_mode": workflow_mode,
     }
     submission_methods_count = sum(1 for method in [files, repo_url, archive_file] if method)
     if submission_methods_count != 1:

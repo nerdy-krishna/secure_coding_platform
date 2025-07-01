@@ -1,0 +1,21 @@
+/* secure-code-ui/src/features/results-display/components/ResultsFileTree.css */
+.results-file-tree .ant-tree-node-content-wrapper {
+  display: flex;
+  align-items: center;
+}
+
+.tree-node-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+}
+
+.finding-count-tag {
+  margin-left: 8px;
+  font-size: 12px;
+  line-height: 16px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+}

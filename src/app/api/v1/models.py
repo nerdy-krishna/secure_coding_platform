@@ -128,6 +128,7 @@ class SubmissionResponse(BaseModel):
 class FixSuggestionResponse(BaseModel):
     id: int
     description: str
+    original_snippet: str # ADDED
     suggested_fix: str
 
     class Config:

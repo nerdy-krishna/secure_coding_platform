@@ -60,14 +60,16 @@ async def retrieve_submission_data(state: WorkerState) -> Dict[str, Any]:
 
             files_map = {file.file_path: file.content for file in submission.files}
             
+            workflow_mode = state.get("workflow_mode") or submission.workflow_mode or "audit"
             llm_id_to_use = submission.main_llm_config_id
-            if state.get("workflow_mode") == "remediate":
+            if workflow_mode in ["remediate", "audit_and_remediate"]:
                 llm_id_to_use = submission.specialized_llm_config_id
 
             return {
                 "files": files_map, 
                 "llm_config_id": llm_id_to_use, 
                 "excluded_files": submission.excluded_files,
+                "workflow_mode": workflow_mode,
                 "error_message": None
             }
         except Exception as e:

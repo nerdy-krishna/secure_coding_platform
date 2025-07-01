@@ -28,7 +28,7 @@ class SubmissionService:
     async def _process_and_create_submission(
         self, files_data: List[Dict[str, Any]], project_name: str, user_id: int, frameworks: List[str],
         excluded_files: List[str], main_llm_id: uuid.UUID, specialized_llm_id: uuid.UUID,
-        correlation_id: str, repo_url: Optional[str] = None
+        workflow_mode: str, correlation_id: str, repo_url: Optional[str] = None
     ) -> db_models.CodeSubmission:
         """A private helper to process submission data, create a DB record, and publish a message."""
         logger.info(
@@ -46,7 +46,7 @@ class SubmissionService:
         submission = await self.repo.create_submission(
             user_id=user_id, project_name=project_name, repo_url=repo_url, files=files_data,
             frameworks=frameworks, excluded_files=excluded_files, main_llm_id=main_llm_id,
-            specialized_llm_id=specialized_llm_id
+            specialized_llm_id=specialized_llm_id, workflow_mode=workflow_mode
         )
         publish_message(
             queue_name=settings.RABBITMQ_SUBMISSION_QUEUE,
@@ -116,12 +116,14 @@ class SubmissionService:
         logger.info("Submission approved and queued for processing.", extra={"submission_id": str(submission_id)})
 
     async def cancel_submission(self, submission_id: uuid.UUID, user: db_models.User) -> None:
-        """Cancels a submission that is pending cost approval."""
+        """Cancels a submission."""
         logger.info("Attempting to cancel submission.", extra={"submission_id": str(submission_id), "user_id": user.id})
         submission = await self.get_submission_status(submission_id)
         if submission.user_id != user.id and not user.is_superuser:
             raise HTTPException(status_code=403, detail="Not authorized to cancel this submission")
-        if submission.status != "PENDING_COST_APPROVAL":
+
+        cancellable_statuses = ["PENDING_COST_APPROVAL", "ANALYZING_CONTEXT", "Approved - Queued", "ANALYZING"]
+        if submission.status not in cancellable_statuses:
             raise HTTPException(status_code=400, detail=f"Submission cannot be cancelled. Current status: {submission.status}")
         
         await self.repo.update_status(submission_id, "Cancelled")
@@ -147,9 +149,9 @@ class SubmissionService:
         
         message = {"submission_id": str(submission.id), "action": "trigger_remediation", "categories_to_fix": remediation_request.categories_to_fix}
         publish_message(settings.RABBITMQ_REMEDIATION_QUEUE, message, correlation_id)
-        await self.repo.update_status(submission_id, "Queued for Remediation")
+        await self.repo.update_for_remediation(submission_id)
         logger.info("Remediation queued successfully.", extra={"submission_id": str(submission_id)})
-        
+    
     async def delete_submission(self, submission_id: uuid.UUID) -> None:
         """Deletes a submission and all its associated data (findings, files, etc.)."""
         logger.info("Attempting to delete submission.", extra={"submission_id": str(submission_id)})
@@ -265,5 +267,6 @@ class SubmissionService:
             selected_frameworks=submission.frameworks or [],
             analysis_timestamp=submission.completed_at,
             summary=summary_response_obj,
+            files_analyzed=files_analyzed_report_items, # ADDED THIS LINE
             overall_risk_score=api_models.OverallRiskScoreResponse(score=str(submission.risk_score or 0), severity="N/A")
-        )
+       )

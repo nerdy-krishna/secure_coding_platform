@@ -130,19 +130,12 @@ const ActionButtons: React.FC<{ record: SubmissionHistoryItem }> = ({ record }) 
     onError: (error) => message.error(`Deletion failed: ${error.message}`),
   });
 
+  const isCancellable = ["PENDING_COST_APPROVAL", "ANALYZING_CONTEXT", "Approved - Queued", "ANALYZING"].includes(record.status);
+
   return (
     <Space wrap align="center" style={{ justifyContent: 'flex-end', width: '100%' }}>
-      {record.status === "PENDING_COST_APPROVAL" && (
-        <Space>
-          <Button
-            type="primary"
-            icon={<CheckCircleOutlined />}
-            loading={approveMutation.isPending}
-            onClick={() => approveMutation.mutate()}
-          >
-            Approve
-          </Button>
-          <Button
+      {isCancellable && (
+         <Button
             danger
             icon={<CloseCircleOutlined />}
             loading={cancelMutation.isPending}
@@ -150,7 +143,17 @@ const ActionButtons: React.FC<{ record: SubmissionHistoryItem }> = ({ record }) 
           >
             Cancel
           </Button>
-        </Space>
+      )}
+
+      {record.status === "PENDING_COST_APPROVAL" && (
+        <Button
+          type="primary"
+          icon={<CheckCircleOutlined />}
+          loading={approveMutation.isPending}
+          onClick={() => approveMutation.mutate()}
+        >
+          Approve
+        </Button>
       )}
 
       {record.status === "Completed" && (
@@ -178,11 +181,6 @@ const ActionButtons: React.FC<{ record: SubmissionHistoryItem }> = ({ record }) 
             Delete
           </Button>
         </Popconfirm>
-      )}
-
-      {/* Fallback text if no other buttons are rendered */}
-      {record.status !== "PENDING_COST_APPROVAL" && record.status !== "Completed" && (
-        <Text type="secondary">No actions available</Text>
       )}
     </Space>
   );

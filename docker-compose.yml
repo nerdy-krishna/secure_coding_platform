@@ -80,10 +80,11 @@ services:
     networks:
       - scpnetwork
 
-  vector_db: # ChromaDB
+  vector_db:
     image: chromadb/chroma:0.5.3
     container_name: secure_coding_platform_vector_db
     environment:
+      - LOG_LEVEL=DEBUG
       - IS_PERSISTENT=TRUE
       - ANONYMIZED_TELEMETRY=FALSE
       - CHROMA_SERVER_HOST=0.0.0.0
@@ -94,11 +95,17 @@ services:
       - chroma_data:/chroma
     networks:
       - scpnetwork
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   worker:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: worker.Dockerfile
     container_name: secure_coding_platform_worker
     env_file:
       - .env
@@ -112,10 +119,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
-      # Changed back to service_healthy now that we know Fluentd works
       fluentd:
         condition: service_healthy
-    # Added logging driver configuration with retry options
     logging:
       driver: "fluentd"
       options:

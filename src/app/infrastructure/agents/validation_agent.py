@@ -56,31 +56,30 @@ async def analysis_node(state: SpecializedAgentState) -> Dict[str, Any]:
 
     logger.info(
         f"[{AGENT_NAME}] Assessing file in '{mode}' mode.",
-        extra={"submission_id": str(submission_id), "filename": filename, "mode": mode}
+        extra={"submission_id": str(submission_id), "source_file_path": filename, "mode": mode}
     )
 
     rag_service = get_rag_service()
     if not rag_service:
-        logger.error(f"[{AGENT_NAME}] Failed to get RAG service.", extra={"submission_id": str(submission_id)})
+        logger.error(f"[{AGENT_NAME}] Failed to get RAG service.", extra={"submission_id": str(submission_id), "source_file_path": filename})
         return {"error": "Failed to get RAG service."}
 
     retrieved_guidelines = rag_service.query_asvs(
         query_texts=[AGENT_DOMAIN_QUERY], n_results=10
     )
-    context_str = (
-        "\n".join(res["document"] for res in retrieved_guidelines[0]["results"])
-        if retrieved_guidelines
-        else "No relevant security guidelines found."
-    )
+    documents = retrieved_guidelines.get("documents")
+    if documents and documents[0]:
+        context_str = "\n".join(documents[0])
+    else:
+        context_str = "No relevant security guidelines found."
 
     # Select the appropriate prompt and response model based on the workflow mode
     if mode == "audit":
         prompt = f"""
-        You are a security expert specializing in {AGENT_PROMPT_NAME}. 
+        You are a security expert specializing in {AGENT_PROMPT_NAME}.
         Your task is to perform a read-only audit of the provided code bundle.
         Analyze the code for vulnerabilities related to your domain, using the provided security guidelines.
-        For each vulnerability found, provide a detailed finding. Do NOT suggest code fixes.
-
+        For each vulnerability found, provide a detailed finding with a concise 'title'. Do NOT suggest code fixes.
         <SECURITY_GUIDELINES>
         {context_str}
         </SECURITY_GUIDELINES>
@@ -96,11 +95,10 @@ async def analysis_node(state: SpecializedAgentState) -> Dict[str, Any]:
         prompt = f"""
         You are a security expert specializing in {AGENT_PROMPT_NAME}.
         Your task is to find vulnerabilities and provide complete, secure code replacements.
-        Analyze the code in the <CODE_BUNDLE> using the provided <SECURITY_GUIDELINES>. 
+        Analyze the code in the <CODE_BUNDLE> using the provided <SECURITY_GUIDELINES>.
         For each vulnerability you identify:
-        1.  Provide a detailed 'finding' object.
+        1.  Provide a detailed 'finding' object, including a concise 'title'.
         2.  Provide a 'suggestion' object that includes the 'original_snippet' of code to be replaced and the new 'code' that fixes the vulnerability.
-
         <SECURITY_GUIDELINES>
         {context_str}
         </SECURITY_GUIDELINES>
@@ -151,7 +149,7 @@ async def analysis_node(state: SpecializedAgentState) -> Dict[str, Any]:
     if llm_response.error or not llm_response.parsed_output:
         logger.error(
             f"[{AGENT_NAME}] LLM failed to produce valid analysis for file.",
-            extra={"submission_id": str(submission_id), "filename": filename, "error": llm_response.error}
+            extra={"submission_id": str(submission_id), "source_file_path": filename, "error": llm_response.error}
         )
         return {"error": f"LLM failed to produce valid analysis: {llm_response.error}"}
 
@@ -174,7 +172,7 @@ async def analysis_node(state: SpecializedAgentState) -> Dict[str, Any]:
 
     logger.info(
         f"[{AGENT_NAME}] Completed analysis for file.",
-        extra={"submission_id": str(submission_id), "filename": filename, "findings_found": len(findings), "fixes_found": len(fixes)}
+        extra={"submission_id": str(submission_id), "source_file_path": filename, "findings_found": len(findings), "fixes_found": len(fixes)}
     )
     return {"findings": findings, "fixes": fixes}
 

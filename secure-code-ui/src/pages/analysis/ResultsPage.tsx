@@ -1,19 +1,13 @@
-// secure-code-ui/src/pages/analysis/ResultsPage.tsx
-
+// frontend/src/pages/analysis/ResultsPage.tsx
 import {
   ArrowLeftOutlined,
-  BugOutlined,
-  CodeOutlined,
-  DownloadOutlined,
-  FileTextOutlined,
-  InfoCircleOutlined,
+  ExclamationCircleOutlined,
+  FileExclamationOutlined,
   LoadingOutlined,
-  ProfileOutlined,
   RocketOutlined,
   SafetyCertificateOutlined,
-  ToolOutlined,
 } from "@ant-design/icons";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
   Button,
@@ -24,563 +18,270 @@ import {
   Empty,
   Layout,
   message,
+  Modal,
   Row,
+  Select,
   Space,
   Spin,
   Statistic,
-  Tabs,
   Tag,
-  Tooltip,
-  Typography,
+  Typography
 } from "antd";
 import { AxiosError } from "axios";
-import React, { useCallback, useEffect, useMemo, useState } from "react"; // useMemo is now used correctly
-// prettier-ignore
-import { saveAs } from 'file-saver';
-import JSZip from 'jszip';
-import ReactDiffViewer, { DiffMethod } from "react-diff-viewer-continued";
-import { Link, useNavigate, useParams } from "react-router-dom";
-import { submissionService, triggerRemediation } from "../../shared/api/submissionService";
-import { SeverityColors, SeverityTags } from "../../shared/lib/severityMappings";
+import React, { useEffect, useMemo, useState } from "react";
+import ReactDiffViewer from "react-diff-viewer-continued";
+import { useNavigate, useParams } from "react-router-dom";
+import RemediationModal from "../../features/results-display/components/RemediationModal";
+import ResultsFileTree from "../../features/results-display/components/ResultsFileTree";
 import {
-  type AnalysisResultResponse,
-  type Finding,
-  type OverallRiskScore,
-  type SubmittedFile,
-  type Summary
+  submissionService,
+  triggerRemediation,
+} from "../../shared/api/submissionService";
+import { SeverityColors } from "../../shared/lib/severityMappings";
+import {
+  type AnalysisResultResponse
 } from "../../shared/types/api";
 
-// Import our new components
-import RemediationModal from "../../features/results-display/components/RemediationModal";
-
-const { Content } = Layout;
+const { Content, Sider } = Layout;
 const { Title, Text, Paragraph } = Typography;
-const { TabPane } = Tabs;
 const { Panel } = Collapse;
 
-// Helper to map severity to color for AntD components remains the same
-const getSeverityTagColor = (severity?: string): string => {
-  if (!severity) return "default";
-  const upperSeverity = severity.toUpperCase();
-  if (upperSeverity in SeverityColors) {
-    return SeverityColors[upperSeverity as keyof typeof SeverityColors];
-  }
-  return "default";
+type SortOption = "severity" | "line" | "cwe";
+
+const SEVERITY_ORDER: { [key: string]: number } = {
+  CRITICAL: 5,
+  HIGH: 4,
+  MEDIUM: 3,
+  LOW: 2,
+  INFORMATIONAL: 1,
+  NONE: 0,
 };
 
 const ResultsPage: React.FC = () => {
   const { submissionId } = useParams<{ submissionId: string }>();
   const navigate = useNavigate();
-  const queryClient = useQueryClient(); // ADDED
+  const queryClient = useQueryClient();
 
-  const [result, setResult] = useState<AnalysisResultResponse | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
-  const [activeFileKey, setActiveFileKey] = useState<string | undefined>(undefined);
-  const [isRemediationModalVisible, setIsRemediationModalVisible] = useState(false); // ADDED
+  const [isRemediationModalVisible, setIsRemediationModalVisible] =
+    useState(false);
+  const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
+  const [sortOrder, setSortOrder] = useState<SortOption>("severity");
 
-  const allFindings: Finding[] = useMemo(() => 
-    result?.summary_report?.files_analyzed?.flatMap(file => file.findings) || [],
-    [result]
-  );
-
-  // Your existing data fetching logic is preserved
-  const fetchAnalysisResults = useCallback(async () => {
-    if (!submissionId) {
-      setError("Submission ID is missing.");
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    try {
-      // The service call is the same, but the 'data' will now contain our new fields
-      const data = await submissionService.getAnalysisResult(submissionId);
-      setResult(data);
-      setError(null);
-      if (
-        data.summary_report?.files_analyzed &&
-        data.summary_report.files_analyzed.length > 0
-      ) {
-        setActiveFileKey(data.summary_report.files_analyzed[0].file_path);
-      }
-    } catch (err) {
-      console.error("Error fetching analysis results:", err);
-      let errorMessage = "Failed to fetch analysis results. Please try again later.";
-      if (err instanceof AxiosError && err.response) {
-        const responseData = err.response.data as { detail?: string; message?: string; error?: string; };
-        if (responseData.detail) {
-          errorMessage = `Error: ${responseData.detail}`;
-        } else if (err.response.status === 404) {
-          errorMessage = "Analysis result not found. It might still be processing or the ID is incorrect.";
-        }
-      } else if (err instanceof Error) {
-        errorMessage = err.message;
-      }
-      setError(errorMessage);
-      message.error(errorMessage);
-    } finally {
-      setLoading(false);
-    }
-  }, [submissionId]);
-
-  useEffect(() => {
-    fetchAnalysisResults();
-  }, [fetchAnalysisResults]);
-
-  // ADDED: Mutation for triggering remediation
-  const remediationMutation = useMutation({
-    mutationFn: ({ categories }: { categories: string[] }) => {
-        if (!submissionId) {
-            throw new Error("Submission ID is missing");
-        }
-        return triggerRemediation(submissionId, { categories_to_fix: categories });
+  const {
+    data: result,
+    isLoading,
+    isError,
+    error,
+  } = useQuery<AnalysisResultResponse, Error>({
+    queryKey: ["analysisResult", submissionId],
+    queryFn: () => {
+      if (!submissionId) throw new Error("Submission ID is missing");
+      return submissionService.getAnalysisResult(submissionId);
     },
-    onSuccess: (data) => {
-        message.success(data.message || "Remediation successfully queued!");
-        setIsRemediationModalVisible(false);
-        // Refetch history to show the new "Queued for Remediation" status
-        queryClient.invalidateQueries({ queryKey: ["submissionHistory"] });
-        // After a short delay, navigate user to the history page
-        setTimeout(() => navigate('/account/history'), 2000);
-    },
-    onError: (err: AxiosError) => {
-        const errorDetail = (err.response?.data as { detail?: string })?.detail || err.message;
-        message.error(`Remediation failed: ${errorDetail}`);
-    }
+    enabled: !!submissionId,
   });
 
-   // Your helper functions and render logic for file tabs are preserved
-  const getFindingColor = (severity?: string): string => {
-    if (!severity) return "grey";
-    const upperSeverity = severity.toUpperCase();
-    return (SeverityColors[upperSeverity as keyof typeof SeverityColors] || "grey");
+  const allFindings = useMemo(
+    () =>
+      result?.summary_report?.files_analyzed?.flatMap((file) => file.findings) ||
+      [],
+    [result],
+  );
+
+  const findingsForSelectedFile = useMemo(() => {
+    const findings =
+      result?.summary_report?.files_analyzed?.find(
+        (file) => file.file_path === selectedFilePath,
+      )?.findings || [];
+
+    return [...findings].sort((a, b) => {
+      switch (sortOrder) {
+        case "line":
+          return (a.line_number || 0) - (b.line_number || 0);
+        case "cwe":
+          return (a.cwe || "").localeCompare(b.cwe || "");
+        case "severity":
+        default:
+          return (
+            (SEVERITY_ORDER[b.severity?.toUpperCase() || "NONE"] || 0) -
+            (SEVERITY_ORDER[a.severity?.toUpperCase() || "NONE"] || 0)
+          );
+      }
+    });
+  }, [result, selectedFilePath, sortOrder]);
+
+  const remediationMutation = useMutation({
+    mutationFn: ({ categories }: { categories: string[] }) => {
+      if (!submissionId) throw new Error("Submission ID is missing");
+      return triggerRemediation(submissionId, {
+        categories_to_fix: categories,
+      });
+    },
+    onSuccess: (data) => {
+      message.success(data.message || "Remediation successfully queued!");
+      setIsRemediationModalVisible(false);
+      queryClient.invalidateQueries({ queryKey: ["submissionHistory"] });
+      setTimeout(() => navigate("/account/history"), 2000);
+    },
+    onError: (err: AxiosError) => {
+      const errorDetail =
+        (err.response?.data as { detail?: string })?.detail || err.message;
+      message.error(`Remediation failed: ${errorDetail}`);
+    },
+  });
+
+  useEffect(() => {
+    if (result && !selectedFilePath) {
+      const firstFileWithFindings = result.summary_report?.files_analyzed?.find(
+        (f) => f.findings.length > 0,
+      );
+      setSelectedFilePath(
+        firstFileWithFindings
+          ? firstFileWithFindings.file_path
+          : result.summary_report?.files_analyzed?.[0]?.file_path || null,
+      );
+    }
+  }, [result, selectedFilePath]);
+
+  const handleStartRemediation = () => {
+    if (result?.status === "Remediation-Completed") {
+      Modal.confirm({
+        title: "Remediate Again?",
+        icon: <ExclamationCircleOutlined />,
+        content:
+          "This submission has already been remediated. Are you sure you want to start a new remediation run?",
+        onOk: () => setIsRemediationModalVisible(true),
+      });
+    } else {
+      setIsRemediationModalVisible(true);
+    }
   };
 
-  // Your existing loading, error, and empty states are preserved
-  if (loading) {
+  if (isLoading) {
     return (
-      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100vh" }}>
+      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100vh" }} >
         <Spin indicator={<LoadingOutlined style={{ fontSize: 48 }} spin />} tip="Loading results..." />
       </div>
     );
   }
 
-  if (error) {
+  if (isError) {
     return (
-      <Content style={{ padding: "20px", margin: "0 auto", maxWidth: "1000px" }}>
-        <Alert message="Error" description={error} type="error" showIcon />
-        <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)} style={{ marginTop: 20 }}>
-          Go Back
-        </Button>
+      <Content style={{ padding: "20px" }}>
+        <Alert message="Error" description={error.message} type="error" showIcon />
       </Content>
     );
   }
 
   if (!result) {
     return (
-      <Content style={{ padding: "20px", margin: "0 auto", maxWidth: "1000px" }}>
-        <Empty description="No analysis results found or result is still processing." />
-        <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)} style={{ marginTop: 20 }}>
-          Go Back
+      <Content style={{ padding: "20px", textAlign: "center" }}>
+        <Empty description="No analysis results found." />
+        <Button onClick={() => navigate(-1)} style={{ marginTop: 24 }}>
+            <ArrowLeftOutlined /> Back to History
         </Button>
       </Content>
     );
   }
 
-  // Your existing data destructuring is preserved
-  const {
-    status,
-    summary_report,
-    sarif_report,
-    text_report,
-    original_code_map,
-    fixed_code_map,
-    // The impact_report is still available but will be linked to, not displayed directly
-  } = result;
-  const summary: Summary | undefined = summary_report?.summary;
-  const filesAnalyzed: SubmittedFile[] | undefined = summary_report?.files_analyzed;
-  const overallRisk: OverallRiskScore | undefined = summary_report?.overall_risk_score;
-  
-  const handleStartRemediation = () => {
-    setIsRemediationModalVisible(true);
-  };
-  
-  const handleRemediationSubmit = (categories: string[]) => {
-    remediationMutation.mutate({ categories });
-  };
-  
-  const handleDownloadFixedCode = async () => {
-    if (!result?.fixed_code_map) {
-      message.error("No fixed code is available to download.");
-      return;
-    }
+  const { status, summary_report } = result;
 
-    message.loading({ content: 'Preparing download...', key: 'zip' });
-    
-    const zip = new JSZip();
-    for (const [filePath, content] of Object.entries(result.fixed_code_map)) {
-      // Use the content directly
-      if (typeof content === 'string') {
-        zip.file(filePath, content);
-      }
-    }
+  return (
+    <Layout style={{ background: "#fff", height: "calc(100vh - 112px)" }}>
+      <Sider width={350} style={{ background: "#f0f2f5", borderRight: "1px solid #d9d9d9", padding: "16px", overflow: "auto" }} >
+        <Title level={4} style={{ marginTop: 0, marginBottom: 16 }}>Analyzed Files</Title>
+        <ResultsFileTree
+          analyzedFiles={summary_report?.files_analyzed || []}
+          findings={allFindings}
+          onSelect={(keys) => setSelectedFilePath(keys[0] as string)}
+        />
+      </Sider>
+      <Layout style={{ padding: "0 24px 24px" }}>
+        <Content>
+          <Row justify="space-between" align="middle" style={{ marginTop: 16, marginBottom: 16, flexWrap: 'nowrap' }}>
+            <Col flex="auto" style={{minWidth: 0}}>
+              <Title level={4} style={{ margin: 0 }} ellipsis={{tooltip: summary_report?.project_name}}>
+                Project: {summary_report?.project_name || "N/A"}
+              </Title>
+              <Text copyable type="secondary">
+                ID: {submissionId}
+              </Text>
+            </Col>
+            <Col flex="none">
+              {status === "Completed" && (
+                <Button type="primary" icon={<RocketOutlined />} onClick={handleStartRemediation}>
+                  Begin Remediation
+                </Button>
+              )}
+            </Col>
+          </Row>
 
-    try {
-      const zipBlob = await zip.generateAsync({ type: "blob" });
-      saveAs(zipBlob, `fixed-code-${submissionId}.zip`);
-      message.success({ content: 'Download started!', key: 'zip', duration: 2 });
-    } catch (e) {
-      console.error("Failed to generate zip file", e);
-      message.error({ content: 'Failed to generate zip file.', key: 'zip', duration: 2 });
-    }
-  };
+          <Card size="small" style={{ marginBottom: 24 }}>
+            <Row gutter={16}>
+              <Col span={6}><Statistic title="Total Findings" value={summary_report?.summary.total_findings_count || 0} prefix={<FileExclamationOutlined />} /></Col>
+              <Col span={6}><Statistic title="Critical" value={summary_report?.summary.severity_counts?.CRITICAL || 0} valueStyle={{ color: SeverityColors.CRITICAL }} /></Col>
+              <Col span={6}><Statistic title="High" value={summary_report?.summary.severity_counts?.HIGH || 0} valueStyle={{ color: SeverityColors.HIGH }}/></Col>
+              <Col span={6}><Statistic title="Risk Score" value={summary_report?.overall_risk_score?.score || 0} prefix={<SafetyCertificateOutlined />} /></Col>
+            </Row>
+          </Card>
 
-  const renderFileTabs = () => {
-    // ... This entire function remains exactly the same as your existing code ...
-    if (!filesAnalyzed || filesAnalyzed.length === 0) {
-      return <Empty description="No files were analyzed or file data is unavailable." />;
-    }
-    // (For brevity, the large renderFileTabs function from your file is omitted here, but it should be kept)
-    return (
-      <Tabs activeKey={activeFileKey} onChange={setActiveFileKey} type="card">
-        {filesAnalyzed.map((file) => (
-          <TabPane tab={file.file_path} key={file.file_path}>
-            <Title level={4}>Details for {file.file_path}</Title>
-            <Descriptions bordered column={1} size="small" style={{ marginBottom: 20 }}>
-              <Descriptions.Item label="Language">
-                {file.language || "N/A"}
-              </Descriptions.Item>
-              <Descriptions.Item label="Analysis Summary">
-                {file.analysis_summary ? (
-                  <Paragraph>{file.analysis_summary}</Paragraph>
-                ) : (
-                  "N/A"
-                )}
-              </Descriptions.Item>
-              <Descriptions.Item label="Identified Components">
-                {file.identified_components &&
-                file.identified_components.length > 0
-                  ? file.identified_components.map((comp: string) => (
-                      <Tag key={comp}>{comp}</Tag>
-                    ))
-                  : "N/A"}
-              </Descriptions.Item>
-              <Descriptions.Item label="ASVS Analysis">
-                {file.asvs_analysis &&
-                Object.keys(file.asvs_analysis).length > 0 ? (
-                  <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
-                    {JSON.stringify(file.asvs_analysis, null, 2)}
-                  </pre>
-                ) : (
-                  "N/A"
-                )}
-              </Descriptions.Item>
-            </Descriptions>
+          <Row justify="space-between" align="middle" style={{ marginBottom: 16 }}>
+            <Col><Title level={5} style={{ margin: 0 }}>{findingsForSelectedFile.length} findings in {selectedFilePath || 'file'}</Title></Col>
+            <Col>
+              <Space>
+                <Text>Sort by:</Text>
+                <Select value={sortOrder} onChange={setSortOrder} style={{width: 120}}>
+                  <Select.Option value="severity">Severity</Select.Option>
+                  <Select.Option value="line">Line No.</Select.Option>
+                  <Select.Option value="cwe">CWE</Select.Option>
+                </Select>
+              </Space>
+            </Col>
+          </Row>
 
-            <Title level={5}>Findings for {file.file_path}</Title>
-            {file.findings && file.findings.length > 0 ? (
+          <div style={{maxHeight: 'calc(100vh - 400px)', overflowY: 'auto', paddingRight: '8px'}}>
+            {findingsForSelectedFile.length > 0 ? (
               <Collapse accordion>
-                {file.findings.map((finding, index) => (
+                {findingsForSelectedFile.map((finding) => (
                   <Panel
+                    key={finding.id} // MODIFIED: Use the unique database ID as the key
                     header={
                       <Space>
-                        <Tooltip
-                          title={`Severity: ${finding.severity || "N/A"}`}
-                        >
-                          <Tag
-                            color={getFindingColor(finding.severity)}
-                            style={{ minWidth: "60px", textAlign: "center" }}
-                          >
-                            {SeverityTags[
-                              finding.severity?.toUpperCase() as keyof typeof SeverityTags
-                            ] ||
-                              finding.severity ||
-                              "N/A"}
-                          </Tag>
-                        </Tooltip>
-                        {/* Backend provides 'description', frontend uses 'message' in header. Using finding.description here. */}
-                        <Text strong>{finding.description || finding.message || "No title"}</Text> 
-                        <Text type="secondary">
-                          - CWE: {finding.cwe || "N/A"} (Rule:
-                          {finding.rule_id || "N/A"})
-                        </Text>
+                        <Tag color={SeverityColors[finding.severity?.toUpperCase() || "DEFAULT"]}>
+                          {finding.severity}
+                        </Tag>
+                        <Text strong>{finding.title}</Text>
+                        <Text type="secondary">(CWE-{finding.cwe?.split('-')[1]})</Text>
                       </Space>
                     }
-                    key={`${file.file_path}-finding-${index}`}
                   >
                     <Descriptions bordered column={1} size="small">
-                      <Descriptions.Item label="Line">
-                        {finding.line_number || "N/A"}
-                      </Descriptions.Item>
-                      <Descriptions.Item label="Description">
-                        <Paragraph>
-                          {finding.description || "No description available."}
-                        </Paragraph>
-                      </Descriptions.Item>
-                      <Descriptions.Item label="Remediation">
-                        <Paragraph>
-                          {finding.remediation || "No remediation advice available."}
-                        </Paragraph>
-                      </Descriptions.Item>
-                      <Descriptions.Item label="Confidence">
-                        {finding.confidence || "N/A"}
-                      </Descriptions.Item>
-                      <Descriptions.Item label="References">
-                        {finding.references && finding.references.length > 0 ? (
-                          <ul>
-                            {finding.references.map((ref: string, i: number) => (
-                              <li key={i}>
-                                <a
-                                  href={ref}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                >
-                                  {ref}
-                                </a>
-                              </li>
-                            ))}
-                          </ul>
-                        ) : (
-                          "N/A"
-                        )}
-                      </Descriptions.Item>
-                      <Descriptions.Item label="ASVS Categories (Finding Specific)">
-                        {/* This field is not in the current backend VulnerabilityFinding model */}
-                        {finding.asvs_categories &&
-                        finding.asvs_categories.length > 0
-                          ? finding.asvs_categories.join(", ")
-                          : "N/A (Not in current backend model)"}
-                      </Descriptions.Item>
-                      <Descriptions.Item label="Attack Name Summary">
-                         {/* This field is not in the current backend VulnerabilityFinding model */}
-                        {finding.attack_name_summary || "N/A (Not in current backend model)"}
-                      </Descriptions.Item>
+                      <Descriptions.Item label="Details"><Paragraph style={{margin: 0}}>{finding.description}</Paragraph></Descriptions.Item>
+                      <Descriptions.Item label="Remediation"><Paragraph style={{margin: 0}}>{finding.remediation}</Paragraph></Descriptions.Item>
                     </Descriptions>
-                    
-                    {finding.fixes && finding.fixes.length > 0 && (
-                      <Card
-                        size="small"
-                        title="Suggested Fixes"
-                        style={{ marginTop: 10 }}
-                      >
-                        <Collapse>
-                          {finding.fixes.map((fix: { description?: string; suggested_fix?: string }, fixIndex: number) => (
-                            <Panel
-                              header={fix.description || `Suggested Fix ${fixIndex + 1}`}
-                              key={`${file.file_path}-finding-${index}-fix-${fixIndex}`}
-                            >
-                              <Text strong>Description:</Text>
-                              <Paragraph>{fix.description || "N/A"}</Paragraph>
-                              <Text strong>Suggested Code:</Text>
-                              <pre style={{ whiteSpace: "pre-wrap", background: "#f5f5f5", padding: "10px", borderRadius: "4px" }}>
-                                {fix.suggested_fix || "No code suggestion."}
-                              </pre>
-                            </Panel>
-                          ))}
-                        </Collapse>
-                      </Card>
-                    )}
-
-                    {finding.code_snippet && (
-                      <Card
-                        size="small"
-                        title="Original Code Snippet"
-                        style={{
-                          marginTop: 10,
-                          marginBottom: 10,
-                          fontFamily: "monospace",
-                          whiteSpace: "pre-wrap",
-                          background: "#f0f0f0",
-                        }}
-                      >
-                        {finding.code_snippet}
-                      </Card>
-                    )}
-                    {fixed_code_map &&
-                      original_code_map &&
-                      original_code_map[file.file_path] &&
-                      fixed_code_map[`${file.file_path}_fixed`] && (
-                        <Card
-                          size="small"
-                          title="Diff View (Original vs. Suggested Fix)"
-                          style={{ marginTop: 10 }}
-                        >
+                    {finding.fixes && finding.fixes.length > 0 && finding.fixes[0].original_snippet && (
+                       <Card size="small" title="Code Diff" style={{marginTop: 12}}>
                           <ReactDiffViewer
-                            oldValue={original_code_map[file.file_path] || ""}
-                            newValue={
-                              fixed_code_map[`${file.file_path}_fixed`] || ""
-                            }
-                            splitView={true}
-                            compareMethod={DiffMethod.LINES}
-                            // useDarkTheme={true} // Optional: if you want a dark theme for the diff
-                            leftTitle="Original Code"
-                            rightTitle="Suggested Fix"
+                            oldValue={finding.fixes[0].original_snippet}
+                            newValue={finding.fixes[0].suggested_fix}
+                            splitView={false}
+                            hideLineNumbers={true}
+                            showDiffOnly={true}
+                            useDarkTheme={true}
                           />
-                        </Card>
-                      )}
+                       </Card>
+                    )}
                   </Panel>
                 ))}
               </Collapse>
             ) : (
-              <Empty description="No findings for this file." />
+              <Empty description="No findings for this file." style={{marginTop: 48}}/>
             )}
-          </TabPane>
-        ))}
-      </Tabs>
-    );
-  };
-
-
-  return (
-    <Content style={{ padding: "20px 50px", margin: "0 auto", maxWidth: "1200px" }}>
-      <Row justify="space-between" align="middle" style={{ marginBottom: 20 }}>
-        <Col>
-            <Button icon={<ArrowLeftOutlined />} onClick={() => navigate("/account/history")}>
-                Back to Submission History
-            </Button>
-        </Col>
-        <Col>
-            <Space>
-                {result.fixed_code_map && Object.keys(result.fixed_code_map).length > 0 && (
-                     <Button type="default" icon={<DownloadOutlined />} onClick={handleDownloadFixedCode}>
-                        Download Fixed Code
-                    </Button>
-                )}
-                {status === "Completed" && (
-                    <Button type="primary" icon={<RocketOutlined />} onClick={handleStartRemediation}>
-                        Begin Remediation
-                    </Button>
-                )}
-            </Space>
-        </Col>
-      </Row>
-
-      <Title level={2}><ProfileOutlined /> Analysis Results</Title>
-      <Text type="secondary">Submission ID: {submissionId}</Text>
-      
-      {/* --- UPDATED: Display the new Impact Report as a link --- */}
-      {result.impact_report && (
-        <Card size="small" style={{ marginTop: 24, backgroundColor: '#e6f4ff', borderColor: '#91caff' }}>
-            <Space>
-                <InfoCircleOutlined style={{color: '#1677ff', fontSize: '18px'}}/>
-                <Text>An AI-generated executive summary is available for this report.</Text>
-                <Link to={`/analysis/results/${submissionId}/executive-summary`}>
-                    <Button type="primary" size="small">View Full Executive Summary</Button>
-                </Link>
-            </Space>
-        </Card>
-      )}
-
-      {/* Your existing summary card is preserved */}
-      {summary && (
-        <Card 
-          title={
-            <>
-            <InfoCircleOutlined /> Statistics Summary
-            </>
-          }
-          style={{ marginTop: 20, marginBottom: 20 }}
-          headStyle={{ backgroundColor: "#f0f2f5" }}
-        >
-          <Row gutter={16}>
-            <Col span={8}>
-              <Statistic
-                title="Total Findings"
-                value={summary.total_findings_count || 0}
-                prefix={<BugOutlined />}
-              />
-            </Col>
-            <Col span={8}>
-              <Statistic
-                title="Files Analyzed"
-                value={summary.files_analyzed_count || 0}
-                prefix={<FileTextOutlined />}
-              />
-            </Col>
-            <Col span={8}>
-              <Statistic
-                title="Risk Score"
-                value={overallRisk?.score || "N/A"}
-                prefix={<SafetyCertificateOutlined />}
-                valueStyle={{
-                  color: getSeverityTagColor(overallRisk?.severity),
-                }}
-              />
-              <Text type="secondary">
-                Severity: {overallRisk?.severity || "N/A"}
-              </Text>
-            </Col>
-          </Row>
-          <Descriptions
-            bordered
-            column={2}
-            size="small"
-            style={{ marginTop: 20 }}
-          >
-            <Descriptions.Item label="Primary Language">
-              {summary_report?.primary_language || "N/A"}
-            </Descriptions.Item>
-            <Descriptions.Item label="Analysis Date">
-              {summary_report?.analysis_timestamp
-                ? new Date(summary_report.analysis_timestamp).toLocaleString()
-                : "N/A"}
-            </Descriptions.Item>
-            <Descriptions.Item label="Critical Vulnerabilities">
-              {summary.severity_counts?.CRITICAL || 0}
-            </Descriptions.Item>
-            <Descriptions.Item label="High Vulnerabilities">
-              {summary.severity_counts?.HIGH || 0}
-            </Descriptions.Item>
-            <Descriptions.Item label="Medium Vulnerabilities">
-              {summary.severity_counts?.MEDIUM || 0}
-            </Descriptions.Item>
-            <Descriptions.Item label="Low Vulnerabilities">
-              {summary.severity_counts?.LOW || 0}
-            </Descriptions.Item>
-            <Descriptions.Item label="Informational Findings">
-              {summary.severity_counts?.INFORMATIONAL || 0}
-            </Descriptions.Item>
-          </Descriptions>
-        </Card>
-      )}
-
-      
-      <Title level={3} style={{ marginTop: 30 }}><FileTextOutlined /> Detailed Findings by File</Title>
-      {renderFileTabs()}
-
-      
-      <Tabs defaultActiveKey="text" style={{ marginTop: 30 }}>
-        <TabPane
-          tab={
-            <>
-              <ToolOutlined /> Text Report
-            </>
-          }
-          key="text"
-        >
-          <Card title="Full Text Report">
-            <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
-              {text_report || "Text report not available."}
-            </pre>
-          </Card>
-        </TabPane>
-        <TabPane tab={<><CodeOutlined /> SARIF Report (JSON)</>} key="sarif">
-          <Card title="SARIF Output">
-            <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
-              {sarif_report ? JSON.stringify(sarif_report, null, 2) : "SARIF report not available."}
-            </pre>
-          </Card>
-        </TabPane>
-      </Tabs>
-      {/* ADDED: Render the modal */}
-      <RemediationModal
-        open={isRemediationModalVisible}
-        isLoading={remediationMutation.isPending}
-        findings={allFindings}
-        onCancel={() => setIsRemediationModalVisible(false)}
-        onSubmit={handleRemediationSubmit}
-      />
-    </Content>
+          </div>
+        </Content>
+      </Layout>
+      <RemediationModal open={isRemediationModalVisible} isLoading={remediationMutation.isPending} findings={allFindings} onCancel={() => setIsRemediationModalVisible(false)} onSubmit={(cats) => remediationMutation.mutate({ categories: cats })} />
+    </Layout>
   );
 };
 

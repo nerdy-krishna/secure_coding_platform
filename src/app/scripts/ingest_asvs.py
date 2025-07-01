@@ -16,9 +16,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # --- Configuration ---
-CHROMA_HOST = os.getenv("CHROMADB_HOST", "chromadb")
-CHROMA_PORT = int(os.getenv("CHROMA_PORT", "8001"))
-COLLECTION_NAME = "asvs_v5"
+CHROMA_HOST = os.getenv("CHROMA_HOST", "vector_db")
+CHROMA_PORT = int(os.getenv("CHROMA_PORT", 8000))
+ASVS_COLLECTION_NAME = "asvs_v5"
 MODEL_NAME = "all-MiniLM-L6-v2"  # A good, lightweight model for embeddings
 
 
@@ -390,11 +390,11 @@ def main():
         model_name=MODEL_NAME
     )
 
-    logger.info(f"Getting or creating collection: {COLLECTION_NAME}")
+    logger.info(f"Getting or creating collection: {ASVS_COLLECTION_NAME}")
     # FIX: Pass the embedding_function to the collection.
     # The '# type: ignore' comment suppresses the stubborn Pylance warning.
     collection = client.get_or_create_collection(
-        name=COLLECTION_NAME,
+        name=ASVS_COLLECTION_NAME,
         embedding_function=embedding_function,  # type: ignore
         metadata={"hnsw:space": "cosine"},
     )
