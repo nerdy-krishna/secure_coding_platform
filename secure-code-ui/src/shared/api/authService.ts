@@ -1,4 +1,4 @@
-// src/app/services/authService.ts
+// secure-code-ui/src/shared/api/authService.ts
 import apiClient from "../../shared/api/apiClient";
 import {
   type TokenResponse,

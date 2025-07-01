@@ -1,4 +1,4 @@
-# src/app/auth/schemas.py
+# src/app/infrastructure/auth/schemas.py
 from fastapi_users import schemas
 
 

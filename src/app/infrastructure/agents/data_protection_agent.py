@@ -1,4 +1,4 @@
-# src/app/agents/data_protection_agent.py
+# src/app/infrastructure/agents/data_protection_agent.py
 
 import logging
 from typing import Dict, Any, cast, List

@@ -1,4 +1,4 @@
-// src/app/pages/account/SubmissionHistoryPage.tsx
+// secure-code-ui/src/pages/account/SubmissionHistoryPage.tsx
 import {
   CheckCircleFilled,
   CheckCircleOutlined,

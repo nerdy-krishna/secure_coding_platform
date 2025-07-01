@@ -1,4 +1,4 @@
-# src/app/auth/manager.py
+# src/app/infrastructure/auth/manager.py
 import logging
 from typing import Optional
 

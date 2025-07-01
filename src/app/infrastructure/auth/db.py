@@ -1,4 +1,4 @@
-# src/app/auth/db.py
+# src/app/infrastructure/auth/db.py
 from fastapi import Depends
 from fastapi_users.db import SQLAlchemyUserDatabase
 from sqlalchemy.ext.asyncio import AsyncSession

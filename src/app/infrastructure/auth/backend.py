@@ -1,4 +1,4 @@
-# src/app/auth/backend.py
+# src/app/infrastructure/auth/backend.py
 import logging
 from typing import Optional, Literal
 

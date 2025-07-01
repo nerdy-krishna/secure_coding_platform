@@ -1,13 +1,10 @@
-// src/app/app/pages/dashboard/SettingsPage.tsx
+// secure-code-ui/src/pages/account/SettingsPage.tsx
 import { Card, Divider, Typography } from "antd";
 import React from "react";
 
 const { Title, Paragraph } = Typography;
 
-// Removed TimeDisplayPreference type and TIME_DISPLAY_PREFERENCE_KEY
-
 const SettingsPage: React.FC = () => {
-  // Removed useState, useEffect, and handleTimePreferenceChange related to timePreference
 
   return (
     <Card>

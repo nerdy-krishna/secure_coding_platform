@@ -1,4 +1,4 @@
-# src/app/agents/cryptography_agent.py
+# src/app/infrastructure/agents/cryptography_agent.py
 
 import logging
 from typing import Dict, Any, cast, List

@@ -1,4 +1,4 @@
-# src/app/db/ingest_asvs.py
+# src/app/scripts/ingest_asvs.py
 import os
 import io
 import pandas as pd

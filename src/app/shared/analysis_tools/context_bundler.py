@@ -1,4 +1,4 @@
-# src/app/analysis/context_bundler.py
+# src/app/shared/analysis_tools/context_bundler.py
 
 import logging
 from pathlib import Path

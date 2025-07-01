@@ -1,4 +1,4 @@
-# src/app/core/config.py
+# src/app/config/config.py
 from pydantic import field_validator, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List, Optional

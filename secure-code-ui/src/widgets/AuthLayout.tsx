@@ -1,5 +1,6 @@
+// secure-code-ui/src/widgets/AuthLayout.tsx
+import { Flex, Layout } from "antd";
 import React from "react";
-import { Layout, Flex } from "antd";
 
 const { Content } = Layout;
 

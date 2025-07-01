@@ -1,4 +1,4 @@
-# src/app/agents/session_management_agent.py
+# src/app/infrastructure/agents/session_management_agent.py
 
 import logging
 from typing import Dict, Any, cast, List

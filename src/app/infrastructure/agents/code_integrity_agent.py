@@ -1,4 +1,4 @@
-# src/app/agents/code_integrity_agent.py
+# src/app/infrastructure/agents/code_integrity_agent.py
 
 import logging
 from typing import Dict, Any, cast, List

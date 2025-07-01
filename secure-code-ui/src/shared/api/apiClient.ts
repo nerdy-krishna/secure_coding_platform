@@ -1,4 +1,4 @@
-// src/app/services/apiClient.ts
+// secure-code-ui/src/shared/api/apiClient.ts
 import axios from "axios";
 
 // Get the API base URL from environment variables

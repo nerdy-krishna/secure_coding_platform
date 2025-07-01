@@ -1,4 +1,4 @@
-# src/app/api/models.py
+# src/app/api/v1/models.py
 
 from datetime import datetime
 import uuid

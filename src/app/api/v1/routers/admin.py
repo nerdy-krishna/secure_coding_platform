@@ -26,8 +26,6 @@ async def read_llm_configurations(
 ):
     return await admin_service.get_all_configs()
 
-# --- ADDED MISSING ENDPOINTS ---
-
 @llm_router.patch("/{config_id}", response_model=api_models.LLMConfigurationRead)
 async def update_llm_configuration(
     config_id: uuid.UUID,

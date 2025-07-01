@@ -1,4 +1,4 @@
-# src/app/agents/communication_agent.py
+# src/app/infrastructure/agents/communication_agent.py
 
 import logging
 from typing import Dict, Any, cast, List

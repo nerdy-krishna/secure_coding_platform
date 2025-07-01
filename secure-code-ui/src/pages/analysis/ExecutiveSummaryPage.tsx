@@ -1,4 +1,4 @@
-// src/app/pages/analysis/ExecutiveSummaryPage.tsx
+// secure-code-ui/src/pages/analysis/ExecutiveSummaryPage.tsx
 
 import {
   ArrowLeftOutlined,

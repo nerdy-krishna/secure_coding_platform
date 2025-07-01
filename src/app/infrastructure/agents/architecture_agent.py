@@ -1,4 +1,4 @@
-# src/app/agents/architecture_agent.py
+# src/app/infrastructure/agents/architecture_agent.py
 import logging
 from typing import Dict, Any, cast, List
 

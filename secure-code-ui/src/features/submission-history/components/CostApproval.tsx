@@ -1,4 +1,4 @@
-// src/app/components/CostApproval.tsx
+// secure-code-ui/src/features/submission-history/components/CostApproval.tsx
 
 import { CheckCircleOutlined, DollarCircleOutlined } from '@ant-design/icons';
 import { useMutation } from '@tanstack/react-query';
