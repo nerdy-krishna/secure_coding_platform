@@ -1,6 +1,6 @@
 # src/app/auth/core.py
 from fastapi_users import FastAPIUsers
-from app.infrastructure.models import User
+from app.infrastructure.database.models import User
 from app.infrastructure.auth.backend import auth_backend
 from app.infrastructure.auth.manager import get_user_manager
 

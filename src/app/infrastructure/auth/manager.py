@@ -3,23 +3,15 @@ import logging
 from typing import Optional
 
 from fastapi import Depends, Request
-
-# --- START: CORRECTED IMPORTS ---
-# Import IntegerIDMixin
 from fastapi_users import BaseUserManager, IntegerIDMixin
-# --- END: CORRECTED IMPORTS ---
 
-from app.infrastructure.models import User
+from app.infrastructure.database.models import User
 from app.infrastructure.auth.db import get_user_db
 from app.config.config import settings
 
 logger = logging.getLogger(__name__)
 
-
-# --- START: CORRECTED CLASS DEFINITION ---
-# Add the IntegerIDMixin to handle integer-based user IDs.
 class UserManager(IntegerIDMixin, BaseUserManager[User, int]):
-    # --- END: CORRECTED CLASS DEFINITION ---
     reset_password_token_secret = settings.SECRET_KEY
     verification_token_secret = settings.SECRET_KEY
 

@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 # Corrected: Import central settings, User model, and the UserUpdate schema
 from app.config.config import settings
-from app.infrastructure.models import User
+from app.infrastructure.database.models import User
 from app.infrastructure.auth.schemas import UserUpdate
 
 # Import the user manager and its dependencies

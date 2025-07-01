@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from app.infrastructure.database.repositories.submission_repo import SubmissionRepository
 from app.infrastructure.database import AsyncSessionLocal
 from app.infrastructure.llm_client import get_llm_client, AgentLLMResult
-from app.infrastructure.rag.rag_service import get_rag_service
+from app.infrastructure.rag.rag_client import get_rag_service
 from app.core.schemas import (
     SpecializedAgentState,
     LLMInteraction,

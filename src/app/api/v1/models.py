@@ -249,7 +249,7 @@ class ResultIndexItem(BaseModel):
     high_findings: int
     medium_findings: int
     low_findings: int
-    risk_score: int  # We will calculate and add this
+    risk_score: int
 
     class Config:
         from_attributes = True
