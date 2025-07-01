@@ -1,4 +1,4 @@
-// src/pages/SubmitCodePage.tsx
+// secure-code-ui/src/pages/submission/SubmitCodePage.tsx
 
 import {
   FileZipOutlined,
@@ -30,11 +30,11 @@ import { type RcFile } from "antd/es/upload";
 import { AxiosError } from "axios";
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { llmConfigService } from "../../services/llmConfigService";
-import { submissionService } from "../../services/submissionService";
-import type { LLMConfiguration } from "../../types/api";
+import type { LLMConfiguration } from "../..//shared/types/api";
+import { llmConfigService } from "../../shared/api/llmConfigService";
+import { submissionService } from "../../shared/api/submissionService";
 
-import FileTree from "../../components/FileTree";
+import FileTree from "../../features/submit-code/components/FileTree";
 
 const { Dragger } = Upload;
 const { Title, Paragraph, Text } = Typography;

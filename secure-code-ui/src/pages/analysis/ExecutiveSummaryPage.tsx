@@ -1,31 +1,31 @@
-// src/pages/analysis/ExecutiveSummaryPage.tsx
+// secure-code-ui/src/pages/analysis/ExecutiveSummaryPage.tsx
 
 import {
-    ArrowLeftOutlined,
-    BuildOutlined,
-    FilePdfOutlined,
-    InfoCircleOutlined,
-    SafetyCertificateOutlined,
-    ToolOutlined,
-    UnorderedListOutlined,
+  ArrowLeftOutlined,
+  BuildOutlined,
+  FilePdfOutlined,
+  InfoCircleOutlined,
+  SafetyCertificateOutlined,
+  ToolOutlined,
+  UnorderedListOutlined,
 } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import {
-    Alert,
-    Button,
-    Card,
-    Descriptions,
-    Divider,
-    List,
-    Space,
-    Spin,
-    Tag,
-    Typography,
+  Alert,
+  Button,
+  Card,
+  Descriptions,
+  Divider,
+  List,
+  Space,
+  Spin,
+  Tag,
+  Typography,
 } from 'antd';
 import React from 'react';
 import { Link, useParams } from 'react-router-dom';
-import apiClient from '../../services/apiClient';
-import { submissionService } from '../../services/submissionService';
+import apiClient from '../../shared/api/apiClient';
+import { submissionService } from '../../shared/api/submissionService';
 
 const { Title, Paragraph, Text } = Typography;
 
