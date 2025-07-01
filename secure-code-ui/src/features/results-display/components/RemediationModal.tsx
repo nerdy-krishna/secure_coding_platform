@@ -3,20 +3,15 @@
 import { RocketOutlined } from '@ant-design/icons';
 import { Alert, Checkbox, Modal, Space, Typography } from 'antd';
 import React, { useMemo, useState } from 'react';
-
+import { type Finding } from '../../../shared/types/api';
 type CheckboxValueType = string | number;
 
 const { Text, Paragraph } = Typography;
 
-// A simplified finding structure for this component's needs
-interface FindingStub {
-  cwe?: string;
-}
-
 interface RemediationModalProps {
   open: boolean;
   isLoading: boolean;
-  findings: FindingStub[];
+  findings: Finding[];
   onCancel: () => void;
   onSubmit: (categories: string[]) => void;
 }
@@ -37,13 +32,11 @@ const CWE_TO_AGENT_MAP: { [key: string]: string } = {
     'CWE-863': 'AccessControlAgent'
     // This map can be expanded
 };
-
-const getAgentNameForFinding = (finding: FindingStub): string | null => {
+const getAgentNameForFinding = (finding: Finding): string | null => {
     if (finding.cwe && CWE_TO_AGENT_MAP[finding.cwe]) {
         return CWE_TO_AGENT_MAP[finding.cwe];
     }
-    // Add more complex mapping logic here if needed
-    return 'ValidationAgent'; // Default fallback agent
+    return 'ValidationAgent';
 }
 
 

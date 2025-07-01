@@ -1,111 +1,138 @@
-# src/app/infrastructure/rag/rag_client.py
 import chromadb
 import os
 import logging
-from typing import List, Dict, Any, Optional  # Ensure Optional is imported
-from chromadb.api import ClientAPI  # Corrected import path
+import socket
+import requests
+from typing import List, Dict, Any, Optional
+from chromadb.api import ClientAPI
 
 logger = logging.getLogger(__name__)
 
-# Configuration for ChromaDB
-# Set the default host to the docker-compose service name
 CHROMA_HOST = os.getenv("CHROMA_HOST", "vector_db")
-# Corrected default port to 8000, which is ChromaDB's default internal port.
 CHROMA_PORT = int(os.getenv("CHROMA_PORT", 8000))
+ASVS_COLLECTION_NAME = "asvs_v5"
 
-ASVS_COLLECTION_NAME = "asvs_collection"
+
+def test_connection(host: str, port: int) -> bool:
+    """Test basic network connectivity to ChromaDB."""
+    try:
+        # Test socket connection
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(5)
+        result = sock.connect_ex((host, port))
+        sock.close()
+        
+        if result == 0:
+            logger.info(f"✓ Socket connection to {host}:{port} successful")
+            
+            # Test HTTP endpoint
+            try:
+                response = requests.get(f"http://{host}:{port}/api/v1/heartbeat", timeout=10)
+                logger.info(f"✓ HTTP heartbeat response: {response.status_code}")
+                return True
+            except requests.exceptions.RequestException as e:
+                logger.warning(f"⚠ Socket connection OK, but HTTP failed: {e}")
+                return False
+        else:
+            logger.error(f"✗ Cannot connect to {host}:{port} - Connection refused")
+            return False
+            
+    except socket.gaierror as e:
+        logger.error(f"✗ DNS resolution failed for {host}: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"✗ Connection test failed: {e}")
+        return False
 
 
 class RAGService:
-    """
-    A singleton service for interacting with the ChromaDB vector store.
-    """
+    """A service for interacting with the ChromaDB vector store."""
+    _client: Optional[ClientAPI] = None
+    _asvs_collection: Optional[Any] = None
 
-    _instance = None
-    _initialization_attempted = False
-    _initialization_succeeded = False
-    client: Optional[ClientAPI] = (
-        None  # Instance attribute, changed type hint to Optional
-    )
-    asvs_collection = (
-        None  # Instance attribute, will be chromadb.api.models.Collection.Collection
-    )
-
-    def __new__(cls):
-        if cls._instance is not None:  # Successfully initialized before
-            return cls._instance
-
-        if cls._initialization_attempted and not cls._initialization_succeeded:
-            # Previous attempt failed, don't try again.
-            logger.warning(
-                "RAGService initialization previously failed. Not re-attempting connection."
-            )
-            raise ConnectionError(
-                "RAGService initialization previously failed and will not be re-attempted."
-            )
-
-        # This is the first actual attempt to initialize
-        cls._initialization_attempted = True
-
+    def __init__(self):
+        """Initializes the RAGService, raising an exception on failure."""
         try:
-            # Log this only on the first actual attempt
-            logger.info(
-                f"Attempting to connect to ChromaDB at {CHROMA_HOST}:{CHROMA_PORT} (first attempt for RAGService singleton)"
+            logger.info(f"RAGService attempting to connect to ChromaDB at {CHROMA_HOST}:{CHROMA_PORT}")
+            
+            # Test basic connectivity first
+            if not test_connection(CHROMA_HOST, CHROMA_PORT):
+                raise ConnectionError(f"Cannot establish basic connection to {CHROMA_HOST}:{CHROMA_PORT}")
+            
+            # Create ChromaDB client with proper settings for v0.5.3
+            client = chromadb.HttpClient(
+                host=CHROMA_HOST,
+                port=CHROMA_PORT,
+                ssl=False,
+                headers={"Connection": "keep-alive"}
             )
+            
+            logger.info("Testing ChromaDB heartbeat...")
+            heartbeat_result = client.heartbeat()
+            logger.info(f"✓ ChromaDB heartbeat successful: {heartbeat_result}")
+            
+            logger.info(f"Getting or creating collection: {ASVS_COLLECTION_NAME}")
+            collection = client.get_or_create_collection(name=ASVS_COLLECTION_NAME)
+            logger.info(f"✓ Collection '{ASVS_COLLECTION_NAME}' ready")
+            
+            # Test collection accessibility
+            try:
+                collection_count = collection.count()
+                logger.info(f"✓ Collection contains {collection_count} documents")
+            except Exception as e:
+                logger.warning(f"⚠ Could not get collection count: {e}")
+            
+            self._client = client
+            self._asvs_collection = collection
 
-            # Create the actual instance object that will be stored in _instance
-            instance = super().__new__(cls)
-
-            instance.client = chromadb.HttpClient(host=CHROMA_HOST, port=CHROMA_PORT)
-            instance.client.heartbeat()  # Heartbeat check
-            logger.info("Successfully connected to ChromaDB.")
-
-            instance.asvs_collection = instance.client.get_or_create_collection(
-                name=ASVS_COLLECTION_NAME
-            )
-            logger.info(f"Collection '{ASVS_COLLECTION_NAME}' loaded/created.")
-
-            cls._instance = instance
-            cls._initialization_succeeded = True
-            return cls._instance
-
+            logger.info(f"✓ RAGService fully initialized and collection '{ASVS_COLLECTION_NAME}' loaded.")
+            
         except Exception as e:
-            cls._initialization_succeeded = False  # Explicitly mark as failed
-            logger.critical(
-                f"Failed to initialize RAGService or connect to ChromaDB on first attempt: {e}",
-                exc_info=True,  # Log with full traceback for the initial failure
+            logger.critical(f"CRITICAL: Failed to initialize RAGService. Error details:")
+            logger.critical(f"  Host: {CHROMA_HOST}")
+            logger.critical(f"  Port: {CHROMA_PORT}")
+            logger.critical(f"  Error: {str(e)}")
+            logger.critical(f"  Error type: {type(e).__name__}")
+            
+            # Additional debugging info
+            logger.critical("Environment variables:")
+            for key, value in os.environ.items():
+                if 'CHROMA' in key.upper():
+                    logger.critical(f"  {key}={value}")
+            
+            self._client = None
+            self._asvs_collection = None
+            raise
+
+    def query_asvs(self, query_texts: List[str], n_results: int = 5) -> Dict[str, Any]:
+        """Queries the ASVS collection."""
+        if not self._asvs_collection:
+            logger.error("ASVS collection is not available.")
+            raise ConnectionError("ASVS collection not available in RAGService.")
+        
+        try:
+            logger.debug(f"Querying collection with {len(query_texts)} queries, n_results={n_results}")
+            results = self._asvs_collection.query(
+                query_texts=query_texts, 
+                n_results=n_results
             )
-            # cls._instance remains None
-            raise  # Re-raise the exception; get_rag_service will handle it by returning None
-
-    def query_asvs(
-        self, query_texts: List[str], n_results: int = 5
-    ) -> List[Dict[str, Any]]:
-        """
-        Queries the ASVS collection for relevant security guidelines.
-        """
-        # This check is important. If RAGService instance exists but asvs_collection is somehow None
-        # (though current logic should prevent this if initialization succeeds),
-        # this prevents an AttributeError.
-        if not hasattr(self, "asvs_collection") or self.asvs_collection is None:
-            logger.error(
-                "ASVS collection is not available. RAGService might not have initialized correctly."
-            )
-            return []
-        # Actual query logic would go here. For now, returning empty list to satisfy Pylance.
-        # Example:
-        # results = self.asvs_collection.query(query_texts=query_texts, n_results=n_results)
-        # return results.get("documents", []) if results else []
-        return []  # Ensures all paths return List[Dict[str, Any]]
+            logger.debug(f"Query successful, returned {len(results.get('ids', []))} result sets")
+            return results
+        except Exception as e:
+            logger.error(f"Failed to query ChromaDB collection '{ASVS_COLLECTION_NAME}': {e}", exc_info=True)
+            raise
 
 
-def get_rag_service() -> Optional[RAGService]:  # Changed return type hint
-    """
-    Factory function to get the singleton instance of RAGService.
-    """
-    try:
-        return RAGService()
-    except Exception:
-        # The RAGService constructor will log the critical error.
-        # This allows the caller to handle the failure gracefully.
-        return None
+_rag_instance: Optional[RAGService] = None
+
+def get_rag_service() -> Optional[RAGService]:
+    """Factory function to get the singleton instance of RAGService."""
+    global _rag_instance
+    if _rag_instance is None:
+        try:
+            _rag_instance = RAGService()
+        except Exception as e:
+            logger.error(f"Failed to create RAGService instance: {e}")
+            _rag_instance = None
+            return None
+    return _rag_instance

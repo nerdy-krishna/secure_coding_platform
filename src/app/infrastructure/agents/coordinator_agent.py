@@ -207,9 +207,24 @@ async def run_specialized_agents_node(state: CoordinatorState) -> Dict[str, Any]
         if not tasks: return {"findings": [], "fixes": []}
         agent_results = await asyncio.gather(*tasks, return_exceptions=True)
         
-        all_findings = [r.get("findings", []) for r in agent_results if isinstance(r, dict)]
-        all_fixes = [r.get("fixes", []) for r in agent_results if isinstance(r, dict)]
-        return {"findings": [item for sublist in all_findings for item in sublist], "fixes": [item for sublist in all_fixes for item in sublist], "live_codebase": None}
+        all_findings = []
+        all_fixes = []
+        has_errors = False
+        for i, res in enumerate(agent_results):
+            if isinstance(res, Exception):
+                logger.error(f"[{AGENT_NAME}] Agent task {i} failed with an exception: {res}", exc_info=res)
+                has_errors = True
+            elif isinstance(res, dict) and res.get("error"):
+                logger.error(f"[{AGENT_NAME}] Agent task {i} returned a dictionary with an error: {res['error']}")
+                has_errors = True
+            elif isinstance(res, dict):
+                all_findings.extend(res.get("findings", []))
+                all_fixes.extend(res.get("fixes", []))
+
+        if has_errors:
+            return {"error": "One or more specialized agents failed during execution. Check worker logs for details."}
+
+        return {"findings": all_findings, "fixes": all_fixes, "live_codebase": None}
 
     elif workflow_mode == "remediate":
         live_codebase = files.copy()
@@ -245,6 +260,10 @@ async def run_specialized_agents_node(state: CoordinatorState) -> Dict[str, Any]
 
 async def finalize_analysis_node(state: CoordinatorState) -> Dict[str, Any]:
     """Saves all findings and fixes from the agent runs into the database."""
+    # MODIFIED: Check for an error from the previous step first
+    if state.get("error"):
+        return {} # Pass the error state through without taking action
+
     submission_id, findings_to_save, fixes_to_save, live_codebase, workflow_mode = state["submission_id"], state.get("findings", []), state.get("fixes", []), state.get("live_codebase"), state["workflow_mode"]
     logger.info(f"[{AGENT_NAME}] Finalizing analysis for submission in '{workflow_mode}' mode.", extra={"submission_id": str(submission_id), "mode": workflow_mode, "findings_count": len(findings_to_save)})
     async with async_session_factory() as db:
@@ -263,15 +282,23 @@ async def finalize_analysis_node(state: CoordinatorState) -> Dict[str, Any]:
             if workflow_mode == 'remediate' and live_codebase:
                 await repo.update_remediated_code_and_status(submission_id, "Remediation-Completed", live_codebase)
                 logger.info(f"[{AGENT_NAME}] Saved fixed code map and updated status to 'Remediation-Completed'.")
-            else:
-                risk_score = sum(10 if f.severity.upper() == "CRITICAL" else 5 if f.severity.upper() == "HIGH" else 2 if f.severity.upper() == "MEDIUM" else 1 for f in findings_to_save)
-                # This will be replaced by the reporting agent's output
-                await repo.save_final_reports_and_status(submission_id, "Completed", {}, {}, risk_score)
-                logger.info(f"[{AGENT_NAME}] Updated status to 'Completed' for submission {submission_id}.")
+            
+            # REMOVED the else block that was prematurely completing the submission.
+            # The status will now be correctly set by the main worker graph after reporting.
+
         except Exception as e:
             logger.error(f"[{AGENT_NAME}] Error saving results to DB for {submission_id}: {e}", exc_info=True)
             return {"error": f"DB error: {e}"}
     return {"final_status": "Analysis complete."}
+
+
+def route_after_agent_runs(state: CoordinatorState) -> str:
+    """Checks for errors after agent execution and routes accordingly."""
+    if state.get("error"):
+        # The error is already logged in the previous node.
+        # We end the coordinator graph here, and the error state propagates up.
+        return "end_with_error"
+    return "finalize_analysis"
 
 
 def build_coordinator_graph():
@@ -286,7 +313,17 @@ def build_coordinator_graph():
     workflow.add_edge("determine_relevant_agents", "create_context_bundles")
     workflow.add_conditional_edges("create_context_bundles", lambda s: "estimate_cost" if not s.get("error") else "end_with_error", {"estimate_cost": "estimate_cost", "end_with_error": "end_with_error"})
     workflow.add_conditional_edges("estimate_cost", route_after_cost_estimation, {"run_specialized_agents": "run_specialized_agents", END: END, "end_with_error": "end_with_error"})
-    workflow.add_edge("run_specialized_agents", "finalize_analysis")
+    
+    # MODIFIED: Added conditional routing after agent runs
+    workflow.add_conditional_edges(
+        "run_specialized_agents",
+        route_after_agent_runs,
+        {
+            "finalize_analysis": "finalize_analysis",
+            "end_with_error": END, # End the graph if agents failed
+        }
+    )
+
     workflow.add_edge("finalize_analysis", END)
     workflow.add_edge("end_with_error", END)
     return workflow.compile()

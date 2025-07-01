@@ -10,6 +10,7 @@ WorkflowMode = Literal["audit", "remediate"]
 
 class VulnerabilityFinding(BaseModel):
     cwe: str = Field(description="The CWE ID for the vulnerability (e.g., 'CWE-22').")
+    title: str = Field(description="A concise, one-line title for the vulnerability.")
     description: str = Field(
         description="A detailed description of the vulnerability found."
     )

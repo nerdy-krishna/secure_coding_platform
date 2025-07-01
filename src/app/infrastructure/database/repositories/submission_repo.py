@@ -34,6 +34,7 @@ class SubmissionRepository:
         excluded_files: List[str],
         main_llm_id: uuid.UUID,
         specialized_llm_id: uuid.UUID,
+        workflow_mode: str,
     ) -> db_models.CodeSubmission:
         """Creates a new CodeSubmission and its associated SubmittedFile records in the database."""
         logger.info(
@@ -49,6 +50,7 @@ class SubmissionRepository:
             excluded_files=excluded_files,
             main_llm_config_id=main_llm_id,
             specialized_llm_config_id=specialized_llm_id,
+            workflow_mode=workflow_mode,
         )
         self.db.add(submission)
         await self.db.flush()
@@ -104,6 +106,20 @@ class SubmissionRepository:
         await self.db.execute(stmt)
         await self.db.commit()
 
+    async def update_for_remediation(self, submission_id: uuid.UUID):
+        """Updates the status and workflow mode for a remediation run."""
+        logger.info(
+            "Updating submission for remediation.",
+            extra={"submission_id": str(submission_id)},
+        )
+        stmt = (
+            update(db_models.CodeSubmission)
+            .where(db_models.CodeSubmission.id == submission_id)
+            .values(status="Queued for Remediation", workflow_mode="remediate")
+        )
+        await self.db.execute(stmt)
+        await self.db.commit()
+
     async def save_llm_interaction(
         self, interaction_data: agent_schemas.LLMInteraction
     ):
@@ -154,6 +170,7 @@ class SubmissionRepository:
         fix = db_models.FixSuggestion(
             finding_id=finding_id,
             description=suggestion.description,
+            original_snippet=suggestion.original_snippet, # ADDED
             suggested_fix=suggestion.code,
         )
         self.db.add(fix)

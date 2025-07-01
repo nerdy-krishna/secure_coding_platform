@@ -78,7 +78,6 @@ class CodeSubmission(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    # This foreign key now correctly points to an integer column.
     project_name: Mapped[str] = mapped_column(String, default="Untitled Project")
     user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), nullable=False)
     repo_url: Mapped[Optional[str]] = mapped_column(String)
@@ -86,6 +85,11 @@ class CodeSubmission(Base):
         String,
         default="Pending",
         comment="Submission status, e.g., Submitted, Pending Cost Approval, Analyzing, Remediating, Completed, Failed, Cancelled",
+    )
+    workflow_mode: Mapped[Optional[str]] = mapped_column(
+        String,
+        nullable=True,
+        comment="The selected workflow mode, e.g., 'audit' or 'audit_and_remediate'.",
     )
     submitted_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -165,6 +169,7 @@ class VulnerabilityFinding(Base):
         ForeignKey("code_submissions.id"), nullable=False
     )
     file_path: Mapped[str] = mapped_column(String, nullable=False)
+    title: Mapped[str] = mapped_column(String, server_default="Untitled Finding", nullable=False)
     cwe: Mapped[str] = mapped_column(String)
     description: Mapped[str] = mapped_column(Text)
     severity: Mapped[str] = mapped_column(String)
@@ -188,6 +193,7 @@ class FixSuggestion(Base):
         ForeignKey("vulnerability_findings.id"), nullable=False
     )
     description: Mapped[str] = mapped_column(Text)
+    original_snippet: Mapped[str] = mapped_column(Text, nullable=False, server_default='') # MODIFIED
     suggested_fix: Mapped[str] = mapped_column(Text)
 
     finding: Mapped["VulnerabilityFinding"] = relationship(

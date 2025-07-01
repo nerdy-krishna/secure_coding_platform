@@ -48,6 +48,7 @@ interface SubmissionFormValues {
   specialized_llm_config_id: string;
   repo_url?: string;
   frameworks: string[];
+  workflow_mode: "audit" | "audit_and_remediate";
 }
 
 type SubmissionMode = "upload" | "repo" | "archive";
@@ -80,7 +81,6 @@ const SubmitCodePage: React.FC = () => {
   }
 
   useEffect(() => {
-    // When fileList or previewFilePaths changes, update the checked keys
     const allFileKeys = submissionMode === 'upload' ? getPathsFromRcFiles(fileList) : previewFilePaths;
     setTreeCheckedKeys(allFileKeys);
   }, [fileList, previewFilePaths, submissionMode]);
@@ -88,7 +88,6 @@ const SubmitCodePage: React.FC = () => {
   const handleSubmissionModeChange = (e: RadioChangeEvent) => {
     const newMode = e.target.value as SubmissionMode;
     setSubmissionMode(newMode);
-    // Do not reset project_name, but reset repo_url
     form.resetFields(['repo_url']);
     setFileList([]);
     setArchiveFileList([]);
@@ -195,6 +194,7 @@ const SubmitCodePage: React.FC = () => {
       formData.append("frameworks", selectedFrameworks.join(","));
       formData.append("main_llm_config_id", values.main_llm_config_id);
       formData.append("specialized_llm_config_id", values.specialized_llm_config_id);
+      formData.append("workflow_mode", values.workflow_mode);
 
       const response = await submissionService.submitCode(formData);
       message.success(response.message);
@@ -285,7 +285,7 @@ const SubmitCodePage: React.FC = () => {
            form={form}
           layout="vertical"
           onFinish={handleSubmit}
-          initialValues={{ frameworks: ["OWASP ASVS v5.0"] }}
+          initialValues={{ frameworks: ["OWASP ASVS v5.0"], workflow_mode: "audit" }}
         >
           <Form.Item
             name="project_name"
@@ -293,6 +293,13 @@ const SubmitCodePage: React.FC = () => {
             rules={[{ required: true, message: "Please enter a name for your project." }]}
           >
             <Input placeholder="e.g., My E-Commerce Website" />
+          </Form.Item>
+
+          <Form.Item name="workflow_mode" label="Workflow Type" rules={[{required: true}]}>
+            <Radio.Group>
+              <Radio.Button value="audit">Audit Only</Radio.Button>
+              <Radio.Button value="audit_and_remediate">Audit & Remediate</Radio.Button>
+            </Radio.Group>
           </Form.Item>
 
           {isLlmError && (

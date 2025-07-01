@@ -28,8 +28,6 @@ class LLMConfigRepository:
         )
         return result.scalars().first()
 
-    return result.scalars().first()
-
     async def get_by_id_with_decrypted_key(
         self, config_id: uuid.UUID
     ) -> Optional[db_models.LLMConfiguration]:
