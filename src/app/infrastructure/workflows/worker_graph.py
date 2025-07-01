@@ -41,8 +41,12 @@ class WorkerState(TypedDict):
 # --- Node Functions ---
 
 async def retrieve_submission_data(state: WorkerState) -> Dict[str, Any]:
+    """Retrieves the submission files and configuration from the database."""
     submission_id = state['submission_id']
-    logger.info(f"[WorkerGraph] Retrieving data for submission_id: {submission_id}")
+    logger.info(
+        f"Entering node to retrieve data for submission.", 
+        extra={"submission_id": str(submission_id)}
+    )
     
     async with AsyncSessionLocal() as db:
         try:
@@ -67,11 +71,13 @@ async def retrieve_submission_data(state: WorkerState) -> Dict[str, Any]:
                 "error_message": None
             }
         except Exception as e:
-            logger.error(f"[WorkerGraph] Error retrieving data for submission {submission_id}: {e}", exc_info=True)
+            logger.error(f"Error retrieving data for submission {submission_id}: {e}", exc_info=True, extra={"submission_id": str(submission_id)})
             return {"error_message": str(e)}
 
 async def run_impact_reporting(state: WorkerState) -> Dict[str, Any]:
-    logger.info(f"[WorkerGraph] Preparing inputs and running ImpactReportingAgent for {state['submission_id']}.")
+    """Invokes the ImpactReportingAgent sub-graph to generate the final reports."""
+    submission_id_str = str(state['submission_id'])
+    logger.info(f"Entering node to run ImpactReportingAgent.", extra={"submission_id": submission_id_str})
     
     reporting_input_state: ImpactReportingAgentState = {
         "submission_id": state["submission_id"],
@@ -87,24 +93,25 @@ async def run_impact_reporting(state: WorkerState) -> Dict[str, Any]:
 
     if report_output_state.get("error"):
         error_msg = f"ImpactReportingAgent sub-graph failed: {report_output_state['error']}"
-        logger.error(f"[WorkerGraph] {error_msg}")
+        logger.error(error_msg, extra={"submission_id": submission_id_str})
         return {"error_message": error_msg}
     
-    logger.info("[WorkerGraph] Received successful output from ImpactReportingAgent.")
+    logger.info("Received successful output from ImpactReportingAgent.", extra={"submission_id": submission_id_str})
     return {
         "impact_report": report_output_state.get("impact_report"),
         "sarif_report": report_output_state.get("sarif_report"),
     }
 
 async def save_final_report_node(state: WorkerState) -> Dict[str, Any]:
+    """Saves the final reports (impact, SARIF) and risk score to the database."""
     submission_id = state["submission_id"]
     impact_report = state.get("impact_report")
     sarif_report = state.get("sarif_report")
     findings = state.get("findings", [])
-    logger.info(f"[WorkerGraph] Saving final reports for submission {submission_id}")
+    logger.info("Entering node to save final reports.", extra={"submission_id": str(submission_id)})
 
     if not impact_report and not sarif_report:
-        logger.warning(f"[WorkerGraph] No reports were found in state for {submission_id}.")
+        logger.warning(f"No reports were found in state for submission.", extra={"submission_id": str(submission_id)})
 
     # Calculate risk score
     risk_score = 0
@@ -128,13 +135,15 @@ async def save_final_report_node(state: WorkerState) -> Dict[str, Any]:
             sarif_report=sarif_report,
             risk_score=risk_score
         )
+        logger.info("Successfully saved final reports and set status to 'Completed'.", extra={"submission_id": str(submission_id)})
     return {}
 
 
 async def handle_error_node(state: WorkerState) -> Dict[str, Any]:
+    """A terminal node to handle any errors that occurred during the workflow."""
     error = state.get("error_message", "An unknown error occurred.")
     submission_id = state['submission_id']
-    logger.error(f"[WorkerGraph] Workflow for submission {submission_id} failed: {error}")
+    logger.error(f"Workflow for submission failed: {error}", extra={"submission_id": str(submission_id), "error_message": error})
     async with AsyncSessionLocal() as db:
         repo = SubmissionRepository(db)
         await repo.update_status(submission_id, "Failed")

@@ -97,7 +97,8 @@ async def create_repository_map_node(state: ContextAnalysisAgentState) -> Dict[s
     a hash of the codebase. If not found, it generates a new map and saves
     it to the cache. It now respects the `excluded_files` list.
     """
-    logger.info(f"[{AGENT_NAME}] Starting repository map creation for submission {state['submission_id']}.")
+    submission_id = state['submission_id']
+    logger.info(f"[{AGENT_NAME}] Starting repository map creation for submission.", extra={"submission_id": str(submission_id)})
     
     all_files = state["files"]
     excluded_files_set = set(state.get("excluded_files") or [])
@@ -112,6 +113,7 @@ async def create_repository_map_node(state: ContextAnalysisAgentState) -> Dict[s
         files_to_process = all_files
 
     if not files_to_process:
+        logger.warning("No files remaining for analysis after exclusions.", extra={"submission_id": str(submission_id)})
         return {"error_message": "No files remaining after exclusions."}
 
     sorted_files = sorted(files_to_process.items())
@@ -120,28 +122,28 @@ async def create_repository_map_node(state: ContextAnalysisAgentState) -> Dict[s
         hasher.update(content.encode('utf-8'))
     codebase_hash = hasher.hexdigest()
     
-    logger.info(f"[{AGENT_NAME}] Calculated codebase_hash: {codebase_hash}")
+    logger.info(f"[{AGENT_NAME}] Calculated codebase_hash: {codebase_hash}", extra={"submission_id": str(submission_id)})
 
     async with AsyncSessionLocal() as db:
         try:
             cache_repo = CacheRepository(db)
             cached_map = await cache_repo.get_repository_map(codebase_hash)
             if cached_map:
-                logger.info(f"[{AGENT_NAME}] Cache hit! Using cached repository map for hash {codebase_hash}.")
+                logger.info(f"[{AGENT_NAME}] Cache hit! Using cached repository map.", extra={"submission_id": str(submission_id), "codebase_hash": codebase_hash})
                 return {"repository_map": cached_map}
 
-            logger.info(f"[{AGENT_NAME}] Cache miss. Generating new repository map.")
+            logger.info(f"[{AGENT_NAME}] Cache miss. Generating new repository map.", extra={"submission_id": str(submission_id), "codebase_hash": codebase_hash})
             mapping_engine = RepositoryMappingEngine()
             repository_map = mapping_engine.create_map(files_to_process)
             
             await cache_repo.create_repository_map(codebase_hash, repository_map)
-            logger.info(f"[{AGENT_NAME}] New repository map saved to cache.")
+            logger.info(f"[{AGENT_NAME}] New repository map saved to cache.", extra={"submission_id": str(submission_id)})
             
             return {"repository_map": repository_map}
         
         except Exception as e:
             error_msg = f"Failed during repository map creation/caching: {e}"
-            logger.error(f"[{AGENT_NAME}] {error_msg}")
+            logger.error(f"[{AGENT_NAME}] {error_msg}", exc_info=True, extra={"submission_id": str(submission_id)})
             return {"error_message": error_msg}
 
 
@@ -155,9 +157,10 @@ async def analyze_repository_context_node(state: ContextAnalysisAgentState) -> D
     repository_map = state['repository_map']
 
     if not repository_map:
+        logger.error(f"[{AGENT_NAME}] Cannot analyze context, repository map is missing.", extra={"submission_id": str(submission_id)})
         return {"error_message": "Cannot analyze context, repository map is missing."}
         
-    logger.info(f"[{AGENT_NAME}] Starting repository context analysis for submission: {submission_id}")
+    logger.info(f"[{AGENT_NAME}] Starting repository context analysis for submission.", extra={"submission_id": str(submission_id)})
 
     llm_client = await get_llm_client(cast(uuid.UUID, llm_config_id))
     if not llm_client:

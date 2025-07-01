@@ -22,7 +22,7 @@ class JSONFormatter(logging.Formatter):
             "level": record.levelname,
             "message": record.getMessage(),
             "logger_name": record.name,
-            # --- Custom fields ---
+            "func_name": record.funcName,
             "correlation_id": correlation_id_var.get(),
             "service_name": os.getenv("SERVICE_NAME", "unknown"),
         }

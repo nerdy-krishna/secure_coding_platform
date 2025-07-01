@@ -114,7 +114,14 @@ class LLMClient:
         Uses LangChain's .with_structured_output() for robust parsing.
         Includes token usage and latency measurement via callbacks.
         """
-        logger.debug(f"Generating structured output for model: {self.db_llm_config.model_name}, response_model: {response_model.__name__}")
+        logger.info(
+            "Entering LLM structured output generation.",
+            extra={
+                "model_name": self.db_llm_config.model_name,
+                "provider": self.provider_name,
+                "response_model": response_model.__name__,
+            },
+        )
         
         structured_llm = self.chat_model.with_structured_output(response_model)
         token_callback = TokenUsageCallbackHandler(provider_name=self.provider_name)
@@ -158,10 +165,13 @@ async def get_llm_client(llm_config_id: uuid.UUID) -> Optional[LLMClient]:
     Factory function to get an instance of LLMClient for a specific config ID.
     This is the new entry point for agents.
     """
+    logger.info("Attempting to get LLM client for config ID.", extra={"llm_config_id": str(llm_config_id)})
     async with async_session_factory() as db:
         repo = LLMConfigRepository(db)
         llm_config = await repo.get_by_id_with_decrypted_key(llm_config_id)
         if not llm_config:
-            logger.error(f"Could not find LLM configuration with ID: {llm_config_id}")
+            logger.error(f"Could not find LLM configuration with ID: {llm_config_id}", extra={"llm_config_id": str(llm_config_id)})
             return None
+        
+        logger.info("Successfully retrieved LLM config and returning new LLMClient instance.", extra={"llm_config_id": str(llm_config_id)})
         return LLMClient(llm_config=llm_config)

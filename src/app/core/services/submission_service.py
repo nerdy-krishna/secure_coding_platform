@@ -30,6 +30,16 @@ class SubmissionService:
         excluded_files: List[str], main_llm_id: uuid.UUID, specialized_llm_id: uuid.UUID,
         correlation_id: str, repo_url: Optional[str] = None
     ) -> db_models.CodeSubmission:
+        """A private helper to process submission data, create a DB record, and publish a message."""
+        logger.info(
+            "Processing and creating new submission.",
+            extra={
+                "project_name": project_name,
+                "user_id": user_id,
+                "file_count": len(files_data),
+                "repo_url": repo_url or "N/A"
+            }
+        )
         if not files_data:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No files were successfully processed for analysis.")
 
@@ -43,11 +53,12 @@ class SubmissionService:
             message_body={"submission_id": str(submission.id)},
             correlation_id=correlation_id
         )
-        logger.info(f"Published submission {submission.id} to RabbitMQ.", extra={"correlation_id": correlation_id})
+        logger.info(f"Published submission {submission.id} to RabbitMQ.", extra={"correlation_id": correlation_id, "submission_id": str(submission.id)})
         return submission
 
     async def create_from_uploads(self, *, files: List[UploadFile], **kwargs) -> db_models.CodeSubmission:
         """Handles submission from direct file uploads."""
+        logger.info("Creating submission from file uploads.", extra={"file_count": len(files)})
         files_data = []
         for file in files:
             if not file.filename:
@@ -71,20 +82,29 @@ class SubmissionService:
         return await self._process_and_create_submission(files_data=files_data, **kwargs)
 
     async def create_from_git(self, *, repo_url: str, **kwargs) -> db_models.CodeSubmission:
+        """Handles submission from a Git repository."""
+        logger.info("Creating submission from Git repository.", extra={"repo_url": repo_url})
         files_data = clone_repo_and_get_files(repo_url)
         return await self._process_and_create_submission(files_data=files_data, repo_url=repo_url, **kwargs)
 
     async def create_from_archive(self, *, archive_file: UploadFile, **kwargs) -> db_models.CodeSubmission:
+        """Handles submission from an archive file."""
+        logger.info("Creating submission from archive file.", extra={"filename": archive_file.filename})
         files_data = extract_archive_to_files(archive_file)
         return await self._process_and_create_submission(files_data=files_data, **kwargs)
     
     async def get_submission_status(self, submission_id: uuid.UUID) -> db_models.CodeSubmission:
+        """Retrieves the status and basic details of a submission."""
+        logger.info("Getting submission status.", extra={"submission_id": str(submission_id)})
         submission = await self.repo.get_submission(submission_id)
         if not submission:
+            logger.warning("Submission not found.", extra={"submission_id": str(submission_id)})
             raise HTTPException(status_code=404, detail="Submission not found")
         return submission
 
     async def approve_submission(self, submission_id: uuid.UUID, user: db_models.User) -> None:
+        """Approves a submission that is pending cost approval, queueing it for analysis."""
+        logger.info("Attempting to approve submission.", extra={"submission_id": str(submission_id), "user_id": user.id})
         submission = await self.get_submission_status(submission_id)
         if submission.user_id != user.id and not user.is_superuser:
             raise HTTPException(status_code=403, detail="Not authorized to approve this submission")
@@ -93,8 +113,11 @@ class SubmissionService:
         
         publish_message(settings.RABBITMQ_APPROVAL_QUEUE, {"submission_id": str(submission.id), "action": "resume_analysis"})
         await self.repo.update_status(submission_id, "Approved - Queued")
+        logger.info("Submission approved and queued for processing.", extra={"submission_id": str(submission_id)})
 
     async def cancel_submission(self, submission_id: uuid.UUID, user: db_models.User) -> None:
+        """Cancels a submission that is pending cost approval."""
+        logger.info("Attempting to cancel submission.", extra={"submission_id": str(submission_id), "user_id": user.id})
         submission = await self.get_submission_status(submission_id)
         if submission.user_id != user.id and not user.is_superuser:
             raise HTTPException(status_code=403, detail="Not authorized to cancel this submission")
@@ -105,6 +128,15 @@ class SubmissionService:
         logger.info(f"User {user.id} cancelled submission {submission_id}.")
         
     async def queue_remediation(self, submission_id: uuid.UUID, remediation_request: api_models.RemediationRequest, user: db_models.User, correlation_id: str) -> None:
+        """Queues a completed submission for the remediation workflow."""
+        logger.info(
+            "Attempting to queue remediation.", 
+            extra={
+                "submission_id": str(submission_id), 
+                "user_id": user.id, 
+                "categories": remediation_request.categories_to_fix
+            }
+        )
         submission = await self.repo.get_submission(submission_id)
         if not submission:
             raise HTTPException(status_code=404, detail="Submission not found")
@@ -116,29 +148,41 @@ class SubmissionService:
         message = {"submission_id": str(submission.id), "action": "trigger_remediation", "categories_to_fix": remediation_request.categories_to_fix}
         publish_message(settings.RABBITMQ_REMEDIATION_QUEUE, message, correlation_id)
         await self.repo.update_status(submission_id, "Queued for Remediation")
+        logger.info("Remediation queued successfully.", extra={"submission_id": str(submission_id)})
         
     async def delete_submission(self, submission_id: uuid.UUID) -> None:
+        """Deletes a submission and all its associated data (findings, files, etc.)."""
+        logger.info("Attempting to delete submission.", extra={"submission_id": str(submission_id)})
         deleted = await self.repo.delete(submission_id)
         if not deleted:
+            logger.warning("Submission not found for deletion.", extra={"submission_id": str(submission_id)})
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Submission not found")
+        logger.info("Submission deleted successfully.", extra={"submission_id": str(submission_id)})
     
     async def get_paginated_history(self, user_id: int, skip: int, limit: int, search: Optional[str]) -> api_models.PaginatedSubmissionHistoryResponse:
+        """Retrieves a paginated list of submission history for a user."""
+        logger.debug("Fetching paginated submission history for user.", extra={"user_id": user_id, "skip": skip, "limit": limit})
         total = await self.repo.get_history_count(user_id, search)
         items_raw = await self.repo.get_paginated_history(user_id, skip, limit, search)
         history_items = [api_models.SubmissionHistoryItem(**item) for item in items_raw]
         return api_models.PaginatedSubmissionHistoryResponse(items=history_items, total=total)
         
     async def get_paginated_results(self, user_id: int, skip: int, limit: int, search: Optional[str]) -> api_models.PaginatedResultsResponse:
+        """Retrieves a paginated list of completed results for a user."""
+        logger.debug("Fetching paginated results for user.", extra={"user_id": user_id, "skip": skip, "limit": limit})
         total = await self.repo.get_results_count(user_id, search)
         items_raw = await self.repo.get_paginated_results(user_id, skip, limit, search)
         result_items = [api_models.ResultIndexItem(**item) for item in items_raw]
         return api_models.PaginatedResultsResponse(items=result_items, total=total)
 
     async def get_llm_interactions(self, user_id: int) -> List[db_models.LLMInteraction]:
+        """Retrieves all LLM interactions for a given user."""
+        logger.debug("Fetching all LLM interactions for user.", extra={"user_id": user_id})
         return await self.repo.get_llm_interactions_for_user(user_id)
 
     async def get_results(self, submission_id: uuid.UUID) -> api_models.AnalysisResultDetailResponse:
         """Assembles the full, detailed analysis result for a submission."""
+        logger.info("Assembling full analysis results.", extra={"submission_id": str(submission_id)})
         submission_db = await self.repo.get_submission(submission_id)
         if not submission_db:
             raise HTTPException(status_code=404, detail="Submission not found")
