@@ -1,10 +1,10 @@
-// src/pages/account/CostUsagePage.tsx
+// secure-code-ui/src/pages/account/CostUsagePage.tsx
 import { useQuery } from "@tanstack/react-query";
 import type { TablePaginationConfig, TableProps } from "antd";
 import { Alert, Card, Col, Row, Space, Spin, Statistic, Table, Tag, Typography } from "antd";
 import React, { useMemo, useState } from "react";
-import { llmConfigService } from "../../services/llmConfigService";
-import type { LLMInteractionResponse } from "../../types/api";
+import { llmConfigService } from "../../shared/api/llmConfigService";
+import type { LLMInteractionResponse } from "../../shared/types/api";
 
 const { Title, Text } = Typography;
 

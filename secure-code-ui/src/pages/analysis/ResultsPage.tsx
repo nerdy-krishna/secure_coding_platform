@@ -1,4 +1,4 @@
-// src/pages/ResultsPage.tsx
+// secure-code-ui/src/pages/analysis/ResultsPage.tsx
 
 import {
   ArrowLeftOutlined,
@@ -40,18 +40,18 @@ import { saveAs } from 'file-saver';
 import JSZip from 'jszip';
 import ReactDiffViewer, { DiffMethod } from "react-diff-viewer-continued";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { submissionService, triggerRemediation } from "../../services/submissionService";
+import { submissionService, triggerRemediation } from "../../shared/api/submissionService";
+import { SeverityColors, SeverityTags } from "../../shared/lib/severityMappings";
 import {
   type AnalysisResultResponse,
   type Finding,
   type OverallRiskScore,
   type SubmittedFile,
   type Summary
-} from "../../types/api";
-import { SeverityColors, SeverityTags } from "../../utils/severityMappings";
+} from "../../shared/types/api";
 
 // Import our new components
-import RemediationModal from "../../components/RemediationModal";
+import RemediationModal from "../../features/results-display/components/RemediationModal";
 
 const { Content } = Layout;
 const { Title, Text, Paragraph } = Typography;

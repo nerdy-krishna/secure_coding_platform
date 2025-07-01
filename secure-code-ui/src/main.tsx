@@ -1,10 +1,10 @@
 // secure-code-ui/src/main.tsx
-import { App as AntdApp, ConfigProvider } from "antd"; // Import Ant Design's App component and alias it
+import { App as AntdApp, ConfigProvider } from "antd";
 import "antd/dist/reset.css";
 import React from "react";
 import ReactDOM from "react-dom/client";
-import App from "./App";
-import "./index.css";
+import App from "./app/App";
+import "./app/styles/index.css";
 
 const antdTheme = {
   token: {

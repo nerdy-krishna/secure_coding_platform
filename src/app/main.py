@@ -12,18 +12,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from psycopg.errors import DuplicateColumn
 from starlette.responses import JSONResponse
 
-# Import our new routers from the api module
-from app.api.endpoints import router as api_router, llm_router
-from app.auth.backend import auth_backend
-from app.auth.core import fastapi_users
-from app.auth.schemas import UserCreate, UserRead, UserUpdate
-from app.core.config import settings
-# --- New Logging Imports ---
-from app.core.logging_config import LOGGING_CONFIG, correlation_id_var
+from app.api.v1.routers.submissions import router as submissions_router
+from app.api.v1.routers.admin import llm_router
+from app.infrastructure.auth.backend import auth_backend
+from app.infrastructure.auth.core import fastapi_users
+from app.infrastructure.auth.schemas import UserCreate, UserRead, UserUpdate
+from app.config.config import settings
+from app.config.logging_config import LOGGING_CONFIG, correlation_id_var
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 # Apply the logging configuration right at the start
 logging.config.dictConfig(LOGGING_CONFIG)
+logging.captureWarnings(True)
 
 # Get the logger for this module
 logger = logging.getLogger(__name__)
@@ -33,13 +33,15 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     # This code runs on application startup
     logger.info("Application startup...")
-    
+
     if settings.ASYNC_DATABASE_URL:
         logger.info("Setting up database checkpointer tables...")
         try:
             # FIX: Convert the SQLAlchemy URL to a standard psycopg/asyncpg URL
-            conn_str = settings.ASYNC_DATABASE_URL.replace("postgresql+asyncpg", "postgresql")
-            
+            conn_str = settings.ASYNC_DATABASE_URL.replace(
+                "postgresql+asyncpg", "postgresql"
+            )
+
             async with AsyncPostgresSaver.from_conn_string(conn_str) as checkpointer:
                 await checkpointer.setup()
             logger.info("Checkpointer tables setup complete.")
@@ -48,13 +50,16 @@ async def lifespan(app: FastAPI):
                 f"Checkpointer tables already exist, which is expected. Details: {e}. Continuing..."
             )
         except Exception as e:
-            logger.error(f"Failed to setup checkpointer tables on startup: {e}", exc_info=True)
+            logger.error(
+                f"Failed to setup checkpointer tables on startup: {e}", exc_info=True
+            )
     else:
         logger.warning("Database URL not set, skipping checkpointer setup.")
-    
+
     yield
     # This code runs on shutdown
     logger.info("Application shutdown.")
+
 
 app = FastAPI(
     title="Secure Coding Platform API",
@@ -63,24 +68,25 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# --- START: New Correlation ID Middleware ---
+
 @app.middleware("http")
 async def correlation_id_middleware(request: Request, call_next):
     # Check for an existing correlation ID in the header, or create a new one
     corr_id = request.headers.get("X-Correlation-ID") or str(uuid.uuid4())
-    
+
     # Set the ID in the context variable so our logger can access it
     correlation_id_var.set(corr_id)
-    
+
     # Process the request
     response = await call_next(request)
-    
+
     # Add the correlation ID to the response headers
     response.headers["X-Correlation-ID"] = corr_id
-    
-    logger.info(f"Request to {request.url.path} completed with status {response.status_code}")
+
+    logger.info(
+        f"Request to {request.url.path} completed with status {response.status_code}"
+    )
     return response
-# --- END: New Correlation ID Middleware ---
 
 
 # --- CORS Middleware Configuration ---
@@ -128,9 +134,9 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 # --- Include API Routers ---
 
 # Main application router for submissions and results
-app.include_router(api_router, prefix="/api/v1", tags=["Submissions"])
+app.include_router(submissions_router, prefix="/api/v1", tags=["Submissions"])
 
-# NEW: Router for managing LLM Configurations
+# Router for managing LLM Configurations
 app.include_router(
     llm_router, prefix="/api/v1/admin", tags=["Admin: LLM Configurations"]
 )

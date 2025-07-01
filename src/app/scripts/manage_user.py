@@ -1,3 +1,4 @@
+# src/app/scripts/manage_user.py
 import asyncio
 import argparse
 import sys
@@ -7,13 +8,13 @@ from typing import cast, Dict, Any
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 # Corrected: Import central settings, User model, and the UserUpdate schema
-from app.core.config import settings
-from app.db.models import User
-from app.auth.schemas import UserUpdate 
+from app.config.config import settings
+from app.infrastructure.database.models import User
+from app.infrastructure.auth.schemas import UserUpdate
 
 # Import the user manager and its dependencies
-from app.auth.manager import get_user_manager
-from app.auth.db import get_user_db
+from app.infrastructure.auth.manager import get_user_manager
+from app.infrastructure.auth.db import get_user_db
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -68,16 +69,30 @@ async def manage_user(email: str, superuser: bool, verified: bool):
 
 async def main():
     parser = argparse.ArgumentParser(description="Manage user properties.")
-    parser.add_argument("--email", type=str, required=True, help="Email of the user to manage.")
-    parser.add_argument("--superuser", action=argparse.BooleanOptionalAction, help="Set or unset superuser status.")
-    parser.add_argument("--verified", action=argparse.BooleanOptionalAction, help="Set or unset verified status.")
+    parser.add_argument(
+        "--email", type=str, required=True, help="Email of the user to manage."
+    )
+    parser.add_argument(
+        "--superuser",
+        action=argparse.BooleanOptionalAction,
+        help="Set or unset superuser status.",
+    )
+    parser.add_argument(
+        "--verified",
+        action=argparse.BooleanOptionalAction,
+        help="Set or unset verified status.",
+    )
     args = parser.parse_args()
 
     if args.superuser is None and args.verified is None:
-        print("Error: You must specify at least one action (--superuser or --verified).")
+        print(
+            "Error: You must specify at least one action (--superuser or --verified)."
+        )
         sys.exit(1)
 
-    await manage_user(email=args.email, superuser=args.superuser, verified=args.verified)
+    await manage_user(
+        email=args.email, superuser=args.superuser, verified=args.verified
+    )
 
 
 if __name__ == "__main__":
