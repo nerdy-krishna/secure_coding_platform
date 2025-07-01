@@ -35,6 +35,11 @@ class SubmissionRepository:
         main_llm_id: uuid.UUID,
         specialized_llm_id: uuid.UUID,
     ) -> db_models.CodeSubmission:
+        """Creates a new CodeSubmission and its associated SubmittedFile records in the database."""
+        logger.info(
+            "Creating CodeSubmission entry in DB.",
+            extra={"user_id": user_id, "project_name": project_name}
+        )
         submission = db_models.CodeSubmission(
             user_id=user_id,
             project_name=project_name,
@@ -53,11 +58,17 @@ class SubmissionRepository:
         self.db.add_all(db_files)
         await self.db.commit()
         await self.db.refresh(submission)
+        logger.info("Successfully created submission in DB.", extra={"submission_id": str(submission.id)})
         return submission
 
     async def get_submission(
         self, submission_id: uuid.UUID
     ) -> Optional[db_models.CodeSubmission]:
+        """
+        Retrieves a single submission by its ID, eagerly loading related files,
+        findings, and fixes for efficiency.
+        """
+        logger.debug("Fetching submission from DB.", extra={"submission_id": str(submission_id)})
         result = await self.db.execute(
             select(db_models.CodeSubmission)
             .options(
@@ -73,6 +84,8 @@ class SubmissionRepository:
     async def get_submitted_files_for_submission(
         self, submission_id: uuid.UUID
     ) -> List[db_models.SubmittedFile]:
+        """Retrieves only the SubmittedFile records for a given submission."""
+        logger.debug("Fetching submitted files for submission.", extra={"submission_id": str(submission_id)})
         result = await self.db.execute(
             select(db_models.SubmittedFile).filter(
                 db_models.SubmittedFile.submission_id == submission_id
@@ -81,6 +94,8 @@ class SubmissionRepository:
         return list(result.scalars().all())
 
     async def update_status(self, submission_id: uuid.UUID, status: str):
+        """Updates the status of a single submission."""
+        logger.info("Updating submission status in DB.", extra={"submission_id": str(submission_id), "new_status": status})
         stmt = (
             update(db_models.CodeSubmission)
             .where(db_models.CodeSubmission.id == submission_id)
@@ -92,6 +107,16 @@ class SubmissionRepository:
     async def save_llm_interaction(
         self, interaction_data: agent_schemas.LLMInteraction
     ):
+        """Saves a single LLM interaction record to the database."""
+        # Use debug level to avoid excessive logging in production
+        logger.debug(
+            "Saving LLM interaction to DB.",
+            extra={
+                "submission_id": str(interaction_data.submission_id),
+                "agent_name": interaction_data.agent_name,
+                "file_path": interaction_data.file_path
+            }
+        )
         db_interaction = db_models.LLMInteraction(**interaction_data.model_dump())
         self.db.add(db_interaction)
         await self.db.commit()
@@ -101,8 +126,13 @@ class SubmissionRepository:
         submission_id: uuid.UUID,
         findings: List[agent_schemas.VulnerabilityFinding],
     ) -> List[db_models.VulnerabilityFinding]:
+        """Saves a list of vulnerability findings for a submission."""
         if not findings:
             return []
+        logger.info(
+            "Saving vulnerability findings to DB.",
+            extra={"submission_id": str(submission_id), "finding_count": len(findings)}
+        )
         db_findings = [
             db_models.VulnerabilityFinding(
                 submission_id=submission_id, **finding.model_dump()
@@ -119,6 +149,8 @@ class SubmissionRepository:
     async def save_fix_suggestion(
         self, finding_id: int, suggestion: agent_schemas.FixSuggestion
     ):
+        """Saves a single code fix suggestion, linked to a specific finding."""
+        logger.debug("Saving fix suggestion to DB.", extra={"finding_id": finding_id})
         fix = db_models.FixSuggestion(
             finding_id=finding_id,
             description=suggestion.description,
@@ -130,6 +162,15 @@ class SubmissionRepository:
     async def update_cost_and_status(
         self, submission_id: uuid.UUID, status: str, estimated_cost: Dict[str, Any]
     ):
+        """Atomically updates the status and the estimated cost of a submission."""
+        logger.info(
+            "Updating cost and status in DB.",
+            extra={
+                "submission_id": str(submission_id),
+                "new_status": status,
+                "total_estimated_cost": estimated_cost.get("total_estimated_cost")
+            }
+        )
         stmt = (
             update(db_models.CodeSubmission)
             .where(db_models.CodeSubmission.id == submission_id)
@@ -146,6 +187,8 @@ class SubmissionRepository:
         sarif_report: Optional[Dict[str, Any]],
         risk_score: Optional[int],
     ):
+        """Saves the final analysis reports, sets the completion timestamp, and updates the status."""
+        logger.info("Saving final reports and status to DB.", extra={"submission_id": str(submission_id), "new_status": status})
         completed_at_aware = datetime.datetime.now(datetime.timezone.utc)
         values = {
             "status": status,
@@ -167,6 +210,8 @@ class SubmissionRepository:
     async def update_remediated_code_and_status(
         self, submission_id: uuid.UUID, status: str, fixed_code_map: Dict[str, Any]
     ):
+        """Saves the map of fixed code and updates the submission status after remediation."""
+        logger.info("Saving remediated code map and status to DB.", extra={"submission_id": str(submission_id), "new_status": status})
         completed_at_aware = datetime.datetime.now(datetime.timezone.utc)
         values = {
             "status": status,
@@ -327,8 +372,11 @@ class SubmissionRepository:
         return result.scalar_one() or 0
 
     async def delete(self, submission_id: uuid.UUID) -> bool:
+        """Deletes a submission and all its cascaded children (files, findings, etc.)."""
+        logger.info("Attempting to delete submission from DB.", extra={"submission_id": str(submission_id)})
         submission = await self.get_submission(submission_id)
         if not submission:
+            logger.warning("Submission not found for deletion.", extra={"submission_id": str(submission_id)})
             return False
         await self.db.delete(submission)
         await self.db.commit()

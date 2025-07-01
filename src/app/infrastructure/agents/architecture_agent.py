@@ -53,10 +53,14 @@ async def analysis_node(state: SpecializedAgentState) -> Dict[str, Any]:
     code_bundle = state["code_snippet"]
     mode = state["workflow_mode"]
 
-    logger.info(f"[{AGENT_NAME}] Assessing '{filename}' in '{mode}' mode.")
+    logger.info(
+        f"[{AGENT_NAME}] Assessing file in '{mode}' mode.",
+        extra={"submission_id": str(submission_id), "filename": filename, "mode": mode}
+    )
 
     rag_service = get_rag_service()
     if not rag_service:
+        logger.error(f"[{AGENT_NAME}] Failed to get RAG service.", extra={"submission_id": str(submission_id)})
         return {"error": "Failed to get RAG service."}
 
     retrieved_guidelines = rag_service.query_asvs(
@@ -110,10 +114,12 @@ async def analysis_node(state: SpecializedAgentState) -> Dict[str, Any]:
 
     llm_config_id = state.get("llm_config_id")
     if not llm_config_id:
+        logger.error(f"[{AGENT_NAME}] LLM configuration ID not provided.", extra={"submission_id": str(submission_id)})
         return {"error": "LLM configuration ID not provided."}
 
     llm_client = await get_llm_client(llm_config_id=llm_config_id)
     if not llm_client:
+        logger.error(f"[{AGENT_NAME}] Failed to initialize LLM client.", extra={"submission_id": str(submission_id)})
         return {"error": "Failed to initialize LLM client."}
 
     llm_response: AgentLLMResult = await llm_client.generate_structured_output(
@@ -142,6 +148,10 @@ async def analysis_node(state: SpecializedAgentState) -> Dict[str, Any]:
         await repo.save_llm_interaction(interaction_data=interaction)
 
     if llm_response.error or not llm_response.parsed_output:
+        logger.error(
+            f"[{AGENT_NAME}] LLM failed to produce valid analysis for file.",
+            extra={"submission_id": str(submission_id), "filename": filename, "error": llm_response.error}
+        )
         return {"error": f"LLM failed to produce valid analysis: {llm_response.error}"}
 
     # Process the response based on the mode
@@ -161,6 +171,10 @@ async def analysis_node(state: SpecializedAgentState) -> Dict[str, Any]:
                 FixResult(finding=result.finding, suggestion=result.suggestion)
             )
 
+    logger.info(
+        f"[{AGENT_NAME}] Completed analysis for file.",
+        extra={"submission_id": str(submission_id), "filename": filename, "findings_found": len(findings), "fixes_found": len(fixes)}
+    )
     return {"findings": findings, "fixes": fixes}
 
 

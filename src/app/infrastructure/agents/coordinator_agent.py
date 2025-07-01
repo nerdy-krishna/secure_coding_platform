@@ -74,7 +74,9 @@ class CoordinatorState(TypedDict):
 
 
 def determine_relevant_agents_node(state: CoordinatorState) -> Dict[str, Any]:
-    logger.info(f"[{AGENT_NAME}] Determining relevant agents from ASVS analysis.")
+    """Determines which specialized agents are relevant based on the codebase context."""
+    submission_id = state['submission_id']
+    logger.info(f"[{AGENT_NAME}] Determining relevant agents for submission.", extra={"submission_id": str(submission_id)})
     asvs_analysis = state.get("asvs_analysis", {})
     relevant_agents: Dict[str, List[str]] = {}
     repository_map = state.get("repository_map")
@@ -90,7 +92,9 @@ def determine_relevant_agents_node(state: CoordinatorState) -> Dict[str, Any]:
 
 
 def create_context_bundles_node(state: CoordinatorState) -> Dict[str, Any]:
-    logger.info(f"[{AGENT_NAME}] Creating context bundles.")
+    """Creates context-rich code bundles for each file to be analyzed."""
+    submission_id = state['submission_id']
+    logger.info(f"[{AGENT_NAME}] Creating context bundles for submission.", extra={"submission_id": str(submission_id)})
     repository_map = state.get("repository_map")
     files = state.get("files")
     if not repository_map or not files:
@@ -98,16 +102,17 @@ def create_context_bundles_node(state: CoordinatorState) -> Dict[str, Any]:
     try:
         engine = ContextBundlingEngine(repository_map, files)
         bundles = engine.create_bundles()
-        logger.info(f"[{AGENT_NAME}] Successfully created {len(bundles)} context bundles.")
+        logger.info(f"[{AGENT_NAME}] Successfully created {len(bundles)} context bundles.", extra={"submission_id": str(submission_id)})
         return {"context_bundles": bundles}
     except Exception as e:
-        logger.error(f"[{AGENT_NAME}] Failed to create context bundles: {e}", exc_info=True)
+        logger.error(f"[{AGENT_NAME}] Failed to create context bundles: {e}", exc_info=True, extra={"submission_id": str(submission_id)})
         return {"error": f"Failed to create context bundles: {e}"}
 
 
 async def estimate_cost_node(state: CoordinatorState) -> Dict[str, Any]:
+    """Estimates analysis cost. If a cost has not been approved, it pauses the graph."""
     submission_id = state["submission_id"]
-    logger.info(f"[{AGENT_NAME}] Evaluating cost and approval status for submission {submission_id}.")
+    logger.info(f"[{AGENT_NAME}] Evaluating cost and approval status for submission.", extra={"submission_id": str(submission_id)})
     
     async with async_session_factory() as db:
         submission_repo = SubmissionRepository(db)
@@ -115,21 +120,21 @@ async def estimate_cost_node(state: CoordinatorState) -> Dict[str, Any]:
 
         submission = await submission_repo.get_submission(submission_id)
         if not submission:
-            logger.error(f"[{AGENT_NAME}] Submission {submission_id} not found during cost evaluation.")
+            logger.error(f"[{AGENT_NAME}] Submission not found during cost evaluation.", extra={"submission_id": str(submission_id)})
             return {"error": f"Submission {submission_id} not found.", "current_submission_status": "ERROR_NO_SUBMISSION"}
 
         current_status = submission.status
         estimated_cost_from_db = submission.estimated_cost
 
         if current_status == STATUS_COST_APPROVED:
-            logger.info(f"[{AGENT_NAME}] Cost for submission {submission_id} is already approved. Proceeding.")
+            logger.info(f"[{AGENT_NAME}] Cost for submission is already approved. Proceeding.", extra={"submission_id": str(submission_id)})
             return {"cost_approval_met": True, "current_submission_status": current_status, "estimated_cost": estimated_cost_from_db}
 
         if current_status == STATUS_PENDING_APPROVAL:
-            logger.info(f"[{AGENT_NAME}] Submission {submission_id} is still {STATUS_PENDING_APPROVAL}. Waiting.")
+            logger.info(f"[{AGENT_NAME}] Submission is still {STATUS_PENDING_APPROVAL}. Waiting.", extra={"submission_id": str(submission_id)})
             return {"cost_approval_met": False, "current_submission_status": current_status, "estimated_cost": estimated_cost_from_db}
 
-        logger.info(f"[{AGENT_NAME}] Performing new cost estimation for submission {submission_id}.")
+        logger.info(f"[{AGENT_NAME}] Performing new cost estimation for submission.", extra={"submission_id": str(submission_id)})
         bundles = state.get("context_bundles")
         llm_config_id = state.get("llm_config_id")
 
@@ -151,7 +156,7 @@ async def estimate_cost_node(state: CoordinatorState) -> Dict[str, Any]:
             cost_details = cost_estimation.estimate_cost_for_prompt(config=llm_config, input_tokens=total_input_tokens)
             
             await submission_repo.update_cost_and_status(submission_id, STATUS_PENDING_APPROVAL, cost_details)
-            logger.info(f"[{AGENT_NAME}] Submission {submission_id} status set to {STATUS_PENDING_APPROVAL}.")
+            logger.info(f"[{AGENT_NAME}] Submission status set to {STATUS_PENDING_APPROVAL}.", extra={"submission_id": str(submission_id)})
             return {"estimated_cost": cost_details, "cost_approval_met": False, "current_submission_status": STATUS_PENDING_APPROVAL}
         except Exception as e:
             logger.error(f"[{AGENT_NAME}] Failed to estimate cost for {submission_id}: {e}", exc_info=True)
@@ -163,9 +168,9 @@ def route_after_cost_estimation(state: CoordinatorState) -> str:
         logger.error(f"[{AGENT_NAME}] Error in coordinator state after cost estimation: {state['error']}")
         return "end_with_error"
     if state.get("cost_approval_met"):
-        logger.info(f"[{AGENT_NAME}] Cost approval met for submission {state['submission_id']}. Proceeding.")
+        logger.info(f"[{AGENT_NAME}] Cost approval met for submission. Proceeding.", extra={"submission_id": str(state['submission_id'])})
         return "run_specialized_agents"
-    logger.info(f"[{AGENT_NAME}] Cost approval not met for {state['submission_id']}. Coordinator ending.")
+    logger.info(f"[{AGENT_NAME}] Cost approval not met. Coordinator ending.", extra={"submission_id": str(state['submission_id'])})
     return END
 
 
@@ -177,7 +182,7 @@ async def run_specialized_agents_node(state: CoordinatorState) -> Dict[str, Any]
     workflow_mode = state["workflow_mode"]
     files = state["files"]
 
-    logger.info(f"[{AGENT_NAME}] Beginning agent runs in '{workflow_mode}' mode with concurrency limit {CONCURRENT_LLM_LIMIT}.")
+    logger.info(f"[{AGENT_NAME}] Beginning agent runs in '{workflow_mode}' mode with concurrency limit {CONCURRENT_LLM_LIMIT}.", extra={"submission_id": str(submission_id), "mode": workflow_mode})
     if not context_bundles or not files:
         return {"error": "Context bundles or files not found."}
 
@@ -219,7 +224,7 @@ async def run_specialized_agents_node(state: CoordinatorState) -> Dict[str, Any]
                 bundle = bundle_map.get(file_path)
                 if not bundle: continue
                 formatted_bundle_content = "".join(f"--- FILE: {path} ---\n{live_codebase.get(path, '')}\n\n" for path in bundle.context_files.keys())
-                logger.info(f"[{AGENT_NAME}] Sequentially remediating '{file_path}' with '{agent_name}'.")
+                logger.info(f"[{AGENT_NAME}] Sequentially remediating '{file_path}' with '{agent_name}'.", extra={"submission_id": str(submission_id)})
                 initial_agent_state: SpecializedAgentState = {"submission_id": submission_id, "llm_config_id": specialized_llm_id, "filename": file_path, "code_snippet": formatted_bundle_content, "workflow_mode": workflow_mode, "findings": [], "fixes": [], "error": None}
                 agent_result = await agent_graph.ainvoke(initial_agent_state)
                 if isinstance(agent_result, dict) and not agent_result.get('error'):
@@ -230,17 +235,18 @@ async def run_specialized_agents_node(state: CoordinatorState) -> Dict[str, Any]
                         target_file, original_snippet, new_code = fix_result.finding.file_path, fix_result.suggestion.original_snippet, fix_result.suggestion.code
                         if target_file in live_codebase and original_snippet in live_codebase[target_file]:
                             live_codebase[target_file] = live_codebase[target_file].replace(original_snippet, new_code, 1)
-                            logger.info(f"Applied fix in '{target_file}'.")
+                            logger.info(f"Applied fix in '{target_file}'.", extra={"submission_id": str(submission_id)})
                         else:
-                            logger.warning(f"Could not find original snippet in '{target_file}' to apply fix.")
+                            logger.warning(f"Could not find original snippet in '{target_file}' to apply fix.", extra={"submission_id": str(submission_id)})
         return {"findings": all_findings, "fixes": all_fixes, "live_codebase": live_codebase}
     else:
         return {"error": f"Unknown workflow_mode: {workflow_mode}"}
 
 
 async def finalize_analysis_node(state: CoordinatorState) -> Dict[str, Any]:
+    """Saves all findings and fixes from the agent runs into the database."""
     submission_id, findings_to_save, fixes_to_save, live_codebase, workflow_mode = state["submission_id"], state.get("findings", []), state.get("fixes", []), state.get("live_codebase"), state["workflow_mode"]
-    logger.info(f"[{AGENT_NAME}] Finalizing analysis for submission {submission_id} in '{workflow_mode}' mode.")
+    logger.info(f"[{AGENT_NAME}] Finalizing analysis for submission in '{workflow_mode}' mode.", extra={"submission_id": str(submission_id), "mode": workflow_mode, "findings_count": len(findings_to_save)})
     async with async_session_factory() as db:
         repo = SubmissionRepository(db)
         try:
