@@ -23,6 +23,7 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 # Apply the logging configuration right at the start
 logging.config.dictConfig(LOGGING_CONFIG)
+logging.captureWarnings(True)
 
 # Get the logger for this module
 logger = logging.getLogger(__name__)

@@ -1,3 +1,5 @@
+# src/app/config/logging_config.py
+
 import logging
 import json
 import os
@@ -52,13 +54,10 @@ LOGGING_CONFIG = {
         "app": {"handlers": ["default"], "level": "INFO", "propagate": False},
         "uvicorn": {"handlers": ["default"], "level": "INFO", "propagate": False},
         "uvicorn.error": {"handlers": ["default"], "level": "INFO", "propagate": False},
-        "uvicorn.access": {
-            "handlers": ["default"],
-            "level": "INFO",
-            "propagate": False,
-        },
+        "uvicorn.access": {"handlers": ["default"], "level": "INFO", "propagate": False},
         "sqlalchemy": {"handlers": ["default"], "level": "WARNING", "propagate": False},
         "pika": {"handlers": ["default"], "level": "WARNING", "propagate": False},
+        "py.warnings": {"handlers": ["default"], "level": "WARNING", "propagate": False}, # ADDED
         "langgraph": {"handlers": ["default"], "level": "INFO", "propagate": False},
         # Root logger
         "": {"handlers": ["default"], "level": "INFO"},

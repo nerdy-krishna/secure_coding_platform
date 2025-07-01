@@ -1,4 +1,4 @@
-// src/app/features/admin-settings/components/LLMSettingsPage.tsx
+// src/features/admin-settings/components/LLMSettingsPage.tsx
 
 import {
   ClearOutlined,
@@ -45,7 +45,6 @@ const LLMSettingsPage: React.FC = () => {
   const [editingConfig, setEditingConfig] = useState<LLMConfiguration | null>(
     null,
   );
-  
   const [pagination, setPagination] = useState({
     current: 1,
     pageSize: 10,
@@ -61,20 +60,19 @@ const LLMSettingsPage: React.FC = () => {
     queryFn: llmConfigService.getLlmConfigs,
   });
 
+  // --- MODIFIED useEffect ---
   useEffect(() => {
     if (editingConfig) {
+      // This populates the form with the data of the config being edited.
       form.setFieldsValue({
         ...editingConfig,
-        // Ensure field names match the form items and the LLMConfiguration type
-        input_cost_per_million: editingConfig.input_cost_per_million, 
-        output_cost_per_million: editingConfig.output_cost_per_million,
-        tokenizer_encoding: editingConfig.tokenizer_encoding,
-        api_key: "", // Clear API key for editing
+        api_key: "", // Always clear the API key field for security
       });
     } else {
+      // This resets the form when we are not in edit mode.
       form.resetFields();
     }
-  }, [editingConfig, form]);
+  }, [editingConfig, form]); // Dependency array is kept to ensure reactivity
 
   const handleApiError = (
     err: AxiosError,
@@ -129,15 +127,11 @@ const LLMSettingsPage: React.FC = () => {
   });
 
   const handleSubmit = (values: LLMConfigurationCreate) => {
-    // Ensure field names here match what the backend expects (LLMConfigurationUpdate)
-    // and what the form provides.
     const payload = {
       ...values,
       input_cost_per_million: Number(values.input_cost_per_million),
       output_cost_per_million: Number(values.output_cost_per_million),
-      // tokenizer_encoding is already a string from the form
     };
-
     if (editingConfig) {
       if (!payload.api_key) {
         delete (payload as Partial<LLMConfigurationCreate>).api_key;
@@ -151,10 +145,8 @@ const LLMSettingsPage: React.FC = () => {
   const handleCancelEdit = () => {
     setEditingConfig(null);
   };
-
-  const parseAsUTCDate = (
-    dateString: string | null | undefined,
-  ): Date | null => {
+  
+  const parseAsUTCDate = (dateString: string | null | undefined): Date | null => {
     if (!dateString) return null;
     let utcDateString = dateString;
     if (!/Z|[+-]\d{2}:\d{2}$/.test(dateString)) {
@@ -206,8 +198,6 @@ const LLMSettingsPage: React.FC = () => {
   }
 
   const isMutating = createMutation.isPending || updateMutation.isPending;
-  
-  // --- NEW: Custom validator for cost fields ---
   const costValidator = (_: RuleObject, value: string) => {
     if (value && (isNaN(parseFloat(value)) || parseFloat(value) < 0)) {
         return Promise.reject(new Error("Please enter a valid positive number."));
@@ -225,13 +215,11 @@ const LLMSettingsPage: React.FC = () => {
           <Row gutter={24}><Col xs={24} sm={12}><Form.Item name="model_name" label="Model Name" rules={[{ required: true, message: "Please enter the model name." }]}><Input placeholder="e.g., gpt-4o-mini" /></Form.Item></Col><Col xs={24} sm={12}><Form.Item name="tokenizer_encoding" label="Tokenizer Encoding (Optional)" tooltip="e.g., 'cl100k_base'. Leave blank for default."><Input placeholder="e.g., cl100k_base" /></Form.Item></Col></Row>
           <Row gutter={24}>
             <Col xs={24} sm={12}>
-              {/* --- UPDATED: Using the custom validator --- */}
               <Form.Item name="input_cost_per_million" label="Input Cost per 1,000,000 Tokens ($)" rules={[{ required: true, message: "Input cost is required." }, { validator: costValidator }]}>
                 <InputNumber style={{ width: "100%" }} placeholder="e.g., 0.15" step="0.01" stringMode />
               </Form.Item>
             </Col>
             <Col xs={24} sm={12}>
-              {/* --- UPDATED: Using the custom validator --- */}
               <Form.Item name="output_cost_per_million" label="Output Cost per 1,000,000 Tokens ($)" rules={[{ required: true, message: "Output cost is required." }, { validator: costValidator }]}>
                 <InputNumber style={{ width: "100%" }} placeholder="e.g., 0.60" step="0.01" stringMode />
               </Form.Item>

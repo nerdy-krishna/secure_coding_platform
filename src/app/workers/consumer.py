@@ -33,16 +33,10 @@ from pika.spec import (
 )  # For Pika message properties and delivery info (Basic.Deliver)
 from pika.exceptions import AMQPConnectionError  # For specific Pika exception handling
 
-logging.basicConfig(
-    level=logging.INFO,  # Lower to DEBUG for more verbose output from this module
-    format="%(asctime)s - %(levelname)-7s - [%(threadName)s] %(name)s (%(module)s.%(funcName)s:%(lineno)d) - %(message)s",
-)
-logger = logging.getLogger(
-    __name__
-)  # Gets logger for current module __main__ if run directly
-
 # Apply the logging configuration at the start of the worker process
 logging.config.dictConfig(LOGGING_CONFIG)
+logging.captureWarnings(True)
+logger = logging.getLogger(__name__)
 
 logging.getLogger("pika").setLevel(logging.WARNING)
 # You can add more libraries here if needed, e.g.:

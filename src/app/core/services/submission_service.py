@@ -47,17 +47,27 @@ class SubmissionService:
         return submission
 
     async def create_from_uploads(self, *, files: List[UploadFile], **kwargs) -> db_models.CodeSubmission:
+        """Handles submission from direct file uploads."""
         files_data = []
         for file in files:
-            if not file.filename: continue
+            if not file.filename:
+                continue
             if is_archive_filename(file.filename):
-                raise HTTPException(status_code=400, detail=f"Archive file '{file.filename}' submitted incorrectly. Use the 'Upload Archive' option.")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Archive file '{file.filename}' submitted incorrectly. Use the 'Upload Archive' option."
+                )
             content_bytes = await file.read()
             try:
                 content_str = content_bytes.decode("utf-8")
             except UnicodeDecodeError:
                 content_str = content_bytes.decode("latin-1")
-            files_data.append({"path": file.filename, "content": content_str.replace("\x00", ""),"language": get_language_from_filename(file.filename) or "unknown"})
+            
+            files_data.append({
+                "file_path": file.filename, # MODIFIED: Renamed 'path' to 'file_path'
+                "content": content_str.replace("\x00", ""),
+                "language": get_language_from_filename(file.filename) or "unknown"
+            })
         return await self._process_and_create_submission(files_data=files_data, **kwargs)
 
     async def create_from_git(self, *, repo_url: str, **kwargs) -> db_models.CodeSubmission:
@@ -111,6 +121,21 @@ class SubmissionService:
         deleted = await self.repo.delete(submission_id)
         if not deleted:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Submission not found")
+    
+    async def get_paginated_history(self, user_id: int, skip: int, limit: int, search: Optional[str]) -> api_models.PaginatedSubmissionHistoryResponse:
+        total = await self.repo.get_history_count(user_id, search)
+        items_raw = await self.repo.get_paginated_history(user_id, skip, limit, search)
+        history_items = [api_models.SubmissionHistoryItem(**item) for item in items_raw]
+        return api_models.PaginatedSubmissionHistoryResponse(items=history_items, total=total)
+        
+    async def get_paginated_results(self, user_id: int, skip: int, limit: int, search: Optional[str]) -> api_models.PaginatedResultsResponse:
+        total = await self.repo.get_results_count(user_id, search)
+        items_raw = await self.repo.get_paginated_results(user_id, skip, limit, search)
+        result_items = [api_models.ResultIndexItem(**item) for item in items_raw]
+        return api_models.PaginatedResultsResponse(items=result_items, total=total)
+
+    async def get_llm_interactions(self, user_id: int) -> List[db_models.LLMInteraction]:
+        return await self.repo.get_llm_interactions_for_user(user_id)
 
     async def get_results(self, submission_id: uuid.UUID) -> api_models.AnalysisResultDetailResponse:
         """Assembles the full, detailed analysis result for a submission."""
