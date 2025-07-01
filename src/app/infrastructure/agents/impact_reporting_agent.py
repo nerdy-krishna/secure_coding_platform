@@ -12,7 +12,7 @@ from app.infrastructure.database.repositories.submission_repo import SubmissionR
 from app.infrastructure.database import AsyncSessionLocal
 from app.infrastructure.llm_client import get_llm_client, AgentLLMResult
 from app.core.schemas import LLMInteraction, VulnerabilityFinding
-from app.shared.lib.reporting_utils import create_sarif_report
+from app.shared.lib.reporting import create_sarif_report
 
 # Configure logging
 logger = logging.getLogger(__name__)

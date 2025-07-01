@@ -1,4 +1,4 @@
-# src/app/agents/context_analysis_agent.py
+# src/app/infrastructure/agents/context_analysis_agent.py
 
 import logging
 import uuid
@@ -8,10 +8,10 @@ from typing import Dict, Any, TypedDict, Optional, List, cast
 from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
 
-from ..analysis.repository_map import RepositoryMappingEngine, RepositoryMap
-from ..llm.llm_client import get_llm_client
-from ..db.database import AsyncSessionLocal
-from ..db import crud
+from app.shared.analysis_tools.repository_map import RepositoryMappingEngine, RepositoryMap
+from app.infrastructure.llm_client import get_llm_client
+from app.infrastructure.database import AsyncSessionLocal
+from app.infrastructure.database.repositories.cache_repo import CacheRepository
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -75,12 +75,10 @@ class FullContextAnalysis(BaseModel):
         description="The relevance analysis for each security agent based on the code."
     )
 
-
 class ContextAnalysisAgentState(TypedDict):
     """
     Defines the state for the Context Analysis Agent's workflow.
     """
-
     llm_config_id: uuid.UUID
     submission_id: uuid.UUID
     files: Dict[str, str]
@@ -93,95 +91,73 @@ class ContextAnalysisAgentState(TypedDict):
 
 
 # --- Updated Node with Caching Logic ---
-async def create_repository_map_node(
-    state: ContextAnalysisAgentState,
-) -> Dict[str, Any]:
+async def create_repository_map_node(state: ContextAnalysisAgentState) -> Dict[str, Any]:
     """
     Creates a repository map. It first checks for a cached version based on
     a hash of the codebase. If not found, it generates a new map and saves
-    it to the cache.
-    It now respects the `excluded_files` list.
+    it to the cache. It now respects the `excluded_files` list.
     """
-    logger.info(
-        f"[{AGENT_NAME}] Starting repository map creation for submission {state['submission_id']}."
-    )
-
+    logger.info(f"[{AGENT_NAME}] Starting repository map creation for submission {state['submission_id']}.")
+    
     all_files = state["files"]
     excluded_files_set = set(state.get("excluded_files") or [])
-
+    
     if excluded_files_set:
-        logger.info(
-            f"[{AGENT_NAME}] Excluding {len(excluded_files_set)} files from analysis."
-        )
+        logger.info(f"[{AGENT_NAME}] Excluding {len(excluded_files_set)} files from analysis.")
         files_to_process = {
-            path: content
-            for path, content in all_files.items()
-            if path not in excluded_files_set
+            path: content for path, content in all_files.items() if path not in excluded_files_set
         }
-        logger.debug(
-            f"[{AGENT_NAME}] Files remaining for analysis: {len(files_to_process)}"
-        )
+        logger.debug(f"[{AGENT_NAME}] Files remaining for analysis: {len(files_to_process)}")
     else:
         files_to_process = all_files
 
     if not files_to_process:
         return {"error_message": "No files remaining after exclusions."}
 
-    # 1. Calculate codebase hash
-    # Sorting by file path ensures the hash is consistent regardless of file order
-    sorted_files = sorted(files_to_process.items())  # Use the filtered list for hashing
+    sorted_files = sorted(files_to_process.items())
     hasher = hashlib.sha256()
     for _, content in sorted_files:
-        hasher.update(content.encode("utf-8"))
+        hasher.update(content.encode('utf-8'))
     codebase_hash = hasher.hexdigest()
-
+    
     logger.info(f"[{AGENT_NAME}] Calculated codebase_hash: {codebase_hash}")
 
     async with AsyncSessionLocal() as db:
         try:
-            # 2. Check for cached repository map
-            cached_map = await crud.get_repository_map_from_cache(db, codebase_hash)
+            cache_repo = CacheRepository(db)
+            cached_map = await cache_repo.get_repository_map(codebase_hash)
             if cached_map:
-                logger.info(
-                    f"[{AGENT_NAME}] Cache hit! Using cached repository map for hash {codebase_hash}."
-                )
+                logger.info(f"[{AGENT_NAME}] Cache hit! Using cached repository map for hash {codebase_hash}.")
                 return {"repository_map": cached_map}
 
-            # 3. Cache miss: Generate a new map
             logger.info(f"[{AGENT_NAME}] Cache miss. Generating new repository map.")
             mapping_engine = RepositoryMappingEngine()
-            repository_map = mapping_engine.create_map(
-                files_to_process
-            )  # Use the filtered list here as well
-
-            # 4. Save the new map to the cache
-            await crud.create_repository_map_cache(db, codebase_hash, repository_map)
+            repository_map = mapping_engine.create_map(files_to_process)
+            
+            await cache_repo.create_repository_map(codebase_hash, repository_map)
             logger.info(f"[{AGENT_NAME}] New repository map saved to cache.")
-
+            
             return {"repository_map": repository_map}
+        
         except Exception as e:
             error_msg = f"Failed during repository map creation/caching: {e}"
             logger.error(f"[{AGENT_NAME}] {error_msg}")
             return {"error_message": error_msg}
 
 
-async def analyze_repository_context_node(
-    state: ContextAnalysisAgentState,
-) -> Dict[str, Any]:
+async def analyze_repository_context_node(state: ContextAnalysisAgentState) -> Dict[str, Any]:
     """
     Analyzes the complete repository map to provide a summary, identify components,
     and determine which specialized security agents are relevant.
     """
-    submission_id = state["submission_id"]
-    llm_config_id = state["llm_config_id"]
-    repository_map = state["repository_map"]
+    submission_id = state['submission_id']
+    llm_config_id = state['llm_config_id']
+    repository_map = state['repository_map']
 
     if not repository_map:
         return {"error_message": "Cannot analyze context, repository map is missing."}
-
-    logger.info(
-        f"[{AGENT_NAME}] Starting repository context analysis for submission: {submission_id}"
-    )
+        
+    logger.info(f"[{AGENT_NAME}] Starting repository context analysis for submission: {submission_id}")
 
     llm_client = await get_llm_client(cast(uuid.UUID, llm_config_id))
     if not llm_client:
@@ -192,12 +168,11 @@ async def analyze_repository_context_node(
     repo_map_json = repository_map.model_dump_json(indent=2)
 
     prompt = f"""
-    You are an expert security architect. Your task is to analyze the provided repository map, which outlines the structure, files, imports, and symbols of an entire codebase.
-
+    You are an expert security architect.
+    Your task is to analyze the provided repository map, which outlines the structure, files, imports, and symbols of an entire codebase.
     First, provide a brief, one-paragraph summary of the project's overall functionality in `analysis_summary`.
     Second, identify key components, frameworks, or libraries from the imports and file structures and list them in `identified_components`.
     Third, for each security agent in the `asvs_analysis` object, determine if its security domain is relevant for a detailed vulnerability scan of the entire project, and provide your reasoning.
-
     AGENT DESCRIPTIONS:
     {AGENT_DESCRIPTIONS}
 
@@ -239,12 +214,12 @@ async def analyze_repository_context_node(
 def build_context_analysis_agent_graph():
     """Builds the graph for the context analysis agent."""
     workflow = StateGraph(ContextAnalysisAgentState)
-
+    
     workflow.add_node("create_repository_map", create_repository_map_node)
     workflow.add_node("analyze_repository_context", analyze_repository_context_node)
 
     workflow.set_entry_point("create_repository_map")
     workflow.add_edge("create_repository_map", "analyze_repository_context")
     workflow.add_edge("analyze_repository_context", END)
-
+    
     return workflow.compile()

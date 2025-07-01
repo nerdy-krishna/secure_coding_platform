@@ -1,4 +1,4 @@
-# src/app/utils/rabbitmq_utils.py
+# src/app/infrastructure/messaging/publisher.py
 
 import pika
 import logging

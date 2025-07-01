@@ -3,7 +3,7 @@ from fastapi import Depends
 from fastapi_users.db import SQLAlchemyUserDatabase
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.infrastructure.models import User
+from app.infrastructure.database.models import User
 
 # --- START: THE FINAL FIX ---
 # Import the correctly named dependency from the central database module.

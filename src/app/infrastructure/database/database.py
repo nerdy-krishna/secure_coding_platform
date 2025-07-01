@@ -1,4 +1,4 @@
-# src/app/db/database.py
+# src/app/infrastructure/database/database.py
 
 import logging
 from typing import AsyncGenerator
