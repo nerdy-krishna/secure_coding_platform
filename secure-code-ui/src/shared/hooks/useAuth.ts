@@ -1,4 +1,4 @@
-// src/app/hooks/useAuth.ts
+// secure-code-ui/src/shared/hooks/useAuth.ts
 import { useContext } from "react";
 import { AuthContext, type AuthContextType } from "../../app/providers//AuthContext";
 

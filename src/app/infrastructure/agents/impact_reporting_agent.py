@@ -1,4 +1,4 @@
-# src/app/agents/impact_reporting_agent.py
+# src/app/infrastructure/agents/impact_reporting_agent.py
 
 import json
 import logging

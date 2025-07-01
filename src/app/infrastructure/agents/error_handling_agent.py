@@ -1,4 +1,4 @@
-# src/app/agents/error_handling_agent.py
+# src/app/infrastructure/agents/error_handling_agent.py
 
 import logging
 from typing import Dict, Any, cast, List

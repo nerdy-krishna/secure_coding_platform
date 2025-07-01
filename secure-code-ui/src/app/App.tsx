@@ -1,4 +1,4 @@
-// src/app/App.tsx
+// secure-code-ui/src/app/App.tsx
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";

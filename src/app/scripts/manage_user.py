@@ -1,3 +1,4 @@
+# src/app/scripts/manage_user.py
 import asyncio
 import argparse
 import sys

@@ -1,4 +1,4 @@
-// src/app/components/RemediationModal.tsx
+// secure-code-ui/src/features/results-display/components/RemediationModal.tsx
 
 import { RocketOutlined } from '@ant-design/icons';
 import { Alert, Checkbox, Modal, Space, Typography } from 'antd';

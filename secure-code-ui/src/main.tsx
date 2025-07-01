@@ -1,4 +1,4 @@
-// src/app/main.tsx
+// secure-code-ui/src/main.tsx
 import { App as AntdApp, ConfigProvider } from "antd";
 import "antd/dist/reset.css";
 import React from "react";

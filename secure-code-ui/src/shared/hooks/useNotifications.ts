@@ -1,3 +1,4 @@
+// secure-code-ui/src/shared/hooks/useNotifications.ts
 import { useEffect, useState } from 'react';
 
 type NotificationPermission = 'default' | 'granted' | 'denied';

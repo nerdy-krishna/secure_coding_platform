@@ -1,4 +1,4 @@
-// src/app/contexts/AuthContext.tsx
+// secure-code-ui/src/app/providers/AuthContext.tsx
 import { createContext } from "react";
 import {
   type UserLoginData,

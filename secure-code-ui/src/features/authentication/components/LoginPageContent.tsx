@@ -1,4 +1,4 @@
-// src/features/authentication/components/LoginPageContent.tsx
+// secure-code-ui/src/features/authentication/components/LoginPageContent.tsx
 
 import { LockOutlined, UserOutlined } from "@ant-design/icons";
 import {

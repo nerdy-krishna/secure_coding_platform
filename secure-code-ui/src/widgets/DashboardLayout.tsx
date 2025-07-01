@@ -1,4 +1,4 @@
-// src/app/layouts/DashboardLayout.tsx
+// secure-code-ui/src/widgets/DashboardLayout.tsx
 import {
   BellOutlined,
   DesktopOutlined,

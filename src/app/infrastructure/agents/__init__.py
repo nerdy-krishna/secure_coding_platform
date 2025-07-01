@@ -1,4 +1,4 @@
-# src/app/agents/__init__.py
+# src/app/infrastructure/agents/__init__.py
 
 # This file can be used to make agent modules easily importable
 # For example:

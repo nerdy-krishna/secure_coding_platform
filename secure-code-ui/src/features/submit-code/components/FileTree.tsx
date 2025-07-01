@@ -1,4 +1,4 @@
-// src/app/components/FileTree.tsx
+// secure-code-ui/src/features/submit-code/components/FileTree.tsx
 import { FileOutlined, FolderTwoTone } from "@ant-design/icons";
 import { Button, Space, Tree, Typography } from "antd";
 import type { DataNode } from "antd/es/tree";

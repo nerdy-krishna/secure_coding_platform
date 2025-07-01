@@ -1,4 +1,4 @@
-// src/app/types/api.ts
+// secure-code-ui/src/shared/types/api.ts
 
 // For Login
 export interface UserLoginData {

@@ -1,4 +1,4 @@
-# src/app/db/models.py
+# src/app/infrastructure/database/models.py
 import uuid
 from datetime import datetime
 from typing import List, Optional, Dict, Any

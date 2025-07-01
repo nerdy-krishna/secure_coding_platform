@@ -1,4 +1,4 @@
-# src/app/agents/configuration_agent.py
+# src/app/infrastructure/agents/configuration_agent.py
 
 import logging
 from typing import Dict, Any, cast, List

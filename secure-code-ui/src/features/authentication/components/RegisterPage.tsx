@@ -1,3 +1,4 @@
+// secure-code-ui/src/features/authentication/components/RegisterPage.tsx
 import { LockOutlined, MailOutlined } from "@ant-design/icons";
 import { Button, Col, Form, Input, message, Row, Typography } from "antd";
 import { AxiosError } from "axios";

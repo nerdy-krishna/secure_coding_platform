@@ -1,4 +1,4 @@
-# src/app/agents/schemas.py
+# src/app/core/schemas.py
 from datetime import datetime, timezone
 from typing import Any, Dict, List, TypedDict, Optional, Literal
 import uuid

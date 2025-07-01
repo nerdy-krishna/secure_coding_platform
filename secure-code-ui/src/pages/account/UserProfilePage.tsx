@@ -1,4 +1,4 @@
-// src/app/pages/dashboard/UserProfilePage.tsx
+// secure-code-ui/src/pages/account/UserProfilePage.tsx
 import { EditOutlined, UserOutlined } from "@ant-design/icons";
 import { Avatar, Button, Card, Descriptions, Divider, Typography } from "antd";
 import React from "react";

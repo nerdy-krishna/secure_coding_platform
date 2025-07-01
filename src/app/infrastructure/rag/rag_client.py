@@ -1,4 +1,4 @@
-# src/app/rag/rag_service.py
+# src/app/infrastructure/rag/rag_client.py
 import chromadb
 import os
 import logging

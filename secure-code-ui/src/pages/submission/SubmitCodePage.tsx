@@ -1,4 +1,4 @@
-// src/app/pages/SubmitCodePage.tsx
+// secure-code-ui/src/pages/submission/SubmitCodePage.tsx
 
 import {
   FileZipOutlined,

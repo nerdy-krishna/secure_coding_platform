@@ -1,4 +1,4 @@
-// src/features/admin-settings/components/LLMSettingsPage.tsx
+// secure-code-ui/src/features/admin-settings/components/LLMSettingsPage.tsx
 
 import {
   ClearOutlined,

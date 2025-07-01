@@ -1,4 +1,4 @@
-# src/app/auth/core.py
+# src/app/infrastructure/auth/core.py
 from fastapi_users import FastAPIUsers
 from app.infrastructure.database.models import User
 from app.infrastructure.auth.backend import auth_backend

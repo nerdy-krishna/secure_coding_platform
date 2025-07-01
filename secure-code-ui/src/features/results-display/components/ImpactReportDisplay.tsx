@@ -1,4 +1,4 @@
-// src/app/components/ImpactReportDisplay.tsx
+// secure-code-ui/src/features/results-display/components/ImpactReportDisplay.tsx
 
 import { BarChartOutlined, BuildOutlined, InfoCircleOutlined, ToolOutlined } from '@ant-design/icons';
 import { Card, Descriptions, Divider, List, Space, Tag, Typography } from 'antd';

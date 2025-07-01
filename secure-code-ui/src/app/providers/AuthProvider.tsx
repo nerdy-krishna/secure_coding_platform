@@ -1,4 +1,4 @@
-// src/app/contexts/AuthProvider.tsx
+// secure-code-ui/src/app/providers/AuthProvider.tsx
 import { AxiosError } from "axios";
 import React, { useCallback, useEffect, useState, type ReactNode } from "react";
 import apiClient from "../../shared/api/apiClient";

@@ -1,4 +1,4 @@
-# src/app/agents/access_control_agent.py
+# src/app/infrastructure/agents/access_control_agent.py
 
 import logging
 from typing import Dict, Any, cast, List

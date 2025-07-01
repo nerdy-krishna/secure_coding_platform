@@ -1,5 +1,6 @@
-import React from "react";
+// secure-code-ui/src/pages/account/DashboardPage.tsx
 import { Typography } from "antd";
+import React from "react";
 
 const { Title } = Typography;
 
