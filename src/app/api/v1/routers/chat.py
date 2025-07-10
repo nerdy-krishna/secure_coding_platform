@@ -3,14 +3,6 @@ import logging
 import uuid
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
-
-from app.api.v1.dependencies import get_chat_service
-import logging
-import uuid
-from typing import List, Optional
-
 from fastapi import APIRouter, Depends, HTTPException, status, Response
 from pydantic import BaseModel, Field
 
@@ -26,6 +18,8 @@ router = APIRouter()
 # --- Pydantic Models for Chat API ---
 class ChatSessionCreateRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=100, description="The title for the new chat session.")
+    llm_config_id: uuid.UUID = Field(..., description="The ID of the LLM to use for this session.")
+    frameworks: List[str] = Field([], description="A list of security framework names to provide context.")
     project_id: Optional[uuid.UUID] = Field(None, description="Optional project ID to associate with the chat.")
 
 
@@ -33,6 +27,8 @@ class ChatSessionResponse(BaseModel):
     id: uuid.UUID
     title: str
     project_id: Optional[uuid.UUID]
+    llm_config_id: Optional[uuid.UUID]
+    frameworks: Optional[List[str]]
     created_at: str
 
     class Config:
@@ -41,13 +37,13 @@ class ChatSessionResponse(BaseModel):
 
 class AskQuestionRequest(BaseModel):
     question: str = Field(..., min_length=1, description="The user's question.")
-    llm_config_id: Optional[uuid.UUID] = Field(None, description="The specific LLM configuration to use for the response.")
 
 
 class ChatMessageResponse(BaseModel):
     id: int
     role: str
     content: str
+    cost: Optional[float]
     timestamp: str
 
     class Config:
@@ -63,12 +59,18 @@ async def create_chat_session(
 ):
     """Starts a new chat session."""
     session = await chat_service.create_new_session(
-        user=user, title=request.title, project_id=request.project_id
+        user=user,
+        title=request.title,
+        project_id=request.project_id,
+        llm_config_id=request.llm_config_id,
+        frameworks=request.frameworks,
     )
     return ChatSessionResponse(
         id=session.id,
         title=session.title,
         project_id=session.project_id,
+        llm_config_id=session.llm_config_id,
+        frameworks=session.frameworks,
         created_at=session.created_at.isoformat(),
     )
 
@@ -85,6 +87,8 @@ async def get_chat_sessions(
             id=s.id,
             title=s.title,
             project_id=s.project_id,
+            llm_config_id=s.llm_config_id,
+            frameworks=s.frameworks,
             created_at=s.created_at.isoformat(),
         )
         for s in sessions
@@ -104,6 +108,7 @@ async def get_session_messages(
             id=m.id,
             role=m.role,
             content=m.content,
+            cost=m.cost,
             timestamp=m.timestamp.isoformat(),
         )
         for m in messages
@@ -119,15 +124,13 @@ async def ask_question(
 ):
     """Sends a message within a session and gets an AI-generated response."""
     ai_message = await chat_service.post_message_to_session(
-        session_id=session_id,
-        question=request.question,
-        user=user,
-        llm_config_id=request.llm_config_id,
+        session_id=session_id, question=request.question, user=user
     )
     return ChatMessageResponse(
         id=ai_message.id,
         role=ai_message.role,
         content=ai_message.content,
+        cost=ai_message.cost,
         timestamp=ai_message.timestamp.isoformat(),
     )
 

@@ -7,7 +7,6 @@ from fastapi import HTTPException, status
 
 from app.infrastructure.database.repositories.chat_repo import ChatRepository
 from app.infrastructure.database import models as db_models
-from app.api.v1 import models as api_models
 from app.infrastructure.agents.chat_agent import ChatAgent
 
 logger = logging.getLogger(__name__)
@@ -22,14 +21,23 @@ class ChatService:
         self.chat_agent = ChatAgent()
 
     async def create_new_session(
-        self, user: db_models.User, title: str, project_id: Optional[uuid.UUID] = None
+        self,
+        user: db_models.User,
+        title: str,
+        llm_config_id: uuid.UUID,
+        frameworks: List[str],
+        project_id: Optional[uuid.UUID] = None,
     ) -> db_models.ChatSession:
-        """Creates a new chat session for a user."""
+        """Creates a new chat session for a user with initial config."""
         logger.info(
-            f"User {user.id} creating new chat session with title '{title}'."
+            f"User {user.id} creating new chat session '{title}' with LLM {llm_config_id}."
         )
         return await self.chat_repo.create_session(
-            user_id=user.id, title=title, project_id=project_id
+            user_id=user.id,
+            title=title,
+            project_id=project_id,
+            llm_config_id=llm_config_id,
+            frameworks=frameworks,
         )
 
     async def get_user_sessions(self, user: db_models.User) -> List[db_models.ChatSession]:
@@ -51,20 +59,20 @@ class ChatService:
 
 
     async def post_message_to_session(
-        self, session_id: uuid.UUID, question: str, user: db_models.User, llm_config_id: Optional[uuid.UUID]
+        self, session_id: uuid.UUID, question: str, user: db_models.User
     ) -> db_models.ChatMessage:
         """
         Posts a user's message, gets a response from the ChatAgent,
         and saves both messages to the database.
         """
-        # 1. Verify user has access to the session
+        # 1. Verify user has access to the session and get its config
         session = await self.chat_repo.get_session_by_id(session_id, user.id)
         if not session:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Chat session not found or not authorized."
             )
 
-        # 2. Save the user's message
+        # 2. Save the user's message (without cost)
         await self.chat_repo.add_message(
             session_id=session_id, role="user", content=question
         )
@@ -74,16 +82,17 @@ class ChatService:
 
         # 4. Invoke the ChatAgent to get a response
         logger.info(f"Invoking ChatAgent for session {session_id}.")
-        ai_response_content, llm_interaction_id = await self.chat_agent.generate_response(
+        ai_response_content, llm_interaction_id, cost = await self.chat_agent.generate_response(
             session_id=session_id,
             user_question=question,
             history=history,
-            llm_config_id=llm_config_id
+            llm_config_id=session.llm_config_id,
+            frameworks=session.frameworks
         )
         
-        # 5. Save the AI's response
+        # 5. Save the AI's response with the calculated cost
         ai_message = await self.chat_repo.add_message(
-            session_id=session_id, role="assistant", content=ai_response_content
+            session_id=session_id, role="assistant", content=ai_response_content, cost=cost
         )
         
         # 6. Link the LLM interaction to the AI's chat message

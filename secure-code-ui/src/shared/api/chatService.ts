@@ -1,9 +1,9 @@
 // src/shared/api/chatService.ts
 import type {
-    AskQuestionRequest,
-    ChatMessage,
-    ChatSession,
-    ChatSessionCreateRequest,
+  AskQuestionRequest,
+  ChatMessage,
+  ChatSession,
+  ChatSessionCreateRequest,
 } from "../types/api";
 import apiClient from "./apiClient";
 
@@ -42,9 +42,8 @@ export const chatService = {
   askQuestion: async (
     sessionId: string,
     question: string,
-    llmConfigId?: string,
   ): Promise<ChatMessage> => {
-    const payload: AskQuestionRequest = { question, llm_config_id: llmConfigId };
+    const payload: AskQuestionRequest = { question };
     const response = await apiClient.post<ChatMessage>(
       `/chat/sessions/${sessionId}/ask`,
       payload,

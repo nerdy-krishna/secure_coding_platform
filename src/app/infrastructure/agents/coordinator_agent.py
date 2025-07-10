@@ -1,9 +1,12 @@
+# src/app/infrastructure/agents/coordinator_agent.py
 import asyncio
 import logging
 from typing import Any, Dict, List, TypedDict, Optional, Coroutine
 import uuid
 
 from langgraph.graph import END, StateGraph
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from app.shared.analysis_tools.context_bundler import ContextBundlingEngine, ContextBundle
 from app.shared.analysis_tools.repository_map import RepositoryMap
@@ -14,25 +17,12 @@ from app.core.schemas import (
     WorkflowMode,
 )
 from app.shared.lib import cost_estimation
-
+from app.infrastructure.database import models as db_models
 from app.infrastructure.database.repositories.scan_repo import ScanRepository
 from app.infrastructure.database.repositories.llm_config_repo import LLMConfigRepository
 from app.infrastructure.database import AsyncSessionLocal as async_session_factory
 
-from app.infrastructure.agents.access_control_agent import build_specialized_agent_graph as build_access_control_agent
-from app.infrastructure.agents.api_security_agent import build_specialized_agent_graph as build_api_security_agent
-from app.infrastructure.agents.architecture_agent import build_specialized_agent_graph as build_architecture_agent
-from app.infrastructure.agents.authentication_agent import build_specialized_agent_graph as build_authentication_agent
-from app.infrastructure.agents.business_logic_agent import build_specialized_agent_graph as build_business_logic_agent
-from app.infrastructure.agents.code_integrity_agent import build_specialized_agent_graph as build_code_integrity_agent
-from app.infrastructure.agents.communication_agent import build_specialized_agent_graph as build_communication_agent
-from app.infrastructure.agents.configuration_agent import build_specialized_agent_graph as build_configuration_agent
-from app.infrastructure.agents.cryptography_agent import build_specialized_agent_graph as build_cryptography_agent
-from app.infrastructure.agents.data_protection_agent import build_specialized_agent_graph as build_data_protection_agent
-from app.infrastructure.agents.error_handling_agent import build_specialized_agent_graph as build_error_handling_agent
-from app.infrastructure.agents.file_handling_agent import build_specialized_agent_graph as build_file_handling_agent
-from app.infrastructure.agents.session_management_agent import build_specialized_agent_graph as build_session_management_agent
-from app.infrastructure.agents.validation_agent import build_specialized_agent_graph as build_validation_agent
+from app.infrastructure.agents.generic_specialized_agent import build_generic_specialized_agent_graph
 
 logger = logging.getLogger(__name__)
 
@@ -41,28 +31,22 @@ CONCURRENT_LLM_LIMIT = 5
 STATUS_PENDING_APPROVAL = "PENDING_COST_APPROVAL"
 STATUS_COST_APPROVED = "QUEUED_FOR_SCAN"
 
-AGENT_BUILDER_MAP = {
-    "AccessControlAgent": build_access_control_agent, "ApiSecurityAgent": build_api_security_agent,
-    "ArchitectureAgent": build_architecture_agent, "AuthenticationAgent": build_authentication_agent,
-    "BusinessLogicAgent": build_business_logic_agent, "CodeIntegrityAgent": build_code_integrity_agent,
-    "CommunicationAgent": build_communication_agent, "ConfigurationAgent": build_configuration_agent,
-    "CryptographyAgent": build_cryptography_agent, "DataProtectionAgent": build_data_protection_agent,
-    "ErrorHandlingAgent": build_error_handling_agent, "FileHandlingAgent": build_file_handling_agent,
-    "SessionManagementAgent": build_session_management_agent, "ValidationAgent": build_validation_agent,
-}
 
 
 class CoordinatorState(TypedDict):
     scan_id: uuid.UUID
+    # This will now hold the ID for the specialized agents
     llm_config_id: Optional[uuid.UUID]
     files: Dict[str, str]
     repository_map: RepositoryMap
+    # This field is now populated by the context analysis agent and is not used here
     asvs_analysis: Dict[str, Any]
     workflow_mode: WorkflowMode
     context_bundles: Optional[List[ContextBundle]]
-    relevant_agents: Dict[str, List[str]]
+    # This will now be a mapping of agent_name -> domain_query
+    relevant_agents: Dict[str, str]
     estimated_cost: Optional[Dict[str, float]]
-    cost_approval_met: Optional[bool] 
+    cost_approval_met: Optional[bool]
     current_scan_status: Optional[str]
     live_codebase: Optional[Dict[str, str]]
     findings: List[VulnerabilityFindingModel]
@@ -71,20 +55,44 @@ class CoordinatorState(TypedDict):
     error: Optional[str]
 
 
-def determine_relevant_agents_node(state: CoordinatorState) -> Dict[str, Any]:
-    """Determines which specialized agents are relevant based on the codebase context."""
+async def determine_relevant_agents_node(state: CoordinatorState) -> Dict[str, Any]:
+    """
+    Determines which specialized agents are relevant by querying the database
+    based on the frameworks selected for the scan.
+    """
     scan_id = state['scan_id']
-    logger.info(f"[{AGENT_NAME}] Determining relevant agents for scan.", extra={"scan_id": str(scan_id)})
-    asvs_analysis = state.get("asvs_analysis", {})
-    relevant_agents: Dict[str, List[str]] = {}
-    repository_map = state.get("repository_map")
-    if not repository_map:
-        return {"error": "Repository map is missing, cannot determine agent assignments."}
-    files_to_scan = list(repository_map.files.keys())
-    for agent_name, details in asvs_analysis.items():
-        agent_key = agent_name if agent_name.endswith("Agent") else f"{agent_name}Agent"
-        if agent_key in AGENT_BUILDER_MAP and details.get("is_relevant"):
-            relevant_agents[agent_key] = files_to_scan
+    logger.info(f"[{AGENT_NAME}] Determining relevant agents for scan from DB.", extra={"scan_id": str(scan_id)})
+    
+    relevant_agents: Dict[str, str] = {}
+    
+    async with async_session_factory() as db:
+        try:
+            scan_repo = ScanRepository(db)
+            scan = await scan_repo.get_scan_with_details(scan_id)
+            if not scan:
+                return {"error": f"Scan {scan_id} not found."}
+
+            if not scan.frameworks:
+                logger.warning(f"Scan {scan_id} has no frameworks selected. No agents will run.")
+                return {"relevant_agents": {}}
+                
+            # This fetches the framework objects, which have their agents pre-loaded by the relationship
+            framework_details = await db.execute(
+                select(db_models.Framework)
+                .options(selectinload(db_models.Framework.agents))
+                .where(db_models.Framework.name.in_(scan.frameworks))
+            )
+            
+            for framework in framework_details.scalars().all():
+                for agent in framework.agents:
+                    if agent.name not in relevant_agents:
+                        relevant_agents[agent.name] = agent.domain_query
+        
+        except Exception as e:
+            error_msg = f"Failed to determine relevant agents from DB for scan {scan_id}: {e}"
+            logger.error(error_msg, exc_info=True)
+            return {"error": error_msg}
+
     logger.info(f"[{AGENT_NAME}] Relevant agents identified: {list(relevant_agents.keys())}")
     return {"relevant_agents": relevant_agents}
 
@@ -138,7 +146,6 @@ async def estimate_cost_node(state: CoordinatorState) -> Dict[str, Any]:
 
         if not bundles or not llm_config_id:
             return {"error": "Bundles or LLM config ID missing, cannot estimate cost."}
-        
         try:
             llm_config = await llm_config_repo.get_by_id_with_decrypted_key(llm_config_id)
             if not llm_config:
@@ -174,93 +181,92 @@ def route_after_cost_estimation(state: CoordinatorState) -> str:
 
 async def run_specialized_agents_node(state: CoordinatorState) -> Dict[str, Any]:
     scan_id = state["scan_id"]
-    relevant_agents = state["relevant_agents"]
+    relevant_agents = state["relevant_agents"] # Now a dict of name -> domain_query
     context_bundles = state["context_bundles"]
-    specialized_llm_id = state.get("llm_config_id")
     workflow_mode = state["workflow_mode"]
     files = state["files"]
+    
+    # Get the specialized LLM config ID from the scan record
+    async with async_session_factory() as db:
+        scan = await db.get(db_models.Scan, scan_id)
+        if not scan or not scan.specialized_llm_config_id:
+            return {"error": f"Could not retrieve specialized LLM config for scan {scan_id}"}
+        specialized_llm_id = scan.specialized_llm_config_id
 
-    logger.info(f"[{AGENT_NAME}] Beginning agent runs in '{workflow_mode}' mode with concurrency limit {CONCURRENT_LLM_LIMIT}.", extra={"scan_id": str(scan_id), "mode": workflow_mode})
+    logger.info(f"[{AGENT_NAME}] Beginning agent runs in '{workflow_mode}' mode with concurrency {CONCURRENT_LLM_LIMIT}.", extra={"scan_id": str(scan_id)})
     if not context_bundles or not files:
         return {"error": "Context bundles or files not found."}
 
-    if workflow_mode == "audit":
-        semaphore = asyncio.Semaphore(CONCURRENT_LLM_LIMIT)
-        async def run_with_semaphore(coro: Coroutine) -> Any:
-            async with semaphore:
-                return await coro
-        bundle_map: Dict[str, ContextBundle] = {b.target_file_path: b for b in context_bundles}
-        tasks = []
-        for agent_name, file_paths in relevant_agents.items():
-            agent_builder = AGENT_BUILDER_MAP.get(agent_name)
-            if not agent_builder: continue
-            agent_graph = agent_builder()
-            for file_path in file_paths:
-                bundle = bundle_map.get(file_path)
-                if not bundle: continue
-                formatted_bundle_content = "".join(f"--- FILE: {path} ---\n{content}\n\n" for path, content in bundle.context_files.items())
-                initial_agent_state: SpecializedAgentState = {"scan_id": scan_id, "llm_config_id": specialized_llm_id, "filename": file_path, "code_snippet": formatted_bundle_content, "workflow_mode": workflow_mode, "findings": [], "fixes": [], "error": None}
-                tasks.append(run_with_semaphore(agent_graph.ainvoke(initial_agent_state)))
+    # The single generic agent graph is built once
+    generic_agent_graph = build_generic_specialized_agent_graph()
+    
+    # --- This entire block is refactored for dynamic invocation ---
+    semaphore = asyncio.Semaphore(CONCURRENT_LLM_LIMIT)
+    async def run_with_semaphore(coro: Coroutine) -> Any:
+        async with semaphore:
+            return await coro
+            
+    tasks = []
+    bundle_map: Dict[str, ContextBundle] = {b.target_file_path: b for b in context_bundles}
+    
+    # Iterate through the agents and files assigned to them
+    for agent_name, domain_query in relevant_agents.items():
+        for bundle in context_bundles:
+            formatted_bundle_content = "".join(f"--- FILE: {path} ---\n{content}\n\n" for path, content in bundle.context_files.items())
+            
+            # This config is passed to the generic agent node
+            agent_run_config = {
+                "configurable": {
+                    "agent_name": agent_name,
+                    "domain_query": domain_query,
+                }
+            }
+            
+            initial_agent_state: SpecializedAgentState = {
+                "scan_id": scan_id,
+                "llm_config_id": specialized_llm_id,
+                "filename": bundle.target_file_path,
+                "code_snippet": formatted_bundle_content,
+                "workflow_mode": workflow_mode,
+                "findings": [],
+                "fixes": [],
+                "error": None
+            }
+            
+            tasks.append(run_with_semaphore(generic_agent_graph.ainvoke(initial_agent_state, config=agent_run_config))) # type: ignore
+
+    if not tasks:
+        logger.warning(f"[{AGENT_NAME}] No agent tasks were created for scan {scan_id}.")
+        return {"findings": [], "fixes": [], "live_codebase": files}
+
+    agent_results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    all_findings = []
+    all_fixes = []
+    has_errors = False
+    for i, res in enumerate(agent_results):
+        if isinstance(res, Exception):
+            logger.error(f"[{AGENT_NAME}] Agent task {i} failed with an exception: {res}", exc_info=res)
+            has_errors = True
+        elif isinstance(res, dict) and res.get("error"):
+            logger.error(f"[{AGENT_NAME}] Agent task {i} returned an error: {res['error']}")
+            has_errors = True
+        elif isinstance(res, dict):
+            all_findings.extend(res.get("findings", []))
+            all_fixes.extend(res.get("fixes", []))
+
+    if has_errors:
+        return {"error": "One or more specialized agents failed. Check logs for details."}
         
-        if not tasks: return {"findings": [], "fixes": []}
-        agent_results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        all_findings = []
-        all_fixes = []
-        has_errors = False
-        for i, res in enumerate(agent_results):
-            if isinstance(res, Exception):
-                logger.error(f"[{AGENT_NAME}] Agent task {i} failed with an exception: {res}", exc_info=res)
-                has_errors = True
-            elif isinstance(res, dict) and res.get("error"):
-                logger.error(f"[{AGENT_NAME}] Agent task {i} returned a dictionary with an error: {res['error']}")
-                has_errors = True
-            elif isinstance(res, dict):
-                all_findings.extend(res.get("findings", []))
-                all_fixes.extend(res.get("fixes", []))
-
-        if has_errors:
-            return {"error": "One or more specialized agents failed during execution. Check worker logs for details."}
-
-        return {"findings": all_findings, "fixes": all_fixes, "live_codebase": None}
-
-    elif workflow_mode == "remediate":
-        live_codebase = files.copy()
-        all_findings: List[VulnerabilityFindingModel] = []
-        all_fixes: List[FixResultModel] = []
-        bundle_map: Dict[str, ContextBundle] = {b.target_file_path: b for b in context_bundles}
-        for agent_name, file_paths in relevant_agents.items():
-            agent_builder = AGENT_BUILDER_MAP.get(agent_name)
-            if not agent_builder: continue
-            agent_graph = agent_builder()
-            for file_path in file_paths:
-                bundle = bundle_map.get(file_path)
-                if not bundle: continue
-                formatted_bundle_content = "".join(f"--- FILE: {path} ---\n{live_codebase.get(path, '')}\n\n" for path in bundle.context_files.keys())
-                logger.info(f"[{AGENT_NAME}] Sequentially remediating '{file_path}' with '{agent_name}'.", extra={"scan_id": str(scan_id)})
-                initial_agent_state: SpecializedAgentState = {"scan_id": scan_id, "llm_config_id": specialized_llm_id, "filename": file_path, "code_snippet": formatted_bundle_content, "workflow_mode": workflow_mode, "findings": [], "fixes": [], "error": None}
-                agent_result = await agent_graph.ainvoke(initial_agent_state)
-                if isinstance(agent_result, dict) and not agent_result.get('error'):
-                    fixes_from_run = agent_result.get("fixes", [])
-                    all_findings.extend(agent_result.get("findings", []))
-                    all_fixes.extend(fixes_from_run)
-                    for fix_result in fixes_from_run:
-                        target_file, original_snippet, new_code = fix_result.finding.file_path, fix_result.suggestion.original_snippet, fix_result.suggestion.code
-                        if target_file in live_codebase and original_snippet in live_codebase[target_file]:
-                            live_codebase[target_file] = live_codebase[target_file].replace(original_snippet, new_code, 1)
-                            logger.info(f"Applied fix in '{target_file}'.", extra={"scan_id": str(scan_id)})
-                        else:
-                            logger.warning(f"Could not find original snippet in '{target_file}' to apply fix.", extra={"scan_id": str(scan_id)})
-        return {"findings": all_findings, "fixes": all_fixes, "live_codebase": live_codebase}
-    else:
-        return {"error": f"Unknown workflow_mode: {workflow_mode}"}
+    # The 'live_codebase' logic for REMEDIATE mode will be handled by the patching node,
+    # so we can return None here for now.
+    return {"findings": all_findings, "fixes": all_fixes, "live_codebase": None}
 
 
 async def finalize_analysis_node(state: CoordinatorState) -> Dict[str, Any]:
     """Saves all findings and fixes from the agent runs into the database."""
     if state.get("error"):
-        return {} 
-
+        return {}
     scan_id, findings_to_save, fixes_to_save, live_codebase, workflow_mode = state["scan_id"], state.get("findings", []), state.get("fixes", []), state.get("live_codebase"), state["workflow_mode"]
     logger.info(f"[{AGENT_NAME}] Finalizing analysis for scan in '{workflow_mode}' mode.", extra={"scan_id": str(scan_id), "mode": workflow_mode, "findings_count": len(findings_to_save)})
     async with async_session_factory() as db:

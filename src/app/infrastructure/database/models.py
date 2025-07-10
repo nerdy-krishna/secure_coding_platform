@@ -4,7 +4,7 @@ import sqlalchemy as sa
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 
-from sqlalchemy import String, Text, DateTime, ForeignKey, Integer, JSON, func, DECIMAL, BIGINT
+from sqlalchemy import String, Text, DateTime, ForeignKey, Integer, JSON, func, DECIMAL, BIGINT, ARRAY
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from fastapi_users.db import SQLAlchemyBaseUserTable
@@ -139,7 +139,9 @@ class ChatSession(Base):
     id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), nullable=False)
     project_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("projects.id"))
+    llm_config_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("llm_configurations.id"))
     title: Mapped[str] = mapped_column(String(255), nullable=False)
+    frameworks: Mapped[Optional[List[str]]] = mapped_column(ARRAY(String))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped["User"] = relationship(back_populates="chat_sessions")
@@ -151,10 +153,11 @@ class ChatMessage(Base):
     session_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("chat_sessions.id"), nullable=False)
     role: Mapped[str] = mapped_column(String(20), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    cost: Mapped[Optional[float]] = mapped_column(DECIMAL(10, 8))
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     
     session: Mapped["ChatSession"] = relationship(back_populates="messages")
-    llm_interaction: Mapped[Optional["LLMInteraction"]] = relationship(back_populates="chat_message")
+    llm_interaction: Mapped[Optional["LLMInteraction"]] = relationship("LLMInteraction", back_populates="chat_message")
 
 class Framework(Base):
     __tablename__ = "frameworks"

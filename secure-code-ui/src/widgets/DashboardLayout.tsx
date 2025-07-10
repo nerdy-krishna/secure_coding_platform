@@ -96,6 +96,10 @@ const DashboardLayout: React.FC<{ children?: React.ReactNode }> = ({
             "llm_settings_nav",
           ),
           getItem(
+            <Link to="/admin/agents">Agents</Link>,
+            "agent_management_nav",
+          ),
+          getItem(
             <Link to="/admin/frameworks">Frameworks</Link>,
             "framework_management_nav",
           ),

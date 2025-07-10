@@ -3,7 +3,7 @@ import logging
 import uuid
 import pandas as pd
 import io
-from typing import List
+from typing import Any, Dict, List, cast
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
 
 from app.infrastructure.auth.core import current_superuser
@@ -26,9 +26,9 @@ async def ingest_documents(
     Ingests documents from an uploaded CSV file into the RAG knowledge base
     for a specific framework.
     """
-    if not file.filename.endswith(".csv"):
+    if not file.filename or not file.filename.endswith(".csv"):
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Only CSV files are allowed."
+            status_code=status.HTTP_400_BAD_REQUEST, detail="A CSV file with a valid filename is required."
         )
     try:
         contents = await file.read()
@@ -44,7 +44,8 @@ async def ingest_documents(
         ids = df["id"].astype(str).tolist()
         documents = df["document"].tolist()
         # All other columns are treated as metadata
-        metadatas = df.drop(columns=["id", "document"]).to_dict("records")
+        metadatas_raw = df.drop(columns=["id", "document"]).to_dict("records")
+        metadatas = cast(List[Dict[str, Any]], metadatas_raw)
 
         # Add the framework name to each metadata entry
         for metadata in metadatas:

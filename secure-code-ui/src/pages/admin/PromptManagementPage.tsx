@@ -1,40 +1,40 @@
 // src/pages/admin/PromptManagementPage.tsx
 import {
-    DeleteOutlined,
-    EditOutlined,
-    PlusOutlined,
-    ReadOutlined,
+  DeleteOutlined,
+  EditOutlined,
+  PlusOutlined,
+  ReadOutlined,
 } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { TableProps } from "antd";
 import {
-    Button,
-    Card,
-    Form,
-    Input,
-    Modal,
-    Popconfirm,
-    Select,
-    Space,
-    Table,
-    Typography,
-    message,
+  Button,
+  Card,
+  Form,
+  Input,
+  Modal,
+  Popconfirm,
+  Select,
+  Space,
+  Table,
+  Typography,
+  message,
 } from "antd";
 import { AxiosError } from "axios";
 import React, { useEffect, useState } from "react";
 import { agentService } from "../../shared/api/agentService";
 import { promptService } from "../../shared/api/promptService";
 import type {
-    AgentRead,
-    PromptTemplateCreate,
-    PromptTemplateRead,
-    PromptTemplateUpdate,
+  AgentRead,
+  PromptTemplateCreate,
+  PromptTemplateRead,
+  PromptTemplateUpdate,
 } from "../../shared/types/api";
 
 const { Title, Paragraph } = Typography;
 const { Option } = Select;
 
-const PROMPT_TEMPLATE_TYPES = ["QUICK_AUDIT", "DETAILED_REMEDIATION"];
+const PROMPT_TEMPLATE_TYPES = ["QUICK_AUDIT", "DETAILED_REMEDIATION", "CHAT"];
 
 const PromptManagementPage: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);

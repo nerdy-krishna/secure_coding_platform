@@ -4,7 +4,8 @@ import logging
 import socket
 import requests
 from typing import List, Dict, Any, Optional
-from chromadb.api import ClientAPI, Where
+from chromadb.api import ClientAPI
+from chromadb.api.types import Where
 from chromadb.utils import embedding_functions
 
 logger = logging.getLogger(__name__)
@@ -137,7 +138,7 @@ class RAGService:
             raise ConnectionError("ChromaDB collection is not available.")
         self._asvs_collection.delete(ids=ids)
 
-    def query_asvs(self, query_texts: List[str], n_results: int = 5) -> Dict[str, Any]:
+    def query_asvs(self, query_texts: List[str], n_results: int = 5, where: Optional[Where] = None) -> Dict[str, Any]:
         """Queries the ASVS collection."""
         if not self._asvs_collection:
             logger.error("ASVS collection is not available.")
@@ -147,7 +148,8 @@ class RAGService:
             logger.debug(f"Querying collection with {len(query_texts)} queries, n_results={n_results}")
             results = self._asvs_collection.query(
                 query_texts=query_texts, 
-                n_results=n_results
+                n_results=n_results,
+                where=where
             )
             logger.debug(f"Query successful, returned {len(results.get('ids', []))} result sets")
             return results

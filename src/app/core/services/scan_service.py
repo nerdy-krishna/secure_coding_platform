@@ -162,6 +162,7 @@ class SubmissionService:
         if not scan or (scan.user_id != user.id and not user.is_superuser):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scan not found or not authorized.")
 
+   
         if scan.scan_type != "AUDIT_AND_REMEDIATE" or scan.status != "COMPLETED":
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -179,15 +180,16 @@ class SubmissionService:
 
         for finding in findings_with_fixes:
             fix_data = finding.fixes
-            original_snippet = fix_data.get("original_snippet")
-            new_code = fix_data.get("code")
+            if fix_data:
+                original_snippet = fix_data.get("original_snippet")
+                new_code = fix_data.get("code")
 
-            if finding.file_path in live_codebase and original_snippet and new_code:
-                if original_snippet in live_codebase[finding.file_path]:
-                    live_codebase[finding.file_path] = live_codebase[finding.file_path].replace(original_snippet, new_code, 1)
-                    logger.debug(f"Applied fix for CWE-{finding.cwe} in {finding.file_path}")
-                else:
-                    logger.warning(f"Could not find snippet to apply fix for CWE-{finding.cwe} in {finding.file_path}")
+                if finding.file_path in live_codebase and original_snippet and new_code:
+                    if original_snippet in live_codebase[finding.file_path]:
+                        live_codebase[finding.file_path] = live_codebase[finding.file_path].replace(original_snippet, new_code, 1)
+                        logger.debug(f"Applied fix for CWE-{finding.cwe} in {finding.file_path}")
+                    else:
+                        logger.warning(f"Could not find snippet to apply fix for CWE-{finding.cwe} in {finding.file_path}")
         
         # Create a new snapshot with the updated code
         new_hashes = await self.repo.get_or_create_source_files([
@@ -222,6 +224,7 @@ class SubmissionService:
             content_map = await self.repo.get_source_files_by_hashes(hashes)
             original_code_map = {path: content_map.get(h, "") for path, h in original_snapshot.file_map.items()}
 
+        
         if remediated_snapshot:
             hashes = list(remediated_snapshot.file_map.values())
             content_map = await self.repo.get_source_files_by_hashes(hashes)
@@ -230,6 +233,7 @@ class SubmissionService:
         # Assemble the detailed summary report response if data is available
         summary_report_response = None
         if scan.summary:
+            
             files_analyzed_map: Dict[str, api_models.SubmittedFileReportItem] = {}
             for finding in scan.findings:
                 if finding.file_path not in files_analyzed_map:
@@ -241,6 +245,9 @@ class SubmissionService:
                 files_analyzed_map[finding.file_path].findings.append(
                     api_models.VulnerabilityFindingResponse.from_orm(finding)
                 )
+            
+            summary_dict = scan.summary.get("summary", {})
+            risk_score_dict = scan.summary.get("overall_risk_score", {})
 
             summary_report_response = api_models.SummaryReportResponse(
                 submission_id=scan.id,
@@ -248,8 +255,8 @@ class SubmissionService:
                 scan_type=scan.scan_type,
                 selected_frameworks=scan.frameworks or [],
                 analysis_timestamp=scan.completed_at,
-                summary=scan.summary.get("summary", {}),
-                overall_risk_score=scan.summary.get("overall_risk_score", {}),
+                summary=api_models.SummaryResponse(**summary_dict),
+                overall_risk_score=api_models.OverallRiskScoreResponse(**risk_score_dict),
                 files_analyzed=list(files_analyzed_map.values())
             )
 

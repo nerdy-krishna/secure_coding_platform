@@ -18,6 +18,7 @@ import DashboardPage from "../pages/account/DashboardPage";
 import SettingsPage from "../pages/account/SettingsPage";
 import SubmissionHistoryPage from "../pages/account/SubmissionHistoryPage";
 import UserProfilePage from "../pages/account/UserProfilePage";
+import AgentManagementPage from "../pages/admin/AgentManagementPage";
 import FrameworkManagementPage from '../pages/admin/FrameworkManagementPage';
 import PromptManagementPage from '../pages/admin/PromptManagementPage';
 import RAGManagementPage from '../pages/admin/RAGManagementPage';
@@ -135,6 +136,7 @@ function AppContent() {
 
         <Route element={<SuperuserRoutesWithLayout />}>
           <Route path="/account/settings/llm" element={<LLMSettingsPage />} />
+          <Route path="/admin/agents" element={<AgentManagementPage />} />
           <Route path="/admin/frameworks" element={<FrameworkManagementPage />} />
           <Route path="/admin/prompts" element={<PromptManagementPage />} />
           <Route path="/admin/rag" element={<RAGManagementPage />} />
