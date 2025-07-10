@@ -160,15 +160,15 @@ def pika_message_callback(
             "llm_config_id": None,
             "files": None,
             "workflow_mode": "audit",
-            "excluded_files": None,
-            "remediation_categories": None,
             "repository_map": None,
             "asvs_analysis": None,
             "findings": [],
+            "fixes": [],
             "impact_report": None,
             "sarif_report": None,
             "error_message": None,
             "current_scan_status": None,
+            "live_codebase": None,
         }
 
         queue_name = method.routing_key
@@ -177,9 +177,6 @@ def pika_message_callback(
                 f"PIKA CB: Received REMEDIATION trigger for scan_id: {scan_uuid}"
             )
             initial_worker_state["workflow_mode"] = "remediate"
-            initial_worker_state["remediation_categories"] = message_data.get(
-                "categories_to_fix", []
-            )
         elif queue_name == settings.RABBITMQ_APPROVAL_QUEUE:
             logger.info(
                 f"PIKA CB: Resuming ANALYSIS for scan_id: {scan_uuid}"

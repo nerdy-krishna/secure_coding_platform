@@ -51,27 +51,30 @@ export interface LLMConfigurationCreate {
   provider: string;
   model_name: string;
   api_key: string;
-  tokenizer_encoding: string; // ADDED
   input_cost_per_million: number;
   output_cost_per_million: number;
+  tokenizer_encoding: string;
 }
 
 // --- Chat Schemas (NEW) ---
 export interface ChatSessionCreateRequest {
   title: string;
   project_id?: string;
+  llm_config_id: string;
+  frameworks: string[];
 }
 
 export interface ChatSession {
   id: string;
   title: string;
   project_id?: string;
+  llm_config_id?: string;
+  frameworks?: string[];
   created_at: string;
 }
 
 export interface AskQuestionRequest {
   question: string;
-  llm_config_id?: string;
 }
 
 export interface ChatMessage {
@@ -79,9 +82,24 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   timestamp: string;
+  cost?: number;
 }
 
 // --- Agent & Framework Schemas (NEW) ---
+export interface AgentBase {
+  name: string;
+  description: string;
+  domain_query: string;
+}
+
+export type AgentCreate = AgentBase;
+
+export interface AgentUpdate {
+  name?: string;
+  description?: string;
+  domain_query?: string;
+}
+
 export interface AgentRead {
   id: string;
   name: string;

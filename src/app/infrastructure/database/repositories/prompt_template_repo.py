@@ -39,6 +39,16 @@ class PromptTemplateRepository:
         result = await self.db.execute(stmt)
         return result.scalars().first()
 
+    async def get_template_by_name_and_type(
+        self, name: str, template_type: str
+    ) -> Optional[db_models.PromptTemplate]:
+        """Retrieves a single prompt template by its unique name and type."""
+        stmt = select(db_models.PromptTemplate).filter_by(
+            name=name, template_type=template_type
+        )
+        result = await self.db.execute(stmt)
+        return result.scalars().first()
+
     async def get_all_templates(self) -> List[db_models.PromptTemplate]:
         """Retrieves all prompt templates."""
         stmt = select(db_models.PromptTemplate).order_by(db_models.PromptTemplate.name)
