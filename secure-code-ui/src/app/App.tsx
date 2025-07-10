@@ -1,3 +1,4 @@
+// src/app/App.tsx
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import {
@@ -25,6 +26,7 @@ import ExecutiveSummaryPage from "../pages/analysis/ExecutiveSummaryPage";
 import LlmLogViewerPage from '../pages/analysis/LlmLogViewerPage';
 import ResultsPage from '../pages/analysis/ResultsPage';
 import LoginPage from "../pages/auth/LoginPage";
+import SecurityAdvisorPage from "../pages/chat/SecurityAdvisorPage";
 import SubmitCodePage from "../pages/submission/SubmitCodePage";
 import AuthLayout from "../widgets/AuthLayout";
 import DashboardLayout from "../widgets/DashboardLayout";
@@ -124,6 +126,7 @@ function AppContent() {
           <Route path="/analysis/results/:scanId" element={<ResultsPage />} />
           <Route path="/scans/:scanId/executive-summary" element={<ExecutiveSummaryPage />} />
           <Route path="/scans/:scanId/llm-logs" element={<LlmLogViewerPage />} />
+          <Route path="/advisor" element={<SecurityAdvisorPage />} />
           <Route path="/account/history" element={<SubmissionHistoryPage />} />
           <Route path="/account/usage" element={<CostUsagePage />} />
           <Route path="/account/profile" element={<UserProfilePage />} />

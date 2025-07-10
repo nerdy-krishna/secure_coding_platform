@@ -8,8 +8,11 @@ from app.infrastructure.database.repositories.agent_repo import AgentRepository
 from app.infrastructure.database.repositories.prompt_template_repo import (
     PromptTemplateRepository,
 )
+from app.infrastructure.database.repositories.chat_repo import ChatRepository
 from app.core.services.admin_service import AdminService
 from app.core.services.scan_service import SubmissionService as ScanService
+from app.core.services.chat_service import ChatService
+
 
 def get_llm_config_repository(
     db: AsyncSession = Depends(get_db),
@@ -46,6 +49,18 @@ def get_admin_service(
         agent_repo=agent_repo,
         prompt_template_repo=prompt_template_repo,
     )
+
+def get_chat_repository(db: AsyncSession = Depends(get_db)) -> ChatRepository:
+    """Dependency provider for the ChatRepository."""
+    return ChatRepository(db)
+
+
+def get_chat_service(
+    chat_repo: ChatRepository = Depends(get_chat_repository),
+) -> ChatService:
+    """Dependency provider for the ChatService."""
+    return ChatService(chat_repo)
+
 
 def get_scan_repository(
     db: AsyncSession = Depends(get_db),
