@@ -1,7 +1,9 @@
 // src/pages/chat/SecurityAdvisorPage.tsx
 import {
     CommentOutlined,
+    DeleteOutlined,
     PlusOutlined,
+    RobotOutlined,
     SendOutlined,
     SyncOutlined,
 } from "@ant-design/icons";
@@ -17,17 +19,26 @@ import {
     List,
     Menu,
     Modal,
+    Popconfirm,
     Row,
+    Select,
     Skeleton,
+    Tooltip,
     Typography,
     message,
 } from "antd";
 import React, { useEffect, useRef, useState } from "react";
 import { chatService } from "../../shared/api/chatService";
-import type { ChatMessage, ChatSession } from "../../shared/types/api";
+import { llmConfigService } from "../../shared/api/llmConfigService";
+import type {
+    ChatMessage,
+    ChatSession,
+    LLMConfiguration,
+} from "../../shared/types/api";
 
 const { Sider, Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
+const { Option } = Select;
 
 const ChatMessageItem: React.FC<{ message: ChatMessage }> = ({ message }) => {
   const isUser = message.role === "user";
@@ -55,23 +66,31 @@ const ChatMessageItem: React.FC<{ message: ChatMessage }> = ({ message }) => {
 
 const SecurityAdvisorPage: React.FC = () => {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [selectedLlmId, setSelectedLlmId] = useState<string | undefined>(
+    undefined,
+  );
   const [isNewChatModalVisible, setIsNewChatModalVisible] = useState(false);
   const [form] = Form.useForm();
   const queryClient = useQueryClient();
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  const {
-    data: sessions,
-    isLoading: isLoadingSessions,
-  } = useQuery<ChatSession[]>({
+  const { data: llmConfigs, isLoading: isLoadingLLMs } = useQuery<
+    LLMConfiguration[]
+  >({
+    queryKey: ["llmConfigs"],
+    queryFn: llmConfigService.getLlmConfigs,
+  });
+
+  const { data: sessions, isLoading: isLoadingSessions } = useQuery<
+    ChatSession[]
+  >({
     queryKey: ["chatSessions"],
     queryFn: chatService.getSessions,
   });
 
-  const {
-    data: messages,
-    isFetching: isFetchingMessages,
-  } = useQuery<ChatMessage[]>({
+  const { data: messages, isFetching: isFetchingMessages } = useQuery<
+    ChatMessage[]
+  >({
     queryKey: ["chatMessages", activeSessionId],
     queryFn: () => {
       if (!activeSessionId) return Promise.resolve([]);
@@ -79,6 +98,13 @@ const SecurityAdvisorPage: React.FC = () => {
     },
     enabled: !!activeSessionId,
   });
+
+  useEffect(() => {
+    // Set default LLM when configs load
+    if (llmConfigs && llmConfigs.length > 0 && !selectedLlmId) {
+      setSelectedLlmId(llmConfigs[0].id);
+    }
+  }, [llmConfigs, selectedLlmId]);
 
   const createSessionMutation = useMutation({
     mutationFn: chatService.createSession,
@@ -93,14 +119,30 @@ const SecurityAdvisorPage: React.FC = () => {
     },
   });
 
+  const deleteSessionMutation = useMutation({
+    mutationFn: chatService.deleteSession,
+    onSuccess: (_, deletedSessionId) => {
+      message.success("Chat session deleted.");
+      queryClient.invalidateQueries({ queryKey: ["chatSessions"] });
+      if (activeSessionId === deletedSessionId) {
+        setActiveSessionId(null);
+      }
+    },
+    onError: (error) => {
+      message.error(`Failed to delete session: ${error.message}`);
+    },
+  });
+
   const askQuestionMutation = useMutation({
     mutationFn: ({
       sessionId,
       question,
+      llmConfigId,
     }: {
       sessionId: string;
       question: string;
-    }) => chatService.askQuestion(sessionId, question),
+      llmConfigId?: string;
+    }) => chatService.askQuestion(sessionId, question, llmConfigId),
     onSuccess: () => {
       queryClient.invalidateQueries({
         queryKey: ["chatMessages", activeSessionId],
@@ -125,10 +167,13 @@ const SecurityAdvisorPage: React.FC = () => {
     askQuestionMutation.mutate({
       sessionId: activeSessionId,
       question: values.question,
+      llmConfigId: selectedLlmId,
     });
   };
-  
-  const activeSessionTitle = sessions?.find(s => s.id === activeSessionId)?.title;
+
+  const activeSessionTitle = sessions?.find(
+    (s) => s.id === activeSessionId,
+  )?.title;
 
   return (
     <Layout style={{ height: "calc(100vh - 180px)", background: "#fff" }}>
@@ -153,29 +198,91 @@ const SecurityAdvisorPage: React.FC = () => {
             onClick={({ key }) => setActiveSessionId(key)}
             items={sessions?.map((session) => ({
               key: session.id,
-              label: session.title,
+              label: (
+                <Row justify="space-between" align="middle" wrap={false}>
+                  <Col flex="auto" style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                    <Tooltip title={session.title}>{session.title}</Tooltip>
+                  </Col>
+                  <Col flex="none">
+                    <Popconfirm
+                      title="Delete Chat?"
+                      description="This action cannot be undone."
+                      onConfirm={(e) => {
+                        e?.stopPropagation();
+                        deleteSessionMutation.mutate(session.id);
+                      }}
+                      onCancel={(e) => e?.stopPropagation()}
+                      okText="Yes"
+                      cancelText="No"
+                    >
+                      <Button
+                        type="text"
+                        danger
+                        size="small"
+                        icon={<DeleteOutlined />}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    </Popconfirm>
+                  </Col>
+                </Row>
+              ),
               icon: <CommentOutlined />,
             }))}
           />
         )}
       </Sider>
-      <Content style={{ padding: "0 24px", display: 'flex', flexDirection: 'column' }}>
+      <Content
+        style={{ padding: "0 24px", display: "flex", flexDirection: "column" }}
+      >
         {activeSessionId ? (
           <>
             <Card
               title={
                 <Title level={4} style={{ margin: 0 }}>
-                  {activeSessionTitle || 'Chat'}
-                  {isFetchingMessages && <SyncOutlined spin style={{ marginLeft: 10, color: '#1677ff' }}/>}
+                  {activeSessionTitle || "Chat"}
+                  {isFetchingMessages && (
+                    <SyncOutlined
+                      spin
+                      style={{ marginLeft: 10, color: "#1677ff" }}
+                    />
+                  )}
                 </Title>
               }
               style={{ flexShrink: 0 }}
+              extra={
+                <Select
+                  value={selectedLlmId}
+                  onChange={setSelectedLlmId}
+                  loading={isLoadingLLMs}
+                  style={{ width: 250 }}
+                  placeholder="Select an LLM"
+                >
+                  {llmConfigs?.map((config) => (
+                    <Option key={config.id} value={config.id}>
+                      <RobotOutlined style={{ marginRight: 8 }} />
+                      {config.name}
+                    </Option>
+                  ))}
+                </Select>
+              }
             >
-              <div style={{ height: "calc(100vh - 400px)", overflowY: "auto", padding: '0 16px' }}>
+              <div
+                style={{
+                  height: "calc(100vh - 455px)",
+                  overflowY: "auto",
+                  padding: "0 16px",
+                }}
+              >
                 <List
                   dataSource={messages || []}
                   renderItem={(item) => <ChatMessageItem message={item} />}
-                  locale={{ emptyText: <Text type="secondary">Send a message to start the conversation.</Text> }}
+                  locale={{
+                    emptyText: (
+                      <Text type="secondary">
+                        Send a message to start the conversation.
+                      </Text>
+                    ),
+                  }}
                 />
                 <div ref={chatEndRef} />
               </div>

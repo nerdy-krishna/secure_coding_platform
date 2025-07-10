@@ -71,6 +71,7 @@ export interface ChatSession {
 
 export interface AskQuestionRequest {
   question: string;
+  llm_config_id?: string;
 }
 
 export interface ChatMessage {

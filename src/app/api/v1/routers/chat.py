@@ -7,6 +7,14 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from app.api.v1.dependencies import get_chat_service
+import logging
+import uuid
+from typing import List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, status, Response
+from pydantic import BaseModel, Field
+
+from app.api.v1.dependencies import get_chat_service
 from app.core.services.chat_service import ChatService
 from app.infrastructure.auth.core import current_active_user
 from app.infrastructure.database import models as db_models
@@ -33,6 +41,7 @@ class ChatSessionResponse(BaseModel):
 
 class AskQuestionRequest(BaseModel):
     question: str = Field(..., min_length=1, description="The user's question.")
+    llm_config_id: Optional[uuid.UUID] = Field(None, description="The specific LLM configuration to use for the response.")
 
 
 class ChatMessageResponse(BaseModel):
@@ -110,7 +119,10 @@ async def ask_question(
 ):
     """Sends a message within a session and gets an AI-generated response."""
     ai_message = await chat_service.post_message_to_session(
-        session_id=session_id, question=request.question, user=user
+        session_id=session_id,
+        question=request.question,
+        user=user,
+        llm_config_id=request.llm_config_id,
     )
     return ChatMessageResponse(
         id=ai_message.id,
@@ -118,3 +130,19 @@ async def ask_question(
         content=ai_message.content,
         timestamp=ai_message.timestamp.isoformat(),
     )
+
+
+@router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_chat_session(
+    session_id: uuid.UUID,
+    user: db_models.User = Depends(current_active_user),
+    chat_service: ChatService = Depends(get_chat_service),
+):
+    """Deletes a chat session and all its messages."""
+    success = await chat_service.delete_session(session_id, user)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Chat session not found or you do not have permission to delete it.",
+        )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

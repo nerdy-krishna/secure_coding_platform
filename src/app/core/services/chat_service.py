@@ -51,7 +51,7 @@ class ChatService:
 
 
     async def post_message_to_session(
-        self, session_id: uuid.UUID, question: str, user: db_models.User
+        self, session_id: uuid.UUID, question: str, user: db_models.User, llm_config_id: Optional[uuid.UUID]
     ) -> db_models.ChatMessage:
         """
         Posts a user's message, gets a response from the ChatAgent,
@@ -78,9 +78,7 @@ class ChatService:
             session_id=session_id,
             user_question=question,
             history=history,
-            # For now, we'll use a hardcoded LLM config or a default one.
-            # This can be made dynamic later.
-            llm_config_id=None # The agent will fetch a default.
+            llm_config_id=llm_config_id
         )
         
         # 5. Save the AI's response
@@ -93,3 +91,8 @@ class ChatService:
             await self.chat_repo.link_llm_interaction(ai_message.id, llm_interaction_id)
 
         return ai_message
+
+    async def delete_session(self, session_id: uuid.UUID, user: db_models.User) -> bool:
+        """Deletes a user's chat session."""
+        logger.info(f"User {user.id} requesting to delete session {session_id}.")
+        return await self.chat_repo.delete_session(session_id, user.id)

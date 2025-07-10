@@ -7,7 +7,7 @@ from typing import Dict, List, Tuple
 from pydantic import BaseModel, Field
 import tree_sitter_languages
 from tree_sitter import Language, Node, Parser, Tree
-from tree_sitter_languages import get_language
+from tree_sitter_languages import get_language, get_parser
 
 
 # Custom exception for grammar loading issues
@@ -195,6 +195,18 @@ LANGUAGE_QUERIES = {
     },
     "r": {"imports": "", "symbols": ""},
     "matlab": {"imports": "", "symbols": ""},
+    "terraform": {
+        "imports": """
+            (module_call name: (string_literal) @import)
+        """,
+        "symbols": """
+            (resource_block type: (identifier) @name) @type
+            (variable_block name: (string_literal) @name) @type
+            (data_block type: (string_literal) @name) @type
+            (provider_block name: (string_literal) @name) @type
+            (output_block name: (string_literal) @name) @type
+        """,
+    },
 }
 
 
@@ -239,6 +251,8 @@ class RepositoryMappingEngine:
             ".sh": "bash",
             ".html": "html",
             ".css": "css",
+            ".tf": "terraform",
+            ".tfvars": "terraform",
         }
         extension = Path(file_path).suffix
         lang_name = lang_map.get(extension)

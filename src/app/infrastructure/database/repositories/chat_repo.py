@@ -5,7 +5,7 @@ from typing import List, Optional
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, joinedload
 
 from app.infrastructure.database import models as db_models
 
@@ -77,7 +77,39 @@ class ChatRepository:
             return []
         # The messages are already loaded via the relationship in get_session_by_id
         return sorted(session.messages, key=lambda m: m.timestamp)
-    
+
+    async def delete_session(self, session_id: uuid.UUID, user_id: int) -> bool:
+        """Deletes a chat session and all its messages, ensuring user owns it."""
+        logger.info(f"Attempting to delete chat session {session_id} for user {user_id}.")
+        # First, get the session with its messages and their LLM interactions
+        stmt = (
+            select(db_models.ChatSession)
+            .options(
+                selectinload(db_models.ChatSession.messages)
+                .selectinload(db_models.ChatMessage.llm_interaction)
+            )
+            .filter_by(id=session_id, user_id=user_id)
+        )
+        result = await self.db.execute(stmt)
+        session = result.scalars().first()
+
+        if not session:
+            logger.warning(f"Delete failed: Session {session_id} not found for user {user_id}.")
+            return False
+
+        # The relationships are configured with cascade="all, delete-orphan",
+        # so deleting the session will automatically delete its messages.
+        # However, the link from LLMInteraction is nullable, so we need to handle that.
+        # We will just nullify the back-reference. The LLM interaction log itself is preserved.
+        for message in session.messages:
+            if message.llm_interaction:
+                message.llm_interaction.chat_message_id = None
+
+        await self.db.delete(session)
+        await self.db.commit()
+        logger.info(f"Successfully deleted chat session {session_id}.")
+        return True
+
     async def link_llm_interaction(self, chat_message_id: int, llm_interaction_id: int):
         """Links an LLMInteraction record to a ChatMessage."""
         stmt = (
