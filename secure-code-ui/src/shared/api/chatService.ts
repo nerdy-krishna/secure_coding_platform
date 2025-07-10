@@ -42,12 +42,20 @@ export const chatService = {
   askQuestion: async (
     sessionId: string,
     question: string,
+    llmConfigId?: string,
   ): Promise<ChatMessage> => {
-    const payload: AskQuestionRequest = { question };
+    const payload: AskQuestionRequest = { question, llm_config_id: llmConfigId };
     const response = await apiClient.post<ChatMessage>(
       `/chat/sessions/${sessionId}/ask`,
       payload,
     );
     return response.data;
+  },
+
+  /**
+   * Deletes a chat session by its ID.
+   */
+  deleteSession: async (sessionId: string): Promise<void> => {
+    await apiClient.delete(`/chat/sessions/${sessionId}`);
   },
 };
