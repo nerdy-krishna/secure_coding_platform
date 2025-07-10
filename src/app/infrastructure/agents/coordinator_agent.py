@@ -1,5 +1,3 @@
-# src/app/infrastructure/agents/coordinator_agent.py
-
 import asyncio
 import logging
 from typing import Any, Dict, List, TypedDict, Optional, Coroutine
@@ -17,7 +15,7 @@ from app.core.schemas import (
 )
 from app.shared.lib import cost_estimation
 
-from app.infrastructure.database.repositories.submission_repo import SubmissionRepository
+from app.infrastructure.database.repositories.scan_repo import ScanRepository
 from app.infrastructure.database.repositories.llm_config_repo import LLMConfigRepository
 from app.infrastructure.database import AsyncSessionLocal as async_session_factory
 
@@ -41,7 +39,7 @@ logger = logging.getLogger(__name__)
 AGENT_NAME = "CoordinatorAgent"
 CONCURRENT_LLM_LIMIT = 5
 STATUS_PENDING_APPROVAL = "PENDING_COST_APPROVAL"
-STATUS_COST_APPROVED = "Approved - Queued"
+STATUS_COST_APPROVED = "QUEUED_FOR_SCAN"
 
 AGENT_BUILDER_MAP = {
     "AccessControlAgent": build_access_control_agent, "ApiSecurityAgent": build_api_security_agent,
@@ -55,7 +53,7 @@ AGENT_BUILDER_MAP = {
 
 
 class CoordinatorState(TypedDict):
-    submission_id: uuid.UUID
+    scan_id: uuid.UUID
     llm_config_id: Optional[uuid.UUID]
     files: Dict[str, str]
     repository_map: RepositoryMap
@@ -65,7 +63,7 @@ class CoordinatorState(TypedDict):
     relevant_agents: Dict[str, List[str]]
     estimated_cost: Optional[Dict[str, float]]
     cost_approval_met: Optional[bool] 
-    current_submission_status: Optional[str]
+    current_scan_status: Optional[str]
     live_codebase: Optional[Dict[str, str]]
     findings: List[VulnerabilityFindingModel]
     fixes: List[FixResultModel]
@@ -75,8 +73,8 @@ class CoordinatorState(TypedDict):
 
 def determine_relevant_agents_node(state: CoordinatorState) -> Dict[str, Any]:
     """Determines which specialized agents are relevant based on the codebase context."""
-    submission_id = state['submission_id']
-    logger.info(f"[{AGENT_NAME}] Determining relevant agents for submission.", extra={"submission_id": str(submission_id)})
+    scan_id = state['scan_id']
+    logger.info(f"[{AGENT_NAME}] Determining relevant agents for scan.", extra={"scan_id": str(scan_id)})
     asvs_analysis = state.get("asvs_analysis", {})
     relevant_agents: Dict[str, List[str]] = {}
     repository_map = state.get("repository_map")
@@ -93,8 +91,8 @@ def determine_relevant_agents_node(state: CoordinatorState) -> Dict[str, Any]:
 
 def create_context_bundles_node(state: CoordinatorState) -> Dict[str, Any]:
     """Creates context-rich code bundles for each file to be analyzed."""
-    submission_id = state['submission_id']
-    logger.info(f"[{AGENT_NAME}] Creating context bundles for submission.", extra={"submission_id": str(submission_id)})
+    scan_id = state['scan_id']
+    logger.info(f"[{AGENT_NAME}] Creating context bundles for scan.", extra={"scan_id": str(scan_id)})
     repository_map = state.get("repository_map")
     files = state.get("files")
     if not repository_map or not files:
@@ -102,39 +100,39 @@ def create_context_bundles_node(state: CoordinatorState) -> Dict[str, Any]:
     try:
         engine = ContextBundlingEngine(repository_map, files)
         bundles = engine.create_bundles()
-        logger.info(f"[{AGENT_NAME}] Successfully created {len(bundles)} context bundles.", extra={"submission_id": str(submission_id)})
+        logger.info(f"[{AGENT_NAME}] Successfully created {len(bundles)} context bundles.", extra={"scan_id": str(scan_id)})
         return {"context_bundles": bundles}
     except Exception as e:
-        logger.error(f"[{AGENT_NAME}] Failed to create context bundles: {e}", exc_info=True, extra={"submission_id": str(submission_id)})
+        logger.error(f"[{AGENT_NAME}] Failed to create context bundles: {e}", exc_info=True, extra={"scan_id": str(scan_id)})
         return {"error": f"Failed to create context bundles: {e}"}
 
 
 async def estimate_cost_node(state: CoordinatorState) -> Dict[str, Any]:
     """Estimates analysis cost. If a cost has not been approved, it pauses the graph."""
-    submission_id = state["submission_id"]
-    logger.info(f"[{AGENT_NAME}] Evaluating cost and approval status for submission.", extra={"submission_id": str(submission_id)})
+    scan_id = state["scan_id"]
+    logger.info(f"[{AGENT_NAME}] Evaluating cost and approval status for scan.", extra={"scan_id": str(scan_id)})
     
     async with async_session_factory() as db:
-        submission_repo = SubmissionRepository(db)
+        scan_repo = ScanRepository(db)
         llm_config_repo = LLMConfigRepository(db)
 
-        submission = await submission_repo.get_submission(submission_id)
-        if not submission:
-            logger.error(f"[{AGENT_NAME}] Submission not found during cost evaluation.", extra={"submission_id": str(submission_id)})
-            return {"error": f"Submission {submission_id} not found.", "current_submission_status": "ERROR_NO_SUBMISSION"}
+        scan = await scan_repo.get_scan(scan_id)
+        if not scan:
+            logger.error(f"[{AGENT_NAME}] Scan not found during cost evaluation.", extra={"scan_id": str(scan_id)})
+            return {"error": f"Scan {scan_id} not found.", "current_scan_status": "ERROR_NO_SCAN"}
 
-        current_status = submission.status
-        estimated_cost_from_db = submission.estimated_cost
+        current_status = scan.status
+        estimated_cost_from_db = scan.cost_details
 
         if current_status == STATUS_COST_APPROVED:
-            logger.info(f"[{AGENT_NAME}] Cost for submission is already approved. Proceeding.", extra={"submission_id": str(submission_id)})
-            return {"cost_approval_met": True, "current_submission_status": current_status, "estimated_cost": estimated_cost_from_db}
+            logger.info(f"[{AGENT_NAME}] Cost for scan is already approved. Proceeding.", extra={"scan_id": str(scan_id)})
+            return {"cost_approval_met": True, "current_scan_status": current_status, "estimated_cost": estimated_cost_from_db}
 
         if current_status == STATUS_PENDING_APPROVAL:
-            logger.info(f"[{AGENT_NAME}] Submission is still {STATUS_PENDING_APPROVAL}. Waiting.", extra={"submission_id": str(submission_id)})
-            return {"cost_approval_met": False, "current_submission_status": current_status, "estimated_cost": estimated_cost_from_db}
+            logger.info(f"[{AGENT_NAME}] Scan is still {STATUS_PENDING_APPROVAL}. Waiting.", extra={"scan_id": str(scan_id)})
+            return {"cost_approval_met": False, "current_scan_status": current_status, "estimated_cost": estimated_cost_from_db}
 
-        logger.info(f"[{AGENT_NAME}] Performing new cost estimation for submission.", extra={"submission_id": str(submission_id)})
+        logger.info(f"[{AGENT_NAME}] Performing new cost estimation for scan.", extra={"scan_id": str(scan_id)})
         bundles = state.get("context_bundles")
         llm_config_id = state.get("llm_config_id")
 
@@ -155,11 +153,11 @@ async def estimate_cost_node(state: CoordinatorState) -> Dict[str, Any]:
             )
             cost_details = cost_estimation.estimate_cost_for_prompt(config=llm_config, input_tokens=total_input_tokens)
             
-            await submission_repo.update_cost_and_status(submission_id, STATUS_PENDING_APPROVAL, cost_details)
-            logger.info(f"[{AGENT_NAME}] Submission status set to {STATUS_PENDING_APPROVAL}.", extra={"submission_id": str(submission_id)})
-            return {"estimated_cost": cost_details, "cost_approval_met": False, "current_submission_status": STATUS_PENDING_APPROVAL}
+            await scan_repo.update_cost_and_status(scan_id, STATUS_PENDING_APPROVAL, cost_details)
+            logger.info(f"[{AGENT_NAME}] Scan status set to {STATUS_PENDING_APPROVAL}.", extra={"scan_id": str(scan_id)})
+            return {"estimated_cost": cost_details, "cost_approval_met": False, "current_scan_status": STATUS_PENDING_APPROVAL}
         except Exception as e:
-            logger.error(f"[{AGENT_NAME}] Failed to estimate cost for {submission_id}: {e}", exc_info=True)
+            logger.error(f"[{AGENT_NAME}] Failed to estimate cost for {scan_id}: {e}", exc_info=True)
             return {"error": f"Failed to estimate cost: {e}"}
 
 
@@ -168,21 +166,21 @@ def route_after_cost_estimation(state: CoordinatorState) -> str:
         logger.error(f"[{AGENT_NAME}] Error in coordinator state after cost estimation: {state['error']}")
         return "end_with_error"
     if state.get("cost_approval_met"):
-        logger.info(f"[{AGENT_NAME}] Cost approval met for submission. Proceeding.", extra={"submission_id": str(state['submission_id'])})
+        logger.info(f"[{AGENT_NAME}] Cost approval met for scan. Proceeding.", extra={"scan_id": str(state['scan_id'])})
         return "run_specialized_agents"
-    logger.info(f"[{AGENT_NAME}] Cost approval not met. Coordinator ending.", extra={"submission_id": str(state['submission_id'])})
+    logger.info(f"[{AGENT_NAME}] Cost approval not met. Coordinator ending.", extra={"scan_id": str(state['scan_id'])})
     return END
 
 
 async def run_specialized_agents_node(state: CoordinatorState) -> Dict[str, Any]:
-    submission_id = state["submission_id"]
+    scan_id = state["scan_id"]
     relevant_agents = state["relevant_agents"]
     context_bundles = state["context_bundles"]
     specialized_llm_id = state.get("llm_config_id")
     workflow_mode = state["workflow_mode"]
     files = state["files"]
 
-    logger.info(f"[{AGENT_NAME}] Beginning agent runs in '{workflow_mode}' mode with concurrency limit {CONCURRENT_LLM_LIMIT}.", extra={"submission_id": str(submission_id), "mode": workflow_mode})
+    logger.info(f"[{AGENT_NAME}] Beginning agent runs in '{workflow_mode}' mode with concurrency limit {CONCURRENT_LLM_LIMIT}.", extra={"scan_id": str(scan_id), "mode": workflow_mode})
     if not context_bundles or not files:
         return {"error": "Context bundles or files not found."}
 
@@ -201,7 +199,7 @@ async def run_specialized_agents_node(state: CoordinatorState) -> Dict[str, Any]
                 bundle = bundle_map.get(file_path)
                 if not bundle: continue
                 formatted_bundle_content = "".join(f"--- FILE: {path} ---\n{content}\n\n" for path, content in bundle.context_files.items())
-                initial_agent_state: SpecializedAgentState = {"submission_id": submission_id, "llm_config_id": specialized_llm_id, "filename": file_path, "code_snippet": formatted_bundle_content, "workflow_mode": workflow_mode, "findings": [], "fixes": [], "error": None}
+                initial_agent_state: SpecializedAgentState = {"scan_id": scan_id, "llm_config_id": specialized_llm_id, "filename": file_path, "code_snippet": formatted_bundle_content, "workflow_mode": workflow_mode, "findings": [], "fixes": [], "error": None}
                 tasks.append(run_with_semaphore(agent_graph.ainvoke(initial_agent_state)))
         
         if not tasks: return {"findings": [], "fixes": []}
@@ -239,8 +237,8 @@ async def run_specialized_agents_node(state: CoordinatorState) -> Dict[str, Any]
                 bundle = bundle_map.get(file_path)
                 if not bundle: continue
                 formatted_bundle_content = "".join(f"--- FILE: {path} ---\n{live_codebase.get(path, '')}\n\n" for path in bundle.context_files.keys())
-                logger.info(f"[{AGENT_NAME}] Sequentially remediating '{file_path}' with '{agent_name}'.", extra={"submission_id": str(submission_id)})
-                initial_agent_state: SpecializedAgentState = {"submission_id": submission_id, "llm_config_id": specialized_llm_id, "filename": file_path, "code_snippet": formatted_bundle_content, "workflow_mode": workflow_mode, "findings": [], "fixes": [], "error": None}
+                logger.info(f"[{AGENT_NAME}] Sequentially remediating '{file_path}' with '{agent_name}'.", extra={"scan_id": str(scan_id)})
+                initial_agent_state: SpecializedAgentState = {"scan_id": scan_id, "llm_config_id": specialized_llm_id, "filename": file_path, "code_snippet": formatted_bundle_content, "workflow_mode": workflow_mode, "findings": [], "fixes": [], "error": None}
                 agent_result = await agent_graph.ainvoke(initial_agent_state)
                 if isinstance(agent_result, dict) and not agent_result.get('error'):
                     fixes_from_run = agent_result.get("fixes", [])
@@ -250,9 +248,9 @@ async def run_specialized_agents_node(state: CoordinatorState) -> Dict[str, Any]
                         target_file, original_snippet, new_code = fix_result.finding.file_path, fix_result.suggestion.original_snippet, fix_result.suggestion.code
                         if target_file in live_codebase and original_snippet in live_codebase[target_file]:
                             live_codebase[target_file] = live_codebase[target_file].replace(original_snippet, new_code, 1)
-                            logger.info(f"Applied fix in '{target_file}'.", extra={"submission_id": str(submission_id)})
+                            logger.info(f"Applied fix in '{target_file}'.", extra={"scan_id": str(scan_id)})
                         else:
-                            logger.warning(f"Could not find original snippet in '{target_file}' to apply fix.", extra={"submission_id": str(submission_id)})
+                            logger.warning(f"Could not find original snippet in '{target_file}' to apply fix.", extra={"scan_id": str(scan_id)})
         return {"findings": all_findings, "fixes": all_fixes, "live_codebase": live_codebase}
     else:
         return {"error": f"Unknown workflow_mode: {workflow_mode}"}
@@ -260,34 +258,24 @@ async def run_specialized_agents_node(state: CoordinatorState) -> Dict[str, Any]
 
 async def finalize_analysis_node(state: CoordinatorState) -> Dict[str, Any]:
     """Saves all findings and fixes from the agent runs into the database."""
-    # MODIFIED: Check for an error from the previous step first
     if state.get("error"):
-        return {} # Pass the error state through without taking action
+        return {} 
 
-    submission_id, findings_to_save, fixes_to_save, live_codebase, workflow_mode = state["submission_id"], state.get("findings", []), state.get("fixes", []), state.get("live_codebase"), state["workflow_mode"]
-    logger.info(f"[{AGENT_NAME}] Finalizing analysis for submission in '{workflow_mode}' mode.", extra={"submission_id": str(submission_id), "mode": workflow_mode, "findings_count": len(findings_to_save)})
+    scan_id, findings_to_save, fixes_to_save, live_codebase, workflow_mode = state["scan_id"], state.get("findings", []), state.get("fixes", []), state.get("live_codebase"), state["workflow_mode"]
+    logger.info(f"[{AGENT_NAME}] Finalizing analysis for scan in '{workflow_mode}' mode.", extra={"scan_id": str(scan_id), "mode": workflow_mode, "findings_count": len(findings_to_save)})
     async with async_session_factory() as db:
-        repo = SubmissionRepository(db)
+        repo = ScanRepository(db)
         try:
             if findings_to_save:
-                persisted_findings = await repo.save_findings(submission_id, findings_to_save)
-                logger.info(f"[{AGENT_NAME}] Saved {len(persisted_findings)} findings.")
-                if fixes_to_save:
-                    finding_map = {(f.file_path, f.line_number, f.cwe): f.id for f in persisted_findings}
-                    for fix_result in fixes_to_save:
-                        pydantic_finding, finding_key = fix_result.finding, (fix_result.finding.file_path, fix_result.finding.line_number, fix_result.finding.cwe)
-                        if finding_id := finding_map.get(finding_key):
-                            await repo.save_fix_suggestion(finding_id, fix_result.suggestion)
-                    logger.info(f"[{AGENT_NAME}] Saved {len(fixes_to_save)} fix suggestions.")
-            if workflow_mode == 'remediate' and live_codebase:
-                await repo.update_remediated_code_and_status(submission_id, "Remediation-Completed", live_codebase)
-                logger.info(f"[{AGENT_NAME}] Saved fixed code map and updated status to 'Remediation-Completed'.")
+                await repo.save_findings(scan_id, findings_to_save)
+                logger.info(f"[{AGENT_NAME}] Saved {len(findings_to_save)} findings.")
             
-            # REMOVED the else block that was prematurely completing the submission.
-            # The status will now be correctly set by the main worker graph after reporting.
-
+            if workflow_mode == 'remediate' and live_codebase:
+                # This needs to create a new snapshot, not just update the scan
+                await repo.create_code_snapshot(scan_id=scan_id, file_map=live_codebase, snapshot_type="POST_REMEDIATION")
+                logger.info(f"[{AGENT_NAME}] Saved post-remediation code snapshot.")
         except Exception as e:
-            logger.error(f"[{AGENT_NAME}] Error saving results to DB for {submission_id}: {e}", exc_info=True)
+            logger.error(f"[{AGENT_NAME}] Error saving results to DB for {scan_id}: {e}", exc_info=True)
             return {"error": f"DB error: {e}"}
     return {"final_status": "Analysis complete."}
 
@@ -295,8 +283,6 @@ async def finalize_analysis_node(state: CoordinatorState) -> Dict[str, Any]:
 def route_after_agent_runs(state: CoordinatorState) -> str:
     """Checks for errors after agent execution and routes accordingly."""
     if state.get("error"):
-        # The error is already logged in the previous node.
-        # We end the coordinator graph here, and the error state propagates up.
         return "end_with_error"
     return "finalize_analysis"
 
@@ -314,13 +300,12 @@ def build_coordinator_graph():
     workflow.add_conditional_edges("create_context_bundles", lambda s: "estimate_cost" if not s.get("error") else "end_with_error", {"estimate_cost": "estimate_cost", "end_with_error": "end_with_error"})
     workflow.add_conditional_edges("estimate_cost", route_after_cost_estimation, {"run_specialized_agents": "run_specialized_agents", END: END, "end_with_error": "end_with_error"})
     
-    # MODIFIED: Added conditional routing after agent runs
     workflow.add_conditional_edges(
         "run_specialized_agents",
         route_after_agent_runs,
         {
             "finalize_analysis": "finalize_analysis",
-            "end_with_error": END, # End the graph if agents failed
+            "end_with_error": END,
         }
     )
 

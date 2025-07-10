@@ -25,7 +25,7 @@ import {
 import React from 'react';
 import { Link, useParams } from 'react-router-dom';
 import apiClient from '../../shared/api/apiClient';
-import { submissionService } from '../../shared/api/submissionService';
+import { scanService } from '../../shared/api/scanService';
 
 const { Title, Paragraph, Text } = Typography;
 
@@ -43,7 +43,7 @@ const ExecutiveSummaryPage: React.FC = () => {
       if (!submissionId) {
         throw new Error('Submission ID is required');
       }
-      return submissionService.getAnalysisResult(submissionId);
+      return scanService.getScanResult(submissionId);
     },
     enabled: !!submissionId, // Only run query if submissionId is present
   });

@@ -73,7 +73,7 @@ class AnalysisResult(BaseModel):
 class SpecializedAgentState(TypedDict):
     """Represents the state of any specialized agent's workflow."""
 
-    submission_id: uuid.UUID
+    scan_id: uuid.UUID
     llm_config_id: Optional[uuid.UUID]
     filename: str
     code_snippet: str
@@ -83,13 +83,15 @@ class SpecializedAgentState(TypedDict):
     error: Optional[str]
 
 
+
 class LLMInteraction(BaseModel):
-    submission_id: Optional[uuid.UUID] = None
+    scan_id: Optional[uuid.UUID] = None
     file_path: Optional[str] = None
     agent_name: str = Field(
         description="The name of the agent that initiated the interaction."
     )
-    prompt: str = Field(description="The full prompt sent to the LLM.")
+    prompt_template_name: Optional[str] = Field(None, description="The name of the prompt template used.")
+    prompt_context: Optional[Dict[str, Any]] = Field(None, description="The context data used to format the prompt.")
     raw_response: str = Field(description="The raw text response from the LLM.")
     parsed_output: Optional[Dict] = Field(
         None, description="The structured output after parsing the response."

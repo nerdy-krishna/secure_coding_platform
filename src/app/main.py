@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from psycopg.errors import DuplicateColumn
 from starlette.responses import JSONResponse
 
-from app.api.v1.routers.submissions import router as submissions_router
+from app.api.v1.routers.projects import router as projects_router
 from app.api.v1.routers.admin import llm_router
 from app.infrastructure.auth.backend import auth_backend
 from app.infrastructure.auth.core import fastapi_users
@@ -134,7 +134,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 # --- Include API Routers ---
 
 # Main application router for submissions and results
-app.include_router(submissions_router, prefix="/api/v1", tags=["Submissions"])
+app.include_router(projects_router, prefix="/api/v1", tags=["Submissions"])
 
 # Router for managing LLM Configurations
 app.include_router(

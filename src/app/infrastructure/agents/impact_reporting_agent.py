@@ -1,5 +1,3 @@
-# src/app/infrastructure/agents/impact_reporting_agent.py
-
 import json
 import logging
 from typing import TypedDict, List, Dict, Any, Optional
@@ -8,21 +6,28 @@ import uuid
 from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
 
-from app.infrastructure.database.repositories.submission_repo import SubmissionRepository
+from app.infrastructure.database.repositories.scan_repo import ScanRepository
 from app.infrastructure.database import AsyncSessionLocal
 from app.infrastructure.llm_client import get_llm_client, AgentLLMResult
 from app.core.schemas import LLMInteraction, VulnerabilityFinding
 from app.shared.lib.reporting import create_sarif_report
 
-# Configure logging
 logger = logging.getLogger(__name__)
 AGENT_NAME = "ImpactReportingAgent"
 
 
-# --- Pydantic Models ---
 class ImpactReport(BaseModel):
     executive_summary: str = Field(
         description="A high-level overview of the project's security posture."
+    )
+    vulnerability_overview: str = Field(
+        description="A paragraph summarizing the types and distribution of vulnerabilities found."
+    )
+    high_risk_findings_summary: List[str] = Field(
+        description="A bulleted list summarizing the most critical or high-risk findings."
+    )
+    remediation_strategy: str = Field(
+        description="A paragraph outlining a strategic approach to remediation, such as which categories to prioritize."
     )
     vulnerability_categories: List[str] = Field(
         description="A list of the main categories of vulnerabilities found."
@@ -35,26 +40,20 @@ class ImpactReport(BaseModel):
     )
 
 
-# --- Agent State ---
-# SIMPLIFIED: We only need fields for inputs and outputs.
-# The parent graph will be responsible for the final 'FinalReport' object.
 class ImpactReportingAgentState(TypedDict):
-    submission_id: uuid.UUID
+    scan_id: uuid.UUID
     llm_config_id: Optional[uuid.UUID]
     findings: List[VulnerabilityFinding]
-
-    # Outputs to be passed back to the parent graph
     impact_report: Optional[Dict[str, Any]]
     sarif_report: Optional[Dict[str, Any]]
     error: Optional[str]
 
 
-# --- Agent Nodes ---
 async def generate_impact_report_node(
     state: ImpactReportingAgentState,
 ) -> Dict[str, Any]:
     """Generates the AI-powered high-level impact summary."""
-    submission_id = state["submission_id"]
+    scan_id = state["scan_id"]
     llm_config_id = state["llm_config_id"]
     findings = state["findings"]
 
@@ -62,13 +61,15 @@ async def generate_impact_report_node(
         f"[{AGENT_NAME}] Generating LLM impact summary with {len(findings)} findings."
     )
 
-    # This check is now crucial. It receives the findings from the worker graph.
     if not findings:
         report = ImpactReport(
             executive_summary="No vulnerabilities were identified during the analysis.",
             vulnerability_categories=[],
             estimated_remediation_effort="N/A",
             required_architectural_changes=[],
+            vulnerability_overview="The scan completed successfully without finding any vulnerabilities.",
+            high_risk_findings_summary=[],
+            remediation_strategy="No remediation is necessary at this time."
         )
         return {"impact_report": report.model_dump()}
 
@@ -86,7 +87,6 @@ async def generate_impact_report_node(
     You are a Principal Security Architect creating an executive summary for a C-level audience and development team leads.
     Based on the following JSON list of findings, generate a detailed, multi-section impact report.
     The tone should be professional, clear, and strategic.
-
     <FINDINGS_DATA>
     {json.dumps(findings_for_prompt, indent=2)}
     </FINDINGS_DATA>
@@ -106,10 +106,12 @@ async def generate_impact_report_node(
         prompt, ImpactReport
     )
 
+    prompt_context_for_log = { "findings": findings_for_prompt }
     interaction = LLMInteraction(
-        submission_id=submission_id,
+        scan_id=scan_id,
         agent_name=AGENT_NAME,
-        prompt=prompt,
+        prompt_template_name="Impact Report Generation",
+        prompt_context=prompt_context_for_log,
         raw_response=llm_response.raw_output,
         parsed_output=llm_response.parsed_output.model_dump()
         if llm_response.parsed_output
@@ -122,7 +124,7 @@ async def generate_impact_report_node(
         total_tokens=llm_response.total_tokens,
     )
     async with AsyncSessionLocal() as db:
-        repo = SubmissionRepository(db)
+        repo = ScanRepository(db)
         await repo.save_llm_interaction(interaction_data=interaction)
 
     if llm_response.error or not llm_response.parsed_output:
@@ -130,7 +132,6 @@ async def generate_impact_report_node(
             "error": f"LLM failed to generate a valid impact report: {llm_response.error}"
         }
 
-    # Return as a dictionary, not a Pydantic model, for state consistency
     return {"impact_report": llm_response.parsed_output.model_dump()}
 
 
@@ -142,27 +143,21 @@ def generate_sarif_node(state: ImpactReportingAgentState) -> Dict[str, Any]:
         logger.warning(
             f"[{AGENT_NAME}] No findings available to generate SARIF report."
         )
-        # Create a valid, empty SARIF report if there are no findings
         return {"sarif_report": create_sarif_report([])}
 
     sarif_report = create_sarif_report(findings)
     return {"sarif_report": sarif_report}
 
 
-# --- Graph Builder ---
 def build_impact_reporting_agent_graph():
     """Builds the graph for the Impact Reporting Agent."""
     workflow = StateGraph(ImpactReportingAgentState)
 
-    # The nodes are independent and can be thought of as parallel
     workflow.add_node("generate_summary", generate_impact_report_node)
     workflow.add_node("generate_sarif", generate_sarif_node)
 
-    # We set up parallel branches from the entry point
     workflow.set_entry_point("generate_summary")
     workflow.add_edge("generate_summary", "generate_sarif")
-    # After SARIF generation, the graph ends. LangGraph automatically collects
-    # the state from all executed nodes.
     workflow.add_edge("generate_sarif", END)
 
     return workflow.compile()

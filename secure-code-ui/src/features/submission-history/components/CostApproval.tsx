@@ -1,49 +1,60 @@
 // secure-code-ui/src/features/submission-history/components/CostApproval.tsx
 
 import { CheckCircleOutlined, DollarCircleOutlined } from '@ant-design/icons';
-import { useMutation } from '@tanstack/react-query';
-import { Button, Card, Col, message, Row, Statistic, Tooltip, Typography } from 'antd';
-import { useState } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { Button, Card, Col, message, Popconfirm, Row, Space, Statistic, Tooltip, Typography } from 'antd';
+import React from 'react';
 
-import { approveSubmission } from '../../../shared/api/submissionService';
-import type { SubmissionHistoryItem } from '../../../shared/types/api';
+import { scanService } from '../../../shared/api/scanService';
+import type { ScanHistoryItem } from '../../../shared/types/api';
 
 const { Text } = Typography;
 
 interface CostApprovalProps {
-  submission: SubmissionHistoryItem;
-  onApprovalSuccess: () => void; // Callback to refetch the history list
+  scan: ScanHistoryItem;
+  onApprovalSuccess: () => void;
 }
 
-const CostApproval: React.FC<CostApprovalProps> = ({ submission, onApprovalSuccess }) => {
-  const [isApproving, setIsApproving] = useState(false);
+const CostApproval: React.FC<CostApprovalProps> = ({ scan, onApprovalSuccess }) => {
+  const queryClient = useQueryClient();
 
   const approveMutation = useMutation({
-    mutationFn: () => approveSubmission(submission.id),
+    mutationFn: () => scanService.approveScan(scan.id),
     onSuccess: () => {
-      message.success(`Submission ${submission.id} approved and queued for analysis.`);
+      message.success(`Scan for project approved and queued for analysis.`);
       onApprovalSuccess();
+      queryClient.invalidateQueries({ queryKey: ["projectHistory"] });
     },
     onError: (error) => {
       console.error("Approval failed", error);
       const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred.';
       message.error(`Approval failed: ${errorMessage}`);
-    },
-    onSettled: () => {
-      setIsApproving(false);
     }
   });
 
+  const cancelMutation = useMutation({
+    mutationFn: () => scanService.cancelScan(scan.id),
+    onSuccess: (data) => {
+      message.info(data.message || "Scan has been cancelled.");
+      onApprovalSuccess();
+      queryClient.invalidateQueries({ queryKey: ["projectHistory"] });
+    },
+    onError: (error) => {
+      console.error("Cancellation failed", error);
+      const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred.';
+      message.error(`Cancellation failed: ${errorMessage}`);
+    },
+  });
+
   const handleApprove = () => {
-    setIsApproving(true);
     approveMutation.mutate();
   };
 
-  if (!submission.estimated_cost) {
+  if (!scan.cost_details) {
     return <Text type="warning">Cost estimation data is missing.</Text>;
   }
 
-  const { input_cost, predicted_output_cost, total_estimated_cost } = submission.estimated_cost;
+  const { input_cost, predicted_output_cost, total_estimated_cost } = scan.cost_details;
 
   return (
     <Card
@@ -91,15 +102,28 @@ const CostApproval: React.FC<CostApprovalProps> = ({ submission, onApprovalSucce
           </Row>
         </Col>
         <Col span={8} style={{ textAlign: 'right', display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
-          <Button
-            type="primary"
-            icon={<CheckCircleOutlined />}
-            loading={isApproving}
-            onClick={handleApprove}
-            size="large"
-          >
-            Approve & Run Scan
-          </Button>
+          <Space>
+            <Popconfirm
+              title="Cancel Scan"
+              description="Are you sure you want to cancel this scan? This action cannot be undone."
+              onConfirm={() => cancelMutation.mutate()}
+              okText="Yes, Cancel"
+              cancelText="No"
+            >
+              <Button danger size="large" loading={cancelMutation.isPending}>
+                Cancel
+              </Button>
+            </Popconfirm>
+            <Button
+              type="primary"
+              icon={<CheckCircleOutlined />}
+              loading={approveMutation.isPending}
+              onClick={handleApprove}
+              size="large"
+            >
+              Approve & Run Scan
+            </Button>
+          </Space>
         </Col>
       </Row>
     </Card>
