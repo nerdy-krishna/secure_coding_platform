@@ -107,6 +107,18 @@ async def cancel_scan_analysis(
     await service.cancel_scan(scan_id, user)
     return {"message": "Scan has been cancelled successfully."}
 
+
+@router.post("/scans/{scan_id}/apply-fixes", status_code=status.HTTP_202_ACCEPTED, response_model=dict)
+async def apply_fixes(
+    scan_id: uuid.UUID,
+    user: db_models.User = Depends(current_active_user),
+    service: SubmissionService = Depends(get_scan_service),
+):
+    """Triggers the application of all suggested fixes for a completed 'AUDIT_AND_REMEDIATE' scan."""
+    await service.apply_fixes_for_scan(scan_id, user)
+    return {"message": "Fix application process initiated. The scan status will be updated upon completion."}
+
+
 @router.get("/scans/{scan_id}/result", response_model=api_models.AnalysisResultDetailResponse)
 async def get_scan_result_details(
     scan_id: uuid.UUID,

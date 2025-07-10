@@ -17,7 +17,6 @@ import {
   Typography,
 } from "antd";
 import React, { useEffect, useMemo, useState } from "react";
-import ReactDiffViewer from 'react-diff-viewer-continued';
 import { useNavigate, useParams } from "react-router-dom";
 import ResultsFileTree from "../../features/results-display/components/ResultsFileTree";
 import ScanSummary from '../../features/results-display/components/ScanSummary';
@@ -194,15 +193,11 @@ const AuditRunPage: React.FC = () => {
                     <Empty description="Select a file to see findings." style={{marginTop: 48}}/>
                     )}
                 </div>
-                 {selectedFinding && selectedFinding.fixes?.[0]?.original_snippet && (
-                    <Card size="small" title="Suggested Fix" style={{ marginTop: 16, flexShrink: 0 }}>
-                        <ReactDiffViewer 
-                            oldValue={selectedFinding.fixes[0].original_snippet} 
-                            newValue={selectedFinding.fixes[0].suggested_fix} 
-                            splitView={false} 
-                            hideLineNumbers={true}
-                            useDarkTheme={true}
-                        />
+                 {selectedFinding && (
+                    <Card size="small" title="Remediation Guidance" style={{ marginTop: 16, flexShrink: 0 }}>
+                        <Paragraph>
+                            {selectedFinding.remediation}
+                        </Paragraph>
                     </Card>
                 )}
             </Content>

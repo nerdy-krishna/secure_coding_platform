@@ -153,6 +153,52 @@ class SubmissionService:
 
         await self.repo.update_status(scan_id, "CANCELLED")
         logger.info(f"Scan {scan_id} has been cancelled by user {user.id}.")
+
+    async def apply_fixes_for_scan(self, scan_id: uuid.UUID, user: db_models.User) -> None:
+        """Applies all suggested and verified fixes for a completed AUDIT_AND_REMEDIATE scan."""
+        logger.info(f"User {user.id} initiating fix application for scan {scan_id}.")
+        scan = await self.repo.get_scan_with_details(scan_id)
+
+        if not scan or (scan.user_id != user.id and not user.is_superuser):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scan not found or not authorized.")
+
+        if scan.scan_type != "AUDIT_AND_REMEDIATE" or scan.status != "COMPLETED":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Fixes can only be applied to completed 'Audit & Remediate' scans."
+            )
+        
+        original_snapshot = next((s for s in scan.snapshots if s.snapshot_type == "ORIGINAL_SUBMISSION"), None)
+        if not original_snapshot:
+            raise HTTPException(status_code=500, detail="Original code snapshot not found.")
+
+        content_map = await self.repo.get_source_files_by_hashes(list(original_snapshot.file_map.values()))
+        live_codebase = {path: content_map.get(h, "") for path, h in original_snapshot.file_map.items()}
+
+        findings_with_fixes = [f for f in scan.findings if f.fixes]
+
+        for finding in findings_with_fixes:
+            fix_data = finding.fixes
+            original_snippet = fix_data.get("original_snippet")
+            new_code = fix_data.get("code")
+
+            if finding.file_path in live_codebase and original_snippet and new_code:
+                if original_snippet in live_codebase[finding.file_path]:
+                    live_codebase[finding.file_path] = live_codebase[finding.file_path].replace(original_snippet, new_code, 1)
+                    logger.debug(f"Applied fix for CWE-{finding.cwe} in {finding.file_path}")
+                else:
+                    logger.warning(f"Could not find snippet to apply fix for CWE-{finding.cwe} in {finding.file_path}")
+        
+        # Create a new snapshot with the updated code
+        new_hashes = await self.repo.get_or_create_source_files([
+            {"path": path, "content": content, "language": get_language_from_filename(path)} for path, content in live_codebase.items()
+        ])
+        
+        new_file_map = {path: file_hash for path, file_hash in zip(live_codebase.keys(), new_hashes)}
+        
+        await self.repo.create_code_snapshot(scan_id=scan.id, file_map=new_file_map, snapshot_type="POST_REMEDIATION")
+        await self.repo.update_status(scan_id, "REMEDIATION_COMPLETED")
+        logger.info(f"All fixes applied for scan {scan_id}. Status set to REMEDIATION_COMPLETED.")
     
     async def get_scan_result(self, scan_id: uuid.UUID, user: db_models.User) -> api_models.AnalysisResultDetailResponse:
         """

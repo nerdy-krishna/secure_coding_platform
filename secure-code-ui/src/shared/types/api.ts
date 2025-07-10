@@ -118,6 +118,18 @@ export interface PromptTemplateUpdate {
   template_text?: string;
 }
 
+// --- Submission Schemas (NEW) ---
+export type ScanType = "AUDIT" | "AUDIT_AND_REMEDIATE" | "REMEDIATE";
+
+export interface SubmissionFormValues {
+  project_name: string;
+  scan_type: ScanType;
+  repo_url?: string;
+  main_llm_config_id: string;
+  specialized_llm_config_id: string;
+  frameworks: string[];
+}
+
 export interface ScanResponse {
     scan_id: UUID;
     message: string;

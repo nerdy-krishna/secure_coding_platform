@@ -4,6 +4,7 @@ import {
   GithubOutlined,
   InboxOutlined,
   RobotOutlined,
+  SafetyCertificateOutlined,
   ToolOutlined,
   UploadOutlined,
 } from "@ant-design/icons";
@@ -17,7 +18,9 @@ import {
   Radio,
   Row,
   Select,
+  Space,
   Spin,
+  Tooltip,
   Typography,
   Upload,
   message,
@@ -29,21 +32,14 @@ import { AxiosError } from "axios";
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import FileTree from "../../features/submit-code/components/FileTree";
+import { frameworkService } from "../../shared/api/frameworkService";
 import { llmConfigService } from "../../shared/api/llmConfigService";
 import { scanService } from "../../shared/api/scanService";
-import type { LLMConfiguration } from "../../shared/types/api";
+import type { FrameworkRead, LLMConfiguration, SubmissionFormValues } from "../../shared/types/api";
 
 const { Dragger } = Upload;
 const { Title, Paragraph } = Typography;
 const { Option } = Select;
-
-interface SubmissionFormValues {
-  project_name: string;
-  scan_type: "audit" | "remediate";
-  repo_url?: string;
-  main_llm_config_id: string;
-  specialized_llm_config_id: string;
-}
 
 type SubmissionMode = "upload" | "repo" | "archive";
 
@@ -66,6 +62,15 @@ const SubmitCodePage: React.FC = () => {
   } = useQuery<LLMConfiguration[], Error>({
     queryKey: ["llmConfigs"],
     queryFn: llmConfigService.getLlmConfigs,
+  });
+
+  const {
+    data: frameworks,
+    isLoading: isLoadingFrameworks,
+    isError: isFrameworksError,
+  } = useQuery<FrameworkRead[], Error>({
+    queryKey: ["frameworks"],
+    queryFn: frameworkService.getFrameworks,
   });
 
   const getPathsFromUploadFiles = (files: UploadFile[]): string[] => {
@@ -161,7 +166,7 @@ const SubmitCodePage: React.FC = () => {
         "specialized_llm_config_id",
         values.specialized_llm_config_id,
       );
-      formData.append("frameworks", "OWASP ASVS v5.0");
+      formData.append("frameworks", values.frameworks.join(','));
 
       if (submissionMode === "upload") {
         const checkedFilePaths = new Set(treeCheckedKeys as string[]);
@@ -277,7 +282,7 @@ const SubmitCodePage: React.FC = () => {
           form={form}
           layout="vertical"
           onFinish={handleSubmit}
-          initialValues={{ scan_type: "audit" }}
+          initialValues={{ scan_type: "AUDIT" }}
         >
           <Form.Item name="project_name" label="Project Name" rules={[{ required: true, message: "Please enter a name for your project." }]}>
             <Input placeholder="e.g., My E-Commerce Website" />
@@ -306,12 +311,42 @@ const SubmitCodePage: React.FC = () => {
 
           <Form.Item name="scan_type" label="Scan Type" rules={[{ required: true }]}>
             <Radio.Group>
-              <Radio.Button value="audit">Audit Only</Radio.Button>
-              <Radio.Button value="remediate">Direct Remediation</Radio.Button>
+              <Tooltip title="Performs a security audit and generates a report of findings. No code will be changed.">
+                <Radio.Button value="AUDIT">Audit</Radio.Button>
+              </Tooltip>
+              <Tooltip title="Performs an audit and suggests code fixes for each finding, which you can apply later.">
+                <Radio.Button value="AUDIT_AND_REMEDIATE">Audit & Remediate</Radio.Button>
+              </Tooltip>
+              <Tooltip title="Performs an audit and automatically applies all generated code fixes.">
+                <Radio.Button value="REMEDIATE">Direct Remediation</Radio.Button>
+              </Tooltip>
             </Radio.Group>
           </Form.Item>
 
-           <Form.Item label="Submission Method" style={{ marginBottom: 0 }}>
+          <Form.Item
+            name="frameworks"
+            label={
+              <Space>
+                <SafetyCertificateOutlined />
+                Security Frameworks
+              </Space>
+            }
+            rules={[{ required: true, message: "Please select at least one framework."}]}
+          >
+            <Select
+              mode="multiple"
+              allowClear
+              placeholder="Select frameworks to audit against"
+              loading={isLoadingFrameworks}
+              disabled={isFrameworksError || isLoadingFrameworks}
+            >
+              {frameworks?.map((fw) => (
+                <Option key={fw.id} value={fw.name}>{fw.name}</Option>
+              ))}
+            </Select>
+          </Form.Item>
+
+          <Form.Item label="Submission Method" style={{ marginBottom: 0 }}>
             <Radio.Group onChange={handleSubmissionModeChange} value={submissionMode} optionType="button" buttonStyle="solid">
               <Radio.Button value="upload"><UploadOutlined /> Upload Files</Radio.Button>
               <Radio.Button value="archive"><FileZipOutlined /> Upload Archive</Radio.Button>
