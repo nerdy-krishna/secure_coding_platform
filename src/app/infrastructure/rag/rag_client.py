@@ -4,7 +4,8 @@ import logging
 import socket
 import requests
 from typing import List, Dict, Any, Optional
-from chromadb.api import ClientAPI
+from chromadb.api import ClientAPI, Where
+from chromadb.utils import embedding_functions
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +104,38 @@ class RAGService:
             self._client = None
             self._asvs_collection = None
             raise
+
+    def add(
+        self, documents: List[str], metadatas: List[Dict[str, Any]], ids: List[str]
+    ):
+        """Adds documents to the collection."""
+        if not self._asvs_collection:
+            raise ConnectionError("ChromaDB collection is not available.")
+        self._asvs_collection.add(
+            documents=documents, metadatas=metadatas, ids=ids
+        )
+
+    def get_by_framework(self, framework_name: str) -> Dict[str, Any]:
+        """Retrieves all documents for a given framework."""
+        if not self._asvs_collection:
+            raise ConnectionError("ChromaDB collection is not available.")
+        
+        where_filter: Where = {"framework_name": framework_name}
+        
+        # We need to fetch all documents, so we get the count first.
+        count = self._asvs_collection.count(where=where_filter)
+        if count == 0:
+            return {"ids": [], "documents": [], "metadatas": []}
+
+        return self._asvs_collection.get(
+            where=where_filter, limit=count, include=["metadatas", "documents"]
+        )
+
+    def delete(self, ids: List[str]):
+        """Deletes documents from the collection by their IDs."""
+        if not self._asvs_collection:
+            raise ConnectionError("ChromaDB collection is not available.")
+        self._asvs_collection.delete(ids=ids)
 
     def query_asvs(self, query_texts: List[str], n_results: int = 5) -> Dict[str, Any]:
         """Queries the ASVS collection."""

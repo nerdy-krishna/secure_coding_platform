@@ -84,7 +84,18 @@ export interface FrameworkAgentMappingUpdate {
   agent_ids: string[];
 }
 
-// --- Prompt Template Schemas (NEW) ---
+// --- RAG Management Schemas ---
+export interface RAGDocument {
+  id: string;
+  document: string;
+  metadata: Record<string, JsonValue>;
+}
+
+export interface RAGDocumentDeleteRequest {
+  document_ids: string[];
+}
+
+// --- Prompt Template Schemas ---
 export interface PromptTemplateBase {
   name: string;
   template_type: string;

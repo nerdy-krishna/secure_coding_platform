@@ -19,6 +19,7 @@ import SubmissionHistoryPage from "../pages/account/SubmissionHistoryPage";
 import UserProfilePage from "../pages/account/UserProfilePage";
 import FrameworkManagementPage from '../pages/admin/FrameworkManagementPage';
 import PromptManagementPage from '../pages/admin/PromptManagementPage';
+import RAGManagementPage from '../pages/admin/RAGManagementPage';
 import AnalysisResultsIndexPage from "../pages/analysis/AnalysisResultsIndexPage";
 import ExecutiveSummaryPage from "../pages/analysis/ExecutiveSummaryPage";
 import LlmLogViewerPage from '../pages/analysis/LlmLogViewerPage';
@@ -133,6 +134,7 @@ function AppContent() {
           <Route path="/account/settings/llm" element={<LLMSettingsPage />} />
           <Route path="/admin/frameworks" element={<FrameworkManagementPage />} />
           <Route path="/admin/prompts" element={<PromptManagementPage />} />
+          <Route path="/admin/rag" element={<RAGManagementPage />} />
         </Route>
 
         <Route path="/" element={<RootRedirector />} />

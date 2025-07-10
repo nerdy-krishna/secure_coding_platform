@@ -97,6 +97,10 @@ const DashboardLayout: React.FC<{ children?: React.ReactNode }> = ({
             <Link to="/admin/prompts">Prompts</Link>,
             "prompt_management_nav",
           ),
+          getItem(
+            <Link to="/admin/rag">RAG</Link>,
+            "rag_management_nav",
+          ),
         ]),
       );
     }
