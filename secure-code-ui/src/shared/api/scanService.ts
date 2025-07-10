@@ -108,4 +108,14 @@ export const scanService = {
     const response = await apiClient.post<{ message: string }>(`/scans/${scanId}/cancel`);
     return response.data;
   },
+
+  /**
+   * Triggers the application of all suggested fixes for a completed scan.
+   */
+  applyAllFixes: async (scanId: string): Promise<{ message: string }> => {
+    const response = await apiClient.post<{ message: string }>(
+      `/scans/${scanId}/apply-fixes`,
+    );
+    return response.data;
+  },
 };
