@@ -2,7 +2,7 @@
 
 from datetime import datetime
 import uuid
-from pydantic import UUID4, BaseModel, Field
+from pydantic import UUID4, BaseModel, Field, field_validator
 from typing import List, Optional, Dict, Any
 
 # === LLM Configuration Schemas (UPDATED) ===
@@ -146,6 +146,13 @@ class VulnerabilityFindingResponse(BaseModel):
     confidence: str
     references: List[str]
     fixes: List[FixSuggestionResponse] = []
+
+    @field_validator("fixes", mode="before")
+    @classmethod
+    def empty_list_for_none_fixes(cls, v: Any) -> Any:
+        if v is None:
+            return []
+        return v
 
     class Config:
         from_attributes = True
@@ -298,7 +305,7 @@ class SummaryResponse(BaseModel):
 
 
 class OverallRiskScoreResponse(BaseModel):
-    score: str = "N/A"
+    score: int = 0
     severity: str = "N/A"
 
     class Config:
@@ -320,6 +327,7 @@ class SubmittedFileReportItem(BaseModel):
 class SummaryReportResponse(BaseModel):
     submission_id: uuid.UUID
     project_name: Optional[str] = "N/A"
+    scan_type: str = "audit"
     primary_language: Optional[str] = "N/A"
     selected_frameworks: List[str] = []
     analysis_timestamp: Optional[datetime] = None
@@ -344,3 +352,38 @@ class AnalysisResultDetailResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class ScanResponse(BaseModel):
+    scan_id: uuid.UUID
+    message: str
+
+class ScanHistoryItem(BaseModel):
+    id: uuid.UUID
+    scan_type: str
+    status: str
+    created_at: datetime
+    completed_at: Optional[datetime] = None
+    cost_details: Optional[Dict[str, Any]] = None
+
+    class Config:
+        from_attributes = True
+
+class PaginatedScanHistoryResponse(BaseModel):
+    items: List[ScanHistoryItem]
+    total: int
+
+class ProjectHistoryItem(BaseModel):
+    id: uuid.UUID
+    name: str
+    repository_url: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    scans: List[ScanHistoryItem] = []
+
+    class Config:
+        from_attributes = True
+
+class PaginatedProjectHistoryResponse(BaseModel):
+    items: List[ProjectHistoryItem]
+    total: int

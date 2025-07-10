@@ -1,5 +1,3 @@
-# src/app/workers/consumer.py
-
 import pika
 import os
 import logging
@@ -7,41 +5,33 @@ import logging.config
 import asyncio
 import json
 import threading
-import time  # For sleep in retry logic and initial loop spin-up
+import time
 from typing import Callable, Optional
 
-from langchain_core.runnables import RunnableConfig  # Added import
-import uuid  # Import uuid
+from langchain_core.runnables import RunnableConfig
+import uuid
 from dotenv import load_dotenv
 
-# Import the worker graph and its state
 from app.infrastructure.workflows.worker_graph import (
     get_workflow,
     WorkerState,
     close_workflow_resources,
 )
 from app.config.config import settings
-
-# Import the new logging config and context variable
 from app.config.logging_config import LOGGING_CONFIG, correlation_id_var
 
-# Ensure necessary imports for type hints used in this file
-from pika.adapters.blocking_connection import BlockingChannel  # For Pika channel type
+from pika.adapters.blocking_connection import BlockingChannel
 from pika.spec import (
     BasicProperties,
     Basic,
-)  # For Pika message properties and delivery info (Basic.Deliver)
-from pika.exceptions import AMQPConnectionError  # For specific Pika exception handling
+)
+from pika.exceptions import AMQPConnectionError
 
-# Apply the logging configuration at the start of the worker process
 logging.config.dictConfig(LOGGING_CONFIG)
 logging.captureWarnings(True)
 logger = logging.getLogger(__name__)
 
 logging.getLogger("pika").setLevel(logging.WARNING)
-# You can add more libraries here if needed, e.g.:
-# logging.getLogger("aio_pika").setLevel(logging.WARNING) # If you use aio_pika directly and it's noisy
-# logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING) # To quiet SQLAlchemy engine logs
 
 load_dotenv()
 
@@ -53,39 +43,30 @@ RABBITMQ_PASS = os.getenv("RABBITMQ_DEFAULT_PASS", "YourStrongRabbitPassword!")
 _async_loop: Optional[asyncio.AbstractEventLoop] = None
 _event_loop_thread: Optional[threading.Thread] = None
 _pika_connection: Optional[pika.BlockingConnection] = None
-_pika_channel: Optional[BlockingChannel] = None  # Changed to BlockingChannel
+_pika_channel: Optional[BlockingChannel] = None
 
-_stop_event = threading.Event()  # For signaling threads to stop
-
-# WorkerGraphState TypedDict is removed as we will use CoordinatorState directly.
-
-# --- Asyncio Task Execution ---
-
+_stop_event = threading.Event()
 
 async def run_graph_task_wrapper(initial_state: WorkerState, delivery_tag: int):
     """
     Gets the compiled workflow and executes it with a checkpointer configuration.
     """
     global _pika_channel, _pika_connection
-    submission_id_uuid = initial_state["submission_id"]
-    submission_id_str_log = str(submission_id_uuid)
+    scan_id_uuid = initial_state["scan_id"]
+    scan_id_str_log = str(scan_id_uuid)
     logger.info(
-        f"ASYNC WRAPPER: Starting/Resuming worker_workflow for submission_id: {submission_id_str_log}"
+        f"ASYNC WRAPPER: Starting/Resuming worker_workflow for scan_id: {scan_id_str_log}"
     )
 
     success = False
 
     try:
-        # Get the compiled workflow instance asynchronously. This will now work.
         worker_workflow = await get_workflow()
-
-        # The checkpointer uses this thread_id to save/load the state
-        config: RunnableConfig = {"configurable": {"thread_id": submission_id_str_log}}
-
+        config: RunnableConfig = {"configurable": {"thread_id": scan_id_str_log}}
         final_graph_state = await worker_workflow.ainvoke(initial_state, config)
 
         logger.info(
-            f"ASYNC WRAPPER: worker_workflow completed for SID: {submission_id_str_log}."
+            f"ASYNC WRAPPER: worker_workflow completed for SID: {scan_id_str_log}."
         )
 
         if final_graph_state and not final_graph_state.get("error_message"):
@@ -107,7 +88,6 @@ async def run_graph_task_wrapper(initial_state: WorkerState, delivery_tag: int):
         success = False
 
     if _pika_connection and _pika_connection.is_open:
-
         def pika_finalize_message():
             try:
                 if success:
@@ -120,7 +100,7 @@ async def run_graph_task_wrapper(initial_state: WorkerState, delivery_tag: int):
                         )
             except Exception as e_pika_finalize:
                 logger.error(
-                    f"PIKA FINALIZE: Exception for SID {submission_id_str_log}: {e_pika_finalize}",
+                    f"PIKA FINALIZE: Exception for SID {scan_id_str_log}: {e_pika_finalize}",
                     exc_info=True,
                 )
 
@@ -134,7 +114,6 @@ def schedule_task_on_async_loop(target_coroutine_func: Callable, *args, **kwargs
     """
     global _async_loop
     if _async_loop and _async_loop.is_running():
-        # Wrapper to call create_task from within the loop's thread
         def _scheduler():
             asyncio.create_task(target_coroutine_func(*args, **kwargs))
             logger.debug(
@@ -151,10 +130,6 @@ def schedule_task_on_async_loop(target_coroutine_func: Callable, *args, **kwargs
         )
 
 
-# In src/app/workers/consumer.py
-# Replace your existing pika_message_callback function with this correct version
-
-
 def pika_message_callback(
     ch: BlockingChannel,
     method: Basic.Deliver,
@@ -164,64 +139,55 @@ def pika_message_callback(
     """Pika callback for received messages from all queues."""
     try:
         message_data = json.loads(body.decode("utf-8"))
-        submission_id_str = message_data.get("submission_id")
+        scan_id_str = message_data.get("scan_id")
 
-        # --- START: CORRELATION ID HANDLING ---
-        # Extract correlation_id from the message, or create a new one if missing
         corr_id = message_data.get("correlation_id") or str(uuid.uuid4())
-        # Set it in the context variable for all subsequent logs in this task
         correlation_id_var.set(corr_id)
-        # --- END: CORRELATION ID HANDLING ---
-
+        
         logger.info(
             f"PIKA CB: Received message from queue '{method.routing_key}'. Delivery Tag: {method.delivery_tag}."
         )
 
-        if not submission_id_str:
-            logger.error("PIKA CB: Invalid message - no submission_id.")
+        if not scan_id_str:
+            logger.error("PIKA CB: Invalid message - no scan_id.")
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
 
-        submission_uuid = uuid.UUID(submission_id_str)
+        scan_uuid = uuid.UUID(scan_id_str)
 
-        # FIX: Explicitly initialize the full state with default values to satisfy Pylance
         initial_worker_state: WorkerState = {
-            "submission_id": submission_uuid,
+            "scan_id": scan_uuid,
             "llm_config_id": None,
             "files": None,
-            "workflow_mode": "audit",  # This will be overridden below
+            "workflow_mode": "audit",
             "excluded_files": None,
-            "remediation_categories": None,  # Initialize new field
+            "remediation_categories": None,
             "repository_map": None,
             "asvs_analysis": None,
             "findings": [],
             "impact_report": None,
             "sarif_report": None,
             "error_message": None,
-            "current_submission_status": None,
+            "current_scan_status": None,
         }
 
-        # --- UPDATED ROUTING LOGIC ---
         queue_name = method.routing_key
         if queue_name == settings.RABBITMQ_REMEDIATION_QUEUE:
             logger.info(
-                f"PIKA CB: Received REMEDIATION trigger for submission_id: {submission_uuid}"
+                f"PIKA CB: Received REMEDIATION trigger for scan_id: {scan_uuid}"
             )
             initial_worker_state["workflow_mode"] = "remediate"
-            # Extract categories from message, default to empty list if not present
             initial_worker_state["remediation_categories"] = message_data.get(
                 "categories_to_fix", []
             )
         elif queue_name == settings.RABBITMQ_APPROVAL_QUEUE:
             logger.info(
-                f"PIKA CB: Resuming ANALYSIS for submission_id: {submission_uuid}"
+                f"PIKA CB: Resuming ANALYSIS for scan_id: {scan_uuid}"
             )
-            # This is for resuming an audit, so workflow_mode can remain 'audit'
-            # Or be set explicitly depending on desired resume logic. Let's assume it resumes the audit.
             initial_worker_state["workflow_mode"] = "audit"
-        else:  # RABBITMQ_SUBMISSION_QUEUE
+        else:
             logger.info(
-                f"PIKA CB: Starting new ANALYSIS for submission_id: {submission_uuid}"
+                f"PIKA CB: Starting new ANALYSIS for scan_id: {scan_uuid}"
             )
             initial_worker_state["workflow_mode"] = "audit"
 
@@ -244,28 +210,26 @@ def asyncio_thread_worker_target():
     logger.info("ASYNCIO THREAD: Event loop created and set for this thread.")
     try:
         logger.info("ASYNCIO THREAD: Starting loop.run_forever().")
-        _async_loop.run_forever()  # Loop runs until loop.stop() is called
+        _async_loop.run_forever()
     except KeyboardInterrupt:
         logger.info(
             "ASYNCIO THREAD: KeyboardInterrupt received in asyncio thread (should be handled by main Pika thread)."
         )
     finally:
         logger.info("ASYNCIO THREAD: loop.run_forever() exited.")
-        # Gracefully shutdown any remaining tasks
         if (
             _async_loop.is_running()
-        ):  # Should be false if stop() was called and processed
+        ):
             logger.warning(
                 "ASYNCIO THREAD: Loop still shows as running after run_forever exited; attempting to stop again."
             )
             _async_loop.call_soon_threadsafe(
                 _async_loop.stop
-            )  # Should have been called already
+            )
 
         try:
             logger.info("ASYNCIO THREAD: Cleaning up remaining tasks...")
             all_tasks = asyncio.all_tasks(loop=_async_loop)
-            # Filter out the current task if it's part of all_tasks to avoid self-cancellation issues
             current_task = asyncio.current_task(loop=_async_loop)
             tasks_to_cancel = [t for t in all_tasks if t is not current_task]
 
@@ -275,7 +239,6 @@ def asyncio_thread_worker_target():
                 )
                 for task in tasks_to_cancel:
                     task.cancel()
-                # Wait for tasks to cancel
                 _async_loop.run_until_complete(
                     asyncio.gather(*tasks_to_cancel, return_exceptions=True)
                 )
@@ -291,9 +254,6 @@ def asyncio_thread_worker_target():
         if not _async_loop.is_closed():
             _async_loop.close()
         logger.info("ASYNCIO THREAD: Event loop closed. Thread exiting.")
-
-
-# In src/app/workers/consumer.py
 
 
 def start_worker_consumer():
@@ -365,16 +325,14 @@ def start_worker_consumer():
             break
         time.sleep(retry_delay)
 
-    # --- FINAL SHUTDOWN LOGIC ---
     logger.info("WORKER: Finalizing shutdown...")
     if _async_loop and _async_loop.is_running():
         logger.info("WORKER: Closing workflow resources...")
-        # Schedule the resource cleanup in the async loop
         future = asyncio.run_coroutine_threadsafe(
             close_workflow_resources(), _async_loop
         )
         try:
-            future.result(timeout=5)  # Wait for cleanup to finish
+            future.result(timeout=5)
         except Exception as e:
             logger.error(f"WORKER: Error during workflow resource cleanup: {e}")
 

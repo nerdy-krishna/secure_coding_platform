@@ -1,245 +1,165 @@
 # src/app/infrastructure/database/models.py
 import uuid
+import sqlalchemy as sa
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 
-from sqlalchemy import String, Text, DateTime, ForeignKey, Integer, JSON, Float, func
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy import String, Text, DateTime, ForeignKey, Integer, JSON, func, DECIMAL, BIGINT
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
 from sqlalchemy.orm import relationship, Mapped, mapped_column
-from sqlalchemy.dialects.postgresql import JSONB
-
+from fastapi_users.db import SQLAlchemyBaseUserTable
 from app.infrastructure.database.database import Base
 
-# Import the base table from the main fastapi-users library
-from fastapi_users.db import SQLAlchemyBaseUserTable
-
-
-# The User model now uses the built-in base table and is correctly
-# typed with an 'int' primary key.
 class User(SQLAlchemyBaseUserTable[int], Base):
     __tablename__ = "user"
-
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    email: Mapped[str] = mapped_column(
-        String(length=320), unique=True, index=True, nullable=False
-    )
+    email: Mapped[str] = mapped_column(String(length=320), unique=True, index=True, nullable=False)
+    
+    projects: Mapped[List["Project"]] = relationship("Project", back_populates="user")
+    scans: Mapped[List["Scan"]] = relationship("Scan", back_populates="user")
+    chat_sessions: Mapped[List["ChatSession"]] = relationship("ChatSession", back_populates="user")
 
-    submissions: Mapped[List["CodeSubmission"]] = relationship(
-        "CodeSubmission", back_populates="user"
-    )
+class Project(Base):
+    __tablename__ = "projects"
+    id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    repository_url: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
+    user: Mapped["User"] = relationship(back_populates="projects")
+    scans: Mapped[List["Scan"]] = relationship("Scan", back_populates="project", cascade="all, delete-orphan")
+
+class Scan(Base):
+    __tablename__ = "scans"
+    id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), nullable=False)
+    parent_scan_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("scans.id"))
+    scan_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="QUEUED")
+    main_llm_config_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("llm_configurations.id"))
+    specialized_llm_config_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("llm_configurations.id"))
+    frameworks: Mapped[Optional[List[str]]] = mapped_column(JSONB)
+    cost_details: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB)
+    sarif_report: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB)
+    impact_report: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB)
+    summary: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    project: Mapped["Project"] = relationship(back_populates="scans")
+    user: Mapped["User"] = relationship(back_populates="scans")
+    events: Mapped[List["ScanEvent"]] = relationship("ScanEvent", back_populates="scan", cascade="all, delete-orphan")
+    findings: Mapped[List["Finding"]] = relationship("Finding", back_populates="scan", cascade="all, delete-orphan")
+    snapshots: Mapped[List["CodeSnapshot"]] = relationship("CodeSnapshot", back_populates="scan", cascade="all, delete-orphan")
+    llm_interactions: Mapped[List["LLMInteraction"]] = relationship("LLMInteraction", back_populates="scan")
+    risk_score: Mapped[Optional[int]] = mapped_column(Integer)
+
+class ScanEvent(Base):
+    __tablename__ = "scan_events"
+    id: Mapped[int] = mapped_column(BIGINT, sa.Identity(always=True), primary_key=True)
+    scan_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("scans.id"), nullable=False)
+    stage_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    scan: Mapped["Scan"] = relationship(back_populates="events")
+
+class SourceCodeFile(Base):
+    __tablename__ = "source_code_files"
+    hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    language: Mapped[str] = mapped_column(String(50), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+class CodeSnapshot(Base):
+    __tablename__ = "code_snapshots"
+    id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    scan_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("scans.id"), nullable=False)
+    snapshot_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    file_map: Mapped[Dict[str, str]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    scan: Mapped["Scan"] = relationship(back_populates="snapshots")
+
+class Finding(Base):
+    __tablename__ = "findings"
+    id: Mapped[int] = mapped_column(BIGINT, sa.Identity(always=True), primary_key=True)
+    scan_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("scans.id"), nullable=False)
+    file_path: Mapped[str] = mapped_column(Text, nullable=False)
+    line_number: Mapped[Optional[int]] = mapped_column(Integer)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    severity: Mapped[Optional[str]] = mapped_column(String(50))
+    remediation: Mapped[Optional[str]] = mapped_column(Text)
+    cwe: Mapped[Optional[str]] = mapped_column(String(50))
+    confidence: Mapped[Optional[str]] = mapped_column(String(50))
+    references: Mapped[Optional[List[str]]] = mapped_column(JSONB)
+    fixes: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB)
+
+    scan: Mapped["Scan"] = relationship(back_populates="findings")
 
 class LLMConfiguration(Base):
     __tablename__ = "llm_configurations"
-
-    # --- Existing Columns ---
-    id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    name: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
-    provider: Mapped[str] = mapped_column(String, nullable=False)
-    model_name: Mapped[str] = mapped_column(String, nullable=False)
-    encrypted_api_key: Mapped[str] = mapped_column(String, nullable=False)
-
-    # --- ADDED/UPDATED COLUMNS for Dynamic Costing & Tokenizing ---
-
-    tokenizer_encoding: Mapped[str] = mapped_column(
-        String(100),
-        nullable=False,
-        server_default="cl100k_base",
-        comment="The name of the tiktoken tokenizer, e.g., 'cl100k_base' or 'o200k_base'.",
-    )
-
-    input_cost_per_million: Mapped[float] = mapped_column(
-        Float,
-        nullable=False,
-        server_default="0.0",
-        comment="Cost per 1 million input tokens in USD.",
-    )
-    output_cost_per_million: Mapped[float] = mapped_column(
-        Float,
-        nullable=False,
-        server_default="0.0",
-        comment="Cost per 1 million output tokens in USD.",
-    )
-
-    # --- End New Columns ---
-
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
-    )
-
-
-class CodeSubmission(Base):
-    __tablename__ = "code_submissions"
-    id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    project_name: Mapped[str] = mapped_column(String, default="Untitled Project")
-    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), nullable=False)
-    repo_url: Mapped[Optional[str]] = mapped_column(String)
-    status: Mapped[str] = mapped_column(
-        String,
-        default="Pending",
-        comment="Submission status, e.g., Submitted, Pending Cost Approval, Analyzing, Remediating, Completed, Failed, Cancelled",
-    )
-    workflow_mode: Mapped[Optional[str]] = mapped_column(
-        String,
-        nullable=True,
-        comment="The selected workflow mode, e.g., 'audit' or 'audit_and_remediate'.",
-    )
-    submitted_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    frameworks: Mapped[Optional[List[str]]] = mapped_column(JSON)
-    excluded_files: Mapped[Optional[List[str]]] = mapped_column(
-        JSONB,
-        nullable=True,
-        comment="A list of file paths to exclude from the analysis.",
-    )
-    main_llm_config_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        ForeignKey("llm_configurations.id")
-    )
-    specialized_llm_config_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        ForeignKey("llm_configurations.id")
-    )
-    estimated_cost: Mapped[Optional[Dict[str, Any]]] = mapped_column(
-        JSONB,
-        nullable=True,
-        comment="Stores the estimated cost breakdown for the analysis.",
-    )
-    impact_report: Mapped[Optional[Dict[str, Any]]] = mapped_column(
-        JSONB,
-        nullable=True,
-        comment="Stores the JSON output of the AI-generated impact report.",
-    )
-    risk_score: Mapped[Optional[int]] = mapped_column(
-        Integer,
-        nullable=True,
-        comment="Calculated risk score based on finding severity.",
-    )
-    fixed_code_map: Mapped[Optional[Dict[str, Any]]] = mapped_column(
-        JSONB, nullable=True, comment="Stores the file content after remediation."
-    )
-    sarif_report: Mapped[Optional[Dict[str, Any]]] = mapped_column(
-        JSONB,
-        nullable=True,
-        comment="Stores the generated SARIF report as a JSON object.",
-    )
-    user: Mapped["User"] = relationship(back_populates="submissions")
-    files: Mapped[List["SubmittedFile"]] = relationship(
-        "SubmittedFile", back_populates="submission", cascade="all, delete-orphan"
-    )
-    findings: Mapped[List["VulnerabilityFinding"]] = relationship(
-        "VulnerabilityFinding",
-        back_populates="submission",
-        cascade="all, delete-orphan",
-    )
-    llm_interactions: Mapped[List["LLMInteraction"]] = relationship(
-        "LLMInteraction", back_populates="submission", cascade="all, delete-orphan"
-    )
-
-
-class SubmittedFile(Base):
-    __tablename__ = "submitted_files"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    submission_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("code_submissions.id"), nullable=False
-    )
-    file_path: Mapped[str] = mapped_column(String, nullable=False)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    language: Mapped[str] = mapped_column(String, default="unknown")
-    analysis_summary: Mapped[Optional[str]] = mapped_column(Text)
-    identified_components: Mapped[Optional[List[str]]] = mapped_column(JSON)
-    asvs_analysis: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON)
-
-    submission: Mapped["CodeSubmission"] = relationship(
-        "CodeSubmission", back_populates="files"
-    )
-
-
-class VulnerabilityFinding(Base):
-    __tablename__ = "vulnerability_findings"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    submission_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("code_submissions.id"), nullable=False
-    )
-    file_path: Mapped[str] = mapped_column(String, nullable=False)
-    title: Mapped[str] = mapped_column(String, server_default="Untitled Finding", nullable=False)
-    cwe: Mapped[str] = mapped_column(String)
-    description: Mapped[str] = mapped_column(Text)
-    severity: Mapped[str] = mapped_column(String)
-    line_number: Mapped[int] = mapped_column(Integer)
-    remediation: Mapped[str] = mapped_column(Text)
-    confidence: Mapped[str] = mapped_column(String)
-    references: Mapped[Optional[List[str]]] = mapped_column(JSON)
-
-    submission: Mapped["CodeSubmission"] = relationship(
-        "CodeSubmission", back_populates="findings"
-    )
-    fixes: Mapped[List["FixSuggestion"]] = relationship(
-        "FixSuggestion", back_populates="finding"
-    )
-
-
-class FixSuggestion(Base):
-    __tablename__ = "fix_suggestions"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    finding_id: Mapped[int] = mapped_column(
-        ForeignKey("vulnerability_findings.id"), nullable=False
-    )
-    description: Mapped[str] = mapped_column(Text)
-    original_snippet: Mapped[str] = mapped_column(Text, nullable=False, server_default='') # MODIFIED
-    suggested_fix: Mapped[str] = mapped_column(Text)
-
-    finding: Mapped["VulnerabilityFinding"] = relationship(
-        "VulnerabilityFinding", back_populates="fixes"
-    )
-
+    id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    encrypted_api_key: Mapped[str] = mapped_column(Text, nullable=False)
+    input_cost_per_million: Mapped[float] = mapped_column(DECIMAL(10, 6), nullable=False, server_default="0.0")
+    output_cost_per_million: Mapped[float] = mapped_column(DECIMAL(10, 6), nullable=False, server_default="0.0")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 class LLMInteraction(Base):
     __tablename__ = "llm_interactions"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    submission_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        ForeignKey("code_submissions.id")
-    )
-    file_path: Mapped[Optional[str]] = mapped_column(String)
-    agent_name: Mapped[str] = mapped_column(String)
-    prompt: Mapped[str] = mapped_column(Text)
-    raw_response: Mapped[str] = mapped_column(Text)
-    parsed_output: Mapped[Optional[Dict]] = mapped_column(JSON)
+    id: Mapped[int] = mapped_column(BIGINT, sa.Identity(always=True), primary_key=True)
+    scan_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("scans.id"))
+    chat_message_id: Mapped[Optional[int]] = mapped_column(ForeignKey("chat_messages.id"))
+    agent_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    file_path: Mapped[Optional[str]] = mapped_column(Text)
+    prompt_template_name: Mapped[Optional[str]] = mapped_column(String(100))
+    prompt_context: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB)
+    raw_response: Mapped[str] = mapped_column(Text, nullable=False)
+    parsed_output: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB)
     error: Mapped[Optional[str]] = mapped_column(Text)
-    cost: Mapped[Optional[float]] = mapped_column(Float)
-    input_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    output_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    total_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    timestamp: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    cost: Mapped[Optional[float]] = mapped_column(DECIMAL(10, 8))
+    input_tokens: Mapped[Optional[int]] = mapped_column(Integer)
+    output_tokens: Mapped[Optional[int]] = mapped_column(Integer)
+    total_tokens: Mapped[Optional[int]] = mapped_column(Integer)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    
+    scan: Mapped[Optional["Scan"]] = relationship(back_populates="llm_interactions")
+    chat_message: Mapped[Optional["ChatMessage"]] = relationship(back_populates="llm_interaction")
 
-    submission: Mapped["CodeSubmission"] = relationship(
-        "CodeSubmission", back_populates="llm_interactions"
-    )
+class ChatSession(Base):
+    __tablename__ = "chat_sessions"
+    id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), nullable=False)
+    project_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("projects.id"))
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
+    user: Mapped["User"] = relationship(back_populates="chat_sessions")
+    messages: Mapped[List["ChatMessage"]] = relationship("ChatMessage", back_populates="session", cascade="all, delete-orphan")
 
-class RepositoryMapCache(Base):
-    __tablename__ = "repository_map_cache"
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+    id: Mapped[int] = mapped_column(BIGINT, sa.Identity(always=True), primary_key=True)
+    session_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("chat_sessions.id"), nullable=False)
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    
+    session: Mapped["ChatSession"] = relationship(back_populates="messages")
+    llm_interaction: Mapped[Optional["LLMInteraction"]] = relationship("LLMInteraction", back_populates="chat_message")
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-
-    # A hash representing the state of all files in the submission.
-    # We'll use this as the cache key.
-    codebase_hash: Mapped[str] = mapped_column(
-        String, unique=True, index=True, nullable=False
-    )
-
-    # The generated RepositoryMap, stored as a JSON object.
-    repository_map: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False)
-
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+class PromptTemplate(Base):
+    __tablename__ = "prompt_templates"
+    id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    agent_name: Mapped[Optional[str]] = mapped_column(String(100))
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    template_text: Mapped[str] = mapped_column(Text, nullable=False)

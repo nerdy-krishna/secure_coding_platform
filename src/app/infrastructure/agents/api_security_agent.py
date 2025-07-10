@@ -1,12 +1,11 @@
-# src/app/infrastructure/agents/api_security_agent.py
-
 import logging
+import uuid
 from typing import Dict, Any, cast, List
 
 from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
 
-from app.infrastructure.database.repositories.submission_repo import SubmissionRepository
+from app.infrastructure.database.repositories.scan_repo import ScanRepository
 from app.infrastructure.database import AsyncSessionLocal
 from app.infrastructure.llm_client import get_llm_client, AgentLLMResult
 from app.infrastructure.rag.rag_client import get_rag_service
@@ -18,14 +17,10 @@ from app.core.schemas import (
     VulnerabilityFinding,
 )
 
-# --- Agent-specific Configuration ---
 AGENT_NAME = "ApiSecurityAgent"
 AGENT_PROMPT_NAME = "API Security"
 AGENT_DOMAIN_QUERY = "API security, REST, GraphQL, API keys, rate limiting, API authentication, API authorization, endpoint security, JWT, OAuth, mass assignment"
 logger = logging.getLogger(__name__)
-
-
-# --- Pydantic models for structured LLM responses ---
 
 
 class RemediateResponse(BaseModel):
@@ -49,19 +44,19 @@ async def analysis_node(state: SpecializedAgentState) -> Dict[str, Any]:
     A single, unified node that performs analysis based on the workflow_mode.
     It can either run a read-only audit or find and fix vulnerabilities.
     """
-    submission_id = state["submission_id"]
+    scan_id = state["scan_id"]
     filename = state["filename"]
     code_bundle = state["code_snippet"]
     mode = state["workflow_mode"]
 
     logger.info(
         f"[{AGENT_NAME}] Assessing file in '{mode}' mode.",
-        extra={"submission_id": str(submission_id), "source_file_path": filename, "mode": mode}
+        extra={"scan_id": str(scan_id), "source_file_path": filename, "mode": mode}
     )
 
     rag_service = get_rag_service()
     if not rag_service:
-        logger.error(f"[{AGENT_NAME}] Failed to get RAG service.", extra={"submission_id": str(submission_id), "source_file_path": filename})
+        logger.error(f"[{AGENT_NAME}] Failed to get RAG service.", extra={"scan_id": str(scan_id), "source_file_path": filename})
         return {"error": "Failed to get RAG service."}
 
     retrieved_guidelines = rag_service.query_asvs(
@@ -73,7 +68,6 @@ async def analysis_node(state: SpecializedAgentState) -> Dict[str, Any]:
     else:
         context_str = "No relevant security guidelines found."
 
-    # Select the appropriate prompt and response model based on the workflow mode
     if mode == "audit":
         prompt = f"""
         You are a security expert specializing in {AGENT_PROMPT_NAME}.
@@ -91,7 +85,7 @@ async def analysis_node(state: SpecializedAgentState) -> Dict[str, Any]:
         Respond ONLY with a valid JSON object that conforms to the specified schema.
         """
         response_model = AuditResponse
-    else:  # mode == "remediate"
+    else:
         prompt = f"""
         You are a security expert specializing in {AGENT_PROMPT_NAME}.
         Your task is to find vulnerabilities and provide complete, secure code replacements.
@@ -113,26 +107,27 @@ async def analysis_node(state: SpecializedAgentState) -> Dict[str, Any]:
 
     llm_config_id = state.get("llm_config_id")
     if not llm_config_id:
-        logger.error(f"[{AGENT_NAME}] LLM configuration ID not provided.", extra={"submission_id": str(submission_id)})
+        logger.error(f"[{AGENT_NAME}] LLM configuration ID not provided.", extra={"scan_id": str(scan_id)})
         return {"error": "LLM configuration ID not provided."}
 
     llm_client = await get_llm_client(llm_config_id=llm_config_id)
     if not llm_client:
-        logger.error(f"[{AGENT_NAME}] Failed to initialize LLM client.", extra={"submission_id": str(submission_id)})
+        logger.error(f"[{AGENT_NAME}] Failed to initialize LLM client.", extra={"scan_id": str(scan_id)})
         return {"error": "Failed to initialize LLM client."}
 
     llm_response: AgentLLMResult = await llm_client.generate_structured_output(
         prompt, response_model
     )
 
-    # Log the entire interaction for traceability
     parsed_output_dict = (
         llm_response.parsed_output.model_dump() if llm_response.parsed_output else None
     )
+    prompt_context_for_log = { "code_bundle": code_bundle, "security_guidelines": context_str }
     interaction = LLMInteraction(
-        submission_id=submission_id,
+        scan_id=scan_id,
         agent_name=AGENT_NAME,
-        prompt=prompt,
+        prompt_template_name=AGENT_PROMPT_NAME,
+        prompt_context=prompt_context_for_log,
         raw_response=llm_response.raw_output,
         parsed_output=parsed_output_dict,
         error=llm_response.error,
@@ -143,17 +138,16 @@ async def analysis_node(state: SpecializedAgentState) -> Dict[str, Any]:
         total_tokens=llm_response.total_tokens,
     )
     async with AsyncSessionLocal() as db:
-        repo = SubmissionRepository(db)
+        repo = ScanRepository(db)
         await repo.save_llm_interaction(interaction_data=interaction)
 
     if llm_response.error or not llm_response.parsed_output:
         logger.error(
             f"[{AGENT_NAME}] LLM failed to produce valid analysis for file.",
-            extra={"submission_id": str(submission_id), "source_file_path": filename, "error": llm_response.error}
+            extra={"scan_id": str(scan_id), "source_file_path": filename, "error": llm_response.error}
         )
         return {"error": f"LLM failed to produce valid analysis: {llm_response.error}"}
 
-    # Process the response based on the mode
     findings = []
     fixes = []
     if mode == "audit":
@@ -161,7 +155,7 @@ async def analysis_node(state: SpecializedAgentState) -> Dict[str, Any]:
         for finding in audit_result.findings:
             finding.file_path = filename
             findings.append(finding)
-    else:  # mode == "remediate"
+    else:
         remediate_result = cast(RemediateResponse, llm_response.parsed_output)
         for result in remediate_result.results:
             result.finding.file_path = filename
@@ -172,7 +166,7 @@ async def analysis_node(state: SpecializedAgentState) -> Dict[str, Any]:
 
     logger.info(
         f"[{AGENT_NAME}] Completed analysis for file.",
-        extra={"submission_id": str(submission_id), "source_file_path": filename, "findings_found": len(findings), "fixes_found": len(fixes)}
+        extra={"scan_id": str(scan_id), "source_file_path": filename, "findings_found": len(findings), "fixes_found": len(fixes)}
     )
     return {"findings": findings, "fixes": fixes}
 

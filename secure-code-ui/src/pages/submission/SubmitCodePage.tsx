@@ -1,5 +1,4 @@
-// secure-code-ui/src/pages/submission/SubmitCodePage.tsx
-
+// src/pages/submission/SubmitCodePage.tsx
 import {
   FileZipOutlined,
   GithubOutlined,
@@ -10,45 +9,40 @@ import {
 } from "@ant-design/icons";
 import { useQuery } from "@tanstack/react-query";
 import {
-  Alert,
   Button,
   Card,
-  Checkbox,
   Col,
   Form,
   Input,
   Radio,
-  type RadioChangeEvent,
   Row,
   Select,
   Spin,
   Typography,
   Upload,
   message,
+  type RadioChangeEvent,
+  type UploadFile,
 } from "antd";
 import { type RcFile } from "antd/es/upload";
 import { AxiosError } from "axios";
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import type { LLMConfiguration } from "../..//shared/types/api";
-import { llmConfigService } from "../../shared/api/llmConfigService";
-import { submissionService } from "../../shared/api/submissionService";
-
 import FileTree from "../../features/submit-code/components/FileTree";
+import { llmConfigService } from "../../shared/api/llmConfigService";
+import { scanService } from "../../shared/api/scanService";
+import type { LLMConfiguration } from "../../shared/types/api";
 
 const { Dragger } = Upload;
-const { Title, Paragraph, Text } = Typography;
+const { Title, Paragraph } = Typography;
 const { Option } = Select;
-
-
 
 interface SubmissionFormValues {
   project_name: string;
+  scan_type: "audit" | "remediate";
+  repo_url?: string;
   main_llm_config_id: string;
   specialized_llm_config_id: string;
-  repo_url?: string;
-  frameworks: string[];
-  workflow_mode: "audit" | "audit_and_remediate";
 }
 
 type SubmissionMode = "upload" | "repo" | "archive";
@@ -56,12 +50,11 @@ type SubmissionMode = "upload" | "repo" | "archive";
 const SubmitCodePage: React.FC = () => {
   const [form] = Form.useForm();
   const navigate = useNavigate();
-  const [fileList, setFileList] = useState<RcFile[]>([]);
-  const [archiveFileList, setArchiveFileList] = useState<RcFile[]>([]);
+  const [fileList, setFileList] = useState<UploadFile[]>([]);
+  const [archiveFileList, setArchiveFileList] = useState<UploadFile[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submissionMode, setSubmissionMode] = useState<SubmissionMode>("upload");
   const [treeCheckedKeys, setTreeCheckedKeys] = useState<React.Key[]>([]);
-
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
   const [previewFilePaths, setPreviewFilePaths] = useState<string[]>([]);
   const [isPreviewComplete, setIsPreviewComplete] = useState(false);
@@ -70,25 +63,27 @@ const SubmitCodePage: React.FC = () => {
     data: llmConfigs,
     isLoading: isLoadingLLMs,
     isError: isLlmError,
-    error: llmError,
   } = useQuery<LLMConfiguration[], Error>({
     queryKey: ["llmConfigs"],
     queryFn: llmConfigService.getLlmConfigs,
   });
 
-  const getPathsFromRcFiles = (files: RcFile[]): string[] => {
-      return files.map(file => file.webkitRelativePath || file.name);
-  }
+  const getPathsFromUploadFiles = (files: UploadFile[]): string[] => {
+    return files.map((file) => (file.originFileObj as RcFile)?.webkitRelativePath || file.name);
+  };
 
   useEffect(() => {
-    const allFileKeys = submissionMode === 'upload' ? getPathsFromRcFiles(fileList) : previewFilePaths;
+    const allFileKeys =
+      submissionMode === "upload"
+        ? getPathsFromUploadFiles(fileList)
+        : previewFilePaths;
     setTreeCheckedKeys(allFileKeys);
   }, [fileList, previewFilePaths, submissionMode]);
 
   const handleSubmissionModeChange = (e: RadioChangeEvent) => {
     const newMode = e.target.value as SubmissionMode;
     setSubmissionMode(newMode);
-    form.resetFields(['repo_url']);
+    form.resetFields(["repo_url"]);
     setFileList([]);
     setArchiveFileList([]);
     setPreviewFilePaths([]);
@@ -99,29 +94,29 @@ const SubmitCodePage: React.FC = () => {
     setIsPreviewLoading(true);
     try {
       let fetchedPaths: string[] = [];
-      if (submissionMode === 'repo') {
-        const repoUrl = form.getFieldValue('repo_url');
+      if (submissionMode === "repo") {
+        const repoUrl = form.getFieldValue("repo_url");
         if (!repoUrl || !repoUrl.trim()) {
-            message.error("Please enter a valid repository URL.");
-            setIsPreviewLoading(false);
-            return;
+          message.error("Please enter a valid repository URL.");
+          setIsPreviewLoading(false);
+          return;
         }
-        fetchedPaths = await submissionService.previewGitRepo(repoUrl);
-      } else if (submissionMode === 'archive') {
+        fetchedPaths = await scanService.previewGitRepo(repoUrl);
+      } else if (submissionMode === "archive") {
         if (archiveFileList.length === 0) {
-            message.error("Please upload an archive file.");
-            setIsPreviewLoading(false);
-            return;
+          message.error("Please upload an archive file.");
+          setIsPreviewLoading(false);
+          return;
         }
-        fetchedPaths = await submissionService.previewArchive(archiveFileList[0]);
+        fetchedPaths = await scanService.previewArchive(archiveFileList[0] as RcFile);
       }
-
-      setPreviewFilePaths(fetchedPaths); // Store the fetched strings directly
+      setPreviewFilePaths(fetchedPaths);
       setIsPreviewComplete(true);
     } catch (err) {
-      const errorMessage = err instanceof AxiosError 
-        ? err.response?.data?.detail || err.message 
-        : 'An unknown error occurred while fetching files.';
+      const errorMessage =
+        err instanceof AxiosError
+          ? err.response?.data?.detail || err.message
+          : "An unknown error occurred while fetching files.";
       message.error(`Failed to fetch files: ${errorMessage}`);
     } finally {
       setIsPreviewLoading(false);
@@ -129,9 +124,8 @@ const SubmitCodePage: React.FC = () => {
   };
 
   const handleTreeCheck = (
-    checked: React.Key[] | { checked: React.Key[]; halfChecked: React.Key[] },
+    checked: React.Key[] | { checked: React.Key[]; halfChecked: React.Key[] }
   ) => {
-    // The onCheck callback can provide an object, so we extract just the checked keys array.
     if (Array.isArray(checked)) {
       setTreeCheckedKeys(checked);
     } else {
@@ -145,68 +139,65 @@ const SubmitCodePage: React.FC = () => {
 
   const handleSubmit = async (values: SubmissionFormValues) => {
     if (submissionMode === "upload" && fileList.length === 0) {
-      message.error("Please upload at least one file for direct analysis.");
+      message.error("Please upload at least one file or folder.");
       return;
     }
     if (submissionMode === "archive" && archiveFileList.length === 0) {
       message.error("Please upload an archive file.");
       return;
     }
-    if (
-      submissionMode === "repo" &&
-      (!values.repo_url || values.repo_url.trim() === "")
-    ) {
-      message.error("Please provide a repository URL to analyze.");
+    if (submissionMode === "repo" && (!values.repo_url || values.repo_url.trim() === "")) {
+      message.error("Please provide a repository URL.");
       return;
     }
 
     setIsSubmitting(true);
     try {
       const formData = new FormData();
-
-      const allFileKeys = new Set(
-        submissionMode === 'upload' ? getPathsFromRcFiles(fileList) : previewFilePaths
+      formData.append("project_name", values.project_name);
+      formData.append("scan_type", values.scan_type);
+      formData.append("main_llm_config_id", values.main_llm_config_id);
+      formData.append(
+        "specialized_llm_config_id",
+        values.specialized_llm_config_id,
       );
-      const checkedFileKeys = new Set(treeCheckedKeys);
-      const excludedFiles: string[] = [];
-      allFileKeys.forEach(key => {
-        if (!checkedFileKeys.has(key)) {
-            excludedFiles.push(key as string);
-        }
-      });
-      formData.append("excluded_files", excludedFiles.join(","));
+      formData.append("frameworks", "OWASP ASVS v5.0");
 
       if (submissionMode === "upload") {
-        fileList.forEach((file) => formData.append("files", file));
+        const checkedFilePaths = new Set(treeCheckedKeys as string[]);
+        const filesToSubmit = fileList.filter((file) =>
+          checkedFilePaths.has((file.originFileObj as RcFile)?.webkitRelativePath || file.name)
+        );
+
+        if (filesToSubmit.length === 0) {
+          message.error("Please select at least one file for analysis.");
+          setIsSubmitting(false);
+          return;
+        }
+        
+        filesToSubmit.forEach((file) => {
+          if (file.originFileObj) {
+            formData.append("files", file.originFileObj as RcFile);
+          }
+        });
+
       } else if (submissionMode === "repo" && values.repo_url) {
         formData.append("repo_url", values.repo_url.trim());
       } else if (submissionMode === "archive" && archiveFileList.length > 0) {
-        formData.append("archive_file", archiveFileList[0]);
+        if(archiveFileList[0].originFileObj) {
+            formData.append("archive_file", archiveFileList[0].originFileObj as RcFile);
+        }
       }
-      
-      const selectedFrameworks = values.frameworks.filter(Boolean);
-      if (selectedFrameworks.length === 0) {
-        message.error("Please select at least one security framework.");
-        setIsSubmitting(false);
-        return;
-      }
-      formData.append("project_name", values.project_name);
-      formData.append("frameworks", selectedFrameworks.join(","));
-      formData.append("main_llm_config_id", values.main_llm_config_id);
-      formData.append("specialized_llm_config_id", values.specialized_llm_config_id);
-      formData.append("workflow_mode", values.workflow_mode);
 
-      const response = await submissionService.submitCode(formData);
+      const response = await scanService.createScan(formData);
       message.success(response.message);
       navigate("/account/history");
     } catch (error: unknown) {
       console.error("Submission failed:", error);
       let errorMessage = "An unknown error occurred during submission.";
-
       if (error instanceof AxiosError && error.response?.data) {
-        const responseData = error.response.data as { detail?: string | { msg: string, loc: (string | number)[] }[] };
-        const detail = responseData.detail;
-        if (typeof detail === 'string') {
+        const detail = (error.response.data as { detail?: string | {msg: string, loc: (string | number)[]}[] }).detail;
+        if (typeof detail === "string") {
           errorMessage = detail;
         } else if (Array.isArray(detail)) {
           errorMessage = detail
@@ -221,206 +212,137 @@ const SubmitCodePage: React.FC = () => {
       setIsSubmitting(false);
     }
   };
-
-  const renderContent = () => {
-    // Git Repo Mode
-    if (submissionMode === 'repo') {
-        return isPreviewComplete ? (
-            <>
-              {/* This Form.Item is hidden but keeps the repo_url value in the form state for submission */}
-              <Form.Item name="repo_url" style={{ display: 'none' }}>
-                <Input />
-              </Form.Item>
-              <FileTree files={previewFilePaths} checkedKeys={treeCheckedKeys} onCheck={handleTreeCheck} />
-            </>
-        ) : (
-            <Form.Item name="repo_url" label="Repository URL" style={{ marginTop: 16 }} rules={[{ required: true, message: "Please enter a valid repository URL."}, { type: "url", message: "The input is not a valid URL!"}]}>
-                <Input placeholder="e.g., https://github.com/user/repo.git" />
-            </Form.Item>
-        );
-    }
-    // Archive Mode
-    if (submissionMode === 'archive') {
-        return isPreviewComplete ? (
-            <FileTree files={previewFilePaths} checkedKeys={treeCheckedKeys} onCheck={handleTreeCheck} />
-        ) : (
-            <Form.Item label="Upload Archive File" style={{ marginTop: 16 }}>
-              <Dragger name="archiveFile" multiple={false} maxCount={1} accept=".zip,.tar.gz,.tgz,.tar.bz2,.tbz2,.tar.xz,.txz,.tar" beforeUpload={(file) => { if (!isArchiveFile(file.name)) { message.error(`File '${file.name}' is not a recognized archive type.`); return Upload.LIST_IGNORE; } setArchiveFileList([file]); return false; }} onRemove={() => setArchiveFileList([])} fileList={archiveFileList}>
-                <p className="ant-upload-drag-icon"><FileZipOutlined /></p>
-                <p className="ant-upload-text">Click or drag a single archive file to this area</p>
-              </Dragger>
-            </Form.Item>
-        );
-    }
-    // Upload Mode
-    return (
-        <>
-          <Form.Item label="Upload Source Code" style={{ marginTop: 16 }}>
-            <Dragger 
-                name="files" 
-                multiple={true} 
-                itemRender={() => null} 
-                beforeUpload={(_, newFileList) => { const filtered = newFileList.filter(f => !isArchiveFile(f.name)); if (filtered.length !== newFileList.length) { message.error("Archive files are not allowed here. Use the 'Upload Archive' tab."); } setFileList(prev => [...prev, ...filtered]); return false; }} 
-                onRemove={(file) => setFileList(p => p.filter(i => i.uid !== file.uid))}>
-                 <p className="ant-upload-drag-icon"><InboxOutlined /></p>
-                <p className="ant-upload-text">Click or drag files or folders to this area to upload</p>
-            </Dragger>
-          </Form.Item>
-          {/* This line is now corrected to pass string[] */}
-          <FileTree files={getPathsFromRcFiles(fileList)} checkedKeys={treeCheckedKeys} onCheck={handleTreeCheck}/>
-        </>
-    );
-  }
   
+  const renderContent = () => {
+    if (submissionMode === "repo") {
+      return (
+        <Form.Item name="repo_url" label="Repository URL" style={{ marginTop: 16 }} rules={[{ required: true, message: "Please enter a valid repository URL."}, { type: "url", message: "The input is not a valid URL!"}]}>
+          <Input placeholder="e.g., https://github.com/user/repo.git" />
+        </Form.Item>
+      );
+    }
+    if (submissionMode === "archive") {
+      return (
+        <Form.Item label="Upload Archive File" style={{ marginTop: 16 }}>
+          <Dragger
+             name="archiveFile"
+             multiple={false}
+             maxCount={1}
+             accept=".zip,.tar.gz,.tgz,.tar.bz2,.tbz2,.tar.xz,.txz,.tar"
+             fileList={archiveFileList}
+             onChange={(info) => {
+                // Allow only one file and check type
+                const latestFile = info.fileList.slice(-1);
+                if (latestFile[0] && !isArchiveFile(latestFile[0].name)) {
+                    message.error(`File '${latestFile[0].name}' is not a recognized archive type.`);
+                    setArchiveFileList([]);
+                } else {
+                    setArchiveFileList(latestFile);
+                }
+             }}
+             beforeUpload={() => false} // Prevent auto-upload
+          >
+            <p className="ant-upload-drag-icon"><FileZipOutlined /></p>
+            <p className="ant-upload-text">Click or drag a single archive file to this area</p>
+          </Dragger>
+        </Form.Item>
+      );
+    }
+    return (
+      <Form.Item label="Upload Source Code Files" style={{ marginTop: 16 }}>
+        <Dragger
+          name="files"
+          multiple={true}
+          fileList={fileList}
+          onChange={(info) => {
+            setFileList(info.fileList);
+          }}
+          beforeUpload={() => false}
+        >
+          <p className="ant-upload-drag-icon"><InboxOutlined /></p>
+          <p className="ant-upload-text">Click or drag files or a folder to this area to upload</p>
+        </Dragger>
+      </Form.Item>
+    );
+  };
 
   return (
     <Spin spinning={isSubmitting || isPreviewLoading} tip={isPreviewLoading ? "Fetching file list..." : "Submitting your code for analysis..."}>
       <Card>
         <Title level={2}>Submit Code for Analysis</Title>
         <Paragraph>
-          Select your submission method, choose your frameworks and AI models,
-          and submit your code for a comprehensive security analysis.
+          Create or select a project, choose a scan type, and submit your code for a comprehensive security analysis.
         </Paragraph>
         <Form
-           form={form}
+          form={form}
           layout="vertical"
           onFinish={handleSubmit}
-          initialValues={{ frameworks: ["OWASP ASVS v5.0"], workflow_mode: "audit" }}
+          initialValues={{ scan_type: "audit" }}
         >
-          <Form.Item
-            name="project_name"
-            label="Project Name"
-            rules={[{ required: true, message: "Please enter a name for your project." }]}
-          >
+          <Form.Item name="project_name" label="Project Name" rules={[{ required: true, message: "Please enter a name for your project." }]}>
             <Input placeholder="e.g., My E-Commerce Website" />
           </Form.Item>
 
-          <Form.Item name="workflow_mode" label="Workflow Type" rules={[{required: true}]}>
-            <Radio.Group>
-              <Radio.Button value="audit">Audit Only</Radio.Button>
-              <Radio.Button value="audit_and_remediate">Audit & Remediate</Radio.Button>
-            </Radio.Group>
-          </Form.Item>
-
-          {isLlmError && (
-            <Alert
-               message="Error"
-              description={`Could not fetch LLM configurations: ${llmError.message}. Please try again later.`}
-              type="error"
-              showIcon
-              style={{ marginBottom: 24 }}
-            />
-          )}
-
-          <Row gutter={24}>
-            {/* LLM Selection */}
+           <Row gutter={24}>
             <Col xs={24} md={12}>
-              <Form.Item
-                name="main_llm_config_id"
-                label={
-                  <>
-                    <RobotOutlined style={{ marginRight: 8 }} />
-                    Main Analysis LLM
-                  </>
-                }
-                rules={[
-                  {
-                    required: true,
-                    message: "Please select the main analysis LLM.",
-                  },
-                ]}
-              >
-                <Select
-                  loading={isLoadingLLMs}
-                  placeholder="Select an LLM for primary analysis"
-                  disabled={isLoadingLLMs || isLlmError}
-                >
+              <Form.Item name="main_llm_config_id" label={<><RobotOutlined style={{ marginRight: 8 }} /> Main Analysis LLM</>} rules={[{ required: true, message: "Please select the main analysis LLM." }]}>
+                <Select loading={isLoadingLLMs} placeholder="Select an LLM for primary analysis" disabled={isLoadingLLMs || isLlmError}>
                   {llmConfigs?.map((config) => (
-                    <Option key={config.id} value={config.id}>
-                      {config.name} ({config.provider})
-                    </Option>
+                    <Option key={config.id} value={config.id}>{config.name} ({config.provider})</Option>
                   ))}
                 </Select>
               </Form.Item>
             </Col>
             <Col xs={24} md={12}>
-              <Form.Item
-                name="specialized_llm_config_id"
-                label={
-                  <>
-                    <ToolOutlined style={{ marginRight: 8 }} />
-                    Specialized Agent LLM
-                  </>
-                }
-                rules={[
-                  {
-                    required: true,
-                    message: "Please select the LLM for specialized agents.",
-                  },
-                ]}
-              >
-                <Select
-                  loading={isLoadingLLMs}
-                  placeholder="Select an LLM for specialized agents"
-                  disabled={isLoadingLLMs || isLlmError}
-                >
+              <Form.Item name="specialized_llm_config_id" label={<><ToolOutlined style={{ marginRight: 8 }} /> Specialized Agent LLM</>} rules={[{ required: true, message: "Please select the LLM for specialized agents."}]}>
+                <Select loading={isLoadingLLMs} placeholder="Select an LLM for specialized agents" disabled={isLoadingLLMs || isLlmError}>
                   {llmConfigs?.map((config) => (
-                    <Option key={config.id} value={config.id}>
-                      {config.name} ({config.provider})
-                    </Option>
+                    <Option key={config.id} value={config.id}>{config.name} ({config.provider})</Option>
                   ))}
                 </Select>
               </Form.Item>
             </Col>
           </Row>
 
-          <Form.Item
-            label="Security Framework"
-          >
-            <Form.Item
-              name={["frameworks", 0]}
-              valuePropName="checked"
-              noStyle
-              getValueFromEvent={(e) =>
-                e.target.checked ? "OWASP ASVS v5.0" : false
-              }
-            >
-              <Checkbox defaultChecked disabled>
-                OWASP ASVS v5.0
-              </Checkbox>
-            </Form.Item>
-            <Text type="secondary" style={{ display: "block", marginTop: 8 }}>
-              (More frameworks will be available soon)
-            </Text>
-          </Form.Item>
-
-          <Form.Item label="Submission Method" style={{ marginBottom: 0 }}>
-            <Radio.Group onChange={handleSubmissionModeChange} value={submissionMode} optionType="button" buttonStyle="solid">
-                <Radio.Button value="upload"><UploadOutlined /> Upload Files</Radio.Button>
-                <Radio.Button value="archive"><FileZipOutlined /> Upload Archive</Radio.Button>
-                <Radio.Button value="repo"><GithubOutlined /> Git Repository</Radio.Button>
+          <Form.Item name="scan_type" label="Scan Type" rules={[{ required: true }]}>
+            <Radio.Group>
+              <Radio.Button value="audit">Audit Only</Radio.Button>
+              <Radio.Button value="remediate">Direct Remediation</Radio.Button>
             </Radio.Group>
           </Form.Item>
 
+           <Form.Item label="Submission Method" style={{ marginBottom: 0 }}>
+            <Radio.Group onChange={handleSubmissionModeChange} value={submissionMode} optionType="button" buttonStyle="solid">
+              <Radio.Button value="upload"><UploadOutlined /> Upload Files</Radio.Button>
+              <Radio.Button value="archive"><FileZipOutlined /> Upload Archive</Radio.Button>
+              <Radio.Button value="repo"><GithubOutlined /> Git Repository</Radio.Button>
+            </Radio.Group>
+           </Form.Item>
+
           {renderContent()}
 
+          {(submissionMode === 'repo' || submissionMode === 'archive') && !isPreviewComplete && (
+            <Button block onClick={handleFetchPreview} loading={isPreviewLoading} style={{ marginTop: 16 }}>
+              Preview Files
+            </Button>
+          )}
+
+          {(submissionMode === 'upload' && fileList.length > 0) || isPreviewComplete ? (
+            <div style={{ marginTop: 16 }}>
+              <FileTree files={submissionMode === 'upload' ? getPathsFromUploadFiles(fileList) : previewFilePaths} checkedKeys={treeCheckedKeys} onCheck={handleTreeCheck}/>
+            </div>
+          ) : null}
+
           <Form.Item style={{ marginTop: 24 }}>
-          {submissionMode !== 'upload' && !isPreviewComplete ? (
-              <Button type="default" size="large" block onClick={handleFetchPreview} loading={isPreviewLoading}>
-                Fetch Files for Selection
-              </Button>
-            ) : (
-              <Button type="primary" htmlType="submit" loading={isSubmitting} disabled={isLoadingLLMs || isLlmError} size="large" block>
-                Start Analysis
-              </Button>
-            )}
+            <Button type="primary" htmlType="submit" loading={isSubmitting} disabled={isLoadingLLMs || isLlmError} size="large" block>
+              Start Scan
+            </Button>
             {isPreviewComplete && (
-                <Button type="link" onClick={() => { setIsPreviewComplete(false); setPreviewFilePaths([]); }} style={{marginTop: '10px'}}>
+                <Button type="link" onClick={() => { setIsPreviewComplete(false); setPreviewFilePaths([]); }} style={{ marginTop: '10px' }} block>
                     Change Repository/Archive
                 </Button>
             )}
           </Form.Item>
-          {/* --- END: DYNAMIC BUTTONS --- */}
         </Form>
       </Card>
     </Spin>
