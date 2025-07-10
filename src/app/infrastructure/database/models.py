@@ -156,10 +156,36 @@ class ChatMessage(Base):
     session: Mapped["ChatSession"] = relationship(back_populates="messages")
     llm_interaction: Mapped[Optional["LLMInteraction"]] = relationship("LLMInteraction", back_populates="chat_message")
 
+class Framework(Base):
+    __tablename__ = "frameworks"
+    id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    agents: Mapped[List["Agent"]] = relationship(
+        secondary="framework_agent_mappings", back_populates="frameworks"
+    )
+
+class Agent(Base):
+    __tablename__ = "agents"
+    id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    domain_query: Mapped[str] = mapped_column(Text, nullable=False)
+    frameworks: Mapped[List["Framework"]] = relationship(
+        secondary="framework_agent_mappings", back_populates="agents"
+    )
+
+class FrameworkAgentMapping(Base):
+    __tablename__ = "framework_agent_mappings"
+    framework_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("frameworks.id"), primary_key=True)
+    agent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agents.id"), primary_key=True)
+
+
 class PromptTemplate(Base):
     __tablename__ = "prompt_templates"
     id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    template_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True, server_default="QUICK_AUDIT")
     agent_name: Mapped[Optional[str]] = mapped_column(String(100))
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     template_text: Mapped[str] = mapped_column(Text, nullable=False)

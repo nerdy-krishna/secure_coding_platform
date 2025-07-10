@@ -14,6 +14,9 @@ from starlette.responses import JSONResponse
 
 from app.api.v1.routers.projects import router as projects_router
 from app.api.v1.routers.admin import llm_router
+from app.api.v1.routers.admin_frameworks import framework_router
+from app.api.v1.routers.admin_agents import agent_router
+from app.api.v1.routers.admin_prompts import prompt_router
 from app.infrastructure.auth.backend import auth_backend
 from app.infrastructure.auth.core import fastapi_users
 from app.infrastructure.auth.schemas import UserCreate, UserRead, UserUpdate
@@ -139,6 +142,21 @@ app.include_router(projects_router, prefix="/api/v1", tags=["Submissions"])
 # Router for managing LLM Configurations
 app.include_router(
     llm_router, prefix="/api/v1/admin", tags=["Admin: LLM Configurations"]
+)
+
+# Router for managing Frameworks
+app.include_router(
+    framework_router, prefix="/api/v1/admin", tags=["Admin: Frameworks"]
+)
+
+# Router for managing Agents
+app.include_router(
+    agent_router, prefix="/api/v1/admin", tags=["Admin: Agents"]
+)
+
+# Router for managing Prompt Templates
+app.include_router(
+    prompt_router, prefix="/api/v1/admin", tags=["Admin: Prompt Templates"]
 )
 
 

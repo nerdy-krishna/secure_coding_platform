@@ -89,7 +89,14 @@ const DashboardLayout: React.FC<{ children?: React.ReactNode }> = ({
             <Link to="/account/settings/llm">LLM Settings</Link>,
             "llm_settings_nav",
           ),
-          // Future admin links can be added here
+          getItem(
+            <Link to="/admin/frameworks">Frameworks</Link>,
+            "framework_management_nav",
+          ),
+          getItem(
+            <Link to="/admin/prompts">Prompts</Link>,
+            "prompt_management_nav",
+          ),
         ]),
       );
     }
