@@ -118,6 +118,11 @@ class FrameworkAgentMappingUpdate(BaseModel):
     agent_ids: List[uuid.UUID]
 
 
+# --- RAG Management Schemas (NEW) ---
+class RAGDocumentDeleteRequest(BaseModel):
+    document_ids: List[str]
+
+
 # --- Prompt Template Schemas (NEW) ---
 class PromptTemplateBase(BaseModel):
     name: str = Field(..., description="The unique name for the prompt template.")

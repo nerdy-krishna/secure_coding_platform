@@ -17,6 +17,7 @@ from app.api.v1.routers.admin import llm_router
 from app.api.v1.routers.admin_frameworks import framework_router
 from app.api.v1.routers.admin_agents import agent_router
 from app.api.v1.routers.admin_prompts import prompt_router
+from app.api.v1.routers.admin_rag import rag_router
 from app.infrastructure.auth.backend import auth_backend
 from app.infrastructure.auth.core import fastapi_users
 from app.infrastructure.auth.schemas import UserCreate, UserRead, UserUpdate
@@ -157,6 +158,11 @@ app.include_router(
 # Router for managing Prompt Templates
 app.include_router(
     prompt_router, prefix="/api/v1/admin", tags=["Admin: Prompt Templates"]
+)
+
+# Router for managing RAG
+app.include_router(
+    rag_router, prefix="/api/v1/admin", tags=["Admin: RAG Management"]
 )
 
 
