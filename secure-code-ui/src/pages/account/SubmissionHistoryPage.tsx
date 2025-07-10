@@ -3,6 +3,7 @@ import {
     CheckCircleFilled,
     CloseCircleOutlined,
     ExclamationCircleOutlined,
+    FileSearchOutlined,
     HistoryOutlined,
     ProjectOutlined,
     RightOutlined,
@@ -69,7 +70,7 @@ const ScanListItem: React.FC<{ scan: ScanHistoryItem; onApprovalSuccess: () => v
     
     // Always point to the generic results page router
     const resultPath = `/analysis/results/${scan.id}`;
-
+    const logsPath = `/scans/${scan.id}/llm-logs`; // New logs path
     return (
       <List.Item style={{ padding: '16px 8px', borderBottom: '1px solid #f0f0f0', display: 'block' }}>
         <Row align="middle" justify="space-between" style={{ width: '100%' }}>
@@ -88,18 +89,26 @@ const ScanListItem: React.FC<{ scan: ScanHistoryItem; onApprovalSuccess: () => v
                 </Tag>
             </Col>
             <Col xs={12} sm={6} md={8} style={{ textAlign: 'right' }}>
-                {isCompleted ? (
-                    <Link to={resultPath}>
-                        <Button type="primary" size="small" icon={<RightOutlined />}>View Report</Button>
+                <Space>
+                    <Link to={logsPath}>
+                        <Button size="small" icon={<FileSearchOutlined />}>View Logs</Button>
                     </Link>
-                ) : (
-                    <Button size="small" disabled icon={<RightOutlined />}>
-                        {isPendingApproval ? "Approve Below" : "View Report"}
-                    </Button>
-                )}
+                    {isCompleted ?
+                    (
+                        <Link to={resultPath}>
+                            <Button type="primary" size="small" icon={<RightOutlined />}>View Report</Button>
+                        </Link>
+                    ) : (
+            
+                        <Button size="small" disabled icon={<RightOutlined />}>
+                            {isPendingApproval ? "Approve Below" : "View Report"}
+                        </Button>
+                    )}
+                </Space>
             </Col>
         </Row>
-        {isPendingApproval && (
+  
+      {isPendingApproval && (
             <CostApproval scan={scan} onApprovalSuccess={onApprovalSuccess} />
         )}
       </List.Item>

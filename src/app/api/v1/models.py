@@ -74,6 +74,75 @@ class LLMConfigurationRead(LLMConfigurationBase):
         from_attributes = True
 
 
+# --- Agent Schemas (NEW) ---
+class AgentBase(BaseModel):
+    name: str
+    description: str
+    domain_query: str
+
+class AgentCreate(AgentBase):
+    pass
+
+class AgentUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    domain_query: Optional[str] = None
+
+class AgentRead(AgentBase):
+    id: uuid.UUID
+
+    class Config:
+        from_attributes = True
+
+# --- Framework Schemas (NEW) ---
+class FrameworkBase(BaseModel):
+    name: str = Field(..., description="The unique name of the security framework (e.g., 'OWASP ASVS v5.0').")
+    description: str = Field(..., description="A brief description of the framework.")
+
+class FrameworkCreate(FrameworkBase):
+    pass
+
+class FrameworkUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+class FrameworkRead(FrameworkBase):
+    id: uuid.UUID
+    agents: List[AgentRead] = []
+
+    class Config:
+        from_attributes = True
+
+# --- Framework-Agent Mapping Schema (NEW) ---
+class FrameworkAgentMappingUpdate(BaseModel):
+    agent_ids: List[uuid.UUID]
+
+
+# --- Prompt Template Schemas (NEW) ---
+class PromptTemplateBase(BaseModel):
+    name: str = Field(..., description="The unique name for the prompt template.")
+    template_type: str = Field(..., description="The type of template (e.g., 'QUICK_AUDIT', 'DETAILED_REMEDIATION').")
+    agent_name: Optional[str] = Field(None, description="The name of the agent this prompt is for.")
+    version: int = Field(1, description="The version of the prompt template.")
+    template_text: str = Field(..., description="The content of the prompt template.")
+
+class PromptTemplateCreate(PromptTemplateBase):
+    pass
+
+class PromptTemplateUpdate(BaseModel):
+    name: Optional[str] = None
+    template_type: Optional[str] = None
+    agent_name: Optional[str] = None
+    version: Optional[int] = None
+    template_text: Optional[str] = None
+
+class PromptTemplateRead(PromptTemplateBase):
+    id: uuid.UUID
+
+    class Config:
+        from_attributes = True
+
+
 # --- Request Models (EXISTING, MERGED & UPDATED) ---
 
 

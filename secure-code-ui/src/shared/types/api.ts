@@ -55,6 +55,58 @@ export interface LLMConfigurationCreate {
   output_cost_per_million: number;
 }
 
+// --- Agent & Framework Schemas (NEW) ---
+export interface AgentRead {
+  id: string;
+  name: string;
+  description: string;
+  domain_query: string;
+}
+
+export interface FrameworkBase {
+  name: string;
+  description: string;
+}
+
+export type FrameworkCreate = FrameworkBase;
+
+export interface FrameworkUpdate {
+  name?: string;
+  description?: string;
+}
+
+export interface FrameworkRead extends FrameworkBase {
+  id: string;
+  agents: AgentRead[];
+}
+
+export interface FrameworkAgentMappingUpdate {
+  agent_ids: string[];
+}
+
+// --- Prompt Template Schemas (NEW) ---
+export interface PromptTemplateBase {
+  name: string;
+  template_type: string;
+  agent_name?: string | null;
+  version: number;
+  template_text: string;
+}
+
+export interface PromptTemplateRead extends PromptTemplateBase {
+  id: string;
+}
+
+export type PromptTemplateCreate = PromptTemplateBase;
+
+export interface PromptTemplateUpdate {
+  name?: string;
+  template_type?: string;
+  agent_name?: string | null;
+  version?: number;
+  template_text?: string;
+}
+
 export interface ScanResponse {
     scan_id: UUID;
     message: string;
@@ -177,6 +229,16 @@ export interface PaginatedProjectHistoryResponse {
     total: number;
 }
 
+// Defines a type for any valid JSON value, improving type safety over 'any'
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+
 export interface LLMInteractionResponse {
   id: number;
   scan_id?: string;
@@ -187,4 +249,8 @@ export interface LLMInteractionResponse {
   input_tokens?: number;
   output_tokens?: number;
   total_tokens?: number;
+  prompt_template_name?: string | null;
+  prompt_context?: Record<string, JsonValue> | null;
+  parsed_output?: Record<string, JsonValue> | null;
+  error?: string | null;
 }

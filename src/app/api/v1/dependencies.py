@@ -3,6 +3,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.infrastructure.database.database import get_db
 from app.infrastructure.database.repositories.llm_config_repo import LLMConfigRepository
 from app.infrastructure.database.repositories.scan_repo import ScanRepository
+from app.infrastructure.database.repositories.framework_repo import FrameworkRepository
+from app.infrastructure.database.repositories.agent_repo import AgentRepository
+from app.infrastructure.database.repositories.prompt_template_repo import (
+    PromptTemplateRepository,
+)
 from app.core.services.admin_service import AdminService
 from app.core.services.scan_service import SubmissionService as ScanService
 
@@ -11,10 +16,36 @@ def get_llm_config_repository(
 ) -> LLMConfigRepository:
     return LLMConfigRepository(db)
 
+def get_framework_repository(
+    db: AsyncSession = Depends(get_db),
+) -> FrameworkRepository:
+    return FrameworkRepository(db)
+
+def get_agent_repository(
+    db: AsyncSession = Depends(get_db),
+) -> AgentRepository:
+    return AgentRepository(db)
+
+def get_prompt_template_repository(
+    db: AsyncSession = Depends(get_db),
+) -> PromptTemplateRepository:
+    return PromptTemplateRepository(db)
+
+
 def get_admin_service(
-    repo: LLMConfigRepository = Depends(get_llm_config_repository),
+    llm_repo: LLMConfigRepository = Depends(get_llm_config_repository),
+    framework_repo: FrameworkRepository = Depends(get_framework_repository),
+    agent_repo: AgentRepository = Depends(get_agent_repository),
+    prompt_template_repo: PromptTemplateRepository = Depends(
+        get_prompt_template_repository
+    ),
 ) -> AdminService:
-    return AdminService(repo)
+    return AdminService(
+        llm_repo=llm_repo,
+        framework_repo=framework_repo,
+        agent_repo=agent_repo,
+        prompt_template_repo=prompt_template_repo,
+    )
 
 def get_scan_repository(
     db: AsyncSession = Depends(get_db),

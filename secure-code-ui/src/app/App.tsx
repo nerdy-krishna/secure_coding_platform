@@ -10,9 +10,6 @@ import {
 import { useAuth } from "../shared/hooks/useAuth";
 import { AuthProvider } from "./providers/AuthProvider";
 
-import AuthLayout from "../widgets/AuthLayout";
-import DashboardLayout from "../widgets/DashboardLayout";
-
 import LLMSettingsPage from "../features/admin-settings/components/LLMSettingsPage";
 import RegisterPage from "../features/authentication/components/RegisterPage";
 import CostUsagePage from "../pages/account/CostUsagePage";
@@ -20,11 +17,16 @@ import DashboardPage from "../pages/account/DashboardPage";
 import SettingsPage from "../pages/account/SettingsPage";
 import SubmissionHistoryPage from "../pages/account/SubmissionHistoryPage";
 import UserProfilePage from "../pages/account/UserProfilePage";
+import FrameworkManagementPage from '../pages/admin/FrameworkManagementPage';
+import PromptManagementPage from '../pages/admin/PromptManagementPage';
 import AnalysisResultsIndexPage from "../pages/analysis/AnalysisResultsIndexPage";
 import ExecutiveSummaryPage from "../pages/analysis/ExecutiveSummaryPage";
+import LlmLogViewerPage from '../pages/analysis/LlmLogViewerPage';
 import ResultsPage from '../pages/analysis/ResultsPage';
 import LoginPage from "../pages/auth/LoginPage";
 import SubmitCodePage from "../pages/submission/SubmitCodePage";
+import AuthLayout from "../widgets/AuthLayout";
+import DashboardLayout from "../widgets/DashboardLayout";
 
 const NotFoundPage: React.FC = () => (
   <div style={{ textAlign: "center", marginTop: "50px", padding: "20px" }}>
@@ -120,6 +122,7 @@ function AppContent() {
           <Route path="/analysis/results" element={<AnalysisResultsIndexPage />} />
           <Route path="/analysis/results/:scanId" element={<ResultsPage />} />
           <Route path="/scans/:scanId/executive-summary" element={<ExecutiveSummaryPage />} />
+          <Route path="/scans/:scanId/llm-logs" element={<LlmLogViewerPage />} />
           <Route path="/account/history" element={<SubmissionHistoryPage />} />
           <Route path="/account/usage" element={<CostUsagePage />} />
           <Route path="/account/profile" element={<UserProfilePage />} />
@@ -128,6 +131,8 @@ function AppContent() {
 
         <Route element={<SuperuserRoutesWithLayout />}>
           <Route path="/account/settings/llm" element={<LLMSettingsPage />} />
+          <Route path="/admin/frameworks" element={<FrameworkManagementPage />} />
+          <Route path="/admin/prompts" element={<PromptManagementPage />} />
         </Route>
 
         <Route path="/" element={<RootRedirector />} />
