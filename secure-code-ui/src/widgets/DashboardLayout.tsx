@@ -1,14 +1,15 @@
 // secure-code-ui/src/widgets/DashboardLayout.tsx
 import {
   BellOutlined,
-  DesktopOutlined,
+  CommentOutlined, // Changed from DesktopOutlined
   DollarOutlined,
   FileTextOutlined,
   LogoutOutlined,
   PieChartOutlined,
   ProfileOutlined,
+  QuestionCircleOutlined, // ADDED
   SettingOutlined,
-  ToolOutlined, // <-- Ensure ToolOutlined is imported for the Admin menu
+  ToolOutlined,
   UserOutlined,
 } from "@ant-design/icons";
 import type { MenuProps } from "antd";
@@ -70,9 +71,14 @@ const DashboardLayout: React.FC<{ children?: React.ReactNode }> = ({
         <ProfileOutlined />,
       ),
       getItem(
+        <Link to="/advisor">Security Advisor</Link>,
+        "security_advisor",
+        <QuestionCircleOutlined />,
+      ),
+      getItem(
         <Link to="/account/history">History</Link>,
         "submission_history",
-        <DesktopOutlined />,
+        <CommentOutlined />,
       ),
       getItem(
         <Link to="/account/usage">Cost & Usage</Link>,

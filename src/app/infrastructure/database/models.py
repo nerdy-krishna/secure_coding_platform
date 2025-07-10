@@ -154,7 +154,7 @@ class ChatMessage(Base):
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     
     session: Mapped["ChatSession"] = relationship(back_populates="messages")
-    llm_interaction: Mapped[Optional["LLMInteraction"]] = relationship("LLMInteraction", back_populates="chat_message")
+    llm_interaction: Mapped[Optional["LLMInteraction"]] = relationship(back_populates="chat_message")
 
 class Framework(Base):
     __tablename__ = "frameworks"

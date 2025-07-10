@@ -51,8 +51,33 @@ export interface LLMConfigurationCreate {
   provider: string;
   model_name: string;
   api_key: string;
+  tokenizer_encoding: string; // ADDED
   input_cost_per_million: number;
   output_cost_per_million: number;
+}
+
+// --- Chat Schemas (NEW) ---
+export interface ChatSessionCreateRequest {
+  title: string;
+  project_id?: string;
+}
+
+export interface ChatSession {
+  id: string;
+  title: string;
+  project_id?: string;
+  created_at: string;
+}
+
+export interface AskQuestionRequest {
+  question: string;
+}
+
+export interface ChatMessage {
+  id: number;
+  role: "user" | "assistant";
+  content: string;
+  timestamp: string;
 }
 
 // --- Agent & Framework Schemas (NEW) ---
