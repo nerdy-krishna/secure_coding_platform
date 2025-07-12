@@ -176,6 +176,7 @@ export interface SubmissionFormValues {
 
 export interface ScanResponse {
     scan_id: UUID;
+    project_id: UUID; // ADD THIS
     message: string;
 }
 
@@ -256,6 +257,7 @@ export interface ScanResultResponse {
   status: string;
   summary_report?: SummaryReport;
   impact_report?: ImpactReport;
+  sarif_report?: { [key: string]: JsonValue }; // ADD THIS LINE
   original_code_map?: { [filePath: string]: string };
   fixed_code_map?: { [filePath: string]: string };
 }
@@ -267,6 +269,12 @@ export interface CostDetails {
   predicted_output_tokens: number;
 }
 
+export interface ScanEventItem {
+  stage_name: string;
+  status: string;
+  timestamp: string;
+}
+
 export interface ScanHistoryItem {
   id: UUID;
   scan_type: string;
@@ -274,6 +282,7 @@ export interface ScanHistoryItem {
   created_at: string;
   completed_at: string | null;
   cost_details: CostDetails | null;
+  events: ScanEventItem[];
   llm_interactions?: LLMInteractionResponse[];
 }
 

@@ -155,12 +155,14 @@ const buildTree = (
 interface ResultsFileTreeProps {
   analyzedFiles: SubmittedFile[];
   findings: Finding[];
+  selectedKeys: React.Key[];
   onSelect: (selectedKeys: React.Key[], info: { node: DataNode }) => void;
 }
 
 const ResultsFileTree: React.FC<ResultsFileTreeProps> = ({
   analyzedFiles,
   findings,
+  selectedKeys,
   onSelect,
 }) => {
   const treeData = useMemo(() => {
@@ -178,6 +180,7 @@ const ResultsFileTree: React.FC<ResultsFileTreeProps> = ({
       showIcon
       defaultExpandAll
       onSelect={onSelect}
+      selectedKeys={selectedKeys}
       treeData={treeData}
       className="results-file-tree"
     />

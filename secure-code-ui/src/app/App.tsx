@@ -25,6 +25,7 @@ import RAGManagementPage from '../pages/admin/RAGManagementPage';
 import AnalysisResultsIndexPage from "../pages/analysis/AnalysisResultsIndexPage";
 import ExecutiveSummaryPage from "../pages/analysis/ExecutiveSummaryPage";
 import LlmLogViewerPage from '../pages/analysis/LlmLogViewerPage';
+import ProjectDetailPage from '../pages/analysis/ProjectDetailPage';
 import ResultsPage from '../pages/analysis/ResultsPage';
 import LoginPage from "../pages/auth/LoginPage";
 import SecurityAdvisorPage from "../pages/chat/SecurityAdvisorPage";
@@ -124,6 +125,7 @@ function AppContent() {
           <Route path="/account/dashboard" element={<DashboardPage />} />
           <Route path="/submission/submit" element={<SubmitCodePage />} />
           <Route path="/analysis/results" element={<AnalysisResultsIndexPage />} />
+          <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
           <Route path="/analysis/results/:scanId" element={<ResultsPage />} />
           <Route path="/scans/:scanId/executive-summary" element={<ExecutiveSummaryPage />} />
           <Route path="/scans/:scanId/llm-logs" element={<LlmLogViewerPage />} />

@@ -12,12 +12,14 @@ import { useQuery } from "@tanstack/react-query";
 import {
   Button,
   Card,
+  Checkbox,
   Col,
   Form,
   Input,
   Radio,
   Row,
   Select,
+  Skeleton,
   Space,
   Spin,
   Tooltip,
@@ -67,7 +69,6 @@ const SubmitCodePage: React.FC = () => {
   const {
     data: frameworks,
     isLoading: isLoadingFrameworks,
-    isError: isFrameworksError,
   } = useQuery<FrameworkRead[], Error>({
     queryKey: ["frameworks"],
     queryFn: frameworkService.getFrameworks,
@@ -196,7 +197,8 @@ const SubmitCodePage: React.FC = () => {
 
       const response = await scanService.createScan(formData);
       message.success(response.message);
-      navigate("/account/history");
+      // Navigate with the project ID to auto-expand it on the history page
+      navigate("/account/history", { state: { newProjectId: response.project_id } });
     } catch (error: unknown) {
       console.error("Submission failed:", error);
       let errorMessage = "An unknown error occurred during submission.";
@@ -333,17 +335,19 @@ const SubmitCodePage: React.FC = () => {
             }
             rules={[{ required: true, message: "Please select at least one framework."}]}
           >
-            <Select
-              mode="multiple"
-              allowClear
-              placeholder="Select frameworks to audit against"
-              loading={isLoadingFrameworks}
-              disabled={isFrameworksError || isLoadingFrameworks}
-            >
-              {frameworks?.map((fw) => (
-                <Option key={fw.id} value={fw.name}>{fw.name}</Option>
-              ))}
-            </Select>
+            {isLoadingFrameworks ? (
+              <Skeleton active paragraph={{rows: 2}} />
+            ) : (
+              <Checkbox.Group style={{ width: '100%' }}>
+                  <Row>
+                      {(frameworks || []).map((fw) => (
+                          <Col span={8} key={fw.id}>
+                              <Checkbox value={fw.name}>{fw.name}</Checkbox>
+                          </Col>
+                      ))}
+                  </Row>
+              </Checkbox.Group>
+            )}
           </Form.Item>
 
           <Form.Item label="Submission Method" style={{ marginBottom: 0 }}>

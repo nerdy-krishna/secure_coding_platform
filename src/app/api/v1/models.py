@@ -430,7 +430,16 @@ class AnalysisResultDetailResponse(BaseModel):
 
 class ScanResponse(BaseModel):
     scan_id: uuid.UUID
+    project_id: uuid.UUID
     message: str
+
+class ScanEventItem(BaseModel):
+    stage_name: str
+    status: str
+    timestamp: datetime
+
+    class Config:
+        from_attributes = True
 
 class ScanHistoryItem(BaseModel):
     id: uuid.UUID
@@ -439,6 +448,7 @@ class ScanHistoryItem(BaseModel):
     created_at: datetime
     completed_at: Optional[datetime] = None
     cost_details: Optional[Dict[str, Any]] = None
+    events: List[ScanEventItem] = [] # Add this line
 
     class Config:
         from_attributes = True

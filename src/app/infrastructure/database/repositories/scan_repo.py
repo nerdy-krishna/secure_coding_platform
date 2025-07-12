@@ -213,6 +213,7 @@ class ScanRepository:
         """Retrieves a paginated list of scans for a specific project."""
         stmt = (
             select(db_models.Scan)
+            .options(selectinload(db_models.Scan.events))
             .where(db_models.Scan.project_id == project_id)
             .order_by(db_models.Scan.created_at.desc())
             .offset(skip)
@@ -259,4 +260,22 @@ class ScanRepository:
         stmt = select(db_models.SourceCodeFile).where(db_models.SourceCodeFile.hash.in_(file_hashes))
         result = await self.db.execute(stmt)
         return {file.hash: file.content for file in result.scalars().all()}
+    
+    async def delete_scan(self, scan_id: uuid.UUID) -> bool:
+        """Deletes a scan record from the database."""
+        scan = await self.db.get(db_models.Scan, scan_id)
+        if scan:
+            await self.db.delete(scan)
+            await self.db.commit()
+            return True
+        return False
+
+    async def delete_project(self, project_id: uuid.UUID) -> bool:
+        """Deletes a project record and its cascade-deleted scans."""
+        project = await self.db.get(db_models.Project, project_id)
+        if project:
+            await self.db.delete(project)
+            await self.db.commit()
+            return True
+        return False
 

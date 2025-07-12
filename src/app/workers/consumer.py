@@ -159,34 +159,40 @@ def pika_message_callback(
             "scan_id": scan_uuid,
             "llm_config_id": None,
             "files": None,
-            "workflow_mode": "audit",
+            "scan_type": "AUDIT", 
             "repository_map": None,
             "asvs_analysis": None,
+            "context_bundles": None,
+            "relevant_agents": {},
+            "excluded_files": None,
             "findings": [],
             "fixes": [],
+            "live_codebase": None,
             "impact_report": None,
             "sarif_report": None,
             "error_message": None,
             "current_scan_status": None,
-            "live_codebase": None,
         }
 
         queue_name = method.routing_key
+        # This block is now updated to set the correct key
         if queue_name == settings.RABBITMQ_REMEDIATION_QUEUE:
             logger.info(
                 f"PIKA CB: Received REMEDIATION trigger for scan_id: {scan_uuid}"
             )
-            initial_worker_state["workflow_mode"] = "remediate"
+            initial_worker_state["scan_type"] = "AUDIT_AND_REMEDIATE"
         elif queue_name == settings.RABBITMQ_APPROVAL_QUEUE:
             logger.info(
                 f"PIKA CB: Resuming ANALYSIS for scan_id: {scan_uuid}"
             )
-            initial_worker_state["workflow_mode"] = "audit"
+            # The scan_type is already set from the DB, no need to change it here
+            pass 
         else:
             logger.info(
                 f"PIKA CB: Starting new ANALYSIS for scan_id: {scan_uuid}"
             )
-            initial_worker_state["workflow_mode"] = "audit"
+            # The scan_type will be correctly read from the DB in the first step
+            pass
 
         schedule_task_on_async_loop(
             run_graph_task_wrapper, initial_worker_state, method.delivery_tag

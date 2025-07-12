@@ -15,6 +15,8 @@ from app.api.v1 import models as api_models
 from app.infrastructure.database import models as db_models
 from app.core import schemas as agent_schemas
 from app.shared.lib.files import get_language_from_filename
+from itertools import groupby
+from operator import attrgetter 
 
 logger = logging.getLogger(__name__)
 
@@ -213,7 +215,14 @@ class SubmissionService:
         if not scan or (scan.user_id != user.id and not user.is_superuser):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scan not found or not authorized.")
 
-        # Reconstruct code maps from snapshots
+        # --- ADD THIS LOGGING BLOCK ---
+        logger.debug(
+            f"[DEBUG] Fetched scan from DB. Findings loaded: {len(scan.findings)}. "
+            f"Impact report loaded: {bool(scan.impact_report)}. Summary loaded: {bool(scan.summary)}.",
+            extra={"scan_id": str(scan_id)}
+        )
+        # --- END LOGGING BLOCK ---
+
         original_code_map = {}
         fixed_code_map = {}
         original_snapshot = next((s for s in scan.snapshots if s.snapshot_type == "ORIGINAL_SUBMISSION"), None)
@@ -224,27 +233,33 @@ class SubmissionService:
             content_map = await self.repo.get_source_files_by_hashes(hashes)
             original_code_map = {path: content_map.get(h, "") for path, h in original_snapshot.file_map.items()}
 
-        
         if remediated_snapshot:
             hashes = list(remediated_snapshot.file_map.values())
             content_map = await self.repo.get_source_files_by_hashes(hashes)
             fixed_code_map = {path: content_map.get(h, "") for path, h in remediated_snapshot.file_map.items()}
 
-        # Assemble the detailed summary report response if data is available
         summary_report_response = None
         if scan.summary:
-            
             files_analyzed_map: Dict[str, api_models.SubmittedFileReportItem] = {}
-            for finding in scan.findings:
-                if finding.file_path not in files_analyzed_map:
-                    files_analyzed_map[finding.file_path] = api_models.SubmittedFileReportItem(
-                        file_path=finding.file_path,
+            
+            # Initialize the map with ALL submitted files to include clean files.
+            if original_snapshot:
+                for file_path in original_snapshot.file_map.keys():
+                    files_analyzed_map[file_path] = api_models.SubmittedFileReportItem(
+                        file_path=file_path,
                         findings=[],
-                        language=get_language_from_filename(finding.file_path)
+                        language=get_language_from_filename(file_path)
                     )
-                files_analyzed_map[finding.file_path].findings.append(
-                    api_models.VulnerabilityFindingResponse.from_orm(finding)
-                )
+
+            # FIX: Use a robust groupby to associate findings with files.
+            # Sort findings by file_path to prepare for grouping.
+            sorted_findings = sorted(scan.findings, key=attrgetter('file_path'))
+            
+            # Group findings by file_path and populate the map.
+            for file_path, group in groupby(sorted_findings, key=attrgetter('file_path')):
+                if file_path in files_analyzed_map:
+                    findings_for_file = [api_models.VulnerabilityFindingResponse.from_orm(f) for f in group]
+                    files_analyzed_map[file_path].findings.extend(findings_for_file)
             
             summary_dict = scan.summary.get("summary", {})
             risk_score_dict = scan.summary.get("overall_risk_score", {})
@@ -259,6 +274,16 @@ class SubmissionService:
                 overall_risk_score=api_models.OverallRiskScoreResponse(**risk_score_dict),
                 files_analyzed=list(files_analyzed_map.values())
             )
+
+        # --- ADD THIS LOGGING BLOCK ---
+        if summary_report_response:
+            total_findings_in_response = sum(len(f.findings) for f in summary_report_response.files_analyzed)
+            logger.debug(
+                f"[DEBUG] Assembled final response. Files in report: {len(summary_report_response.files_analyzed)}. "
+                f"Total findings in response file list: {total_findings_in_response}.",
+                extra={"scan_id": str(scan_id)}
+            )
+        # --- END LOGGING BLOCK ---
 
         return api_models.AnalysisResultDetailResponse(
             status=scan.status,
@@ -311,3 +336,72 @@ class SubmissionService:
             project_items.append(project_item)
             
         return api_models.PaginatedProjectHistoryResponse(items=project_items, total=total)
+    
+    async def delete_scan_by_id(self, scan_id: uuid.UUID, user: db_models.User):
+        """Deletes a single scan, checking for superuser privileges."""
+        if not user.is_superuser:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only superusers can delete scans.")
+        
+        scan = await self.repo.get_scan(scan_id)
+        if not scan:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scan not found.")
+
+        await self.repo.delete_scan(scan_id)
+        logger.info(f"Superuser {user.id} deleted scan {scan_id}.")
+
+    async def delete_project_by_id(self, project_id: uuid.UUID, user: db_models.User):
+        """Deletes a project and all its associated scans, for superusers only."""
+        if not user.is_superuser:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only superusers can delete projects.")
+
+        project = await self.repo.get_project_by_id(project_id)
+        if not project:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        
+        await self.repo.delete_project(project_id)
+        logger.info(f"Superuser {user.id} deleted project {project_id} and all associated scans.")
+
+    async def apply_selective_fixes(self, scan_id: uuid.UUID, finding_ids: List[int], user: db_models.User):
+        """Applies fixes only for a selected list of finding IDs."""
+        logger.info(f"User {user.id} initiating selective fix application for {len(finding_ids)} findings in scan {scan_id}.")
+        scan = await self.repo.get_scan_with_details(scan_id)
+
+        if not scan or (scan.user_id != user.id and not user.is_superuser):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scan not found or not authorized.")
+
+        original_snapshot = next((s for s in scan.snapshots if s.snapshot_type == "ORIGINAL_SUBMISSION"), None)
+        if not original_snapshot:
+            raise HTTPException(status_code=500, detail="Original code snapshot not found.")
+
+        content_map = await self.repo.get_source_files_by_hashes(list(original_snapshot.file_map.values()))
+        live_codebase = {path: content_map.get(h, "") for path, h in original_snapshot.file_map.items()}
+
+        # Filter findings to only those selected for fixing
+        findings_to_fix = [f for f in scan.findings if f.id in finding_ids and f.fixes]
+
+        if not findings_to_fix:
+            raise HTTPException(status_code=400, detail="No valid findings with fixes were selected.")
+
+        for finding in findings_to_fix:
+            fix_data = finding.fixes
+            if fix_data:
+                original_snippet = fix_data.get("original_snippet")
+                new_code = fix_data.get("code")
+
+                if finding.file_path in live_codebase and original_snippet and new_code:
+                    if original_snippet in live_codebase[finding.file_path]:
+                        live_codebase[finding.file_path] = live_codebase[finding.file_path].replace(original_snippet, new_code, 1)
+                        logger.debug(f"Applied selective fix for CWE-{finding.cwe} in {finding.file_path}")
+                    else:
+                        logger.warning(f"Could not find snippet to apply selective fix for CWE-{finding.cwe} in {finding.file_path}")
+        
+        # Create a new snapshot with the updated code
+        new_hashes = await self.repo.get_or_create_source_files([
+            {"path": path, "content": content, "language": get_language_from_filename(path)} for path, content in live_codebase.items()
+        ])
+        
+        new_file_map = {path: file_hash for path, file_hash in zip(live_codebase.keys(), new_hashes)}
+        
+        await self.repo.create_code_snapshot(scan_id=scan.id, file_map=new_file_map, snapshot_type="POST_REMEDIATION")
+        await self.repo.update_status(scan_id, "REMEDIATION_COMPLETED")
+        logger.info(f"Selective fixes applied for scan {scan_id}. Status set to REMEDIATION_COMPLETED.")
