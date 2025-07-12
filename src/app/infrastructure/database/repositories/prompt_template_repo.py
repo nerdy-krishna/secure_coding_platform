@@ -40,11 +40,12 @@ class PromptTemplateRepository:
         return result.scalars().first()
 
     async def get_template_by_name_and_type(
-        self, name: str, template_type: str
+        self, agent_name: str, template_type: str
     ) -> Optional[db_models.PromptTemplate]:
-        """Retrieves a single prompt template by its unique name and type."""
+        """Retrieves a single prompt template by its unique agent_name and type."""
         stmt = select(db_models.PromptTemplate).filter_by(
-            name=name, template_type=template_type
+            agent_name=agent_name,
+            template_type=template_type
         )
         result = await self.db.execute(stmt)
         return result.scalars().first()

@@ -1,47 +1,63 @@
 // src/pages/chat/SecurityAdvisorPage.tsx
 import {
-    CommentOutlined,
-    DeleteOutlined,
-    PlusOutlined,
-    RobotOutlined,
-    SendOutlined,
-    SyncOutlined,
+  CommentOutlined,
+  CopyOutlined,
+  DeleteOutlined,
+  PlusOutlined,
+  RobotOutlined,
+  SendOutlined,
+  SyncOutlined,
 } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-    Button,
-    Card,
-    Col,
-    Empty,
-    Form,
-    Input,
-    Layout,
-    List,
-    Menu,
-    Modal,
-    Popconfirm,
-    Row,
-    Select,
-    Skeleton,
-    Tooltip,
-    Typography,
-    message,
+  Button,
+  Card,
+  Checkbox,
+  Col,
+  Empty,
+  Form,
+  Input,
+  Layout,
+  List,
+  Menu,
+  Modal,
+  Popconfirm,
+  Row,
+  Select,
+  Skeleton,
+  Space,
+  Statistic,
+  Tag,
+  Tooltip,
+  Typography,
+  message,
 } from "antd";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { chatService } from "../../shared/api/chatService";
+import { frameworkService } from "../../shared/api/frameworkService";
 import { llmConfigService } from "../../shared/api/llmConfigService";
 import type {
-    ChatMessage,
-    ChatSession,
-    LLMConfiguration,
+  ChatMessage,
+  ChatSession,
+  ChatSessionCreateRequest,
+  FrameworkRead,
+  LLMConfiguration,
 } from "../../shared/types/api";
 
 const { Sider, Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
 const { Option } = Select;
 
-const ChatMessageItem: React.FC<{ message: ChatMessage }> = ({ message }) => {
-  const isUser = message.role === "user";
+
+// --- MODIFIED ChatMessageItem Component ---
+const ChatMessageItem: React.FC<{ message: ChatMessage }> = ({ message: chatMessage }) => {
+  const isUser = chatMessage.role === "user";
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(chatMessage.content);
+    message.success("Copied to clipboard!");
+  };
+
   return (
     <List.Item
       style={{
@@ -51,18 +67,36 @@ const ChatMessageItem: React.FC<{ message: ChatMessage }> = ({ message }) => {
         padding: "8px 0",
       }}
     >
-      <Card
-        style={{
-          maxWidth: "75%",
-          backgroundColor: isUser ? "#e6f7ff" : "#f0f0f0",
-        }}
-        size="small"
-      >
-        <Text>{message.content}</Text>
-      </Card>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: isUser ? 'flex-end' : 'flex-start' }}>
+            <Card
+                style={{
+                maxWidth: "750px", // Increased max-width
+                backgroundColor: isUser ? "#e3f2fd" : "#e8f5e9", // New pastel colors
+                }}
+                size="small"
+                bodyStyle={{ padding: '8px 12px' }}
+            >
+                <Text style={{ whiteSpace: 'pre-wrap' }}>{chatMessage.content}</Text>
+            </Card>
+            <Space style={{ marginTop: '4px', opacity: 0.7 }}>
+                <Text type="secondary" style={{ fontSize: '11px' }}>
+                    {new Date(chatMessage.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </Text>
+                <Tooltip title="Copy text">
+                    <Button
+                        type="text"
+                        shape="circle"
+                        icon={<CopyOutlined />}
+                        size="small"
+                        onClick={handleCopy}
+                    />
+                </Tooltip>
+            </Space>
+        </div>
     </List.Item>
   );
 };
+
 
 const SecurityAdvisorPage: React.FC = () => {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -73,6 +107,13 @@ const SecurityAdvisorPage: React.FC = () => {
   const [form] = Form.useForm();
   const queryClient = useQueryClient();
   const chatEndRef = useRef<HTMLDivElement>(null);
+
+  const { data: frameworks, isLoading: isLoadingFrameworks } = useQuery<
+    FrameworkRead[]
+  >({
+    queryKey: ["frameworks"],
+    queryFn: frameworkService.getFrameworks,
+  });
 
   const { data: llmConfigs, isLoading: isLoadingLLMs } = useQuery<
     LLMConfiguration[]
@@ -99,20 +140,35 @@ const SecurityAdvisorPage: React.FC = () => {
     enabled: !!activeSessionId,
   });
 
+  const currentSessionDetails = useMemo(() => {
+    if (!activeSessionId || !sessions) {
+        return { title: "Chat", frameworks: [], cost: 0 };
+    }
+    const session = sessions.find(s => s.id === activeSessionId);
+    const totalCost = messages?.reduce((acc, msg) => acc + (msg.cost || 0), 0) || 0;
+
+    return {
+        title: session?.title || "Chat",
+        frameworks: session?.frameworks || [],
+        cost: totalCost
+    }
+  }, [activeSessionId, sessions, messages]);
+
+
   useEffect(() => {
-    // Set default LLM when configs load
     if (llmConfigs && llmConfigs.length > 0 && !selectedLlmId) {
       setSelectedLlmId(llmConfigs[0].id);
     }
   }, [llmConfigs, selectedLlmId]);
 
   const createSessionMutation = useMutation({
-    mutationFn: chatService.createSession,
+    mutationFn: (payload: ChatSessionCreateRequest) => chatService.createSession(payload),
     onSuccess: (newSession) => {
       message.success("New chat session created!");
       queryClient.invalidateQueries({ queryKey: ["chatSessions"] });
       setActiveSessionId(newSession.id);
       setIsNewChatModalVisible(false);
+      form.resetFields();
     },
     onError: (error) => {
       message.error(`Failed to create session: ${error.message}`);
@@ -137,29 +193,55 @@ const SecurityAdvisorPage: React.FC = () => {
     mutationFn: ({
       sessionId,
       question,
-      llmConfigId,
     }: {
       sessionId: string;
       question: string;
-      llmConfigId?: string;
-    }) => chatService.askQuestion(sessionId, question, llmConfigId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: ["chatMessages", activeSessionId],
-      });
+    }) => chatService.askQuestion(sessionId, question),
+    onMutate: async (newMessage) => {
+      if (!activeSessionId) return;
+
+      await queryClient.cancelQueries({ queryKey: ["chatMessages", activeSessionId] });
+      const previousMessages = queryClient.getQueryData<ChatMessage[]>(["chatMessages", activeSessionId]) || [];
+      
+      const optimisticMessage: ChatMessage = {
+        id: Math.random(),
+        role: 'user',
+        content: newMessage.question,
+        timestamp: new Date().toISOString(),
+      };
+
+      queryClient.setQueryData<ChatMessage[]>(
+        ["chatMessages", activeSessionId],
+        [...previousMessages, optimisticMessage]
+      );
+
       form.resetFields();
+      return { previousMessages };
     },
-    onError: (error) => {
-      message.error(`Failed to send message: ${error.message}`);
+    onError: (err, _newMessage, context) => {
+      if (activeSessionId && context?.previousMessages) {
+        queryClient.setQueryData(["chatMessages", activeSessionId], context.previousMessages);
+      }
+      message.error(`Failed to send message: ${err.message}`);
+    },
+    onSettled: () => {
+      if (activeSessionId) {
+        queryClient.invalidateQueries({ queryKey: ["chatMessages", activeSessionId] });
+      }
     },
   });
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, askQuestionMutation.isPending]);
 
-  const handleCreateSession = (values: { title: string }) => {
-    createSessionMutation.mutate({ title: values.title });
+  const handleCreateSession = (values: { title: string; llm_config_id: string; frameworks: string[] }) => {
+    const payload: ChatSessionCreateRequest = {
+      title: values.title,
+      llm_config_id: values.llm_config_id,
+      frameworks: values.frameworks || [],
+    };
+    createSessionMutation.mutate(payload);
   };
 
   const handleSendMessage = (values: { question: string }) => {
@@ -167,13 +249,8 @@ const SecurityAdvisorPage: React.FC = () => {
     askQuestionMutation.mutate({
       sessionId: activeSessionId,
       question: values.question,
-      llmConfigId: selectedLlmId,
     });
   };
-
-  const activeSessionTitle = sessions?.find(
-    (s) => s.id === activeSessionId,
-  )?.title;
 
   return (
     <Layout style={{ height: "calc(100vh - 180px)", background: "#fff" }}>
@@ -196,7 +273,7 @@ const SecurityAdvisorPage: React.FC = () => {
             mode="inline"
             selectedKeys={activeSessionId ? [activeSessionId] : []}
             onClick={({ key }) => setActiveSessionId(key)}
-            items={sessions?.map((session) => ({
+            items={sessions?.map((session: ChatSession) => ({
               key: session.id,
               label: (
                 <Row justify="space-between" align="middle" wrap={false}>
@@ -237,38 +314,45 @@ const SecurityAdvisorPage: React.FC = () => {
         {activeSessionId ? (
           <>
             <Card
-              title={
-                <Title level={4} style={{ margin: 0 }}>
-                  {activeSessionTitle || "Chat"}
-                  {isFetchingMessages && (
-                    <SyncOutlined
-                      spin
-                      style={{ marginLeft: 10, color: "#1677ff" }}
-                    />
-                  )}
-                </Title>
-              }
-              style={{ flexShrink: 0 }}
-              extra={
-                <Select
-                  value={selectedLlmId}
-                  onChange={setSelectedLlmId}
-                  loading={isLoadingLLMs}
-                  style={{ width: 250 }}
-                  placeholder="Select an LLM"
-                >
-                  {llmConfigs?.map((config) => (
-                    <Option key={config.id} value={config.id}>
-                      <RobotOutlined style={{ marginRight: 8 }} />
-                      {config.name}
-                    </Option>
-                  ))}
-                </Select>
-              }
+              style={{ flexShrink: 0, borderBottom: '1px solid #f0f0f0' }}
+              bodyStyle={{padding: '12px 24px'}}
+              bordered={false}
             >
-              <div
+                <Row justify="space-between" align="top">
+                    <Col>
+                        <Title level={4} style={{ margin: 0, display: 'inline-flex', alignItems: 'center' }}>
+                            {currentSessionDetails.title}
+                            {(isFetchingMessages && !askQuestionMutation.isPending) && (
+                                <SyncOutlined spin style={{ marginLeft: 10, color: "#1677ff" }} />
+                            )}
+                        </Title>
+                        <div style={{marginTop: '4px'}}>
+                            {currentSessionDetails.frameworks.map(fw => <Tag key={fw} color="blue">{fw}</Tag>)}
+                        </div>
+                    </Col>
+                    <Col style={{textAlign: 'right'}}>
+                        <Statistic title="Conversation Cost" value={currentSessionDetails.cost} precision={6} prefix="$" valueStyle={{fontSize: '18px'}}/>
+                         <Select
+                            value={sessions?.find(s => s.id === activeSessionId)?.llm_config_id}
+                            loading={isLoadingLLMs || isLoadingSessions}
+                            style={{ width: 200, marginTop: '8px' }}
+                            placeholder="Select an LLM"
+                            disabled
+                            size="small"
+                        >
+                        {llmConfigs?.map((config) => (
+                            <Option key={config.id} value={config.id}>
+                            <RobotOutlined style={{ marginRight: 8 }} />
+                            {config.name}
+                            </Option>
+                        ))}
+                        </Select>
+                    </Col>
+                </Row>
+            </Card>
+            <div
                 style={{
-                  height: "calc(100vh - 455px)",
+                  flexGrow: 1,
                   overflowY: "auto",
                   padding: "0 16px",
                 }}
@@ -278,48 +362,59 @@ const SecurityAdvisorPage: React.FC = () => {
                   renderItem={(item) => <ChatMessageItem message={item} />}
                   locale={{
                     emptyText: (
-                      <Text type="secondary">
-                        Send a message to start the conversation.
-                      </Text>
+                      <Empty
+                        description="Send a message to start the conversation."
+                        image={Empty.PRESENTED_IMAGE_SIMPLE}
+                        style={{marginTop: '20vh'}}
+                      />
                     ),
                   }}
                 />
+                {askQuestionMutation.isPending && (
+                  <List.Item style={{ borderBottom: 'none' }}>
+                    <div style={{ display: 'flex', alignItems: 'center' }}>
+                        <Skeleton.Avatar active size="default" />
+                        <Skeleton.Input active style={{ width: '200px', marginLeft: '12px' }} size="small" />
+                    </div>
+                  </List.Item>
+                )}
                 <div ref={chatEndRef} />
               </div>
-            </Card>
-            <Form
-              form={form}
-              onFinish={handleSendMessage}
-              style={{ marginTop: "auto", paddingTop: '16px', flexShrink: 0 }}
-            >
-              <Row align="middle">
-                <Col flex="auto">
-                  <Form.Item name="question" style={{ marginBottom: 0 }}>
-                    <Input.TextArea
-                      rows={2}
-                      placeholder="Ask a security question..."
-                      onPressEnter={(e) => {
-                        if (!e.shiftKey) {
-                          e.preventDefault();
-                          form.submit();
-                        }
-                      }}
-                      disabled={askQuestionMutation.isPending}
-                    />
-                  </Form.Item>
-                </Col>
-                <Col flex="none" style={{ marginLeft: 8 }}>
-                  <Button
-                    type="primary"
-                    htmlType="submit"
-                    icon={<SendOutlined />}
-                    loading={askQuestionMutation.isPending}
-                  >
-                    Send
-                  </Button>
-                </Col>
-              </Row>
-            </Form>
+            <div style={{ padding: '16px', borderTop: '1px solid #f0f0f0' }}>
+                <Form
+                form={form}
+                onFinish={handleSendMessage}
+                >
+                <Row align="middle">
+                    <Col flex="auto">
+                    <Form.Item name="question" style={{ marginBottom: 0 }}>
+                        <Input.TextArea
+                        rows={1}
+                        autoSize={{minRows: 1, maxRows: 5}}
+                        placeholder="Ask a security question..."
+                        onPressEnter={(e) => {
+                            if (!e.shiftKey) {
+                            e.preventDefault();
+                            form.submit();
+                            }
+                        }}
+                        disabled={askQuestionMutation.isPending}
+                        />
+                    </Form.Item>
+                    </Col>
+                    <Col flex="none" style={{ marginLeft: 8 }}>
+                    <Button
+                        type="primary"
+                        htmlType="submit"
+                        icon={<SendOutlined />}
+                        loading={askQuestionMutation.isPending}
+                    >
+                        Send
+                    </Button>
+                    </Col>
+                </Row>
+                </Form>
+            </div>
           </>
         ) : (
           <div style={{ textAlign: "center", margin: "auto" }}>
@@ -341,9 +436,13 @@ const SecurityAdvisorPage: React.FC = () => {
       <Modal
         title="Start a New Chat"
         open={isNewChatModalVisible}
-        onCancel={() => setIsNewChatModalVisible(false)}
+        onCancel={() => {
+          setIsNewChatModalVisible(false);
+          form.resetFields();
+        }}
         onOk={() => form.submit()}
         confirmLoading={createSessionMutation.isPending}
+        destroyOnClose
       >
         <Form form={form} onFinish={handleCreateSession} layout="vertical">
           <Form.Item
@@ -352,6 +451,44 @@ const SecurityAdvisorPage: React.FC = () => {
             rules={[{ required: true, message: "Please enter a title." }]}
           >
             <Input placeholder="e.g., Advice on SQL Injection" />
+          </Form.Item>
+
+          <Form.Item
+            name="llm_config_id"
+            label="Select Language Model"
+            rules={[{ required: true, message: "Please select a language model." }]}
+          >
+            <Select
+              loading={isLoadingLLMs}
+              placeholder="Choose the LLM for this session"
+            >
+              {llmConfigs?.map((config) => (
+                <Option key={config.id} value={config.id}>
+                  <RobotOutlined style={{ marginRight: 8 }} />
+                  {config.name}
+                </Option>
+              ))}
+            </Select>
+          </Form.Item>
+        
+          <Form.Item
+            name="frameworks"
+            label="Security Frameworks (Optional)"
+            tooltip="Select frameworks to provide additional context from the knowledge base."
+          >
+            {isLoadingFrameworks ? (
+                <Skeleton active paragraph={{ rows: 2 }} />
+            ) : (
+                <Checkbox.Group style={{ width: '100%' }}>
+                    <Row>
+                        {(frameworks || []).map((fw) => (
+                            <Col span={12} key={fw.id}>
+                                <Checkbox value={fw.name}>{fw.name}</Checkbox>
+                            </Col>
+                        ))}
+                    </Row>
+                </Checkbox.Group>
+            )}
           </Form.Item>
         </Form>
       </Modal>

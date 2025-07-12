@@ -84,8 +84,8 @@ const AnalysisResultsIndexPage: React.FC = () => {
                             <Card
                                 title={project.name}
                                 actions={[
-                                    <Link to={`/account/history#${project.id}`}>
-                                        <Button type="primary" icon={<HistoryOutlined />}>View History</Button>
+                                    <Link to={`/projects/${project.id}`}>
+                                        <Button type="primary" icon={<HistoryOutlined />}>View Details & Scans</Button>
                                     </Link>
                                 ]}
                             >

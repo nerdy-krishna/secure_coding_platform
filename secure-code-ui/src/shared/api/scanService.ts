@@ -110,12 +110,21 @@ export const scanService = {
   },
 
   /**
-   * Triggers the application of all suggested fixes for a completed scan.
+   * Triggers the application of selected fixes for a completed scan.
    */
-  applyAllFixes: async (scanId: string): Promise<{ message: string }> => {
+  applySelectiveFixes: async (scanId: string, findingIds: number[]): Promise<{ message: string }> => {
     const response = await apiClient.post<{ message: string }>(
       `/scans/${scanId}/apply-fixes`,
+      { finding_ids: findingIds } // Send the finding IDs in the request body
     );
     return response.data;
+  },
+
+  deleteScan: async (scanId: string): Promise<void> => {
+    await apiClient.delete(`/scans/${scanId}`);
+  },
+
+  deleteProject: async (projectId: string): Promise<void> => {
+    await apiClient.delete(`/projects/${projectId}`);
   },
 };

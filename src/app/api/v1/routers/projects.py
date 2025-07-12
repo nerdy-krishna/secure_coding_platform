@@ -13,6 +13,7 @@ from fastapi import (
     Response,
     status,
 )
+from pydantic import BaseModel
 
 from app.infrastructure.database import models as db_models
 from app.api.v1 import models as api_models
@@ -86,7 +87,8 @@ async def create_scan(
     else:
         raise HTTPException(status_code=400, detail="No submission data provided.")
 
-    return api_models.ScanResponse(scan_id=scan.id, message="Scan initiated and queued for analysis.")
+    return api_models.ScanResponse(scan_id=scan.id, project_id=scan.project_id, message="Scan initiated and queued for analysis.")
+
 
 @router.post("/scans/{scan_id}/approve", status_code=status.HTTP_202_ACCEPTED, response_model=dict)
 async def approve_scan_analysis(
@@ -107,15 +109,18 @@ async def cancel_scan_analysis(
     await service.cancel_scan(scan_id, user)
     return {"message": "Scan has been cancelled successfully."}
 
+class SelectiveRemediationRequest(BaseModel):
+    finding_ids: List[int]
 
 @router.post("/scans/{scan_id}/apply-fixes", status_code=status.HTTP_202_ACCEPTED, response_model=dict)
 async def apply_fixes(
     scan_id: uuid.UUID,
+    request: SelectiveRemediationRequest,
     user: db_models.User = Depends(current_active_user),
     service: SubmissionService = Depends(get_scan_service),
 ):
-    """Triggers the application of all suggested fixes for a completed 'AUDIT_AND_REMEDIATE' scan."""
-    await service.apply_fixes_for_scan(scan_id, user)
+    """Triggers the application of selected fixes for a scan."""
+    await service.apply_selective_fixes(scan_id, request.finding_ids, user)
     return {"message": "Fix application process initiated. The scan status will be updated upon completion."}
 
 
@@ -126,7 +131,20 @@ async def get_scan_result_details(
     service: SubmissionService = Depends(get_scan_service),
 ):
     """Retrieves the full, detailed result of a completed scan."""
-    return await service.get_scan_result(scan_id, user)
+    result = await service.get_scan_result(scan_id, user)
+
+    # --- ADD THIS LOGGING BLOCK ---
+    if result and result.summary_report:
+        files_count = len(result.summary_report.files_analyzed)
+        findings_count = sum(len(f.findings) for f in result.summary_report.files_analyzed)
+        logger.debug(
+            f"[API ENDPOINT DEBUG] Returning result for scan {scan_id}. "
+            f"Files in report: {files_count}, Total findings nested in files: {findings_count}",
+            extra={"scan_id": str(scan_id)}
+        )
+    # --- END LOGGING BLOCK ---
+    
+    return result
 
 @router.get("/projects/{project_id}/scans", response_model=api_models.PaginatedScanHistoryResponse)
 async def get_scan_history_for_project(
@@ -147,3 +165,24 @@ async def get_llm_interactions_for_scan(
     """Retrieves all LLM interactions associated with a specific scan."""
     interactions_db = await service.get_llm_interactions_for_scan(scan_id, user)
     return [api_models.LLMInteractionResponse.from_orm(inter) for inter in interactions_db]
+
+@router.delete("/scans/{scan_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_scan(
+    scan_id: uuid.UUID,
+    user: db_models.User = Depends(current_superuser),
+    service: SubmissionService = Depends(get_scan_service),
+):
+    """Deletes a single scan (superuser only)."""
+    await service.delete_scan_by_id(scan_id, user)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.delete("/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_project(
+    project_id: uuid.UUID,
+    user: db_models.User = Depends(current_superuser),
+    service: SubmissionService = Depends(get_scan_service),
+):
+    """Delets a project and all its scans (superuser only)."""
+    await service.delete_project_by_id(project_id, user)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

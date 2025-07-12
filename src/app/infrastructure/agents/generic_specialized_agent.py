@@ -52,10 +52,10 @@ async def analysis_node(state: SpecializedAgentState, config: Dict[str, Any]) ->
     # The scan_type from the DB (e.g., 'AUDIT_AND_REMEDIATE') determines the agent's behavior
     scan_type = state["workflow_mode"] 
     
-    # Determine the prompt_template_type based on scan type
-    if scan_type in ["REMEDIATE", "AUDIT_AND_REMEDIATE"]:
+    # Determine the prompt_template_type based on the internal workflow_mode
+    if scan_type == "remediate":
         template_type = "DETAILED_REMEDIATION"
-    else: # AUDIT
+    else: # "audit"
         template_type = "QUICK_AUDIT"
         
     logger.info(
