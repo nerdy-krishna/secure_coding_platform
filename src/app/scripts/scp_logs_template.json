@@ -1,0 +1,25 @@
+{
+  "index_patterns": ["scp-logs-*"],
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 1
+    },
+    "mappings": {
+      "properties": {
+        "@timestamp": { "type": "date" },
+        "container_id": { "type": "keyword" },
+        "container_name": { "type": "keyword" },
+        "correlation_id": { "type": "keyword" },
+        "func_name": { "type": "keyword" },
+        "level": { "type": "keyword" },
+        "logger_name": { "type": "keyword" },
+        "message": { "type": "text" },
+        "service_name": { "type": "keyword" },
+        "source": { "type": "keyword" }
+      }
+    }
+  },
+  "priority": 300,
+  "composed_of": []
+}

@@ -26,19 +26,16 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import FindingList from "../../features/results-display/components/FindingList";
 import ResultsFileTree from "../../features/results-display/components/ResultsFileTree";
 import ScanSummary from "../../features/results-display/components/ScanSummary";
-import SnippetDiffViewer from "../../features/results-display/components/SnippetDiffViewer";
 import { scanService } from "../../shared/api/scanService";
-import type { Finding, ScanResultResponse } from "../../shared/types/api";
+import type { ScanResultResponse } from "../../shared/types/api";
 
 const { Content, Sider } = Layout;
-const { Title } = Typography;
+const { Title, Paragraph } = Typography;
 
 const ResultsPage: React.FC = () => {
   const { scanId } = useParams<{ scanId: string }>();
   const navigate = useNavigate();
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
-  const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null);
-
   const { data: result, isLoading, isError, error, refetch } = useQuery<ScanResultResponse, Error>({
     queryKey: ["scanResult", scanId],
     queryFn: () => {
@@ -114,6 +111,8 @@ const ResultsPage: React.FC = () => {
       <Row justify="space-between" align="middle" style={{ marginBottom: 16 }}>
         <Col>
             <Title level={3} style={{ margin: 0 }}>{summary_report.scan_type.replace(/_/g, ' ')} Report: {summary_report.project_name}</Title>
+            <Paragraph copyable type="secondary" style={{margin: 0}}>Scan ID: {scanId}</Paragraph>
+            <Paragraph copyable type="secondary" style={{margin: 0}}>Project ID: {summary_report.project_id}</Paragraph>
         </Col>
         <Col>
             <Space>
@@ -136,7 +135,6 @@ const ResultsPage: React.FC = () => {
                 selectedKeys={selectedFilePath ? [selectedFilePath] : []}
                 onSelect={(keys) => {
                     setSelectedFilePath(keys[0] as string);
-                    setSelectedFinding(null);
                 }}
               />
             </Sider>
@@ -153,7 +151,6 @@ const ResultsPage: React.FC = () => {
                 <div style={{ flexGrow: 1, overflowY: 'auto' }}>
                     <FindingList 
                         findings={findingsForSelectedFile} 
-                        onFindingSelect={setSelectedFinding}
                         onRemediateFinding={(id) => applyFixesMutation.mutate([id])}
                     />
                 </div>
@@ -162,9 +159,6 @@ const ResultsPage: React.FC = () => {
 
         {/* --- FIX: Corrected Conditional Bottom Panel --- */}
         <div style={{ padding: '0 24px 24px 24px' }}>
-            {isAuditAndRemediate && !isRemediationComplete && selectedFinding && (
-                <SnippetDiffViewer finding={selectedFinding} />
-            )}
             {isRemediationComplete && selectedFilePath && (
                 <ReactDiffViewer oldValue={originalCode} newValue={fixedCode} splitView={true} useDarkTheme={false} />
             )}

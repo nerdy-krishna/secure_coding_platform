@@ -52,6 +52,7 @@ const getStatusInfo = (status: string): { color: string; icon: React.ReactNode; 
             return { color: "green", icon: <CheckCircleFilled />, text: "Completed" };
         case "ANALYZING_CONTEXT":
         case "RUNNING_AGENTS":
+        case "GENERATING_REPORTS":
         case "REMEDIATING":
         case "ANALYZING":
         case "QUEUED_FOR_SCAN":
@@ -74,6 +75,15 @@ const ScanListItem: React.FC<{ scan: ScanHistoryItem; onApprovalSuccess: () => v
     const { user } = useAuth();
     const queryClient = useQueryClient();
 
+    const cancelMutation = useMutation({
+        mutationFn: () => scanService.cancelScan(scan.id),
+        onSuccess: (data) => {
+            message.info(data.message || "Scan has been cancelled.");
+            queryClient.invalidateQueries({ queryKey: ["projectHistory"] });
+        },
+        onError: (error: Error) => message.error(`Failed to cancel scan: ${error.message}`),
+    });
+
     const deleteScanMutation = useMutation({
         mutationFn: () => scanService.deleteScan(scan.id),
         onSuccess: () => {
@@ -86,6 +96,7 @@ const ScanListItem: React.FC<{ scan: ScanHistoryItem; onApprovalSuccess: () => v
     const statusInfo = getStatusInfo(scan.status);
     const isCompleted = scan.status.trim().toLowerCase().includes('completed');
     const isPendingApproval = scan.status === 'PENDING_COST_APPROVAL';
+    const isCancellable = !isCompleted && !isPendingApproval && scan.status !== 'FAILED' && scan.status !== 'CANCELLED';
     
     const resultPath = `/analysis/results/${scan.id}`;
     const logsPath = `/scans/${scan.id}/llm-logs`;
@@ -109,6 +120,17 @@ const ScanListItem: React.FC<{ scan: ScanHistoryItem; onApprovalSuccess: () => v
             </Col>
             <Col xs={12} sm={6} md={8} style={{ textAlign: 'right' }}>
                 <Space>
+                    {isCancellable && (
+                         <Popconfirm
+                            title="Cancel this scan?"
+                            description="The current process will be halted."
+                            onConfirm={() => cancelMutation.mutate()}
+                            okText="Yes, Cancel"
+                            cancelText="No"
+                        >
+                            <Button danger size="small" loading={cancelMutation.isPending}>Cancel</Button>
+                        </Popconfirm>
+                    )}
                      {user?.is_superuser && (
                         <Popconfirm
                             title="Delete Scan?"

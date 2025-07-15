@@ -1,36 +1,29 @@
-// src/features/results-display/components/FindingList.tsx
 import { CheckCircleOutlined } from "@ant-design/icons";
-import { Button, Card, Col, Collapse, Empty, Row, Space, Tag, Typography } from "antd";
+import { Button, Col, Collapse, Descriptions, Divider, Empty, Popconfirm, Row, Space, Tag, Typography, message } from "antd";
 import React from "react";
 import { SeverityColors } from "../../../shared/lib/severityMappings";
 import type { Finding } from "../../../shared/types/api";
 
-const { Text, Paragraph } = Typography;
+const { Text } = Typography;
 const { Panel } = Collapse;
 
 interface FindingListProps {
   findings: Finding[];
-  onFindingSelect: (finding: Finding | null) => void;
   onRemediateFinding: (findingId: number) => void;
 }
 
-const FindingList: React.FC<FindingListProps> = ({ findings, onFindingSelect, onRemediateFinding }) => {
+const FindingList: React.FC<FindingListProps> = ({ findings, onRemediateFinding }) => {
   if (findings.length === 0) {
     return <Empty description="No findings in this file." style={{ marginTop: 48 }} />;
   }
 
   return (
-    <Collapse accordion onChange={(key) => {
-        const activeKey = Array.isArray(key) ? key[0] : key;
-        const findingId = activeKey ? parseInt(activeKey, 10) : null;
-        const selected = findingId ? findings.find(f => f.id === findingId) || null : null;
-        onFindingSelect(selected);
-    }}>
+    <Collapse accordion>
       {findings.map((finding) => (
         <Panel
           key={finding.id}
           header={
-            <Row justify="space-between" align="middle">
+            <Row justify="space-between" align="middle" style={{ width: '100%'}}>
               <Col>
                 <Space>
                     <Tag color={SeverityColors[finding.severity?.toUpperCase() || "DEFAULT"]}>
@@ -43,22 +36,60 @@ const FindingList: React.FC<FindingListProps> = ({ findings, onFindingSelect, on
             </Row>
           }
           extra={
-            <Button
-                size="small"
-                icon={<CheckCircleOutlined />}
-                onClick={(e) => {
-                    e.stopPropagation(); // Prevent collapse from toggling
-                    onRemediateFinding(finding.id);
-                }}
-            >
-                Fix this
-            </Button>
+            finding.fixes && (
+               <Popconfirm
+                    title="Apply this fix?"
+                    description="This will create a new remediation commit. Are you sure?"
+                    onConfirm={(e) => {
+                      e?.stopPropagation();
+                      onRemediateFinding(finding.id);
+                      message.info("Fix application has been initiated.");
+                    }}
+                    onCancel={(e) => e?.stopPropagation()}
+                    okText="Yes, Fix it"
+                    cancelText="No"
+                  >
+                    <Button
+                      size="small"
+                      icon={<CheckCircleOutlined />}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      Fix this
+                    </Button>
+                </Popconfirm>
+            )
           }
         >
-          <Paragraph>{finding.description}</Paragraph>
-          <Card size="small" title="Remediation Guidance">
-            <Paragraph style={{ margin: 0 }}>{finding.remediation}</Paragraph>
-          </Card>
+            <Descriptions bordered column={2} size="small" labelStyle={{ backgroundColor: '#fafafa' }}>
+                <Descriptions.Item label="Severity" span={1}>{finding.severity}</Descriptions.Item>
+                <Descriptions.Item label="Confidence" span={1}>{finding.confidence}</Descriptions.Item>
+                <Descriptions.Item label="File Path" span={2}><Text code>{finding.file_path}</Text></Descriptions.Item>
+                <Descriptions.Item label="Line Number" span={2}>{finding.line_number}</Descriptions.Item>
+                <Descriptions.Item label="Description" span={2}>{finding.description}</Descriptions.Item>
+                <Descriptions.Item label="Remediation" span={2}>{finding.remediation}</Descriptions.Item>
+                 {finding.references && finding.references.length > 0 && (
+                    <Descriptions.Item label="References" span={2}>
+                        <ul style={{paddingLeft: 20, margin: 0}}>
+                            {finding.references.map((ref, i) => <li key={i}><a href={ref} target="_blank" rel="noopener noreferrer">{ref}</a></li>)}
+                        </ul>
+                    </Descriptions.Item>
+                )}
+            </Descriptions>
+
+            {finding.fixes?.code && (
+                <>
+                <Divider>Suggested Fix Snippet</Divider>
+                <pre style={{ 
+                    backgroundColor: '#f5f5f5', 
+                    padding: '12px', 
+                    borderRadius: '4px', 
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-all' 
+                }}>
+                    <code>{finding.fixes.code}</code>
+                </pre>
+                </>
+            )}
         </Panel>
       ))}
     </Collapse>

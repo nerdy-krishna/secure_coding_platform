@@ -124,6 +124,24 @@ async def apply_fixes(
     return {"message": "Fix application process initiated. The scan status will be updated upon completion."}
 
 
+@router.get("/scans/{scan_id}/executive-summary/download", response_class=Response)
+async def download_executive_summary(
+    scan_id: uuid.UUID,
+    user: db_models.User = Depends(current_active_user),
+    service: SubmissionService = Depends(get_scan_service),
+):
+    """Generates and downloads the executive summary as a PDF."""
+    pdf_bytes = await service.generate_executive_summary_pdf(scan_id, user)
+    if not pdf_bytes:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report data not found or you do not have permission to access it.")
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=executive-summary-{scan_id}.pdf"}
+    )
+
+
 @router.get("/scans/{scan_id}/result", response_model=api_models.AnalysisResultDetailResponse)
 async def get_scan_result_details(
     scan_id: uuid.UUID,

@@ -21,8 +21,10 @@ import {
   Spin,
   Tag,
   Typography,
+  message,
 } from 'antd';
-import React from 'react';
+import { saveAs } from 'file-saver';
+import React, { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import apiClient from '../../shared/api/apiClient';
 import { scanService } from '../../shared/api/scanService';
@@ -30,7 +32,8 @@ import { scanService } from '../../shared/api/scanService';
 const { Title, Paragraph, Text } = Typography;
 
 const ExecutiveSummaryPage: React.FC = () => {
-  const { submissionId } = useParams<{ submissionId: string }>();
+  const { scanId } = useParams<{ scanId: string }>();
+  const [isDownloading, setIsDownloading] = useState(false);
 
   const {
     data: result,
@@ -38,14 +41,14 @@ const ExecutiveSummaryPage: React.FC = () => {
     isError,
     error,
   } = useQuery({
-    queryKey: ['analysisResult', submissionId],
+    queryKey: ["scanResult", scanId],
     queryFn: () => {
-      if (!submissionId) {
+      if (!scanId) {
         throw new Error('Submission ID is required');
       }
-      return scanService.getScanResult(submissionId);
+      return scanService.getScanResult(scanId);
     },
-    enabled: !!submissionId, // Only run query if submissionId is present
+    enabled: !!scanId, // Only run query if submissionId is present
   });
 
   if (isLoading) {
@@ -80,13 +83,28 @@ const ExecutiveSummaryPage: React.FC = () => {
     );
   }
 
-  const { impact_report, summary_report } = result;
-  const downloadUrl = `${apiClient.defaults.baseURL}/result/${submissionId}/executive-summary/download`;
+  const handleDownload = async () => {
+    if (!scanId) return;
+    setIsDownloading(true);
+    try {
+      const response = await apiClient.get(
+        `/scans/${scanId}/executive-summary/download`,
+        { responseType: 'blob' } // Important: expect binary data
+      );
+      saveAs(response.data, `executive-summary-${scanId}.pdf`);
+    } catch (err) {
+      console.error("PDF Download failed", err);
+      message.error("Could not download the report. Please try again.");
+    } finally {
+      setIsDownloading(false);
+    }
+  };
 
+  const { impact_report, summary_report } = result;
   return (
     <div style={{ maxWidth: '960px', margin: '0 auto', padding: '24px' }}>
       <Space direction="vertical" style={{ width: '100%' }} size="large">
-        <Link to={`/analysis/results/${submissionId}`}>
+        <Link to={`/analysis/results/${scanId}`}>
           <Button icon={<ArrowLeftOutlined />}>Back to Full Report</Button>
         </Link>
 
@@ -95,7 +113,7 @@ const ExecutiveSummaryPage: React.FC = () => {
             Executive Security Summary
           </Title>
           <Paragraph style={{ textAlign: 'center' }} type="secondary">
-            Project: {summary_report?.project_name || 'N/A'} | Submission ID: {submissionId}
+            Project: {summary_report?.project_name || 'N/A'} | Submission ID: {scanId}
           </Paragraph>
           <Divider />
 
@@ -144,11 +162,15 @@ const ExecutiveSummaryPage: React.FC = () => {
 
           <Divider />
           <div style={{ textAlign: 'center' }}>
-            <a href={downloadUrl} download>
-                <Button type="primary" icon={<FilePdfOutlined />} size="large">
-                    Download as PDF
-                </Button>
-            </a>
+            <Button 
+              type="primary" 
+              icon={<FilePdfOutlined />} 
+              size="large"
+              onClick={handleDownload}
+              loading={isDownloading}
+            >
+              Download as PDF
+            </Button>
           </div>
         </Card>
       </Space>

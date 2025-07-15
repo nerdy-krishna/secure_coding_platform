@@ -219,13 +219,13 @@ class VulnerabilityFindingResponse(BaseModel):
     remediation: str
     confidence: str
     references: List[str]
-    fixes: List[FixSuggestionResponse] = []
+    fixes: Optional[Dict[str, Any]] = None
 
     @field_validator("fixes", mode="before")
     @classmethod
-    def empty_list_for_none_fixes(cls, v: Any) -> Any:
+    def empty_dict_for_none_fixes(cls, v: Any) -> Any:
         if v is None:
-            return []
+            return None
         return v
 
     class Config:
@@ -400,6 +400,7 @@ class SubmittedFileReportItem(BaseModel):
 
 class SummaryReportResponse(BaseModel):
     submission_id: uuid.UUID
+    project_id: uuid.UUID
     project_name: Optional[str] = "N/A"
     scan_type: str = "audit"
     primary_language: Optional[str] = "N/A"
