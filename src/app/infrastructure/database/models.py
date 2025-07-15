@@ -96,6 +96,7 @@ class Finding(Base):
     remediation: Mapped[Optional[str]] = mapped_column(Text)
     cwe: Mapped[Optional[str]] = mapped_column(String(50))
     confidence: Mapped[Optional[str]] = mapped_column(String(50))
+    agent_name: Mapped[Optional[str]] = mapped_column(String(100))
     references: Mapped[Optional[List[str]]] = mapped_column(JSONB)
     fixes: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB)
 

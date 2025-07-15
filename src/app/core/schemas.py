@@ -46,6 +46,9 @@ class VulnerabilityFinding(BaseModel):
     fixes: Optional[FixSuggestion] = Field(
         default=None, description="The suggested code fix, including original and new snippets."
     )
+    agent_name: Optional[str] = Field(
+        default=None, description="The name of the agent that generated the finding."
+    )
 
 
 class FixResult(BaseModel):

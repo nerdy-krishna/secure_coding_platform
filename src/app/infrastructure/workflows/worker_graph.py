@@ -315,7 +315,7 @@ async def run_specialized_agents_node(state: WorkerState) -> Dict[str, Any]:
             initial_agent_state: SpecializedAgentState = {
                 "scan_id": scan_id, "llm_config_id": specialized_llm_id, "filename": bundle.target_file_path,
                 "code_snippet": "".join(f"--- FILE: {p} ---\n{c}\n\n" for p, c in bundle.context_files.items()),
-                "workflow_mode": "remediate" if scan_type == "AUDIT_AND_REMEDIATE" else "audit",
+                "workflow_mode": "audit" if scan_type == "AUDIT" else "remediate",
                 "findings": [], "fixes": [], "error": None
             }
             tasks.append(run_with_semaphore(generic_agent_graph.ainvoke(initial_agent_state, config=agent_run_config)))

@@ -1,8 +1,8 @@
 // secure-code-ui/src/features/results-display/components/ResultsFileTree.tsx
-import { FileOutlined, FolderTwoTone } from "@ant-design/icons";
-import { Tag, Tree, Typography } from "antd";
+import { FileOutlined, FolderTwoTone, MinusSquareOutlined, PlusSquareOutlined } from "@ant-design/icons";
+import { Button, Space, Tag, Tree, Typography } from "antd";
 import type { DataNode } from "antd/es/tree";
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { SeverityColors } from "../../../shared/lib/severityMappings";
 import { type Finding, type SubmittedFile } from "../../../shared/types/api";
 import "./ResultsFileTree.css";
@@ -62,8 +62,9 @@ interface IntermediateNode {
 const buildTree = (
   paths: string[],
   severityMap: { [path: string]: FileSeverity },
-): DataNode[] => {
+): { treeData: DataNode[]; folderKeys: React.Key[] } => {
   const root: Record<string, IntermediateNode> = {};
+  const folderKeys: React.Key[] = [];
 
   paths.forEach((path) => {
     const parts = path.split("/").filter((p) => p);
@@ -75,6 +76,9 @@ const buildTree = (
       const isLeaf = i === parts.length - 1;
 
       if (!currentLevel[part]) {
+        if (!isLeaf) {
+          folderKeys.push(currentPath);
+        }
         currentLevel[part] = {
           title: part,
           key: currentPath,
@@ -149,7 +153,7 @@ const buildTree = (
       });
   };
 
-  return convertToAntdFormat(root);
+  return { treeData: convertToAntdFormat(root), folderKeys };
 };
 
 interface ResultsFileTreeProps {
@@ -165,25 +169,43 @@ const ResultsFileTree: React.FC<ResultsFileTreeProps> = ({
   selectedKeys,
   onSelect,
 }) => {
-  const treeData = useMemo(() => {
+  const { treeData, folderKeys } = useMemo(() => {
     const filePaths = analyzedFiles.map((f) => f.file_path);
     const severityMap = buildSeverityMap(findings);
     return buildTree(filePaths, severityMap);
   }, [analyzedFiles, findings]);
+
+  const [expandedKeys, setExpandedKeys] = useState<React.Key[]>(folderKeys);
+
+  useEffect(() => {
+    setExpandedKeys(folderKeys);
+  }, [folderKeys]);
+
 
   if (analyzedFiles.length === 0) {
     return <Text type="secondary">No files were analyzed.</Text>;
   }
 
   return (
-    <Tree
-      showIcon
-      defaultExpandAll
-      onSelect={onSelect}
-      selectedKeys={selectedKeys}
-      treeData={treeData}
-      className="results-file-tree"
-    />
+    <>
+      <Space style={{ marginBottom: 8 }}>
+        <Button size="small" onClick={() => setExpandedKeys(folderKeys)} icon={<PlusSquareOutlined />}>
+            Expand All
+        </Button>
+        <Button size="small" onClick={() => setExpandedKeys([])} icon={<MinusSquareOutlined />}>
+            Collapse All
+        </Button>
+      </Space>
+      <Tree
+        showIcon
+        onSelect={onSelect}
+        selectedKeys={selectedKeys}
+        treeData={treeData}
+        className="results-file-tree"
+        expandedKeys={expandedKeys}
+        onExpand={(keys) => setExpandedKeys(keys as React.Key[])}
+      />
+    </>
   );
 };
 

@@ -16,6 +16,7 @@
         "logger_name": { "type": "keyword" },
         "message": { "type": "text" },
         "service_name": { "type": "keyword" },
+        "exc_info": { "type": "text" },
         "source": { "type": "keyword" }
       }
     }

@@ -135,11 +135,13 @@ async def analysis_node(state: SpecializedAgentState, config: Dict[str, Any]) ->
         audit_result = cast(AuditResponse, llm_response.parsed_output)
         for finding in audit_result.findings:
             finding.file_path = filename
+            finding.agent_name = agent_name
             findings.append(finding)
     else:  # DETAILED_REMEDIATION
         remediate_result = cast(RemediateResponse, llm_response.parsed_output)
         for result in remediate_result.results:
             result.finding.file_path = filename
+            result.finding.agent_name = agent_name
             findings.append(result.finding)
             fixes.append(
                 FixResult(finding=result.finding, suggestion=result.suggestion)

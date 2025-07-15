@@ -1,27 +1,29 @@
-import { CheckCircleOutlined } from "@ant-design/icons";
+import { CheckCircleOutlined, RobotOutlined } from "@ant-design/icons";
 import { Button, Col, Collapse, Descriptions, Divider, Empty, Popconfirm, Row, Space, Tag, Typography, message } from "antd";
 import React from "react";
+import ReactDiffViewer from "react-diff-viewer-continued";
 import { SeverityColors } from "../../../shared/lib/severityMappings";
 import type { Finding } from "../../../shared/types/api";
-
 const { Text } = Typography;
 const { Panel } = Collapse;
 
 interface FindingListProps {
   findings: Finding[];
   onRemediateFinding: (findingId: number) => void;
+  activeKeys: string[];
+  onActiveKeyChange: (keys: string | string[]) => void;
 }
 
-const FindingList: React.FC<FindingListProps> = ({ findings, onRemediateFinding }) => {
+const FindingList: React.FC<FindingListProps> = ({ findings, onRemediateFinding, activeKeys, onActiveKeyChange }) => {
   if (findings.length === 0) {
     return <Empty description="No findings in this file." style={{ marginTop: 48 }} />;
   }
 
   return (
-    <Collapse accordion>
+    <Collapse activeKey={activeKeys} onChange={(keys) => onActiveKeyChange(keys as string[])}>
       {findings.map((finding) => (
         <Panel
-          key={finding.id}
+          key={finding.id.toString()}
           header={
             <Row justify="space-between" align="middle" style={{ width: '100%'}}>
               <Col>
@@ -30,7 +32,6 @@ const FindingList: React.FC<FindingListProps> = ({ findings, onRemediateFinding 
                         {finding.severity}
                     </Tag>
                     <Text strong>{finding.title}</Text>
-                    <Text type="secondary">(CWE-{finding.cwe?.split('-')[1]})</Text>
                 </Space>
               </Col>
             </Row>
@@ -63,6 +64,8 @@ const FindingList: React.FC<FindingListProps> = ({ findings, onRemediateFinding 
             <Descriptions bordered column={2} size="small" labelStyle={{ backgroundColor: '#fafafa' }}>
                 <Descriptions.Item label="Severity" span={1}>{finding.severity}</Descriptions.Item>
                 <Descriptions.Item label="Confidence" span={1}>{finding.confidence}</Descriptions.Item>
+                <Descriptions.Item label="CWE" span={1}>{finding.cwe}</Descriptions.Item>
+                <Descriptions.Item label="Agent" span={1}><RobotOutlined style={{marginRight: '8px'}}/>{finding.agent_name || 'Unknown'}</Descriptions.Item>
                 <Descriptions.Item label="File Path" span={2}><Text code>{finding.file_path}</Text></Descriptions.Item>
                 <Descriptions.Item label="Line Number" span={2}>{finding.line_number}</Descriptions.Item>
                 <Descriptions.Item label="Description" span={2}>{finding.description}</Descriptions.Item>
@@ -76,19 +79,19 @@ const FindingList: React.FC<FindingListProps> = ({ findings, onRemediateFinding 
                 )}
             </Descriptions>
 
-            {finding.fixes?.code && (
-                <>
-                <Divider>Suggested Fix Snippet</Divider>
-                <pre style={{ 
-                    backgroundColor: '#f5f5f5', 
-                    padding: '12px', 
-                    borderRadius: '4px', 
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-all' 
-                }}>
-                    <code>{finding.fixes.code}</code>
-                </pre>
-                </>
+            {finding.fixes?.code && finding.fixes?.original_snippet && (
+              <>
+                <Divider>Suggested Fix</Divider>
+                <ReactDiffViewer
+                    oldValue={finding.fixes.original_snippet}
+                    newValue={finding.fixes.code}
+                    splitView={true}
+                    hideLineNumbers={false}
+                    useDarkTheme={false}
+                    leftTitle="Original Snippet"
+                    rightTitle="Suggested Fix"
+                />
+              </>
             )}
         </Panel>
       ))}
