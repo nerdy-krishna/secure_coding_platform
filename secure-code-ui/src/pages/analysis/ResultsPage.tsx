@@ -1,4 +1,3 @@
-// src/pages/analysis/ResultsPage.tsx
 import {
   ArrowLeftOutlined,
   CodeOutlined,
@@ -38,7 +37,8 @@ const { Content, Sider } = Layout;
 const { Title, Paragraph } = Typography;
 const { Option } = Select;
 
-type GroupableFields = keyof Pick<Finding, 'severity' | 'confidence' | 'cwe' | 'agent_name'>;
+type GroupableFields = keyof Pick<Finding, 'severity' | 'confidence' | 'cwe' | 'agent_name' | 'title'>;
+type FilterableFields = keyof Pick<Finding, 'severity' | 'confidence' | 'agent_name' | 'title'>;
 
 const ResultsPage: React.FC = () => {
   const { scanId } = useParams<{ scanId: string }>();
@@ -46,7 +46,7 @@ const ResultsPage: React.FC = () => {
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
   const [activeFindingKeys, setActiveFindingKeys] = useState<string[]>([]);
   const [sortConfig, setSortConfig] = useState<{ field: keyof Finding; order: 'asc' | 'desc' }>({ field: 'severity', order: 'desc' });
-  const [filters, setFilters] = useState<Partial<Record<keyof Finding, string[]>>>({});
+  const [filters, setFilters] = useState<Partial<Record<FilterableFields, string[]>>>({});
   const [groupBy, setGroupBy] = useState<GroupableFields | 'none'>('severity');
 
   const { data: result, isLoading, isError, error, refetch } = useQuery<ScanResultResponse, Error>({
@@ -59,16 +59,6 @@ const ResultsPage: React.FC = () => {
     refetchOnWindowFocus: false,
   });
 
-  // --- ADD THIS LOGGING BLOCK ---
-    useEffect(() => {
-        if (result) {
-            console.log("--- [ResultsPage] Data Received from API ---");
-            console.log(result);
-            console.log("-------------------------------------------");
-        }
-    }, [result]);
-  // --- END LOGGING BLOCK ---
-
   const applyFixesMutation = useMutation({
     mutationFn: (findingIds: number[]) => scanService.applySelectiveFixes(scanId!, findingIds),
     onSuccess: (data) => {
@@ -78,32 +68,39 @@ const ResultsPage: React.FC = () => {
     onError: (err: Error) => message.error(`Failed to apply fixes: ${err.message}`),
   });
 
-  const allFindings = useMemo(() => result?.summary_report?.files_analyzed?.flatMap(f => f.findings) || [], [result]);
+  const allFindingsInFile = useMemo(() => {
+    if (!selectedFilePath) return [];
+    return result?.summary_report?.files_analyzed?.find(f => f.file_path === selectedFilePath)?.findings || [];
+  }, [result, selectedFilePath]);
 
-  const uniqueFilterOptions = useMemo(() => {
-    return {
-      severity: [...new Set(allFindings.map(f => f.severity).filter(Boolean))],
-      confidence: [...new Set(allFindings.map(f => f.confidence).filter(Boolean))],
-      cwe: [...new Set(allFindings.map(f => f.cwe).filter(Boolean))],
-      agent_name: [...new Set(allFindings.map(f => f.agent_name).filter(Boolean))],
-    };
-  }, [allFindings]);
+  const dynamicFilterOptions = useMemo(() => {
+    const options: Record<FilterableFields, string[]> = { severity: [], confidence: [], agent_name: [], title: [] };
+    const activeFilters = Object.entries(filters).filter(([, values]) => values && values.length > 0);
 
-  const processedFindings = useMemo(() => {
-    if (!selectedFilePath || !result?.summary_report?.files_analyzed) return [];
-    
-    let findings = result.summary_report.files_analyzed.find(f => f.file_path === selectedFilePath)?.findings || [];
+    for (const key in options) {
+      const otherFilters = activeFilters.filter(([filterKey]) => filterKey !== key);
+      const relevantFindings = allFindingsInFile.filter(finding => {
+        return otherFilters.every(([filterKey, values]) => {
+          const findingValue = finding[filterKey as FilterableFields];
+          return findingValue ? values.includes(findingValue) : false;
+        });
+      });
+      options[key as FilterableFields] = [...new Set(relevantFindings.map(f => f[key as FilterableFields]).filter(Boolean))] as string[];
+    }
+    return options;
+  }, [allFindingsInFile, filters]);
 
-    // Apply Filters
+  const filteredAndSortedFindings = useMemo(() => {
+    let findings = [...allFindingsInFile];
+
     findings = findings.filter(finding => {
       return Object.entries(filters).every(([key, values]) => {
         if (!values || values.length === 0) return true;
-        const findingValue = finding[key as keyof Finding];
-        return findingValue ? values.includes(findingValue as string) : false;
+        const findingValue = finding[key as FilterableFields];
+        return findingValue ? values.includes(findingValue) : false;
       });
     });
 
-    // Apply Sorting
     const severityOrder: Record<string, number> = { 'CRITICAL': 5, 'HIGH': 4, 'MEDIUM': 3, 'LOW': 2, 'INFORMATIONAL': 1 };
     findings.sort((a, b) => {
       const field = sortConfig.field;
@@ -129,13 +126,13 @@ const ResultsPage: React.FC = () => {
     });
 
     return findings;
-  }, [result, selectedFilePath, sortConfig, filters]);
+  }, [allFindingsInFile, sortConfig, filters]);
 
-  const groupedAndSortedFindings = useMemo(() => {
+  const groupedFindings = useMemo(() => {
     if (groupBy === 'none') {
-      return { 'all': processedFindings };
+      return { 'all': filteredAndSortedFindings };
     }
-    return processedFindings.reduce((acc, finding) => {
+    return filteredAndSortedFindings.reduce((acc, finding) => {
       const key = finding[groupBy] || 'Unknown';
       if (!acc[key]) {
         acc[key] = [];
@@ -143,8 +140,7 @@ const ResultsPage: React.FC = () => {
       acc[key].push(finding);
       return acc;
     }, {} as Record<string, Finding[]>);
-  }, [processedFindings, groupBy]);
-
+  }, [filteredAndSortedFindings, groupBy]);
 
   useEffect(() => {
     const filesWithFindings = result?.summary_report?.files_analyzed?.filter(f => f.findings.length > 0) || [];
@@ -152,6 +148,10 @@ const ResultsPage: React.FC = () => {
         setSelectedFilePath(filesWithFindings[0].file_path);
     }
   }, [result, selectedFilePath]);
+
+  const handleFilterChange = (key: FilterableFields, values: string[]) => {
+    setFilters(prev => ({...prev, [key]: values}));
+  };
 
   const handleDownloadSarif = () => {
     if (result?.sarif_report) {
@@ -190,13 +190,68 @@ const ResultsPage: React.FC = () => {
       
       <ScanSummary summaryReport={summary_report} />
 
-      <Layout style={{ background: '#fff', marginTop: 24, borderRadius: 8, border: '1px solid #f0f0f0', flexDirection: 'column' }}>
+      <Card size="small" style={{ marginBottom: 16 }}>
+        <Row gutter={[16, 8]} align="bottom">
+          <Col xs={24} sm={12} md={6}>
+            <Typography.Text>Group By:</Typography.Text>
+            <Select value={groupBy} onChange={(value) => setGroupBy(value as GroupableFields | 'none')} style={{ width: '100%' }}>
+                <Option value="none">None</Option>
+                <Option value="severity">Severity</Option>
+                <Option value="confidence">Confidence</Option>
+                <Option value="agent_name">Agent</Option>
+                <Option value="title">Finding Title</Option>
+            </Select>
+          </Col>
+          <Col xs={24} sm={12} md={6}>
+              <Typography.Text>Sort By:</Typography.Text>
+              <Select value={sortConfig.field} onChange={(field) => setSortConfig(prev => ({ ...prev, field }))} style={{ width: '100%' }}>
+                  <Option value="severity">Severity</Option>
+                  <Option value="confidence">Confidence</Option>
+                  <Option value="line_number">Line Number</Option>
+                  <Option value="title">Finding Title</Option>
+              </Select>
+          </Col>
+          <Col xs={12} sm={12} md={6}>
+            <Typography.Text>Order:</Typography.Text>
+            <Select value={sortConfig.order} onChange={(order) => setSortConfig(prev => ({ ...prev, order }))} style={{ width: '100%' }}>
+                <Option value="desc">Descending</Option>
+                <Option value="asc">Ascending</Option>
+            </Select>
+          </Col>
+          <Col xs={12} sm={12} md={6}>
+            <Typography.Text>Filter by Severity:</Typography.Text>
+            <Select mode="multiple" allowClear style={{ width: '100%' }} placeholder="All Severities" onChange={(values) => handleFilterChange('severity', values)} value={filters.severity}>
+                {dynamicFilterOptions.severity.map(s => <Option key={s} value={s}>{s}</Option>)}
+            </Select>
+          </Col>
+          <Col xs={12} sm={12} md={6}>
+            <Typography.Text>Filter by Confidence:</Typography.Text>
+            <Select mode="multiple" allowClear style={{ width: '100%' }} placeholder="All Confidences" onChange={(values) => handleFilterChange('confidence', values)} value={filters.confidence}>
+                {dynamicFilterOptions.confidence.map(s => <Option key={s} value={s}>{s}</Option>)}
+            </Select>
+          </Col>
+          <Col xs={12} sm={12} md={6}>
+            <Typography.Text>Filter by Agent:</Typography.Text>
+            <Select mode="multiple" allowClear style={{ width: '100%' }} placeholder="All Agents" onChange={(values) => handleFilterChange('agent_name', values)} value={filters.agent_name}>
+                {dynamicFilterOptions.agent_name.map(s => <Option key={s} value={s}>{s}</Option>)}
+            </Select>
+          </Col>
+          <Col xs={24} sm={12} md={12}>
+            <Typography.Text>Filter by Finding Title:</Typography.Text>
+            <Select mode="multiple" allowClear style={{ width: '100%' }} placeholder="All Titles" onChange={(values) => handleFilterChange('title', values)} value={filters.title}>
+                {dynamicFilterOptions.title.map(s => <Option key={s} value={s}>{s}</Option>)}
+            </Select>
+          </Col>
+        </Row>
+      </Card>
+      
+      <Layout style={{ background: '#fff', borderRadius: 8, border: '1px solid #f0f0f0', flexDirection: 'column' }}>
         <Layout>
             <Sider width={350} style={{ background: "#fafafa", padding: "16px", overflow: "auto", borderRight: '1px solid #f0f0f0', borderRadius: '8px 0 0 8px' }}>
               <Title level={5} style={{ marginTop: 0, marginBottom: 16 }}>Analyzed Files</Title>
               <ResultsFileTree
                 analyzedFiles={summary_report.files_analyzed || []}
-                findings={allFindings}
+                findings={allFindingsInFile}
                 selectedKeys={selectedFilePath ? [selectedFilePath] : []}
                 onSelect={(keys) => {
                     setSelectedFilePath(keys[0] as string);
@@ -207,81 +262,29 @@ const ResultsPage: React.FC = () => {
                 <Row justify="space-between" align="middle" style={{ marginBottom: 16, flexWrap: 'wrap', gap: '10px' }}>
                     <Title level={5} style={{ margin: 0 }}>Findings in: {selectedFilePath || "..."}</Title>
                     <Space wrap>
-                        <Button size="small" onClick={() => setActiveFindingKeys(processedFindings.map(f => f.id.toString()))} icon={<PlusSquareOutlined />}>Expand All</Button>
+                        <Button size="small" onClick={() => setActiveFindingKeys(filteredAndSortedFindings.map(f => f.id.toString()))} icon={<PlusSquareOutlined />}>Expand All</Button>
                         <Button size="small" onClick={() => setActiveFindingKeys([])} icon={<MinusSquareOutlined />}>Collapse All</Button>
                     </Space>
                 </Row>
                 
-                <Card size="small" style={{ marginBottom: 16 }}>
-                    <Row gutter={[16, 16]} align="bottom">
-                        <Col xs={24} sm={12} md={8}>
-                            <Typography.Text>Group By:</Typography.Text>
-                            <Select
-                                value={groupBy}
-                                onChange={(value) => setGroupBy(value)}
-                                style={{ width: '100%' }}
-                            >
-                                <Option value="none">None</Option>
-                                <Option value="severity">Severity</Option>
-                                <Option value="confidence">Confidence</Option>
-                                <Option value="cwe">CWE</Option>
-                                <Option value="agent_name">Agent</Option>
-                            </Select>
-                        </Col>
-                        <Col xs={24} sm={12} md={8}>
-                            <Typography.Text>Sort By:</Typography.Text>
-                            <Select
-                                value={sortConfig.field}
-                                onChange={(field) => setSortConfig(prev => ({ ...prev, field }))}
-                                style={{ width: '100%' }}
-                            >
-                                <Option value="severity">Severity</Option>
-                                <Option value="confidence">Confidence</Option>
-                                <Option value="line_number">Line Number</Option>
-                                <Option value="cwe">CWE</Option>
-                                <Option value="agent_name">Agent</Option>
-                            </Select>
-                        </Col>
-                        <Col xs={24} sm={12} md={8}>
-                             <Typography.Text>Order:</Typography.Text>
-                            <Select
-                                value={sortConfig.order}
-                                onChange={(order) => setSortConfig(prev => ({ ...prev, order }))}
-                                style={{ width: '100%' }}
-                            >
-                                <Option value="desc">Descending</Option>
-                                <Option value="asc">Ascending</Option>
-                            </Select>
-                        </Col>
-                         <Col xs={24} sm={12} md={24}>
-                             <Typography.Text>Filter by Severity:</Typography.Text>
-                            <Select
-                                mode="multiple"
-                                allowClear
-                                style={{ width: '100%' }}
-                                placeholder="Filter by Severity"
-                                onChange={(values) => setFilters(prev => ({...prev, severity: values}))}
-                            >
-                                {uniqueFilterOptions.severity.map(s => <Option key={s} value={s}>{s}</Option>)}
-                            </Select>
-                        </Col>
-                    </Row>
-                </Card>
-
                 <div style={{ flexGrow: 1, overflowY: 'auto' }}>
-                    {Object.entries(groupedAndSortedFindings).map(([groupName, findingsInGroup]) => (
+                    {Object.entries(groupedFindings).map(([groupName, findingsInGroup]) => (
                       <React.Fragment key={groupName}>
                         {groupBy !== 'none' && (
                           <Divider orientation="left">
                              <Tag color="purple">{`${groupBy.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}: ${groupName}`}</Tag>
                           </Divider>
                         )}
-                        <FindingList 
-                            findings={findingsInGroup} 
-                            onRemediateFinding={(id) => applyFixesMutation.mutate([id])}
-                            activeKeys={activeFindingKeys}
-                            onActiveKeyChange={(keys) => setActiveFindingKeys(keys as string[])}
-                        />
+                        {findingsInGroup.length > 0 ? (
+                            <FindingList 
+                                findings={findingsInGroup} 
+                                onRemediateFinding={(id) => applyFixesMutation.mutate([id])}
+                                activeKeys={activeFindingKeys}
+                                onActiveKeyChange={(keys) => setActiveFindingKeys(keys as string[])}
+                            />
+                        ) : (
+                            <Empty description="No findings match the current filter criteria." />
+                        )}
                       </React.Fragment>
                     ))}
                 </div>

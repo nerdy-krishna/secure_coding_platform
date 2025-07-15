@@ -121,6 +121,13 @@ class ScanRepository:
         )
         return result.scalars().first()
 
+    async def update_scan_artifacts(self, scan_id: uuid.UUID, artifacts: Dict[str, Any]):
+        """Updates a scan record with large artifact JSONB data."""
+        logger.info(f"Updating artifacts for scan {scan_id} in DB.", extra={"scan_id": str(scan_id), "artifacts": list(artifacts.keys())})
+        stmt = update(db_models.Scan).where(db_models.Scan.id == scan_id).values(**artifacts)
+        await self.db.execute(stmt)
+        await self.db.commit()
+
     async def update_status(self, scan_id: uuid.UUID, status: str):
         """Updates the status of a single scan."""
         logger.info("Updating scan status in DB.", extra={"scan_id": str(scan_id), "new_status": status})
