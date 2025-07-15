@@ -218,6 +218,7 @@ class VulnerabilityFindingResponse(BaseModel):
     line_number: int
     remediation: str
     confidence: str
+    agent_name: Optional[str] = None
     references: List[str]
     fixes: Optional[Dict[str, Any]] = None
 

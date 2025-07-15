@@ -56,7 +56,7 @@ async def create_scan(
     service: SubmissionService = Depends(get_scan_service),
     user: db_models.User = Depends(current_active_user),
     project_name: str = Form(...),
-    scan_type: str = Form("audit"),
+    scan_type: str = Form(...),
     main_llm_config_id: uuid.UUID = Form(...),
     specialized_llm_config_id: uuid.UUID = Form(...),
     frameworks: str = Form(...), # Received as a string, will be processed in service

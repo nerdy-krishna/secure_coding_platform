@@ -200,6 +200,7 @@ export interface Finding {
   line_number: number;
   remediation: string;
   confidence: string;
+  agent_name?: string;
   references: string[];
   fixes?: SuggestedFix;
 }
