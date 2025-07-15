@@ -133,6 +133,8 @@ For each vulnerability you identify:
 1.  Provide a detailed 'finding' object, including a concise 'title', 'cwe', 'severity', and 'description'.
 2.  Provide a 'suggestion' object that includes the 'original_snippet' of code to be replaced and the new 'code' that fixes the vulnerability. The 'original_snippet' must be an EXACT continuous block of code from the source file.
 
+IMPORTANT: To ensure a complete response, please limit your output to the top 7 most critical findings you identify in the code.
+
 <SECURITY_GUIDELINES>
 {{security_guidelines}}
 </SECURITY_GUIDELINES>

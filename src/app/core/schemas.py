@@ -8,6 +8,19 @@ from pydantic import BaseModel, Field
 WorkflowMode = Literal["audit", "remediate"]
 
 
+class FixSuggestion(BaseModel):
+    """A standard representation of a single code fix, including the original code."""
+
+    description: str = Field(
+        description="A brief description of the suggested code change."
+    )
+    original_snippet: str = Field(
+        description="The exact, original code snippet that is vulnerable and should be replaced."
+    )
+    code: str = Field(
+        description="The secure code snippet to replace the vulnerable part."
+    )
+
 class VulnerabilityFinding(BaseModel):
     cwe: str = Field(description="The CWE ID for the vulnerability (e.g., 'CWE-22').")
     title: str = Field(description="A concise, one-line title for the vulnerability.")
@@ -30,19 +43,8 @@ class VulnerabilityFinding(BaseModel):
         default_factory=list, description="A list of URLs or reference links."
     )
     file_path: str
-
-
-class FixSuggestion(BaseModel):
-    """A standard representation of a single code fix, including the original code."""
-
-    description: str = Field(
-        description="A brief description of the suggested code change."
-    )
-    original_snippet: str = Field(
-        description="The exact, original code snippet that is vulnerable and should be replaced."
-    )
-    code: str = Field(
-        description="The secure code snippet to replace the vulnerable part."
+    fixes: Optional[FixSuggestion] = Field(
+        default=None, description="The suggested code fix, including original and new snippets."
     )
 
 

@@ -34,8 +34,12 @@ CONCURRENT_LLM_LIMIT = 5
 STATUS_PENDING_APPROVAL = "PENDING_COST_APPROVAL"
 STATUS_QUEUED = "QUEUED"
 STATUS_QUEUED_FOR_SCAN = "QUEUED_FOR_SCAN"
-STATUS_REMEDIATION_COMPLETE = "REMEDIATION_COMPLETED"
+STATUS_ANALYZING_CONTEXT = "ANALYZING_CONTEXT"
+STATUS_RUNNING_AGENTS = "RUNNING_AGENTS"
+STATUS_GENERATING_REPORTS = "GENERATING_REPORTS"
+STATUS_REMEDIATION_COMPLETED = "REMEDIATION_COMPLETED"
 STATUS_COMPLETED = "COMPLETED"
+STATUS_CANCELLED = "CANCELLED"
 
 
 class WorkerState(TypedDict):
@@ -185,13 +189,17 @@ async def retrieve_scan_data(state: WorkerState) -> Dict[str, Any]:
             logger.error(f"Error retrieving data for scan {scan_id}: {e}", exc_info=True)
             return {"error_message": str(e)}
 
-def create_repository_map_node(state: WorkerState) -> Dict[str, Any]:
+async def create_repository_map_node(state: WorkerState) -> Dict[str, Any]:
     """
     Creates a repository map from the provided files, respecting exclusions.
     """
     scan_id = state['scan_id']
     logger.info(f"[ContextAnalysisAgent] Starting repository map creation for scan.", extra={"scan_id": str(scan_id)})
     
+    # Set the status to indicate analysis has begun
+    async with AsyncSessionLocal() as db:
+        await ScanRepository(db).update_status(scan_id, STATUS_ANALYZING_CONTEXT)
+
     all_files = state.get("files")
     if not all_files:
         return {"error_message": "No files found in state for repository mapping."}
@@ -283,6 +291,8 @@ async def run_specialized_agents_node(state: WorkerState) -> Dict[str, Any]:
         return {"error_message": "State is missing data for agent run."}
 
     async with AsyncSessionLocal() as db:
+        # Set status to RUNNING_AGENTS
+        await ScanRepository(db).update_status(scan_id, STATUS_RUNNING_AGENTS)
         scan = await db.get(db_models.Scan, scan_id)
         if not scan or not scan.specialized_llm_config_id:
             return {"error_message": f"Could not get specialized LLM config for scan {scan_id}"}
@@ -335,6 +345,9 @@ def should_run_cost_estimation(state: WorkerState) -> str:
     elif status == STATUS_QUEUED_FOR_SCAN:
         logger.info(f"Routing scan {state['scan_id']} to post-approval path (agent execution).")
         return "run_setup_steps" # Both paths need the setup steps
+    elif status == STATUS_CANCELLED:
+        logger.info(f"Scan {state['scan_id']} was previously cancelled. Terminating workflow gracefully.")
+        return END
     else:
         logger.error(f"Unknown status '{status}' for routing, sending to error handler.")
         return "handle_error"
@@ -417,8 +430,17 @@ async def patch_and_verify_node(state: WorkerState) -> Dict[str, Any]:
 
     async with AsyncSessionLocal() as db:
         repo = ScanRepository(db)
-        # Use the specific snapshot type for remediated code
-        await repo.create_code_snapshot(scan_id, file_map=live_codebase, snapshot_type="POST_REMEDIATION")
+        # 1. Create new source file records for the changed files to get their hashes
+        new_hashes = await repo.get_or_create_source_files([
+            {"path": path, "content": content, "language": "unknown"} # Language can be improved later
+            for path, content in live_codebase.items()
+        ])
+        
+        # 2. Create the new file_map with {path: hash}
+        new_file_map = {path: file_hash for path, file_hash in zip(live_codebase.keys(), new_hashes)}
+
+        # 3. Create the snapshot using the correct map
+        await repo.create_code_snapshot(scan_id, file_map=new_file_map, snapshot_type="POST_REMEDIATION")
         logger.info(f"Saved post-remediation code snapshot for scan {scan_id}")
 
     return {"live_codebase": live_codebase}
@@ -426,8 +448,13 @@ async def patch_and_verify_node(state: WorkerState) -> Dict[str, Any]:
 async def run_impact_reporting(state: WorkerState) -> Dict[str, Any]:
     """Invokes the ImpactReportingAgent sub-graph to generate the final reports."""
     scan_id_str = str(state['scan_id'])
+    scan_id = state['scan_id']
     logger.info(f"Entering node to run ImpactReportingAgent.", extra={"scan_id": scan_id_str})
     
+    # Set status to GENERATING_REPORTS
+    async with AsyncSessionLocal() as db:
+        await ScanRepository(db).update_status(scan_id, STATUS_GENERATING_REPORTS)
+
     # Use the main LLM for reporting
     llm_id_to_use = state.get("llm_config_id")
 
@@ -493,6 +520,7 @@ async def save_final_report_node(state: WorkerState) -> Dict[str, Any]:
     
     final_risk_score = int(round(risk_score, 0))
     
+    
     summary_data = {
         "summary": {
             "total_findings_count": len(findings),
@@ -505,8 +533,8 @@ async def save_final_report_node(state: WorkerState) -> Dict[str, Any]:
         }
     }
             
-    # FIX: Ensure this logic correctly uses the 'scan_type' key
-    final_status = STATUS_REMEDIATION_COMPLETE if state['scan_type'] == 'AUDIT_AND_REMEDIATE' else STATUS_COMPLETED
+    # Set the final status based on the original scan type.
+    final_status = STATUS_REMEDIATION_COMPLETED if state.get('scan_type') == 'REMEDIATE' else STATUS_COMPLETED
 
     async with AsyncSessionLocal() as db:
         repo = ScanRepository(db)
@@ -544,9 +572,57 @@ def route_after_setup(state: WorkerState) -> str:
     elif status == STATUS_QUEUED_FOR_SCAN: return "run_specialized_agents"
     else: return "handle_error"
 
+async def save_findings_node(state: WorkerState) -> Dict[str, Any]:
+    """Saves the aggregated findings from all agents to the database."""
+    scan_id = state["scan_id"]
+    findings: List[VulnerabilityFinding] = state.get("findings", [])
+    fixes: List[FixResult] = state.get("fixes", [])
+    
+    if not findings:
+        logger.warning(f"No findings in state to save for scan {scan_id}.")
+        return {}
+
+    # Create a dictionary for quick lookup of fixes by a unique finding identifier
+    fix_map = {
+        (fix.finding.file_path, fix.finding.line_number, fix.finding.cwe): fix.suggestion
+        for fix in fixes
+    }
+
+    # Embed the fix suggestions directly into the finding objects
+    for finding in findings:
+        fix_key = (finding.file_path, finding.line_number, finding.cwe)
+        if fix_key in fix_map:
+            suggestion = fix_map[fix_key]
+            # The 'fixes' attribute in the DB model is a JSONB column
+            finding.fixes = suggestion.model_dump()  # type: ignore
+
+    logger.info(f"Entering node to save {len(findings)} findings to the database.", extra={"scan_id": str(scan_id)})
+    async with AsyncSessionLocal() as db:
+        repo = ScanRepository(db)
+        try:
+            await repo.save_findings(scan_id, findings)
+            logger.info(f"Successfully saved {len(findings)} findings for scan {scan_id}.")
+            return {}
+        except Exception as e:
+            error_msg = f"Failed to save findings to database: {e}"
+            logger.error(error_msg, exc_info=True, extra={"scan_id": str(scan_id)})
+            return {"error_message": error_msg}
+
+
 def route_after_agents(state: WorkerState) -> str:
-    if state.get("error_message"): return "handle_error"
-    return "patch_and_verify" if state.get("scan_type") == 'AUDIT_AND_REMEDIATE' else "run_impact_reporting"
+    """Routes to the correct path after agents have run."""
+    if state.get("error_message"):
+        return "handle_error"
+    
+    scan_type = state.get("scan_type")
+    # The 'REMEDIATE' scan type corresponds to "Direct Remediation" in the UI
+    if scan_type == "REMEDIATE":
+        logger.info(f"Scan type is {scan_type}, routing to patch_and_verify.")
+        return "patch_and_verify"
+    else:
+        # Both AUDIT and AUDIT_AND_REMEDIATE go directly to reporting now.
+        logger.info(f"Scan type is {scan_type}, routing to run_impact_reporting.")
+        return "run_impact_reporting"
 
 
 # --- WORKFLOW WIRING ---
@@ -558,6 +634,7 @@ workflow.add_node("determine_relevant_agents", determine_relevant_agents_node)
 workflow.add_node("create_context_bundles", create_context_bundles_node)
 workflow.add_node("estimate_cost", estimate_cost_node)
 workflow.add_node("run_specialized_agents", run_specialized_agents_node)
+workflow.add_node("save_findings_node", save_findings_node)
 workflow.add_node("patch_and_verify", patch_and_verify_node)
 workflow.add_node("run_impact_reporting", run_impact_reporting)
 workflow.add_node("save_final_report", save_final_report_node)
@@ -573,6 +650,7 @@ workflow.add_conditional_edges(
     {
         "run_setup_steps": "create_repository_map",
         "handle_error": "handle_error",
+        END: END,
     }
 )
 
@@ -590,11 +668,26 @@ workflow.add_conditional_edges("create_context_bundles", route_after_setup, {
 workflow.add_conditional_edges("estimate_cost", lambda s: END if s.get("current_scan_status") == STATUS_PENDING_APPROVAL else "handle_error", {
     END: END, "handle_error": "handle_error"
 })
-workflow.add_conditional_edges("run_specialized_agents", route_after_agents, {
+
+# Connect the save findings node
+workflow.add_conditional_edges(
+    "run_specialized_agents",
+    should_continue,
+    {
+        "continue": "save_findings_node",
+        "handle_error": "handle_error"
+    }
+)
+
+# After saving findings, route based on the scan type
+workflow.add_conditional_edges(
+    "save_findings_node",
+    route_after_agents, {
     "patch_and_verify": "patch_and_verify",
     "run_impact_reporting": "run_impact_reporting",
     "handle_error": "handle_error"
 })
+
 workflow.add_conditional_edges("patch_and_verify", should_continue, {"continue": "run_impact_reporting", "handle_error": "handle_error"})
 workflow.add_conditional_edges("run_impact_reporting", should_continue, {"continue": "save_final_report", "handle_error": "handle_error"})
 workflow.add_edge("save_final_report", END)

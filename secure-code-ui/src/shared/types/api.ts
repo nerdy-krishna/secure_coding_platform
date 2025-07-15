@@ -187,7 +187,7 @@ export interface GitRepoPreviewRequest {
 export interface SuggestedFix {
   description?: string;
   original_snippet?: string;
-  suggested_fix?: string;
+  code?: string;
 }
 
 export interface Finding {
@@ -201,7 +201,7 @@ export interface Finding {
   remediation: string;
   confidence: string;
   references: string[];
-  fixes?: SuggestedFix[];
+  fixes?: SuggestedFix;
 }
 
 export interface SubmittedFile {
@@ -232,6 +232,7 @@ export interface OverallRiskScore {
 
 export interface SummaryReport {
   scan_id: string;
+  project_id: string;
   project_name: string;
   scan_type: string;
   primary_language?: string;

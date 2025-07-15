@@ -15,8 +15,9 @@ from app.api.v1 import models as api_models
 from app.infrastructure.database import models as db_models
 from app.core import schemas as agent_schemas
 from app.shared.lib.files import get_language_from_filename
+from app.shared.lib.reporting import create_executive_summary_html, generate_pdf_from_html
 from itertools import groupby
-from operator import attrgetter 
+from operator import attrgetter
 
 logger = logging.getLogger(__name__)
 
@@ -150,10 +151,15 @@ class SubmissionService:
         if not scan or (scan.user_id != user.id and not user.is_superuser):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scan not found or not authorized.")
 
-        if scan.status != "PENDING_COST_APPROVAL":
+        cancellable_statuses = [
+            "QUEUED", "PENDING_COST_APPROVAL", "QUEUED_FOR_SCAN", 
+            "ANALYZING_CONTEXT", "RUNNING_AGENTS", "GENERATING_REPORTS"
+        ]
+        if scan.status not in cancellable_statuses:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Scan cannot be cancelled from its current state: {scan.status}")
 
         await self.repo.update_status(scan_id, "CANCELLED")
+        await self.repo.create_scan_event(scan_id=scan.id, stage_name="CANCELLED", status="COMPLETED")
         logger.info(f"Scan {scan_id} has been cancelled by user {user.id}.")
 
     async def apply_fixes_for_scan(self, scan_id: uuid.UUID, user: db_models.User) -> None:
@@ -266,6 +272,7 @@ class SubmissionService:
 
             summary_report_response = api_models.SummaryReportResponse(
                 submission_id=scan.id,
+                project_id=scan.project_id,
                 project_name=scan.project.name if scan.project else "N/A",
                 scan_type=scan.scan_type,
                 selected_frameworks=scan.frameworks or [],
@@ -405,3 +412,38 @@ class SubmissionService:
         await self.repo.create_code_snapshot(scan_id=scan.id, file_map=new_file_map, snapshot_type="POST_REMEDIATION")
         await self.repo.update_status(scan_id, "REMEDIATION_COMPLETED")
         logger.info(f"Selective fixes applied for scan {scan_id}. Status set to REMEDIATION_COMPLETED.")
+
+    async def generate_executive_summary_pdf(self, scan_id: uuid.UUID, user: db_models.User) -> Optional[bytes]:
+        """Generates a PDF byte stream for the executive summary report."""
+        scan = await self.repo.get_scan_with_details(scan_id)
+
+        if not scan or (scan.user_id != user.id and not user.is_superuser):
+            logger.warning(f"User {user.id} attempted to access PDF for unauthorized scan {scan_id}.")
+            return None
+        
+        if not scan.impact_report or not scan.summary:
+            logger.warning(f"PDF generation failed: Scan {scan_id} is missing impact or summary report data.")
+            return None
+
+        # Re-construct Pydantic models from the JSON data for type safety
+        impact_report_model = agent_schemas.ImpactReport(**scan.impact_report)
+
+        # Build the summary report model from all necessary sources
+        summary_data_from_db = scan.summary or {}
+        summary_report_model = api_models.SummaryReportResponse(
+            submission_id=scan.id,
+            project_id=scan.project_id,
+            project_name=scan.project.name,
+            scan_type=scan.scan_type,
+            analysis_timestamp=scan.completed_at,
+            selected_frameworks=scan.frameworks or [],
+            summary=summary_data_from_db.get("summary", {}),
+            overall_risk_score=summary_data_from_db.get("overall_risk_score", {})
+        )
+
+        # Generate the HTML and then the PDF
+        html_content = create_executive_summary_html(impact_report_model, summary_report_model)
+        pdf_bytes = generate_pdf_from_html(html_content)
+        
+        logger.info(f"Successfully generated PDF for scan {scan_id}.")
+        return pdf_bytes
