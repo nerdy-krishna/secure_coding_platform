@@ -212,6 +212,7 @@ class FixSuggestionResponse(BaseModel):
 class VulnerabilityFindingResponse(BaseModel):
     id: int
     file_path: str
+    title: str
     cwe: str
     description: str
     severity: str

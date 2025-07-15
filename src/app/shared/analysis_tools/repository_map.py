@@ -28,6 +28,9 @@ class Symbol(BaseModel):
     line_number: int = Field(
         ..., description="The line number where the symbol is defined."
     )
+    end_line_number: int = Field(
+        ..., description="The line number where the symbol's definition ends."
+    )
 
 
 class FileSummary(BaseModel):
@@ -353,13 +356,15 @@ class RepositoryMappingEngine:
                     # FIX: Check if name_node.text is not None before decoding
                     symbol_name = name_node.text.decode("utf8")
                     line_number = node.start_point[0] + 1
+                    end_line_number = node.end_point[0] + 1
 
                     if (symbol_name, line_number) not in processed_symbols:
                         symbol = Symbol(
-                            name=symbol_name, type=symbol_type, line_number=line_number
+                            name=symbol_name, type=symbol_type, line_number=line_number, end_line_number=end_line_number
                         )
                         summary.symbols.append(symbol)
                         processed_symbols[(symbol_name, line_number)] = symbol
+ 
         return summary
 
     def create_map(self, files: Dict[str, str]) -> RepositoryMap:

@@ -157,21 +157,19 @@ def pika_message_callback(
 
         initial_worker_state: WorkerState = {
             "scan_id": scan_uuid,
+            "scan_type": "AUDIT", # This will be overwritten by the DB value
             "llm_config_id": None,
+            "specialized_llm_config_id": None,
             "files": None,
-            "scan_type": "AUDIT", 
+            "current_scan_status": None,
             "repository_map": None,
-            "asvs_analysis": None,
-            "context_bundles": None,
+            "dependency_graph": None,
             "relevant_agents": {},
-            "excluded_files": None,
-            "findings": [],
-            "fixes": [],
             "live_codebase": None,
+            "findings": [],
             "impact_report": None,
             "sarif_report": None,
             "error_message": None,
-            "current_scan_status": None,
         }
 
         queue_name = method.routing_key

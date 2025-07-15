@@ -28,10 +28,10 @@ const FindingList: React.FC<FindingListProps> = ({ findings, onRemediateFinding,
             <Row justify="space-between" align="middle" style={{ width: '100%'}}>
               <Col>
                 <Space>
-                    <Tag color={SeverityColors[finding.severity?.toUpperCase() || "DEFAULT"]}>
-                        {finding.severity}
-                    </Tag>
-                    <Text strong>{finding.title}</Text>
+                  <Text strong>{finding.title}</Text>
+                  <Tag color={SeverityColors[finding.severity?.toUpperCase() || "DEFAULT"]}>
+                      {finding.severity}
+                  </Tag>
                 </Space>
               </Col>
             </Row>

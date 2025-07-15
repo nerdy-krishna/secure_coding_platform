@@ -316,11 +316,8 @@ const SubmitCodePage: React.FC = () => {
               <Tooltip title="Performs a security audit and generates a report of findings. No code will be changed.">
                 <Radio.Button value="AUDIT">Audit</Radio.Button>
               </Tooltip>
-              <Tooltip title="Performs an audit and suggests code fixes for each finding, which you can apply later.">
-                <Radio.Button value="AUDIT_AND_REMEDIATE">Audit & Remediate</Radio.Button>
-              </Tooltip>
-              <Tooltip title="Performs an audit and automatically applies all generated code fixes.">
-                <Radio.Button value="REMEDIATE">Direct Remediation</Radio.Button>
+              <Tooltip title="Performs a full remediation scan, generating verified fixes and creating a final, patched version of the code.">
+                <Radio.Button value="REMEDIATE">Remediate</Radio.Button>
               </Tooltip>
             </Radio.Group>
           </Form.Item>

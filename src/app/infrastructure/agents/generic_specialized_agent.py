@@ -1,6 +1,6 @@
 # src/app/infrastructure/agents/generic_specialized_agent.py
 import logging
-from typing import Dict, Any, cast, List
+from typing import Dict, Any, Optional, cast, List
 
 from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
@@ -16,6 +16,7 @@ from app.core.schemas import (
     RemediationResult,
     FixResult,
     VulnerabilityFinding,
+    FixSuggestion,
 )
 
 logger = logging.getLogger(__name__)
@@ -34,10 +35,13 @@ class AuditResponse(BaseModel):
         description="A list of vulnerability findings without any fixes."
     )
 
+class CorrectedSnippet(BaseModel):
+    """A Pydantic model for the snippet correction call."""
+    corrected_original_snippet: str
+
 async def analysis_node(state: SpecializedAgentState, config: Dict[str, Any]) -> Dict[str, Any]:
     """
     A single, unified node that performs analysis based on the workflow_mode.
-    It is parameterized by the agent_name and domain_query from the config.
     """
     agent_config = config.get("configurable", {})
     agent_name = agent_config.get("agent_name")
@@ -49,17 +53,12 @@ async def analysis_node(state: SpecializedAgentState, config: Dict[str, Any]) ->
     scan_id = state["scan_id"]
     filename = state["filename"]
     code_bundle = state["code_snippet"]
-    # The scan_type from the DB (e.g., 'AUDIT_AND_REMEDIATE') determines the agent's behavior
-    scan_type = state["workflow_mode"] 
+    workflow_mode = state["workflow_mode"]
     
-    # Determine the prompt_template_type based on the internal workflow_mode
-    if scan_type == "remediate":
-        template_type = "DETAILED_REMEDIATION"
-    else: # "audit"
-        template_type = "QUICK_AUDIT"
+    template_type = "DETAILED_REMEDIATION" if workflow_mode == "remediate" else "QUICK_AUDIT"
         
     logger.info(
-        f"[{agent_name}] Assessing file '{filename}' with template type '{template_type}'.",
+        f"[{agent_name}] Assessing '{filename}' with template type '{template_type}'.",
         extra={"scan_id": str(scan_id), "source_file_path": filename}
     )
 
@@ -129,30 +128,101 @@ async def analysis_node(state: SpecializedAgentState, config: Dict[str, Any]) ->
         return {"error": f"[{agent_name}] LLM failed to produce valid analysis: {llm_response.error}"}
 
     # 5. Process the response
-    findings = []
-    fixes = []
-    if template_type == "QUICK_AUDIT":
+    findings: List[VulnerabilityFinding] = []
+    fixes: List[FixResult] = []
+
+    if workflow_mode == "audit":
         audit_result = cast(AuditResponse, llm_response.parsed_output)
         for finding in audit_result.findings:
             finding.file_path = filename
             finding.agent_name = agent_name
             findings.append(finding)
-    else:  # DETAILED_REMEDIATION
+    else:  # 'remediate' mode
         remediate_result = cast(RemediateResponse, llm_response.parsed_output)
         for result in remediate_result.results:
             result.finding.file_path = filename
             result.finding.agent_name = agent_name
+            
+            # Snippet Verification & Retry Logic
+            code_for_verification = state.get("file_content_for_verification")
+            verified_suggestion = None
+            if code_for_verification:
+                verified_suggestion = await _verify_and_correct_snippet(
+                    llm_client=llm_client,
+                    code_to_search=code_for_verification,
+                    suggestion=result.suggestion,
+                )
+            else:
+                logger.warning(f"[{agent_name}] Missing full file content for verification. Skipping snippet check.")
+
+
+            if verified_suggestion:
+                result.suggestion = verified_suggestion
+                fixes.append(
+                    FixResult(finding=result.finding, suggestion=result.suggestion)
+                )
+            else:
+                logger.warning(
+                    f"[{agent_name}] Could not verify snippet for CWE {result.finding.cwe} "
+                    f"in {filename} after retries. Discarding fix."
+                )
+            
+            # Always add the finding, even if the fix was discarded
             findings.append(result.finding)
-            fixes.append(
-                FixResult(finding=result.finding, suggestion=result.suggestion)
-            )
 
     logger.info(
-        f"[{agent_name}] Completed analysis for file '{filename}'. Findings: {len(findings)}, Fixes: {len(fixes)}",
+        f"[{agent_name}] Completed analysis for file '{filename}'. "
+        f"Findings: {len(findings)}, Verified Fixes: {len(fixes)}",
         extra={"scan_id": str(scan_id)}
     )
     return {"findings": findings, "fixes": fixes}
 
+async def _verify_and_correct_snippet(
+    llm_client: Any, code_to_search: str, suggestion: FixSuggestion
+) -> Optional[FixSuggestion]:
+    """
+    Verifies a snippet exists and attempts to correct it using an LLM if it doesn't.
+    Returns the verified/corrected suggestion or None if it fails.
+    """
+    original_snippet = suggestion.original_snippet
+    for attempt in range(4): # 1 initial try + 3 retries
+        if original_snippet in code_to_search:
+            suggestion.original_snippet = original_snippet # Ensure the latest version is set
+            return suggestion
+
+        if attempt == 3:
+            break # Failed last attempt
+
+        logger.warning(f"Snippet not found. Retrying with LLM correction (Attempt {attempt + 1}/3).")
+        correction_prompt = f"""
+        The following 'original_snippet' was not found in the 'source_code'.
+        Please analyze the 'source_code' and the 'suggested_fix' to identify the correct 'original_snippet' that the fix should replace.
+        The code may have been slightly modified. Find the logical equivalent.
+        Respond ONLY with a JSON object containing the 'corrected_original_snippet'.
+
+        <source_code>
+        {code_to_search}
+        </source_code>
+
+        <original_snippet>
+        {original_snippet}
+        </original_snippet>
+
+        <suggested_fix>
+        {suggestion.code}
+        </suggested_fix>
+        """
+        try:
+            correction_result = await llm_client.generate_structured_output(correction_prompt, CorrectedSnippet)
+            if isinstance(correction_result.parsed_output, CorrectedSnippet):
+                original_snippet = correction_result.parsed_output.corrected_original_snippet
+                logger.info(f"Received corrected snippet from LLM: '{original_snippet[:60]}...'")
+            else:
+                logger.warning("LLM failed to provide a corrected snippet on this attempt.")
+        except Exception as e:
+            logger.error(f"Error during LLM snippet correction: {e}")
+
+    return None
 
 def build_generic_specialized_agent_graph():
     """Builds the simplified, single-step graph for any specialized agent."""

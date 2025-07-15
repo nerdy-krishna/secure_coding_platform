@@ -8,6 +8,13 @@ from pydantic import BaseModel, Field
 WorkflowMode = Literal["audit", "remediate"]
 
 
+class CodeChunk(TypedDict):
+    symbol_name: str
+    code: str
+    start_line: int
+    end_line: int
+
+
 class FixSuggestion(BaseModel):
     """A standard representation of a single code fix, including the original code."""
 
@@ -82,7 +89,8 @@ class SpecializedAgentState(TypedDict):
     llm_config_id: Optional[uuid.UUID]
     filename: str
     code_snippet: str
-    workflow_mode: WorkflowMode
+    workflow_mode: str
+    file_content_for_verification: Optional[str]
     findings: List[VulnerabilityFinding]
     fixes: List[FixResult]
     error: Optional[str]
