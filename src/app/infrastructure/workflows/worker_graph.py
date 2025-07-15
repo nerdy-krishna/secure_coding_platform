@@ -21,11 +21,13 @@ from app.infrastructure.agents.impact_reporting_agent import ImpactReportingAgen
 from app.infrastructure.agents.symbol_map_agent import generate_symbol_map
 from app.infrastructure.database import AsyncSessionLocal
 from app.infrastructure.database import models as db_models
+from app.infrastructure.database.repositories.llm_config_repo import LLMConfigRepository
 from app.infrastructure.database.repositories.scan_repo import ScanRepository
 from app.infrastructure.llm_client import get_llm_client
 from app.shared.analysis_tools.context_bundler import ContextBundlingEngine
 from app.shared.analysis_tools.repository_map import RepositoryMappingEngine
 from app.shared.analysis_tools.chunker import semantic_chunker
+from app.shared.lib import cost_estimation
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +35,9 @@ CONCURRENT_LLM_LIMIT = 5
 CHUNK_TOKEN_THRESHOLD = 4000
 
 # --- Status Constants ---
+STATUS_PENDING_APPROVAL = "PENDING_COST_APPROVAL"
+STATUS_QUEUED = "QUEUED"
+STATUS_QUEUED_FOR_SCAN = "QUEUED_FOR_SCAN"
 STATUS_ANALYZING_CONTEXT = "ANALYZING_CONTEXT"
 STATUS_RUNNING_AGENTS = "RUNNING_AGENTS"
 STATUS_GENERATING_REPORTS = "GENERATING_REPORTS"
@@ -63,12 +68,16 @@ class MergedFixResponse(BaseModel):
 # --- WORKFLOW NODES ---
 
 async def retrieve_and_prepare_data_node(state: WorkerState) -> Dict[str, Any]:
+    """
+    Node to retrieve all initial data, create the repo map, and dependency graph.
+    """
     scan_id = state['scan_id']
     logger.info(f"Entering node to retrieve and prepare data for scan {scan_id}.")
-    await ScanRepository(AsyncSessionLocal()).update_status(scan_id, STATUS_ANALYZING_CONTEXT)
-    async with AsyncSessionLocal() as db:
-        try:
+    try:
+        async with AsyncSessionLocal() as db:
             repo = ScanRepository(db)
+            await repo.update_status(scan_id, STATUS_ANALYZING_CONTEXT)
+
             scan = await repo.get_scan_with_details(scan_id)
             if not scan: return {"error_message": f"Scan with ID {scan_id} not found."}
             
@@ -78,13 +87,18 @@ async def retrieve_and_prepare_data_node(state: WorkerState) -> Dict[str, Any]:
             files_map = await repo.get_source_files_by_hashes(list(original_snapshot.file_map.values()))
             files = {path: files_map.get(h, "") for path, h in original_snapshot.file_map.items()}
 
+            # Create Repo Map
             mapping_engine = RepositoryMappingEngine()
             repository_map = mapping_engine.create_map(files)
 
+            # Create Dependency Graph
             bundling_engine = ContextBundlingEngine(repository_map, files)
-            dependency_graph = bundling_engine.graph
+            dependency_graph = bundling_engine.graph 
 
-            framework_details = await db.execute(select(db_models.Framework).options(selectinload(db_models.Framework.agents)).where(db_models.Framework.name.in_(scan.frameworks or [])))
+            # Determine Relevant Agents
+            framework_details = await db.execute(
+                select(db_models.Framework).options(selectinload(db_models.Framework.agents)).where(db_models.Framework.name.in_(scan.frameworks or []))
+            )
             relevant_agents = {agent.name: agent.domain_query for framework in framework_details.scalars().all() for agent in framework.agents}
 
             return {
@@ -92,15 +106,15 @@ async def retrieve_and_prepare_data_node(state: WorkerState) -> Dict[str, Any]:
                 "llm_config_id": scan.main_llm_config_id,
                 "specialized_llm_config_id": scan.specialized_llm_config_id,
                 "files": files,
-                "live_codebase": files.copy(),
+                "live_codebase": files.copy(), 
                 "repository_map": repository_map,
-                "dependency_graph": dependency_graph,
+                "dependency_graph": nx.node_link_data(dependency_graph),
                 "relevant_agents": relevant_agents,
                 "findings": [],
             }
-        except Exception as e:
-            logger.error(f"Error preparing data for scan {scan_id}: {e}", exc_info=True)
-            return {"error_message": str(e)}
+    except Exception as e:
+        logger.error(f"Error preparing data for scan {scan_id}: {e}", exc_info=True)
+        return {"error_message": str(e)}
 
 
 async def _run_merge_agent(llm_config_id: uuid.UUID, code_block: str, conflicting_fixes: List[FixResult]) -> Optional[FixResult]:
@@ -156,11 +170,72 @@ Respond ONLY with a valid JSON object conforming to the MergedFixResponse schema
     return conflicting_fixes[0] # Placeholder for a more advanced selection/merge logic
 
 
-async def consolidation_node(state: WorkerState, agent_results: List[Dict], scan_type: str, file_content: str, llm_config_id: uuid.UUID) -> Dict[str, Any]:
+async def estimate_cost_node(state: WorkerState) -> Dict[str, Any]:
+    """
+    Performs a dry run of the analysis to generate a highly accurate cost estimate.
+    """
+    scan_id = state['scan_id']
+    logger.info(f"Performing cost estimation dry run for scan {scan_id}.")
+
+    # --- REVISED GUARD CLAUSE BLOCK ---
+    repository_map = state.get('repository_map')
+    if not repository_map: return {"error_message": "Cost estimation missing 'repository_map'."}
+
+    dependency_graph_data = state.get('dependency_graph')
+    if not dependency_graph_data: return {"error_message": "Cost estimation missing 'dependency_graph'."}
+
+    llm_config_id = state.get('llm_config_id')
+    if not llm_config_id: return {"error_message": "Cost estimation missing 'llm_config_id'."}
+    
+    live_codebase = state.get('live_codebase')
+    if not live_codebase: return {"error_message": "Cost estimation missing 'live_codebase'."}
+    
+    relevant_agents = state.get('relevant_agents')
+    if not relevant_agents: return {"error_message": "Cost estimation missing 'relevant_agents'."}
+    # --- END REVISED GUARD CLAUSE BLOCK ---
+
+    try:
+        dependency_graph = nx.node_link_graph(dependency_graph_data)
+        processing_order = list(nx.topological_sort(dependency_graph))
+    except nx.NetworkXUnfeasible:
+        processing_order = sorted(list(live_codebase.keys()))
+
+    total_input_tokens = 0
+    async with AsyncSessionLocal() as db:
+        llm_config = await LLMConfigRepository(db).get_by_id_with_decrypted_key(llm_config_id)
+        if not llm_config:
+            return {"error_message": f"LLM Config {llm_config_id} not found for cost estimation."}
+
+        for file_path in processing_order:
+            file_content = live_codebase[file_path]
+            file_summary = repository_map.files.get(file_path)
+            if not file_summary: continue
+
+            chunks: List[CodeChunk] = []
+            if (len(file_content) / 4) > CHUNK_TOKEN_THRESHOLD:
+                chunks = semantic_chunker(file_content, file_summary)
+            else:
+                chunks = [{"symbol_name": file_path, "code": file_content, "start_line": 1, "end_line": 1}]
+
+            for chunk in chunks:
+                # In a dry run, we don't need the symbol map or external dependencies,
+                # as the chunk code itself is the primary driver of token count.
+                # A more advanced estimator could include them for perfect accuracy.
+                for _ in relevant_agents:
+                    total_input_tokens += await cost_estimation.count_tokens(chunk['code'], llm_config, llm_config.decrypted_api_key)
+
+    cost_details = cost_estimation.estimate_cost_for_prompt(llm_config, total_input_tokens)
+    
+    async with AsyncSessionLocal() as db:
+        await ScanRepository(db).update_cost_and_status(scan_id, STATUS_PENDING_APPROVAL, cost_details)
+
+    return {}
+
+
+async def consolidation_node(scan_id: uuid.UUID, agent_results: List[Dict], scan_type: str) -> Dict[str, Any]:
     """
     A node to de-duplicate findings (Audit) or merge conflicting fixes (Remediate).
     """
-    scan_id = state['scan_id']
     all_findings = [item for sublist in (res.get("findings", []) for res in agent_results) for item in sublist]
 
     if scan_type == 'AUDIT':
@@ -240,8 +315,9 @@ async def dependency_aware_analysis_orchestrator(state: WorkerState) -> Dict[str
     repository_map = state.get('repository_map')
     if not repository_map: return {"error_message": "Orchestrator is missing 'repository_map'."}
 
-    dependency_graph = state.get('dependency_graph')
-    if not dependency_graph: return {"error_message": "Orchestrator is missing 'dependency_graph'."}
+    graph_data = state.get('dependency_graph')
+    if not graph_data: return {"error_message": "Orchestrator is missing 'dependency_graph'."}
+    dependency_graph = nx.node_link_graph(graph_data) # Deserialize the graph
 
     relevant_agents = state.get('relevant_agents')
     if not relevant_agents: return {"error_message": "Orchestrator is missing 'relevant_agents'."}
@@ -298,8 +374,9 @@ async def dependency_aware_analysis_orchestrator(state: WorkerState) -> Dict[str
             agent_raw_results = await asyncio.gather(*tasks, return_exceptions=True)
             agent_results = [r for r in agent_raw_results if not isinstance(r, BaseException) and r is not None]
 
-            consolidation_result = await consolidation_node(state, agent_results, scan_type, file_content, llm_config_id)
+            consolidation_result = await consolidation_node(scan_id, agent_results, scan_type)
             all_scan_findings.extend(consolidation_result.get("findings", []))
+            
             
             if scan_type == 'REMEDIATE' and consolidation_result.get("fixes"):
                 temp_file_content = live_codebase[file_path]
@@ -370,24 +447,67 @@ async def handle_error_node(state: WorkerState) -> Dict[str, Any]:
 # --- FINAL WORKFLOW WIRING ---
 workflow = StateGraph(WorkerState)
 
+# Define all nodes
 workflow.add_node("retrieve_and_prepare_data", retrieve_and_prepare_data_node)
+workflow.add_node("estimate_cost", estimate_cost_node)
 workflow.add_node("dependency_aware_analysis_orchestrator", dependency_aware_analysis_orchestrator)
 workflow.add_node("save_results", save_results_node)
 workflow.add_node("run_impact_reporting", run_impact_reporting)
 workflow.add_node("save_final_report", save_final_report_node)
 workflow.add_node("handle_error", handle_error_node)
 
+# Build the graph
 workflow.set_entry_point("retrieve_and_prepare_data")
 
 def should_continue(state: WorkerState) -> str:
     return "handle_error" if state.get("error_message") else "continue"
 
-workflow.add_conditional_edges("retrieve_and_prepare_data", should_continue, {"continue": "dependency_aware_analysis_orchestrator", "handle_error": "handle_error"})
-workflow.add_conditional_edges("dependency_aware_analysis_orchestrator", should_continue, {"continue": "save_results", "handle_error": "handle_error"})
-workflow.add_conditional_edges("save_results", should_continue, {"continue": "run_impact_reporting", "handle_error": "handle_error"})
-workflow.add_conditional_edges("run_impact_reporting", should_continue, {"continue": "save_final_report", "handle_error": "handle_error"})
+def should_estimate_cost_or_run(state: WorkerState) -> str:
+    """Routes new scans to cost estimation and approved scans to analysis."""
+    if state.get("error_message"):
+        return "handle_error"
+    
+    # This value is fetched from the DB in the first step
+    status = state.get("current_scan_status")
+    if status == "QUEUED":
+        return "estimate_cost"
+    elif status == "QUEUED_FOR_SCAN":
+        return "run_analysis"
+    else:
+        logger.error(f"Routing failed due to unexpected status: {status}")
+        return "handle_error"
+
+workflow.add_conditional_edges(
+    "retrieve_and_prepare_data",
+    should_estimate_cost_or_run,
+    {
+        "estimate_cost": "estimate_cost",
+        "run_analysis": "dependency_aware_analysis_orchestrator",
+        "handle_error": "handle_error"
+    }
+)
+
+# After estimation, the workflow ends, awaiting user approval
+workflow.add_edge("estimate_cost", END)
+
+workflow.add_conditional_edges(
+    "dependency_aware_analysis_orchestrator",
+    should_continue,
+    {"continue": "save_results", "handle_error": "handle_error"}
+)
+workflow.add_conditional_edges(
+    "save_results",
+    should_continue,
+    {"continue": "run_impact_reporting", "handle_error": "handle_error"}
+)
+workflow.add_conditional_edges(
+    "run_impact_reporting",
+    should_continue,
+    {"continue": "save_final_report", "handle_error": "handle_error"}
+)
 workflow.add_edge("save_final_report", END)
 workflow.add_edge("handle_error", END)
+
 
 _workflow: Optional[Pregel] = None
 _checkpointer_conn: Optional[psycopg.AsyncConnection] = None
