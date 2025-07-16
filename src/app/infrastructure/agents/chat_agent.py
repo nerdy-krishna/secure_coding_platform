@@ -165,8 +165,9 @@ class ChatAgent:
         # 4. Fetch the prompt template from the database
         async with async_session_factory() as db:
             prompt_repo = PromptTemplateRepository(db)
+        
             # This assumes a template with this name and type exists
-            template_obj = await prompt_repo.get_template_by_name_and_type(CHAT_PROMPT_TEMPLATE_NAME, "CHAT")
+            template_obj = await prompt_repo.get_template_by_name_and_type(AGENT_NAME, "CHAT")
             if not template_obj:
                 return "Error: Chat prompt template not found in database.", None, None
             base_prompt = template_obj.template_text

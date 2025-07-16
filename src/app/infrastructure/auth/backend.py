@@ -97,7 +97,7 @@ def get_custom_cookie_jwt_strategy() -> CustomCookieJWTStrategy:
 
 # This is our main authentication backend.
 auth_backend = AuthenticationBackend(
-    name="jwt-bearer-cookie-refresh",
+    name="jwt",
     transport=bearer_transport,
     get_strategy=get_custom_cookie_jwt_strategy,
 )

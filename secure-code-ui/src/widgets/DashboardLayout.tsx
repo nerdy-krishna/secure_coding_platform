@@ -1,8 +1,7 @@
 // secure-code-ui/src/widgets/DashboardLayout.tsx
 import {
   BellOutlined,
-  CommentOutlined, // Changed from DesktopOutlined
-  DollarOutlined,
+  CommentOutlined,
   FileTextOutlined,
   LogoutOutlined,
   PieChartOutlined,
@@ -10,7 +9,7 @@ import {
   QuestionCircleOutlined, // ADDED
   SettingOutlined,
   ToolOutlined,
-  UserOutlined,
+  UserOutlined
 } from "@ant-design/icons";
 import type { MenuProps } from "antd";
 import {
@@ -79,11 +78,6 @@ const DashboardLayout: React.FC<{ children?: React.ReactNode }> = ({
         <Link to="/account/history">History</Link>,
         "submission_history",
         <CommentOutlined />,
-      ),
-      getItem(
-        <Link to="/account/usage">Cost & Usage</Link>,
-        "cost_usage",
-        <DollarOutlined />,
       ),
     ];
 
