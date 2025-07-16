@@ -1,0 +1,44 @@
+/* Gives the component a subtle border and cleans up spacing */
+.enhanced-diff-viewer-card {
+  border: 1px solid #f0f0f0;
+  margin-top: 16px;
+}
+
+/* Overrides default library styles for better visual clarity */
+.enhanced-diff-viewer-card .react-diff-viewer {
+  border: none;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
+}
+
+/* Ensures each pane's code is independently selectable without bleed-over */
+.enhanced-diff-viewer-card .diff-viewer > tbody > tr > td:nth-child(2),
+.enhanced-diff-viewer-card .diff-viewer > tbody > tr > td:nth-child(4) {
+  -webkit-user-select: text; /* For Safari */
+  -moz-user-select: text;    /* For Firefox */
+  -ms-user-select: text;     /* For Internet Explorer/Edge */
+  user-select: text;         /* Standard */
+}
+
+/* Improves the highlighting of added/removed words to be less aggressive */
+.enhanced-diff-viewer-card .word-diff-added {
+  background-color: #d4edda;
+  padding: 2px 0;
+  border-radius: 3px;
+}
+
+.enhanced-diff-viewer-card .word-diff-removed {
+  background-color: #f8d7da;
+  padding: 2px 0;
+  border-radius: 3px;
+}
+
+/* Styles the gutter (line numbers) for better separation */
+.enhanced-diff-viewer-card .diff-gutter {
+  background-color: #f7f7f7;
+  border-right: 1px solid #e8e8e8;
+}
+
+.enhanced-diff-viewer-card .diff-viewer-title {
+    background-color: #fafafa;
+    border-bottom: 1px solid #e8e8e8;
+}

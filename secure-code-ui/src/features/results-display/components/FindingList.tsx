@@ -1,9 +1,9 @@
 import { CheckCircleOutlined, RobotOutlined } from "@ant-design/icons";
-import { Button, Col, Collapse, Descriptions, Divider, Empty, Popconfirm, Row, Space, Tag, Typography, message } from "antd";
+import { Button, Col, Collapse, Descriptions, Empty, Popconfirm, Row, Space, Tag, Typography, message } from "antd";
 import React from "react";
-import ReactDiffViewer from "react-diff-viewer-continued";
 import { SeverityColors } from "../../../shared/lib/severityMappings";
 import type { Finding } from "../../../shared/types/api";
+import EnhancedDiffViewer from "./EnhancedDiffViewer";
 const { Text } = Typography;
 const { Panel } = Collapse;
 
@@ -80,18 +80,13 @@ const FindingList: React.FC<FindingListProps> = ({ findings, onRemediateFinding,
             </Descriptions>
 
             {finding.fixes?.code && finding.fixes?.original_snippet && (
-              <>
-                <Divider>Suggested Fix</Divider>
-                <ReactDiffViewer
-                    oldValue={finding.fixes.original_snippet}
-                    newValue={finding.fixes.code}
-                    splitView={true}
-                    hideLineNumbers={false}
-                    useDarkTheme={false}
-                    leftTitle="Original Snippet"
-                    rightTitle="Suggested Fix"
-                />
-              </>
+              <EnhancedDiffViewer
+                title="AI-Suggested Fix"
+                oldCode={finding.fixes.original_snippet}
+                newCode={finding.fixes.code}
+                oldCodeTitle="Original Code"
+                newCodeTitle="Suggested Fix"
+              />
             )}
         </Panel>
       ))}
