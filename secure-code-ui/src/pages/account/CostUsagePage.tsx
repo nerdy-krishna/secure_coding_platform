@@ -23,8 +23,15 @@ const ScanCostDetails: React.FC<{ scan: ScanHistoryItem }> = ({ scan }) => {
         // This query will only run when the panel is expanded and this component is rendered.
     });
 
-    const totalScanCost = useMemo(() => {
-        return interactions?.reduce((acc, item) => acc + (item.cost || 0), 0) ?? 0;
+    const { totalScanCost, totalInputTokens, totalOutputTokens, totalOverallTokens } = useMemo(() => {
+        if (!interactions) return { totalScanCost: 0, totalInputTokens: 0, totalOutputTokens: 0, totalOverallTokens: 0 };
+        return interactions.reduce((acc, item) => {
+            acc.totalScanCost += item.cost || 0;
+            acc.totalInputTokens += item.input_tokens || 0;
+            acc.totalOutputTokens += item.output_tokens || 0;
+            acc.totalOverallTokens += item.total_tokens || 0;
+            return acc;
+        }, { totalScanCost: 0, totalInputTokens: 0, totalOutputTokens: 0, totalOverallTokens: 0 });
     }, [interactions]);
 
     const columns: TableProps<LLMInteractionResponse>['columns'] = [
@@ -43,14 +50,29 @@ const ScanCostDetails: React.FC<{ scan: ScanHistoryItem }> = ({ scan }) => {
     }
 
     return (
-        <Space direction="vertical" style={{ width: '100%' }}>
-            <Statistic title="Total Scan Cost" value={totalScanCost} precision={6} prefix="$" />
+        <Space direction="vertical" style={{ width: '100%' }} size="middle">
+            <Card size="small" bordered={false} style={{background: '#fafafa'}}>
+                <Row gutter={16}>
+                    <Col span={6}><Statistic title="Total Scan Cost (Actual)" value={totalScanCost} precision={6} prefix="$" /></Col>
+                    <Col span={6}><Statistic title="Total Input Tokens" value={totalInputTokens} /></Col>
+                    <Col span={6}><Statistic title="Total Output Tokens" value={totalOutputTokens} /></Col>
+                    <Col span={6}><Statistic title="Total Overall Tokens" value={totalOverallTokens} /></Col>
+                </Row>
+            </Card>
             <Table
                 columns={columns}
                 dataSource={interactions}
                 rowKey="id"
-                pagination={{ pageSize: 5, showSizeChanger: false }}
+                pagination={false}
                 size="small"
+                summary={() => (
+                    <Table.Summary.Row>
+                        <Table.Summary.Cell index={0} colSpan={1}><strong>Totals</strong></Table.Summary.Cell>
+                        <Table.Summary.Cell index={1} />
+                        <Table.Summary.Cell index={2} align="right"><strong>${totalScanCost.toFixed(6)}</strong></Table.Summary.Cell>
+                        <Table.Summary.Cell index={3} align="right"><strong>{totalOverallTokens.toLocaleString()}</strong></Table.Summary.Cell>
+                    </Table.Summary.Row>
+                )}
             />
         </Space>
     );
@@ -83,7 +105,6 @@ const CostUsagePage: React.FC = () => {
         };
     }, [projectsResponse]);
 
-
     if (isLoading) {
         return <Spin tip="Loading projects..." size="large" style={{ display: 'block', marginTop: '50px' }} />;
     }
@@ -98,19 +119,23 @@ const CostUsagePage: React.FC = () => {
             <Paragraph type="secondary">
                 Review the estimated costs associated with your projects. Costs are grouped by project and broken down by individual scan runs.
             </Paragraph>
+    
             <Card>
                 <Row gutter={16}>
                     <Col span={12}>
                         <Statistic title="Total Projects" value={totalProjects} />
                     </Col>
                     <Col span={12}>
-                        <Statistic title="Total Estimated Cost Across All Projects" value={totalOverallCost} precision={6} prefix="$" />
+                        <Statistic title="Total Estimated Cost Across All Scans" value={totalOverallCost} precision={6} prefix="$" />
                     </Col>
                 </Row>
             </Card>
 
             {projectsResponse && projectsResponse.length > 0 ? (
-                <Collapse expandIcon={({ isActive }) => <DownOutlined rotate={isActive ? 180 : 0} />}>
+                <Collapse 
+                    expandIcon={({ isActive }) => <DownOutlined rotate={isActive ? 180 : 0} />}
+                    defaultActiveKey={projectsResponse.map(p => p.id)}
+                >
                     {projectsResponse.map(project => (
                         <Panel
                             header={
@@ -123,17 +148,22 @@ const CostUsagePage: React.FC = () => {
                             key={project.id}
                         >
                             {project.scans && project.scans.length > 0 ? (
-                                <Collapse bordered={false} ghost>
+                                <Collapse bordered={false} ghost accordion>
                                     {project.scans.map(scan => (
                                         <Panel
                                             header={
-                                                <Row justify="space-between" style={{ width: '100%' }}>
+                                                <Row justify="space-between" align="middle" style={{ width: '100%' }}>
                                                     <Col>
-                                                        <Text>Scan ({scan.scan_type}) - {new Date(scan.created_at).toLocaleString()}</Text>
-                                                        <Text copyable type="secondary" style={{ marginLeft: 16 }}>ID: {scan.id}</Text>
+                                                        <Space>
+                                                            <Text strong>{scan.scan_type}</Text>
+                                                            <Text type="secondary"> - Scanned on {new Date(scan.created_at).toLocaleString()}</Text>
+                                                        </Space>
                                                     </Col>
                                                     <Col>
-                                                        <Tag color={scan.status.includes('Completed') ? 'green' : 'blue'}>{scan.status}</Tag>
+                                                        <Space>
+                                                            {scan.cost_details && <Statistic title="Est. Cost" value={scan.cost_details.total_estimated_cost} precision={6} prefix="$" valueStyle={{fontSize: 14}}/>}
+                                                            <Tag color={scan.status.includes('Completed') ? 'green' : 'blue'}>{scan.status}</Tag>
+                                                        </Space>
                                                     </Col>
                                                 </Row>
                                             }

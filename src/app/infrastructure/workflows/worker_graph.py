@@ -76,11 +76,17 @@ async def retrieve_and_prepare_data_node(state: WorkerState) -> Dict[str, Any]:
     try:
         async with AsyncSessionLocal() as db:
             repo = ScanRepository(db)
-            await repo.update_status(scan_id, STATUS_ANALYZING_CONTEXT)
-
+            
+            # --- FETCH SCAN FIRST to get its status ---
             scan = await repo.get_scan_with_details(scan_id)
             if not scan: return {"error_message": f"Scan with ID {scan_id} not found."}
             
+            # Capture the status before updating the DB
+            current_status = scan.status
+
+            # Now, update the status to show progress
+            await repo.update_status(scan_id, STATUS_ANALYZING_CONTEXT)
+
             original_snapshot = next((s for s in scan.snapshots if s.snapshot_type == "ORIGINAL_SUBMISSION"), None)
             if not original_snapshot: return {"error_message": f"Original code snapshot not found for scan {scan_id}."}
 
@@ -103,6 +109,7 @@ async def retrieve_and_prepare_data_node(state: WorkerState) -> Dict[str, Any]:
 
             return {
                 "scan_type": scan.scan_type,
+                "current_scan_status": current_status,
                 "llm_config_id": scan.main_llm_config_id,
                 "specialized_llm_config_id": scan.specialized_llm_config_id,
                 "files": files,
@@ -196,7 +203,7 @@ async def estimate_cost_node(state: WorkerState) -> Dict[str, Any]:
 
     try:
         dependency_graph = nx.node_link_graph(dependency_graph_data)
-        processing_order = list(nx.topological_sort(dependency_graph))
+        processing_order = list(nx.topological_sort(dependency_graph))  
     except nx.NetworkXUnfeasible:
         processing_order = sorted(list(live_codebase.keys()))
 
