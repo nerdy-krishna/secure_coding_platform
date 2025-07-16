@@ -220,7 +220,10 @@ class ScanRepository:
         """Retrieves a paginated list of scans for a specific project."""
         stmt = (
             select(db_models.Scan)
-            .options(selectinload(db_models.Scan.events))
+            .options(
+                selectinload(db_models.Scan.events),
+                selectinload(db_models.Scan.project)
+            )
             .where(db_models.Scan.project_id == project_id)
             .order_by(db_models.Scan.created_at.desc())
             .offset(skip)
@@ -229,6 +232,18 @@ class ScanRepository:
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
     
+    async def search_projects_by_name(self, user_id: int, name_query: str) -> List[db_models.Project]:
+        """Searches for projects by name for a specific user."""
+        stmt = (
+            select(db_models.Project)
+            .where(db_models.Project.user_id == user_id)
+            .where(db_models.Project.name.ilike(f"%{name_query}%"))
+            .order_by(db_models.Project.name)
+            .limit(10)
+        )
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
     async def get_scans_count_for_user(self, user_id: int, search: Optional[str], statuses: Optional[List[str]] = None) -> int:
         """Counts the total number of scans for a specific user, with optional search and status filters."""
         stmt = (

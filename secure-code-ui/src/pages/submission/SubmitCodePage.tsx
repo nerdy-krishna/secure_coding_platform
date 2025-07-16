@@ -10,6 +10,7 @@ import {
 } from "@ant-design/icons";
 import { useQuery } from "@tanstack/react-query";
 import {
+  AutoComplete,
   Button,
   Card,
   Checkbox,
@@ -56,6 +57,7 @@ const SubmitCodePage: React.FC = () => {
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
   const [previewFilePaths, setPreviewFilePaths] = useState<string[]>([]);
   const [isPreviewComplete, setIsPreviewComplete] = useState(false);
+  const [projectOptions, setProjectOptions] = useState<{ value: string }[]>([]);
 
   const {
     data: llmConfigs,
@@ -286,11 +288,18 @@ const SubmitCodePage: React.FC = () => {
           onFinish={handleSubmit}
           initialValues={{ scan_type: "AUDIT" }}
         >
-          <Form.Item name="project_name" label="Project Name" rules={[{ required: true, message: "Please enter a name for your project." }]}>
-            <Input placeholder="e.g., My E-Commerce Website" />
+          <Form.Item name="project_name" label="Project Name" rules={[{ required: true, message: "Please enter or select a project name." }]}>
+            <AutoComplete
+              options={projectOptions}
+              onSearch={async (text) => {
+                const results = await scanService.searchProjects(text);
+                setProjectOptions(results.map(name => ({ value: name })));
+              }}
+              placeholder="Select an existing project or type to create a new one"
+            />
           </Form.Item>
 
-           <Row gutter={24}>
+          <Row gutter={24}>
             <Col xs={24} md={12}>
               <Form.Item name="main_llm_config_id" label={<><RobotOutlined style={{ marginRight: 8 }} /> Main Analysis LLM</>} rules={[{ required: true, message: "Please select the main analysis LLM." }]}>
                 <Select loading={isLoadingLLMs} placeholder="Select an LLM for primary analysis" disabled={isLoadingLLMs || isLlmError}>

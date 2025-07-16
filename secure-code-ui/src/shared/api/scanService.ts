@@ -1,5 +1,6 @@
 import {
   type GitRepoPreviewRequest,
+  type JsonValue,
   type LLMInteractionResponse,
   type PaginatedProjectHistoryResponse,
   type PaginatedScanHistoryResponse,
@@ -69,6 +70,17 @@ export const scanService = {
   },
   
   /**
+   * Searches for projects by name for autocomplete.
+   */
+  searchProjects: async (query: string): Promise<string[]> => {
+    if (!query) return [];
+    const response = await apiClient.get<string[]>("/projects/search", {
+      params: { q: query },
+    });
+    return response.data;
+  },
+
+  /**
    * Fetches a paginated list of all scans for the current user.
    */
   getScanHistory: async (
@@ -87,6 +99,14 @@ export const scanService = {
             status: status === 'All' ? undefined : status,
         }
     });
+    return response.data;
+  },
+
+  /**
+   * Fetches the SARIF report for a specific scan.
+   */
+  downloadSarifReport: async (scanId: string): Promise<JsonValue> => {
+    const response = await apiClient.get(`/scans/${scanId}/sarif`);
     return response.data;
   },
 

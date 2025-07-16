@@ -286,6 +286,8 @@ export interface ScanHistoryItem {
   completed_at: string | null;
   cost_details: CostDetails | null;
   events: ScanEventItem[];
+  has_sarif_report: boolean;
+  has_impact_report: boolean;
   llm_interactions?: LLMInteractionResponse[];
 }
 
