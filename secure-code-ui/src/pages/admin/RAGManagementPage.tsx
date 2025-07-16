@@ -46,8 +46,7 @@ import type {
   LLMConfiguration,
   PreprocessingResponse,
   RAGDocument,
-  RAGJobStartResponse,
-  RAGJobStatusResponse,
+  RAGJobStatusResponse
 } from "../../shared/types/api";
 
 const { Title, Paragraph, Text } = Typography;
@@ -141,7 +140,6 @@ const FrameworkCard: React.FC<{
     onSuccess: () => {
       message.success(`Framework "${framework.name}" deleted successfully.`);
       queryClient.invalidateQueries({ queryKey: ["frameworks"] });
-      // Note: A more robust delete would also clean up associated RAG documents.
     },
     onError: (error: AxiosError) => {
       message.error(`Failed to delete framework: ${error.message}`);
@@ -206,23 +204,24 @@ const FrameworkCard: React.FC<{
 const RAGManagementPage: React.FC = () => {
   const [form] = Form.useForm();
   const preprocessorRef = useRef<HTMLDivElement>(null);
-
   const [file, setFile] = useState<RcFile | null>(null);
-  const [job, setJob] = useState<RAGJobStartResponse | null>(null);
-  const [frameworkMode, setFrameworkMode] = useState<"existing" | "new">(
-    "existing",
-  );
+  const [pollingJobId, setPollingJobId] = useState<string | null>(null);
+  const [frameworkMode, setFrameworkMode] = useState<"existing" | "new">("existing");
+  const queryClient = useQueryClient();
 
-  const { data: frameworks = [], isLoading: isLoadingFrameworks } = useQuery<
-    FrameworkRead[]
-  >({
+  useEffect(() => {
+    const storedJobId = sessionStorage.getItem("rag_processing_job_id");
+    if (storedJobId) {
+      setPollingJobId(storedJobId);
+    }
+  }, []);
+
+  const { data: frameworks = [], isLoading: isLoadingFrameworks } = useQuery<FrameworkRead[]>({
     queryKey: ["frameworks"],
     queryFn: frameworkService.getFrameworks,
   });
 
-  const { data: llmConfigs = [], isLoading: isLoadingLLMs } = useQuery<
-    LLMConfiguration[]
-  >({
+  const { data: llmConfigs = [], isLoading: isLoadingLLMs } = useQuery<LLMConfiguration[]>({
     queryKey: ["llmConfigs"],
     queryFn: llmConfigService.getLlmConfigs,
   });
@@ -232,32 +231,29 @@ const RAGManagementPage: React.FC = () => {
     isFetching: isPolling,
     refetch: pollStatus,
   } = useQuery<RAGJobStatusResponse, Error>({
-    queryKey: ["ragJobStatus", job?.job_id],
-    queryFn: () => ragService.getJobStatus(job!.job_id),
-    enabled: false, // Important: only poll manually
-    refetchOnWindowFocus: false,
+    queryKey: ["ragJobStatus", pollingJobId],
+    queryFn: () => {
+      if (!pollingJobId) throw new Error("No job ID to poll");
+      return ragService.getJobStatus(pollingJobId);
+    },
+    enabled: !!pollingJobId,
+    refetchOnWindowFocus: true,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === "PROCESSING" ? 3000 : false;
+    },
   });
-
-  useEffect(() => {
-    // Polling logic
-    if (jobStatus?.status === "PROCESSING") {
-      const timer = setTimeout(() => pollStatus(), 3000); // Poll every 3 seconds
-      return () => clearTimeout(timer);
-    }
-  }, [jobStatus, pollStatus]);
 
   const startMutation = useMutation({
     mutationFn: (vars: FormData) => ragService.startPreprocessing(vars),
     onSuccess: (data) => {
-      setJob(data);
       message.info(data.message);
+      sessionStorage.setItem("rag_processing_job_id", data.job_id);
+      setPollingJobId(data.job_id);
     },
     onError: (error: AxiosError) => {
-      message.error(
-        `Failed to start job: ${
-          (error.response?.data as { detail: string })?.detail || error.message
-        }`,
-      );
+      const errorDetail = (error.response?.data as { detail?: string })?.detail || error.message;
+      message.error(`Failed to start job: ${errorDetail}`);
     },
   });
 
@@ -265,37 +261,32 @@ const RAGManagementPage: React.FC = () => {
     mutationFn: (jobId: string) => ragService.approveJob(jobId),
     onSuccess: () => {
       message.success("Job approved and is now processing in the background.");
-      pollStatus(); // Start polling immediately
+      pollStatus();
     },
     onError: (error: AxiosError) => {
-      message.error(
-        `Failed to approve job: ${
-          (error.response?.data as { detail: string })?.detail || error.message
-        }`,
-      );
+      const errorDetail = (error.response?.data as { detail?: string })?.detail || error.message;
+      message.error(`Failed to approve job: ${errorDetail}`);
     },
   });
 
   const ingestMutation = useMutation({
-    mutationFn: (payload: PreprocessingResponse) =>
-      ragService.ingestProcessed(payload),
+    mutationFn: (payload: PreprocessingResponse) => ragService.ingestProcessed(payload),
     onSuccess: (data: { message: string }) => {
       message.success(data.message);
+      queryClient.invalidateQueries({ queryKey: ["frameworks"] });
       handleReset();
     },
     onError: (error: AxiosError) => {
-      message.error(
-        `Ingestion failed: ${
-          (error.response?.data as { detail: string })?.detail || error.message
-        }`,
-      );
+      const errorDetail = (error.response?.data as { detail: string })?.detail || error.message;
+      message.error(`Ingestion failed: ${errorDetail}`);
     },
   });
 
   const handleDownloadSampleCsv = () => {
     const csvContent = [
-      "id,document,control_family,control_title", // Headers
-      '"REQUIRED: A unique ID for the control (e.g., NIST-AC-1)","REQUIRED: The full text of the security control.","RECOMMENDED: The high-level category (e.g., Access Control).","RECOMMENDED: A short, human-readable title for the control."', // Descriptions
+      "id,document,control_family,control_title",
+      '"CWE-79","The web application does not properly neutralize user-controllable input before it is placed in output that is used as a web page that is served to other users.","Improper Neutralization of Input","Cross-site Scripting (XSS)"',
+      '"NIST-AC-1","The organization develops, documents, and disseminates to [Assignment: organization-defined personnel or roles] an access control policy that: a. Is consistent with applicable laws, Executive Orders, directives, policies, regulations, standards, and guidelines; and b. Addresses purpose, scope, roles, responsibilities, management commitment, coordination among organizational entities, and compliance.","Access Control","Access Control Policy and Procedures"',
     ].join("\n");
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     saveAs(blob, "framework_template.csv");
@@ -309,8 +300,7 @@ const RAGManagementPage: React.FC = () => {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("llm_config_id", values.llm_config_id);
-    const frameworkName =
-      frameworkMode === "new" ? values.newFrameworkName : values.frameworkName;
+    const frameworkName = frameworkMode === "new" ? values.newFrameworkName : values.frameworkName;
     if (!frameworkName) {
       message.error("Framework name is required.");
       return;
@@ -320,21 +310,28 @@ const RAGManagementPage: React.FC = () => {
   };
 
   const handleDownload = () => {
-    if (!jobStatus?.processed_documents) return;
-    const { processed_documents } = jobStatus;
-    const header = Object.keys(processed_documents[0].metadata).join(",");
-    const rows = processed_documents.map((doc: EnrichedDocument) =>
-      [
-        doc.id,
-        `"${doc.enriched_content.replace(/"/g, '""')}"`,
-        ...Object.values(doc.metadata).map((val) =>
-          `"${String(val).replace(/"/g, '""')}"`,
-        ),
-      ].join(","),
-    );
-    const csvContent = `id,document,${header}\n${rows.join("\n")}`;
+    if (!jobStatus?.processed_documents || jobStatus.processed_documents.length === 0) return;
+    const { processed_documents, framework_name } = jobStatus;
+
+    const metadataKeys = Object.keys(processed_documents[0].metadata || {}).sort();
+    const header = ["id", "document", ...metadataKeys].join(",");
+
+    const rows = processed_documents.map((doc: EnrichedDocument) => {
+      const metadataValues = metadataKeys.map(key => {
+        const value = doc.metadata[key as keyof typeof doc.metadata] ?? '';
+        return `"${String(value).replace(/"/g, '""')}"`;
+      });
+
+      return [
+          `"${doc.id}"`,
+          `"${doc.enriched_content.replace(/"/g, '""')}"`,
+          ...metadataValues
+      ].join(',');
+    });
+    
+    const csvContent = `${header}\n${rows.join("\n")}`;
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    saveAs(blob, `${jobStatus.framework_name}_processed.csv`);
+    saveAs(blob, `${framework_name}_processed.csv`);
   };
 
   const handleUpdate = (name: string) => {
@@ -344,33 +341,112 @@ const RAGManagementPage: React.FC = () => {
   };
 
   const handleReset = () => {
-    setJob(null);
+    setPollingJobId(null);
+    sessionStorage.removeItem("rag_processing_job_id");
     setFile(null);
     form.resetFields();
   };
 
   const renderContent = () => {
-    if (job?.status === "PENDING_APPROVAL" || (job?.status === "COMPLETED" && jobStatus?.status !== "COMPLETED")) {
-      // Approval View
+    const currentJob = jobStatus;
+
+    if (!pollingJobId || !currentJob) {
       return (
-        <Card
-          type="inner"
-          title={`Cost Estimation for "${job?.framework_name || "New Framework"}"`}
-        >
+        <Form form={form} layout="vertical" onFinish={handleStart}>
+          <Row gutter={24} align="bottom">
+            <Col xs={24} md={12}>
+              <Form.Item label="Framework">
+                <Radio.Group value={frameworkMode} onChange={(e) => setFrameworkMode(e.target.value)}>
+                  <Radio value="existing">Update Existing</Radio>
+                  <Radio value="new">Create New</Radio>
+                </Radio.Group>
+              </Form.Item>
+              {frameworkMode === "existing" ? (
+                <Form.Item name="frameworkName" rules={[{ required: true, message: "Please select a framework." }]}>
+                  <Select
+                    showSearch
+                    placeholder="Select framework to update"
+                    loading={isLoadingFrameworks}
+                    options={frameworks.map((f) => ({ label: f.name, value: f.name }))}
+                  />
+                </Form.Item>
+              ) : (
+                <Form.Item name="newFrameworkName" rules={[{ required: true, message: "Please enter a name." }]}>
+                  <Input placeholder="Enter name for the new framework" />
+                </Form.Item>
+              )}
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item label="LLM for Processing" name="llm_config_id" rules={[{ required: true, message: "Please select an LLM." }]}>
+                <Select
+                  placeholder="Select LLM"
+                  loading={isLoadingLLMs}
+                  options={llmConfigs.map((c) => ({ label: c.name, value: c.id }))}
+                />
+              </Form.Item>
+            </Col>
+            <Col span={24}>
+              <Alert
+                type="info"
+                style={{ marginBottom: 16 }}
+                message="CSV Format Requirements"
+                description={
+                  <>
+                    Your CSV file <b>must</b> contain an <b>`id`</b> column (for a unique control ID) and a <b>`document`</b> column (for the full control text).
+                    You can add any other columns for metadata (e.g., `control_family`, `cwe`). These will be used to enrich the knowledge base.
+                    <Button size="small" type="link" onClick={handleDownloadSampleCsv} style={{ display: 'block', paddingLeft: 0, marginTop: '8px' }}>
+                      Download Sample Template
+                    </Button>
+                  </>
+                }
+              />
+              <Form.Item label="Upload Raw Framework CSV" required>
+                <Upload.Dragger
+                  name="file"
+                  multiple={false}
+                  accept=".csv"
+                  fileList={file ? [file] : []}
+                  beforeUpload={(f) => { setFile(f); return false; }}
+                  onRemove={() => setFile(null)}
+                >
+                  <p className="ant-upload-drag-icon"><InboxOutlined /></p>
+                  <p>Click or drag CSV file to this area</p>
+                </Upload.Dragger>
+              </Form.Item>
+            </Col>
+          </Row>
+          <Button type="primary" htmlType="submit" loading={startMutation.isPending} disabled={!file}>
+            Get Cost Estimate
+          </Button>
+        </Form>
+      );
+    }
+
+    if (currentJob.status === "PENDING_APPROVAL") {
+      return (
+        <Card type="inner" title={`Cost Estimation for "${currentJob.framework_name}"`}>
           <Statistic
             title="Total Estimated Cost"
-            value={Number(job.estimated_cost?.total_estimated_cost) || 0}
+            value={Number(currentJob.estimated_cost?.total_estimated_cost) || 0}
             precision={6}
             prefix="$"
           />
           <Paragraph type="secondary" style={{ marginTop: 16 }}>
-            {job.message}
+            Please approve to start processing. This action will incur the estimated cost.
           </Paragraph>
           <Space style={{ marginTop: 16 }}>
-            <Button onClick={handleReset}>Cancel</Button>
+            <Popconfirm
+              title="Cancel this job?"
+              description="Are you sure you want to cancel this operation? This cannot be undone."
+              onConfirm={handleReset}
+              okText="Yes, Cancel"
+              cancelText="No"
+            >
+              <Button danger loading={approveMutation.isPending}>Cancel</Button>
+            </Popconfirm>
             <Button
               type="primary"
-              onClick={() => approveMutation.mutate(job.job_id)}
+              onClick={() => approveMutation.mutate(pollingJobId!)}
               loading={approveMutation.isPending}
             >
               Approve & Process
@@ -380,37 +456,44 @@ const RAGManagementPage: React.FC = () => {
       );
     }
 
-    if (jobStatus?.status === "COMPLETED") {
-      // Result View
+    if (currentJob.status === "PROCESSING" || isPolling) {
+      return (
+        <Card type="inner" title={`Processing Job for "${currentJob?.framework_name || '...'}"`}>
+          <Spin tip="Processing in background... Status will update automatically.">
+            <Alert
+              message="Job is processing"
+              description="This may take a few minutes. You can safely navigate away from this page and come back later to check the status."
+              type="info"
+              showIcon
+            />
+          </Spin>
+        </Card>
+      );
+    }
+
+    if (currentJob.status === "COMPLETED") {
       const finalPayload: PreprocessingResponse = {
-        framework_name: jobStatus.framework_name,
-        llm_config_name: "", // Not available here, can be added to status response
-        processed_documents: jobStatus.processed_documents || [],
+        framework_name: currentJob.framework_name,
+        llm_config_name: "",
+        processed_documents: currentJob.processed_documents || [],
       };
       return (
-        <Card
-          type="inner"
-          title="Processing Complete"
-        >
+        <Card type="inner" title="Processing Complete">
           <Alert
             type="success"
             showIcon
-            message={`Successfully processed ${
-              jobStatus.processed_documents?.length || 0
-            } documents for "${jobStatus.framework_name}".`}
+            message={`Successfully processed ${currentJob.processed_documents?.length || 0} documents for "${currentJob.framework_name}".`}
             description="You can now download the processed file or ingest it directly into the knowledge base."
           />
           <Statistic
             title="Final Actual Cost"
-            value={jobStatus.actual_cost}
+            value={currentJob.actual_cost}
             precision={6}
             prefix="$"
             style={{ margin: "16px 0" }}
           />
           <Space>
-            <Button icon={<DownloadOutlined />} onClick={handleDownload}>
-              Download CSV
-            </Button>
+            <Button icon={<DownloadOutlined />} onClick={handleDownload}>Download CSV</Button>
             <Button
               type="primary"
               icon={<SendOutlined />}
@@ -425,99 +508,23 @@ const RAGManagementPage: React.FC = () => {
       );
     }
 
-    // Default: Initial Form View
-    return (
-      <Form form={form} layout="vertical" onFinish={handleStart}>
-        <Row gutter={24}>
-          <Col xs={24} md={12}>
-            <Form.Item label="Framework">
-              <Radio.Group
-                value={frameworkMode}
-                onChange={(e) => setFrameworkMode(e.target.value)}
-              >
-                <Radio value="existing">Update Existing</Radio>
-                <Radio value="new">Create New</Radio>
-              </Radio.Group>
-            </Form.Item>
-            {frameworkMode === "existing" ? (
-              <Form.Item
-                name="frameworkName"
-                rules={[{ required: true, message: "Please select a framework." }]}
-              >
-                <Select
-                  showSearch
-                  placeholder="Select framework to update"
-                  loading={isLoadingFrameworks}
-                  options={frameworks.map((f) => ({
-                    label: f.name,
-                    value: f.name,
-                  }))}
-                />
-              </Form.Item>
-            ) : (
-              <Form.Item
-                name="newFrameworkName"
-                rules={[{ required: true, message: "Please enter a name." }]}
-              >
-                <Input placeholder="Enter name for the new framework" />
-              </Form.Item>
-            )}
-          </Col>
-          <Col xs={24} md={12}>
-            <Form.Item
-              name="llm_config_id"
-              label="LLM for Processing"
-              rules={[{ required: true, message: "Please select an LLM." }]}
-            >
-              <Select
-                placeholder="Select LLM"
-                loading={isLoadingLLMs}
-                options={llmConfigs.map((c) => ({
-                  label: c.name,
-                  value: c.id,
-                }))}
-              />
-            </Form.Item>
-          </Col>
-          <Col span={24}>
-            <Alert
-              type="info"
-              style={{ marginBottom: 16 }}
-              message={
-                <Space>
-                  <span>CSV Format Requirements</span>
-                  {/* Download button will be added here */}
-                </Space>
-              }
-              description="Your CSV must contain 'id' and 'document' columns. Recommended: 'control_family', 'control_title'."
-            />
-            <Form.Item label="Upload Raw Framework CSV" required>
-              <Upload.Dragger
-                name="file"
-                multiple={false}
-                accept=".csv"
-                fileList={file ? [file] : []}
-                beforeUpload={(f) => {
-                  setFile(f);
-                  return false;
-                }}
-                onRemove={() => setFile(null)}
-              >
-                <p className="ant-upload-drag-icon"><InboxOutlined /></p>
-                <p>Click or drag CSV file to this area</p>
-              </Upload.Dragger>
-            </Form.Item>
-          </Col>
-        </Row>
-        <Button
-          type="primary"
-          htmlType="submit"
-          loading={startMutation.isPending}
-        >
-          Get Cost Estimate
-        </Button>
-      </Form>
-    );
+    if (currentJob.status === "FAILED") {
+      return (
+        <Card type="inner" title="Job Failed">
+          <Alert
+            type="error"
+            showIcon
+            message={`Processing failed for framework "${currentJob.framework_name}".`}
+            description={currentJob.error_message || "An unknown error occurred."}
+          />
+          <Button onClick={handleReset} style={{ marginTop: 16 }}>
+            Start New Job
+          </Button>
+        </Card>
+      );
+    }
+
+    return <Spin tip="Loading job status..."/>;
   };
 
   return (
@@ -534,8 +541,8 @@ const RAGManagementPage: React.FC = () => {
           }
         >
           <Spin
-            spinning={startMutation.isPending || isPolling}
-            tip={isPolling ? "Processing in background..." : "Estimating cost..."}
+            spinning={startMutation.isPending || (isPolling && !jobStatus)}
+            tip={startMutation.isPending ? "Estimating cost..." : "Checking job status..."}
           >
             {renderContent()}
           </Spin>

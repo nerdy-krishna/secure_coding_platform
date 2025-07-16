@@ -55,37 +55,54 @@ async def start_preprocessing_job(
     calculating the cost, and returning a job ID for approval.
     """
     contents = await file.read()
+    await file.seek(0)
     file_hash = job_repo.hash_content(contents)
 
+    # Check if a completed job with the same content and LLM config exists.
     existing_job = await job_repo.find_completed_job_by_hash(file_hash, llm_config_id)
-    if existing_job:
-        return RAGJobStartResponse(
-            job_id=existing_job.id,
-            framework_name=existing_job.framework_name,
-            status=existing_job.status,
-            estimated_cost=existing_job.estimated_cost,
-            message="An identical file has been processed before. You can approve to run ingestion with this result.",
+
+    if existing_job and existing_job.estimated_cost and existing_job.processed_documents:
+        # If a duplicate exists, create a NEW job record...
+        job = await job_repo.create_job(
+            user_id=user.id,
+            framework_name=framework_name,
+            llm_config_id=llm_config_id,
+            file_hash=file_hash,
         )
+        # ...then immediately update it with the old job's data and a PENDING_APPROVAL status.
+        await job_repo.update_job(job.id, {
+            "status": "PENDING_APPROVAL",
+            "estimated_cost": existing_job.estimated_cost,
+            "actual_cost": existing_job.actual_cost,
+            "processed_documents": existing_job.processed_documents,
+            "raw_content": contents
+        })
+        message = "An identical file has been processed before. You can approve to re-use the result or cancel."
+    else:
+        # If it's a new file, create a job and calculate the cost.
+        job = await job_repo.create_job(
+            user_id=user.id,
+            framework_name=framework_name,
+            llm_config_id=llm_config_id,
+            file_hash=file_hash,
+        )
+        await job_repo.update_job(job.id, {"raw_content": contents})
+        estimated_cost = await preprocessor.estimate_cost(contents, llm_config_id)
+        await job_repo.update_job(
+            job.id, {"status": "PENDING_APPROVAL", "estimated_cost": estimated_cost}
+        )
+        message = "Cost estimated. Please approve to start processing."
 
-    job = await job_repo.create_job(
-        user_id=user.id,
-        framework_name=framework_name,
-        llm_config_id=llm_config_id,
-        file_hash=file_hash,
-    )
-
-    await job_repo.update_job(job.id, {"raw_content": contents})
-    estimated_cost = await preprocessor.estimate_cost(contents, llm_config_id)
-    await job_repo.update_job(
-        job.id, {"status": "PENDING_APPROVAL", "estimated_cost": estimated_cost}
-    )
+    final_job_state = await job_repo.get_job_by_id(job.id, user.id)
+    if not final_job_state:
+        raise HTTPException(status_code=500, detail="Failed to retrieve job state after creation.")
 
     return RAGJobStartResponse(
-        job_id=job.id,
-        framework_name=job.framework_name,
-        status="PENDING_APPROVAL",
-        estimated_cost=estimated_cost,
-        message="Cost estimated. Please approve to start processing.",
+        job_id=final_job_state.id,
+        framework_name=final_job_state.framework_name,
+        status=final_job_state.status,
+        estimated_cost=final_job_state.estimated_cost,
+        message=message,
     )
 
 
@@ -104,23 +121,26 @@ async def approve_preprocessing_job(
     if not job:
         raise HTTPException(status_code=404, detail="Job not found.")
 
-    if job.status == "COMPLETED":
-        return {"message": "Job has already been processed successfully."}
-
     if job.status != "PENDING_APPROVAL":
         raise HTTPException(
             status_code=400, detail=f"Job is not awaiting approval. Status: {job.status}"
         )
 
+    # If the job already has processed documents (from a duplicate run), we can complete it immediately.
+    if job.processed_documents:
+        await job_repo.update_job(job_id, {"status": "COMPLETED"})
+        return {"message": "Existing job result approved. You can now ingest the data."}
+
     raw_content = job.raw_content
     if not raw_content:
+        await job_repo.update_job(job_id, {"status": "FAILED", "error_message": "Original file content is missing."})
         raise HTTPException(
             status_code=400, detail="Cannot process job, original file content is missing."
         )
 
     await job_repo.update_job(job_id, {"status": "PROCESSING"})
 
-    # Run the time-consuming task in the background, passing the stored file content
+    # Run the time-consuming task in the background
     background_tasks.add_task(
         preprocessor.run_preprocessing_job, job_id, user.id, raw_content
     )
