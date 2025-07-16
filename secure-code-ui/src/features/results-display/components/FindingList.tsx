@@ -84,8 +84,7 @@ const FindingList: React.FC<FindingListProps> = ({ findings, onRemediateFinding,
                 title="AI-Suggested Fix"
                 oldCode={finding.fixes.original_snippet}
                 newCode={finding.fixes.code}
-                oldCodeTitle="Original Code"
-                newCodeTitle="Suggested Fix"
+                filePath={finding.file_path}
               />
             )}
         </Panel>

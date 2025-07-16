@@ -163,8 +163,7 @@ export interface PromptTemplateUpdate {
 }
 
 // --- Submission Schemas (NEW) ---
-export type ScanType = "AUDIT" | "AUDIT_AND_REMEDIATE" | "REMEDIATE";
-
+export type ScanType = "AUDIT" | "SUGGEST" | "REMEDIATE";
 export interface SubmissionFormValues {
   project_name: string;
   scan_type: ScanType;

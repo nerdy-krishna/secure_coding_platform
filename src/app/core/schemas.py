@@ -5,7 +5,7 @@ import uuid
 
 from pydantic import BaseModel, Field
 
-WorkflowMode = Literal["audit", "remediate"]
+WorkflowMode = Literal["audit", "suggest", "remediate"]
 
 
 class CodeChunk(TypedDict):

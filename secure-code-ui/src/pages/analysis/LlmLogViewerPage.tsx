@@ -175,7 +175,7 @@ const LlmLogViewerPage: React.FC = () => {
                 <RobotOutlined style={{ marginRight: 8 }} />
                 LLM Interaction Logs
               </Title>
-              <Text copyable type="secondary" code>
+              <Text copyable={{ text: scanId }} type="secondary" code>
                 Scan ID: {scanId}
               </Text>
             </Col>

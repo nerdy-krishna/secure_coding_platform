@@ -1,10 +1,10 @@
 // secure-code-ui/src/shared/api/apiClient.ts
 import axios from "axios";
+import { authService } from "./authService";
 
 // Get the API base URL from environment variables
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api/v1";
-
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
   withCredentials: true, // Let Axios handle the Content-Type header per request
@@ -23,20 +23,40 @@ apiClient.interceptors.request.use(
     return Promise.reject(error);
   },
 );
-
-// Response Interceptor (Your existing logic is good and can remain)
+// Response Interceptor
 apiClient.interceptors.response.use(
   (response) => response,
-  (error) => {
-    if (error.response && error.response.status === 401) {
-      console.error(
-        "Axios Interceptor: Saw a 401 Unauthorized error for URL:",
-        error.config.url,
-      );
-      // The logic in AuthProvider is already handling the session cleanup
-      // when it fails to fetch `/users/me`, so no immediate action is needed here.
-      // This is good for logging or for more complex refresh token logic in the future.
+  async (error) => {
+    const originalRequest = error.config;
+
+    // Check if the error is 401 and it's not a retry request
+    if (error.response?.status === 401 && !originalRequest._retry) {
+      originalRequest._retry = true; // Mark it as a retry to prevent infinite loops
+
+      try {
+        // Attempt to refresh the token
+        const tokenResponse = await authService.refreshToken();
+        const { access_token } = tokenResponse;
+
+        // Store the new token
+        localStorage.setItem("accessToken", access_token);
+
+        // Update the Authorization header for the original request and for all future requests
+        apiClient.defaults.headers.common["Authorization"] = `Bearer ${access_token}`;
+        originalRequest.headers["Authorization"] = `Bearer ${access_token}`;
+
+        // Retry the original request with the new token
+        return apiClient(originalRequest);
+      } catch (refreshError) {
+        // If the refresh token is also invalid, log the user out
+        console.error("Session refresh failed, logging out.", refreshError);
+        localStorage.removeItem("accessToken");
+        window.location.href = "/login";
+        return Promise.reject(refreshError);
+      }
     }
+
+    // For all other errors, just pass them along
     return Promise.reject(error);
   },
 );

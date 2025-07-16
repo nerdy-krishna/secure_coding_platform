@@ -142,7 +142,7 @@ const CostUsagePage: React.FC = () => {
                                 <Space>
                                     <ProjectOutlined />
                                     <Text strong>{project.name}</Text>
-                                    <Text copyable type="secondary" code>{project.id}</Text>
+                                    <Text copyable={{ text: project.id }} type="secondary" code>{project.id}</Text>
                                 </Space>
                             }
                             key={project.id}

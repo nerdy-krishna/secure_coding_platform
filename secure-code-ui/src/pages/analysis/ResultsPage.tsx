@@ -68,6 +68,10 @@ const ResultsPage: React.FC = () => {
     onError: (err: Error) => message.error(`Failed to apply fixes: ${err.message}`),
   });
 
+  const allFindingsForScan = useMemo(() => {
+    return result?.summary_report?.files_analyzed?.flatMap(file => file.findings) || [];
+  }, [result]);
+
   const allFindingsInFile = useMemo(() => {
     if (!selectedFilePath) return [];
     return result?.summary_report?.files_analyzed?.find(f => f.file_path === selectedFilePath)?.findings || [];
@@ -176,8 +180,8 @@ const ResultsPage: React.FC = () => {
       <Row justify="space-between" align="middle" style={{ marginBottom: 16 }}>
         <Col>
             <Title level={3} style={{ margin: 0 }}>{summary_report.scan_type.replace(/_/g, ' ')} Report: {summary_report.project_name}</Title>
-            <Paragraph copyable type="secondary" style={{margin: 0}}>Scan ID: {scanId}</Paragraph>
-            <Paragraph copyable type="secondary" style={{margin: 0}}>Project ID: {summary_report.project_id}</Paragraph>
+            <Paragraph copyable={{ text: scanId }} type="secondary" style={{margin: 0}}>Scan ID: {scanId}</Paragraph>
+            <Paragraph copyable={{ text: summary_report.project_id }} type="secondary" style={{margin: 0}}>Project ID: {summary_report.project_id}</Paragraph>
         </Col>
         <Col>
             <Space>
@@ -247,14 +251,16 @@ const ResultsPage: React.FC = () => {
       
       <Layout style={{ background: '#fff', borderRadius: 8, border: '1px solid #f0f0f0', flexDirection: 'column' }}>
         <Layout>
-            <Sider width={350} style={{ background: "#fafafa", padding: "16px", overflow: "auto", borderRight: '1px solid #f0f0f0', borderRadius: '8px 0 0 8px' }}>
+          <Sider width={350} style={{ background: "#fafafa", padding: "16px", overflow: "auto", borderRight: '1px solid #f0f0f0', borderRadius: '8px 0 0 8px' }}>
               <Title level={5} style={{ marginTop: 0, marginBottom: 16 }}>Analyzed Files</Title>
               <ResultsFileTree
                 analyzedFiles={summary_report.files_analyzed || []}
-                findings={allFindingsInFile}
+                findings={allFindingsForScan}
                 selectedKeys={selectedFilePath ? [selectedFilePath] : []}
                 onSelect={(keys) => {
-                    setSelectedFilePath(keys[0] as string);
+                    if (keys.length > 0) {
+                      setSelectedFilePath(keys[0] as string);
+                    }
                 }}
               />
             </Sider>
@@ -294,11 +300,10 @@ const ResultsPage: React.FC = () => {
         {isRemediationComplete && selectedFilePath && (
           <div style={{ padding: '16px 24px 24px 24px' }}>
             <EnhancedDiffViewer
-                title={`Full File Diff: ${selectedFilePath}`}
+              title={`Full File Diff: ${selectedFilePath}`}
                 oldCode={originalCode}
                 newCode={fixedCode}
-                oldCodeTitle="Original File Content"
-                newCodeTitle="Fully Remediated File"
+                filePath={selectedFilePath}
             />
           </div>
         )}
