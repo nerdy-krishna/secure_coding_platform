@@ -271,7 +271,7 @@ class SecurityQueryResponse(BaseModel):
 
 class LLMInteractionResponse(BaseModel):
     id: int
-    submission_id: Optional[uuid.UUID] = None
+    scan_id: Optional[uuid.UUID] = None
     file_path: Optional[str] = None
     agent_name: str
     timestamp: datetime
@@ -279,6 +279,10 @@ class LLMInteractionResponse(BaseModel):
     input_tokens: Optional[int] = None
     output_tokens: Optional[int] = None
     total_tokens: Optional[int] = None
+    prompt_template_name: Optional[str] = None
+    prompt_context: Optional[Dict[str, Any]] = None
+    parsed_output: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
 
     class Config:
         from_attributes = True

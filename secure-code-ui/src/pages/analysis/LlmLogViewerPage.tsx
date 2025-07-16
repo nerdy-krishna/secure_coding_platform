@@ -1,7 +1,7 @@
 import {
   ArrowLeftOutlined,
-  LoadingOutlined,
-  RobotOutlined,
+  DollarCircleOutlined,
+  LoadingOutlined
 } from "@ant-design/icons";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -16,6 +16,7 @@ import {
   Row,
   Space,
   Spin,
+  Statistic,
   Table,
   Tag,
   Typography,
@@ -48,6 +49,17 @@ const LlmLogViewerPage: React.FC = () => {
     enabled: !!scanId,
   });
 
+  const overallStats = useMemo(() => {
+    if (!interactions) return { totalCost: 0, totalInputTokens: 0, totalOutputTokens: 0, totalOverallTokens: 0 };
+    return interactions.reduce((acc, item) => {
+        acc.totalCost += item.cost || 0;
+        acc.totalInputTokens += item.input_tokens || 0;
+        acc.totalOutputTokens += item.output_tokens || 0;
+        acc.totalOverallTokens += item.total_tokens || 0;
+        return acc;
+    }, { totalCost: 0, totalInputTokens: 0, totalOutputTokens: 0, totalOverallTokens: 0 });
+  }, [interactions]);
+
   const { filePaths, agentNames } = useMemo(() => {
     if (!interactions) return { filePaths: [], agentNames: [] };
     const paths = new Set<string>();
@@ -71,6 +83,17 @@ const LlmLogViewerPage: React.FC = () => {
     }
     return interactions.filter(i => i.file_path === selectedFilePath);
   }, [interactions, selectedFilePath]);
+
+  const fileStats = useMemo(() => {
+    if (!filteredInteractions || selectedFilePath === 'All Files') return null;
+    return filteredInteractions.reduce((acc, item) => {
+        acc.totalCost += item.cost || 0;
+        acc.totalInputTokens += item.input_tokens || 0;
+        acc.totalOutputTokens += item.output_tokens || 0;
+        acc.totalOverallTokens += item.total_tokens || 0;
+        return acc;
+    }, { totalCost: 0, totalInputTokens: 0, totalOutputTokens: 0, totalOverallTokens: 0 });
+  }, [filteredInteractions, selectedFilePath]);
 
   const columns: TableProps<LLMInteractionResponse>["columns"] = [
     {
@@ -154,8 +177,34 @@ const LlmLogViewerPage: React.FC = () => {
   }
 
   return (
-    <Layout style={{ background: "#fff", padding: 0, height: 'calc(100vh - 180px)' }}>
-        <Sider width={300} style={{ background: "#fafafa", padding: "16px", borderRight: '1px solid #f0f0f0' }}>
+    <>
+      <Row justify="space-between" align="middle" style={{ marginBottom: 16 }}>
+        <Col>
+          <Title level={3} style={{ margin: 0 }}>
+            <DollarCircleOutlined style={{ marginRight: 8 }} />
+            LLM Cost & Interaction Logs
+          </Title>
+          <Text copyable={{text: scanId}} type="secondary" code>
+            Scan ID: {scanId}
+          </Text>
+        </Col>
+        <Col>
+          <Button onClick={() => navigate(-1)} icon={<ArrowLeftOutlined />}>
+            Back
+          </Button>
+        </Col>
+      </Row>
+      <Card style={{ marginBottom: 16 }}>
+        <Title level={5} style={{ marginTop: 0 }}>Overall Scan Summary</Title>
+        <Row gutter={16}>
+            <Col span={6}><Statistic title="Total Scan Cost (Actual)" value={overallStats.totalCost} precision={6} prefix="$" /></Col>
+            <Col span={6}><Statistic title="Total Input Tokens" value={overallStats.totalInputTokens} loading={isLoading} /></Col>
+            <Col span={6}><Statistic title="Total Output Tokens" value={overallStats.totalOutputTokens} loading={isLoading} /></Col>
+            <Col span={6}><Statistic title="Total Overall Tokens" value={overallStats.totalOverallTokens} loading={isLoading} /></Col>
+        </Row>
+      </Card>
+      <Layout style={{ background: "#fff", padding: 0, border: '1px solid #f0f0f0', borderRadius: '8px' }}>
+        <Sider width={300} style={{ background: "#fafafa", padding: "16px", borderRight: '1px solid #f0f0f0', maxHeight: '60vh', overflowY: 'auto' }}>
             <Title level={5} style={{marginTop: 0, marginBottom: 16}}>Files Involved</Title>
             <Menu
                 mode="inline"
@@ -169,26 +218,17 @@ const LlmLogViewerPage: React.FC = () => {
             />
         </Sider>
         <Content style={{ padding: '16px 24px', display: 'flex', flexDirection: 'column' }}>
-          <Row justify="space-between" align="middle" style={{ marginBottom: 16, flexShrink: 0 }}>
-            <Col>
-              <Title level={3} style={{ margin: 0 }}>
-                <RobotOutlined style={{ marginRight: 8 }} />
-                LLM Interaction Logs
-              </Title>
-              <Text copyable={{ text: scanId }} type="secondary" code>
-                Scan ID: {scanId}
-              </Text>
-            </Col>
-            <Col>
-              <Button
-                onClick={() => navigate(-1)}
-                icon={<ArrowLeftOutlined />}
-              >
-                Back
-              </Button>
-            </Col>
-          </Row>
-
+          {fileStats && selectedFilePath !== 'All Files' && (
+             <Card size="small" bordered={false} style={{background: '#fafafa', marginBottom: 16}}>
+                <Title level={5} style={{ marginTop: 0 }}>Summary for: <Text code>{selectedFilePath}</Text></Title>
+                <Row gutter={16}>
+                    <Col span={6}><Statistic title="File Cost" value={fileStats.totalCost} precision={6} prefix="$" valueStyle={{fontSize: 14}} /></Col>
+                    <Col span={6}><Statistic title="Input Tokens" value={fileStats.totalInputTokens} valueStyle={{fontSize: 14}} /></Col>
+                    <Col span={6}><Statistic title="Output Tokens" value={fileStats.totalOutputTokens} valueStyle={{fontSize: 14}} /></Col>
+                    <Col span={6}><Statistic title="Overall Tokens" value={fileStats.totalOverallTokens} valueStyle={{fontSize: 14}} /></Col>
+                </Row>
+            </Card>
+          )}
           <Table
             columns={columns}
             dataSource={filteredInteractions}
@@ -263,10 +303,11 @@ const LlmLogViewerPage: React.FC = () => {
                 />
               ),
             }}
-            scroll={{ y: 'calc(100vh - 400px)' }}
+            scroll={{ y: 'calc(100vh - 550px)' }}
           />
       </Content>
     </Layout>
+    </>
   );
 };
 

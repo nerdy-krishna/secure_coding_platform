@@ -13,7 +13,6 @@ import { AuthProvider } from "./providers/AuthProvider";
 
 import LLMSettingsPage from "../features/admin-settings/components/LLMSettingsPage";
 import RegisterPage from "../features/authentication/components/RegisterPage";
-import CostUsagePage from "../pages/account/CostUsagePage";
 import DashboardPage from "../pages/account/DashboardPage";
 import SettingsPage from "../pages/account/SettingsPage";
 import SubmissionHistoryPage from "../pages/account/SubmissionHistoryPage";
@@ -131,7 +130,6 @@ function AppContent() {
           <Route path="/scans/:scanId/llm-logs" element={<LlmLogViewerPage />} />
           <Route path="/advisor" element={<SecurityAdvisorPage />} />
           <Route path="/account/history" element={<SubmissionHistoryPage />} />
-          <Route path="/account/usage" element={<CostUsagePage />} />
           <Route path="/account/profile" element={<UserProfilePage />} />
           <Route path="/account/settings" element={<SettingsPage />} />
         </Route>
