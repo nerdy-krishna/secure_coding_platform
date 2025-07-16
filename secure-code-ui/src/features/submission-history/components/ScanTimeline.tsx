@@ -35,8 +35,14 @@ const getStageInfo = (stage: string, events: ScanEventItem[], currentStatus: str
     const currentStatusIndex = STAGE_ORDER.indexOf(currentStatus);
     const event = events.find(e => e.stage_name === stage);
 
+    const isFinished = currentStatus === "COMPLETED" || currentStatus === "REMEDIATION_COMPLETED";
     const isFailedOrCancelled = currentStatus === "FAILED" || currentStatus === "CANCELLED";
 
+    if (isFinished && stageIndex <= STAGE_ORDER.indexOf("COMPLETED")) {
+        // If the scan is complete, all visible stages are marked as finished.
+        return { status: 'finish', icon: <CheckCircleOutlined /> };
+    }
+    
     if (isFailedOrCancelled) {
         if (stage === currentStatus) return { status: 'error', icon: <CloseCircleOutlined /> };
         if (event) return { status: 'finish', icon: <CheckCircleOutlined /> };

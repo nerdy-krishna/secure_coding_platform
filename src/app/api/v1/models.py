@@ -271,7 +271,7 @@ class SecurityQueryResponse(BaseModel):
 
 class LLMInteractionResponse(BaseModel):
     id: int
-    submission_id: Optional[uuid.UUID] = None
+    scan_id: Optional[uuid.UUID] = Field(None, alias="submission_id") # DEPRECATED: use scan_id
     file_path: Optional[str] = None
     agent_name: str
     timestamp: datetime
@@ -423,9 +423,9 @@ class AnalysisResultDetailResponse(BaseModel):
     impact_report: Optional[Dict[str, Any]] = None
     sarif_report: Optional[Dict[str, Any]] = None
     summary_report: Optional[SummaryReportResponse] = None
-    text_report: Optional[str] = None
     original_code_map: Optional[Dict[str, str]] = None
     fixed_code_map: Optional[Dict[str, str]] = None
+    llm_interactions: Optional[List['LLMInteractionResponse']] = None
 
     class Config:
         from_attributes = True
