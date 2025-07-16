@@ -36,7 +36,7 @@ export const authService = {
   refreshToken: async (): Promise<TokenResponse> => {
     // The refresh token is in an HttpOnly cookie, so the browser sends it automatically.
     // We just need to hit the refresh endpoint at the correct path.
-    const response = await apiClient.post<TokenResponse>("/auth/jwt/refresh");
+    const response = await apiClient.post<TokenResponse>("/auth/refresh");
     return response.data;
   },
 
