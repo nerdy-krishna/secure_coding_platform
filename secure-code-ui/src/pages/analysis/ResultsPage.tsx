@@ -25,8 +25,8 @@ import {
 } from "antd";
 import { saveAs } from "file-saver";
 import React, { useEffect, useMemo, useState } from "react";
-import ReactDiffViewer from "react-diff-viewer-continued";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import EnhancedDiffViewer from "../../features/results-display/components/EnhancedDiffViewer";
 import FindingList from "../../features/results-display/components/FindingList";
 import ResultsFileTree from "../../features/results-display/components/ResultsFileTree";
 import ScanSummary from "../../features/results-display/components/ScanSummary";
@@ -292,8 +292,14 @@ const ResultsPage: React.FC = () => {
         </Layout>
 
         {isRemediationComplete && selectedFilePath && (
-          <div style={{ padding: '0 24px 24px 24px' }}>
-            <ReactDiffViewer oldValue={originalCode} newValue={fixedCode} splitView={true} useDarkTheme={false} />
+          <div style={{ padding: '16px 24px 24px 24px' }}>
+            <EnhancedDiffViewer
+                title={`Full File Diff: ${selectedFilePath}`}
+                oldCode={originalCode}
+                newCode={fixedCode}
+                oldCodeTitle="Original File Content"
+                newCodeTitle="Fully Remediated File"
+            />
           </div>
         )}
       </Layout>

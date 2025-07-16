@@ -299,7 +299,6 @@ class SubmissionService:
             summary_report=summary_report_response,
             original_code_map=original_code_map or None,
             fixed_code_map=fixed_code_map or None,
-            llm_interactions=[api_models.LLMInteractionResponse.from_orm(i) for i in scan.llm_interactions]
         )
 
     async def get_paginated_scans_for_project(self, project_id: uuid.UUID, user_id: int, skip: int, limit: int) -> api_models.PaginatedScanHistoryResponse:

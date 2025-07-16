@@ -158,6 +158,8 @@ async def analysis_node(state: SpecializedAgentState, config: Dict[str, Any]) ->
 
             if verified_suggestion:
                 result.suggestion = verified_suggestion
+                # --- FIX: Assign the verified suggestion to the finding ---
+                result.finding.fixes = verified_suggestion
                 fixes.append(
                     FixResult(finding=result.finding, suggestion=result.suggestion)
                 )

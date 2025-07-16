@@ -115,8 +115,7 @@ class ScanRepository:
             .options(
                 selectinload(db_models.Scan.project),
                 selectinload(db_models.Scan.snapshots),
-                selectinload(db_models.Scan.findings),
-                selectinload(db_models.Scan.llm_interactions)
+                selectinload(db_models.Scan.findings)
             )
             .filter(db_models.Scan.id == scan_id)
         )
