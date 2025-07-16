@@ -161,3 +161,41 @@ class FinalReport(BaseModel):
 
     impact_analysis: ImpactReport
     sarif_report: Dict[str, Any]
+
+
+class EnrichedDocument(BaseModel):
+    """Represents a single document/control after LLM enrichment."""
+
+    id: str
+    original_document: str
+    enriched_content: str
+    metadata: Dict[str, Any]
+
+
+class PreprocessingResponse(BaseModel):
+    """The API response after a framework CSV has been processed."""
+
+    framework_name: str
+    llm_config_name: str
+    processed_documents: List[EnrichedDocument]
+
+class RAGJobStartResponse(BaseModel):
+    """Response when starting a new RAG preprocessing job."""
+
+    job_id: uuid.UUID
+    framework_name: str
+    status: str
+    estimated_cost: Optional[Dict[str, Any]] = None
+    message: str
+
+
+class RAGJobStatusResponse(BaseModel):
+    """Response for a job status check."""
+
+    job_id: uuid.UUID
+    framework_name: str
+    status: str
+    estimated_cost: Optional[Dict[str, Any]] = None
+    actual_cost: Optional[float] = None
+    processed_documents: Optional[List[EnrichedDocument]] = None
+    error_message: Optional[str] = None

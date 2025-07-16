@@ -405,6 +405,7 @@ def main():
     metadatas: List[Metadata] = []
     for index, row in df.iterrows():
         record: Metadata = {
+            "framework_name": "OWASP ASVS v5.0",
             "chapter_id": str(row["chapter_id"]),
             "chapter_name": str(row["chapter_name"]),
             "section_id": str(row["section_id"]),
@@ -413,6 +414,13 @@ def main():
             "L": int(row["L"]),
         }
         metadatas.append(record)
+
+    logger.info(f"Attempting to delete {len(ids)} existing documents to ensure a clean slate.")
+    try:
+        collection.delete(ids=ids)
+        logger.info("Deletion of existing documents complete.")
+    except Exception as e:
+        logger.warning(f"Could not delete documents (they may not exist yet): {e}")
 
     logger.info(
         f"Ingesting {len(documents)} documents into ChromaDB. This may take a moment..."

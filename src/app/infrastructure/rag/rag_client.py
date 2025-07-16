@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 CHROMA_HOST = os.getenv("CHROMA_HOST", "vector_db")
 CHROMA_PORT = int(os.getenv("CHROMA_PORT", 8000))
 ASVS_COLLECTION_NAME = "asvs_v5"
+MODEL_NAME = "all-MiniLM-L6-v2"
 
 
 def test_connection(host: str, port: int) -> bool:
@@ -73,8 +74,15 @@ class RAGService:
             heartbeat_result = client.heartbeat()
             logger.info(f"✓ ChromaDB heartbeat successful: {heartbeat_result}")
             
+            # Define the embedding function, same as in the ingestion script
+            embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+                model_name=MODEL_NAME
+            )
+            
             logger.info(f"Getting or creating collection: {ASVS_COLLECTION_NAME}")
-            collection = client.get_or_create_collection(name=ASVS_COLLECTION_NAME)
+            collection = client.get_or_create_collection(
+                name=ASVS_COLLECTION_NAME, embedding_function=embedding_function  # type: ignore
+            )
             logger.info(f"✓ Collection '{ASVS_COLLECTION_NAME}' ready")
             
             # Test collection accessibility
@@ -117,20 +125,34 @@ class RAGService:
         )
 
     def get_by_framework(self, framework_name: str) -> Dict[str, Any]:
-        """Retrieves all documents for a given framework."""
+        """Retrieves all documents for a given framework using a metadata filter."""
         if not self._asvs_collection:
             raise ConnectionError("ChromaDB collection is not available.")
-        
-        where_filter: Where = {"framework_name": framework_name}
-        
-        # We need to fetch all documents, so we get the count first.
-        count = self._asvs_collection.count(where=where_filter)
-        if count == 0:
-            return {"ids": [], "documents": [], "metadatas": []}
+
+        # Use a 'where' filter to efficiently query ChromaDB for documents
+        # with the matching framework_name in their metadata.
+        where_filter: Where = {"framework_name": {"$eq": framework_name}}
 
         return self._asvs_collection.get(
-            where=where_filter, limit=count, include=["metadatas", "documents"]
+            where=where_filter, include=["metadatas", "documents"]
         )
+
+    def delete_by_framework(self, framework_name: str) -> int:
+        """Deletes all documents associated with a specific framework."""
+        if not self._asvs_collection:
+            raise ConnectionError("ChromaDB collection is not available.")
+
+        # Get all document IDs for the framework first
+        docs_to_delete = self.get_by_framework(framework_name)
+        ids_to_delete = docs_to_delete.get("ids", [])
+
+        if not ids_to_delete:
+            logger.info(f"No documents found for framework '{framework_name}' to delete.")
+            return 0
+
+        self.delete(ids=ids_to_delete)
+        logger.info(f"Deleted {len(ids_to_delete)} documents for framework '{framework_name}'.")
+        return len(ids_to_delete)
 
     def delete(self, ids: List[str]):
         """Deletes documents from the collection by their IDs."""

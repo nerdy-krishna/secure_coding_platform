@@ -139,6 +139,37 @@ export interface RAGDocumentDeleteRequest {
   document_ids: string[];
 }
 
+export interface EnrichedDocument {
+  id: string;
+  original_document: string;
+  enriched_content: string;
+  metadata: Record<string, JsonValue>;
+}
+
+export interface PreprocessingResponse {
+  framework_name: string;
+  llm_config_name: string;
+  processed_documents: EnrichedDocument[];
+}
+
+export interface RAGJobStartResponse {
+  job_id: string;
+  framework_name: string;
+  status: string;
+  estimated_cost?: { [key: string]: JsonValue };
+  message: string;
+}
+
+export interface RAGJobStatusResponse {
+  job_id: string;
+  framework_name: string;
+  status: string;
+  estimated_cost?: { [key: string]: JsonValue };
+  actual_cost?: number;
+  processed_documents?: EnrichedDocument[];
+  error_message?: string;
+}
+
 // --- Prompt Template Schemas ---
 export interface PromptTemplateBase {
   name: string;

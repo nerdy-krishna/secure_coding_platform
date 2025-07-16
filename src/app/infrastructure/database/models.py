@@ -197,3 +197,22 @@ class PromptTemplate(Base):
     agent_name: Mapped[Optional[str]] = mapped_column(String(100))
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     template_text: Mapped[str] = mapped_column(Text, nullable=False)
+
+class RAGPreprocessingJob(Base):
+    __tablename__ = "rag_preprocessing_jobs"
+    id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), nullable=False)
+    framework_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    llm_config_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("llm_configurations.id"), nullable=False)
+    original_file_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    raw_content: Mapped[Optional[bytes]] = mapped_column(sa.LargeBinary, nullable=True)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="PENDING")
+    estimated_cost: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB)
+    actual_cost: Mapped[Optional[float]] = mapped_column(DECIMAL(10, 8))
+    processed_documents: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSONB)
+    error_message: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    user: Mapped["User"] = relationship()
+    llm_configuration: Mapped["LLMConfiguration"] = relationship()

@@ -9,9 +9,11 @@ from app.infrastructure.database.repositories.prompt_template_repo import (
     PromptTemplateRepository,
 )
 from app.infrastructure.database.repositories.chat_repo import ChatRepository
+from app.infrastructure.database.repositories.rag_job_repo import RAGJobRepository
 from app.core.services.admin_service import AdminService
 from app.core.services.scan_service import SubmissionService as ScanService
 from app.core.services.chat_service import ChatService
+from app.core.services.rag_preprocessor_service import RAGPreprocessorService
 
 
 def get_llm_config_repository(
@@ -60,6 +62,20 @@ def get_chat_service(
 ) -> ChatService:
     """Dependency provider for the ChatService."""
     return ChatService(chat_repo)
+
+def get_rag_job_repository(
+    db: AsyncSession = Depends(get_db),
+) -> RAGJobRepository:
+    """Dependency provider for the RAGJobRepository."""
+    return RAGJobRepository(db)
+
+
+def get_rag_preprocessor_service(
+    job_repo: RAGJobRepository = Depends(get_rag_job_repository),
+    llm_config_repo: LLMConfigRepository = Depends(get_llm_config_repository),
+) -> RAGPreprocessorService:
+    """Dependency provider for the RAGPreprocessorService."""
+    return RAGPreprocessorService(job_repo=job_repo, llm_config_repo=llm_config_repo)
 
 
 def get_scan_repository(
