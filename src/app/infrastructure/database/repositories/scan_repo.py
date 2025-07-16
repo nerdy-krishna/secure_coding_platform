@@ -229,6 +229,63 @@ class ScanRepository:
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
     
+    async def get_scans_count_for_user(self, user_id: int, search: Optional[str], statuses: Optional[List[str]] = None) -> int:
+        """Counts the total number of scans for a specific user, with optional search and status filters."""
+        stmt = (
+            select(func.count(db_models.Scan.id))
+            .join(db_models.Scan.project)
+            .where(db_models.Scan.user_id == user_id)
+        )
+        if search:
+            search_term = f"%{search}%"
+            stmt = stmt.where(
+                or_(
+                    cast(db_models.Scan.id, String).ilike(search_term),
+                    db_models.Project.name.ilike(search_term),
+                    db_models.Scan.status.ilike(search_term),
+                    db_models.Scan.scan_type.ilike(search_term),
+                )
+            )
+        if statuses:
+            stmt = stmt.where(db_models.Scan.status.in_(statuses))
+
+        result = await self.db.execute(stmt)
+        return result.scalar_one() or 0
+
+    async def get_paginated_scans_for_user(
+        self, user_id: int, skip: int, limit: int, search: Optional[str], sort_order: str, statuses: Optional[List[str]] = None
+    ) -> List[db_models.Scan]:
+        """Retrieves a paginated list of scans for a user, with searching, sorting, and status filtering."""
+        stmt = (
+            select(db_models.Scan)
+            .join(db_models.Scan.project)
+            .options(selectinload(db_models.Scan.events), selectinload(db_models.Scan.project))
+            .where(db_models.Scan.user_id == user_id)
+        )
+        if search:
+            search_term = f"%{search}%"
+            stmt = stmt.where(
+                or_(
+                    cast(db_models.Scan.id, String).ilike(search_term),
+                    db_models.Project.name.ilike(search_term),
+                    db_models.Scan.status.ilike(search_term),
+                    db_models.Scan.scan_type.ilike(search_term),
+                )
+            )
+
+        if statuses:
+            stmt = stmt.where(db_models.Scan.status.in_(statuses))
+
+        order_column = db_models.Scan.created_at
+        if sort_order.lower() == "asc":
+            stmt = stmt.order_by(order_column.asc())
+        else:
+            stmt = stmt.order_by(order_column.desc())
+
+        stmt = stmt.offset(skip).limit(limit)
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
     async def get_paginated_projects(self, user_id: int, skip: int, limit: int, search: Optional[str]) -> List[db_models.Project]:
         """Retrieves a paginated list of projects for a user."""
         stmt = (

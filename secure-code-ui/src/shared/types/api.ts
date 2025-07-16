@@ -278,6 +278,8 @@ export interface ScanEventItem {
 
 export interface ScanHistoryItem {
   id: UUID;
+  project_id: UUID;
+  project_name: string;
   scan_type: string;
   status: string;
   created_at: string;

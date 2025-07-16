@@ -69,6 +69,28 @@ export const scanService = {
   },
   
   /**
+   * Fetches a paginated list of all scans for the current user.
+   */
+  getScanHistory: async (
+    page: number,
+    pageSize: number,
+    search?: string,
+    sortOrder?: string,
+    status?: string,
+  ): Promise<PaginatedScanHistoryResponse> => {
+    const response = await apiClient.get<PaginatedScanHistoryResponse>("/scans/history", {
+        params: {
+            page,
+            page_size: pageSize,
+            search: search || undefined,
+            sort_order: sortOrder,
+            status: status === 'All' ? undefined : status,
+        }
+    });
+    return response.data;
+  },
+
+  /**
    * Fetches a paginated list of scans for a specific project.
    */
   getScansForProject: async (
