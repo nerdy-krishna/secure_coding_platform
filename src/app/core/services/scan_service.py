@@ -313,6 +313,41 @@ class SubmissionService:
         history_items = [api_models.ScanHistoryItem.from_orm(scan) for scan in scans_raw]
         return api_models.PaginatedScanHistoryResponse(items=history_items, total=total)
     
+    async def get_paginated_user_scans(
+        self, user_id: int, skip: int, limit: int, search: Optional[str], sort_order: str, status: Optional[str]
+    ) -> api_models.PaginatedScanHistoryResponse:
+        """Retrieves a paginated list of all scans for a user."""
+        
+        status_filters = []
+        if status:
+            if status == "In Progress":
+                status_filters = ["QUEUED", "QUEUED_FOR_SCAN", "ANALYZING_CONTEXT", "RUNNING_AGENTS", "GENERATING_REPORTS"]
+            elif status == "Completed":
+                status_filters = ["COMPLETED", "REMEDIATION_COMPLETED"]
+            elif status != "All":
+                status_filters = [status.upper().replace(' ', '_')]
+
+        total = await self.repo.get_scans_count_for_user(user_id, search, status_filters)
+        scans_raw = await self.repo.get_paginated_scans_for_user(
+            user_id, skip, limit, search, sort_order, status_filters
+        )
+
+        history_items = [
+            api_models.ScanHistoryItem(
+                id=scan.id,
+                project_id=scan.project_id,
+                project_name=scan.project.name,
+                scan_type=scan.scan_type,
+                status=scan.status,
+                created_at=scan.created_at,
+                completed_at=scan.completed_at,
+                cost_details=scan.cost_details,
+                events=scan.events,
+            )
+            for scan in scans_raw
+        ]
+        return api_models.PaginatedScanHistoryResponse(items=history_items, total=total)
+
     async def get_llm_interactions_for_scan(self, scan_id: uuid.UUID, user: db_models.User) -> List[db_models.LLMInteraction]:
         """Gets all LLM interactions for a given scan, ensuring user has access."""
         logger.info(f"User {user.id} requesting LLM interactions for scan {scan_id}.")

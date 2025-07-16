@@ -37,6 +37,26 @@ async def get_all_projects(
 ):
     return await service.get_paginated_projects(user.id, skip, limit, search)
 
+@router.get("/scans/history", response_model=api_models.PaginatedScanHistoryResponse)
+async def get_user_scan_history(
+    user: db_models.User = Depends(current_active_user),
+    service: SubmissionService = Depends(get_scan_service),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100),
+    search: Optional[str] = Query(None, min_length=1, max_length=100),
+    sort_order: str = Query("desc", pattern="^(asc|desc)$"),
+    status: Optional[str] = Query(None),
+):
+    """Retrieves a paginated list of all scans for the current user."""
+    return await service.get_paginated_user_scans(
+        user_id=user.id,
+        skip=(page - 1) * page_size,
+        limit=page_size,
+        search=search,
+        sort_order=sort_order,
+        status=status,
+    )
+
 @router.post("/scans/preview-archive", response_model=dict)
 async def preview_archive_files(archive_file: UploadFile = File(...)):
     if not archive_file.filename or not is_archive_filename(archive_file.filename):

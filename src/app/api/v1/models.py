@@ -450,6 +450,8 @@ class ScanEventItem(BaseModel):
 
 class ScanHistoryItem(BaseModel):
     id: uuid.UUID
+    project_id: uuid.UUID
+    project_name: str
     scan_type: str
     status: str
     created_at: datetime
