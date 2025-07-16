@@ -2,22 +2,16 @@
 import { AxiosError } from "axios";
 import React, { useCallback, useEffect, useState, type ReactNode } from "react";
 import apiClient from "../../shared/api/apiClient";
+import { authService } from "../../shared/api/authService";
 import {
-  loginUser,
-  logoutUser,
-  registerUser,
-} from "../../shared/api/authService";
-import {
-  type AuthContextType,
   type TokenResponse,
   type UserLoginData,
   type UserRead,
   type UserRegisterData,
 } from "../../shared/types/api";
-import { AuthContext } from "./AuthContext";
+import { AuthContext, type AuthContextType } from "./AuthContext";
 
 const ACCESS_TOKEN_KEY = "accessToken";
-
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({
   children,
 }) => {
@@ -74,7 +68,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
     setIsLoading(true);
     setError(null);
     try {
-      const response: TokenResponse = await loginUser(credentials);
+      const response: TokenResponse = await authService.loginUser(credentials);
       localStorage.setItem("accessToken", response.access_token);
       setAccessToken(response.access_token);
     } catch (err: unknown) {
@@ -97,7 +91,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
       setIsLoading(true);
       setError(null);
       try {
-        return await registerUser(credentials);
+        return await authService.registerUser(credentials);
       } catch (err: unknown) {
         console.error("AuthProvider: Registration failed:", err);
         let errorMessage = "Registration failed. Please try again.";
@@ -118,7 +112,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
     setError(null);
     try {
       if (accessToken) {
-        await logoutUser();
+        await authService.logoutUser();
       }
     } catch (err: unknown) {
       console.error("AuthProvider: API Logout failed but proceeding with client-side logout:", err);

@@ -373,7 +373,7 @@ async def dependency_aware_analysis_orchestrator(state: WorkerState) -> Dict[str
                 initial_agent_state: SpecializedAgentState = {
                     "scan_id": scan_id, "llm_config_id": specialized_llm_id, "filename": file_path,
                     "code_snippet": chunk['code'], "file_content_for_verification": file_content,
-                    "workflow_mode": "remediate" if scan_type == "REMEDIATE" else "audit",
+                    "workflow_mode": "remediate" if scan_type in ("REMEDIATE", "SUGGEST") else "audit",
                     "findings": [], "fixes": [], "error": None
                 }
                 tasks.append(run_with_semaphore(generic_agent_graph.ainvoke(initial_agent_state, config={"configurable": {"agent_name": agent_name, "domain_query": domain_query}})))

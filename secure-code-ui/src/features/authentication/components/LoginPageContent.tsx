@@ -11,33 +11,35 @@ import {
   Row,
   Typography,
 } from "antd";
-import React from "react";
+import React, { useEffect } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../../../shared/hooks/useAuth";
 import { type UserLoginData } from "../../../shared/types/api";
 
 const { Title } = Typography;
-
 const LoginPageContent: React.FC = () => {
   const {
     login,
     error: authError,
     isLoading: authLoading,
+    clearError,
   } = useAuth();
-  
   const [form] = Form.useForm();
+
+  useEffect(() => {
+    if (authError) {
+      message.error(authError);
+      clearError();
+    }
+  }, [authError, clearError]);
 
   const onFinish = async (values: UserLoginData) => {
     try {
       await login(values);
-      
     } catch (err: unknown) {
-      
+      // Error is now handled by the useEffect hook watching authError.
+      // This catch block can be kept for additional logging if needed.
       console.error("LoginPage: Login attempt failed:", err);
-      
-      if (!authError) {
-        message.error("Login failed. Please check your credentials and try again.");
-      }
     }
   };
 
