@@ -1,6 +1,6 @@
 import logging
 import uuid
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import (
     APIRouter,
@@ -36,6 +36,15 @@ async def get_all_projects(
     search: Optional[str] = Query(None, min_length=1, max_length=100)
 ):
     return await service.get_paginated_projects(user.id, skip, limit, search)
+
+@router.get("/projects/search", response_model=List[str])
+async def search_projects_for_user(
+    q: str = Query(..., min_length=1, max_length=100),
+    user: db_models.User = Depends(current_active_user),
+    service: SubmissionService = Depends(get_scan_service),
+):
+    """Searches for projects by name for the current user (for autocomplete)."""
+    return await service.search_projects(user_id=user.id, query=q)
 
 @router.get("/scans/history", response_model=api_models.PaginatedScanHistoryResponse)
 async def get_user_scan_history(
@@ -192,7 +201,16 @@ async def get_scan_history_for_project(
     skip: int = Query(0, ge=0), 
     limit: int = Query(10, ge=1, le=100)
 ):
-    return await service.get_paginated_scans_for_project(project_id, user.id, skip, limit)
+     return await service.get_paginated_scans_for_project(project_id, user.id, skip, limit)
+
+@router.get("/scans/{scan_id}/sarif", response_model=Dict[str, Any])
+async def download_sarif_report(
+    scan_id: uuid.UUID,
+    user: db_models.User = Depends(current_active_user),
+    service: SubmissionService = Depends(get_scan_service),
+):
+    """Downloads the SARIF report for a specific scan."""
+    return await service.get_sarif_for_scan(scan_id, user)
 
 @router.get("/scans/{scan_id}/llm-interactions", response_model=List[api_models.LLMInteractionResponse])
 async def get_llm_interactions_for_scan(

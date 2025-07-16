@@ -342,11 +342,27 @@ class SubmissionService:
                 created_at=scan.created_at,
                 completed_at=scan.completed_at,
                 cost_details=scan.cost_details,
-                events=scan.events,
+                events=[api_models.ScanEventItem.from_orm(e) for e in scan.events],
+                has_sarif_report=bool(scan.sarif_report),
+                has_impact_report=bool(scan.impact_report),
             )
             for scan in scans_raw
         ]
         return api_models.PaginatedScanHistoryResponse(items=history_items, total=total)
+
+    async def search_projects(self, user_id: int, query: str) -> List[str]:
+        """Searches project names for autocomplete."""
+        projects = await self.repo.search_projects_by_name(user_id=user_id, name_query=query)
+        return [p.name for p in projects]
+
+    async def get_sarif_for_scan(self, scan_id: uuid.UUID, user: db_models.User) -> Dict[str, Any]:
+        """Retrieves just the SARIF report for a given scan, ensuring user has access."""
+        scan = await self.repo.get_scan(scan_id)
+        if not scan or (scan.user_id != user.id and not user.is_superuser):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scan not found or not authorized.")
+        if not scan.sarif_report:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="SARIF report not available for this scan.")
+        return scan.sarif_report
 
     async def get_llm_interactions_for_scan(self, scan_id: uuid.UUID, user: db_models.User) -> List[db_models.LLMInteraction]:
         """Gets all LLM interactions for a given scan, ensuring user has access."""
@@ -366,7 +382,22 @@ class SubmissionService:
         project_items = []
         for project in projects:
             scans_raw = await self.repo.get_paginated_scans_for_project(project.id, 0, 5) # Fetch latest 5 scans for preview
-            scans = [api_models.ScanHistoryItem.from_orm(s) for s in scans_raw]
+            scans = [
+                api_models.ScanHistoryItem(
+                    id=s.id,
+                    project_id=s.project_id,
+                    project_name=s.project.name,
+                    scan_type=s.scan_type,
+                    status=s.status,
+                    created_at=s.created_at,
+                    completed_at=s.completed_at,
+                    cost_details=s.cost_details,
+                    events=[api_models.ScanEventItem.from_orm(e) for e in s.events],
+                    has_sarif_report=bool(s.sarif_report),
+                    has_impact_report=bool(s.impact_report),
+                )
+                for s in scans_raw
+            ]
             project_item = api_models.ProjectHistoryItem(
                 id=project.id,
                 name=project.name,

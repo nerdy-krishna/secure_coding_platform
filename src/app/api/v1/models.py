@@ -457,7 +457,9 @@ class ScanHistoryItem(BaseModel):
     created_at: datetime
     completed_at: Optional[datetime] = None
     cost_details: Optional[Dict[str, Any]] = None
-    events: List[ScanEventItem] = [] # Add this line
+    events: List[ScanEventItem] = []
+    has_sarif_report: bool = False
+    has_impact_report: bool = False
 
     class Config:
         from_attributes = True

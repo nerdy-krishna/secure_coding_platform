@@ -5,8 +5,8 @@ import {
   FileTextOutlined,
   LogoutOutlined,
   PieChartOutlined,
-  ProfileOutlined,
-  QuestionCircleOutlined, // ADDED
+  ProjectOutlined,
+  QuestionCircleOutlined,
   SettingOutlined,
   ToolOutlined,
   UserOutlined
@@ -65,9 +65,9 @@ const DashboardLayout: React.FC<{ children?: React.ReactNode }> = ({
         <FileTextOutlined />,
       ),
       getItem(
-        <Link to="/analysis/results">Analysis Results</Link>,
+        <Link to="/analysis/results">Projects</Link>,
         "analysis_results",
-        <ProfileOutlined />,
+        <ProjectOutlined />,
       ),
       getItem(
         <Link to="/advisor">Security Advisor</Link>,
