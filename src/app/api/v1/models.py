@@ -18,11 +18,6 @@ class LLMConfigurationBase(BaseModel):
     model_name: str = Field(
         ..., description="The specific model name (e.g., 'gpt-4o', 'gemini-1.5-pro')."
     )
-    # --- ADDED: New fields for dynamic configuration ---
-    tokenizer_encoding: str = Field(
-        default="cl100k_base",
-        description="The name of the tiktoken tokenizer for this model (e.g., 'cl100k_base').",
-    )
     input_cost_per_million: float = Field(
         default=0.0, description="Cost per 1 million input tokens in USD."
     )
@@ -49,10 +44,6 @@ class LLMConfigurationUpdate(BaseModel):
     api_key: Optional[str] = Field(
         None,
         description="The API key for the provider. If provided, it will be updated and re-encrypted.",
-    )
-    tokenizer_encoding: Optional[str] = Field(
-        None,
-        description="The name of the tiktoken tokenizer for this model (e.g., 'cl100k_base').",
     )
     input_cost_per_million: Optional[float] = Field(
         None, description="Cost per 1 million input tokens in USD."

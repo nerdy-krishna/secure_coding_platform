@@ -38,7 +38,7 @@ class AdminService:
         """Creates a new LLM configuration."""
         logger.info(
             "Creating new LLM configuration.",
-            extra={"name": config_create.name, "provider": config_create.provider},
+            extra={"llm_config_name": config_create.name, "provider": config_create.provider},
         )
         config_db = await self.llm_repo.create(config_create)
         return api_models.LLMConfigurationRead.from_orm(config_db)

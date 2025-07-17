@@ -157,18 +157,27 @@ Respond ONLY with a valid JSON object conforming to the schema. Do not include a
 
         df = self._parse_csv(csv_content)
         tasks = []
+
+        # Helper coroutine to wrap the enrichment call with a semaphore.
+        # This avoids the late-binding closure issue by taking arguments explicitly.
+        async def enrich_with_semaphore(doc_id: str, doc_text: str, metadata: Dict[str, Any]):
+            async with CONCURRENCY_SEMAPHORE:
+                return await self._enrich_document(
+                    llm_client, doc_id, doc_text, metadata
+                )
+
         for _, row in df.iterrows():
             doc_id = str(row["id"])
             doc_text = str(row["document"])
             metadata = row.drop(["id", "document"]).to_dict()
 
-            async def process_with_semaphore():
+            async def process_with_semaphore(d_id: str, d_text: str, m_data: dict):
                 async with CONCURRENCY_SEMAPHORE:
                     return await self._enrich_document(
-                        llm_client, doc_id, doc_text, metadata
+                        llm_client, d_id, d_text, m_data
                     )
 
-            tasks.append(process_with_semaphore())
+            tasks.append(process_with_semaphore(doc_id, doc_text, metadata))
 
         processed_results_with_costs = await asyncio.gather(*tasks, return_exceptions=True)
 

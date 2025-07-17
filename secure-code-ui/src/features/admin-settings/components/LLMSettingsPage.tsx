@@ -178,7 +178,6 @@ const LLMSettingsPage: React.FC = () => {
       { title: "Model Name", dataIndex: "model_name", key: "model_name" },
       { title: "Input Cost ($/1M)", dataIndex: "input_cost_per_million", key: "input_cost_per_million", render: (cost) => <Text>${cost ? cost.toFixed(6) : "0.00"}</Text>, sorter: (a, b) => a.input_cost_per_million - b.input_cost_per_million },
       { title: "Output Cost ($/1M)", dataIndex: "output_cost_per_million", key: "output_cost_per_million", render: (cost) => <Text>${cost ? cost.toFixed(6) : "0.00"}</Text>, sorter: (a, b) => a.output_cost_per_million - b.output_cost_per_million },
-      { title: "Tokenizer", dataIndex: "tokenizer_encoding", key: "tokenizer_encoding", render: (name) => (name ? <Tag color="blue">{name}</Tag> : <Text type="secondary">Default</Text>) },
       { title: "Created At", dataIndex: "created_at", key: "created_at", render: (text) => formatDisplayDate(text), sorter: (a, b) => (parseAsUTCDate(a.created_at)?.getTime() || 0) - (parseAsUTCDate(b.created_at)?.getTime() || 0) },
       { title: "Action", key: "action", render: (_, record) => (
           <Space>
@@ -212,7 +211,7 @@ const LLMSettingsPage: React.FC = () => {
         <Paragraph type="secondary">{editingConfig ? "Update the details for this configuration." : "Add a new Large Language Model provider configuration."}</Paragraph>
         <Form form={form} layout="vertical" onFinish={handleSubmit}>
           <Row gutter={24}><Col xs={24} sm={12}><Form.Item name="name" label="Configuration Name" rules={[{ required: true, message: "Please enter a unique name." }]}><Input placeholder="e.g., OpenAI GPT-4o Mini" /></Form.Item></Col><Col xs={24} sm={12}><Form.Item name="provider" label="Provider" rules={[{ required: true, message: "Please select a provider." }]}><Select placeholder="Select a provider">{LLM_PROVIDERS.map((p) => (<Option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</Option>))}</Select></Form.Item></Col></Row>
-          <Row gutter={24}><Col xs={24} sm={12}><Form.Item name="model_name" label="Model Name" rules={[{ required: true, message: "Please enter the model name." }]}><Input placeholder="e.g., gpt-4o-mini" /></Form.Item></Col><Col xs={24} sm={12}><Form.Item name="tokenizer_encoding" label="Tokenizer Encoding (Optional)" tooltip="e.g., 'cl100k_base'. Leave blank for default."><Input placeholder="e.g., cl100k_base" /></Form.Item></Col></Row>
+          <Row gutter={24}><Col xs={24} sm={12}><Form.Item name="model_name" label="Model Name" rules={[{ required: true, message: "Please enter the model name." }]}><Input placeholder="e.g., gpt-4o-mini" /></Form.Item></Col><Col xs={24} sm={12}></Col></Row>
           <Row gutter={24}>
             <Col xs={24} sm={12}>
               <Form.Item name="input_cost_per_million" label="Input Cost per 1,000,000 Tokens ($)" rules={[{ required: true, message: "Input cost is required." }, { validator: costValidator }]}>

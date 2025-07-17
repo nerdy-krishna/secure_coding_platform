@@ -58,40 +58,19 @@ async def start_preprocessing_job(
     await file.seek(0)
     file_hash = job_repo.hash_content(contents)
 
-    # Check if a completed job with the same content and LLM config exists.
-    existing_job = await job_repo.find_completed_job_by_hash(file_hash, llm_config_id)
-
-    if existing_job and existing_job.estimated_cost and existing_job.processed_documents:
-        # If a duplicate exists, create a NEW job record...
-        job = await job_repo.create_job(
-            user_id=user.id,
-            framework_name=framework_name,
-            llm_config_id=llm_config_id,
-            file_hash=file_hash,
-        )
-        # ...then immediately update it with the old job's data and a PENDING_APPROVAL status.
-        await job_repo.update_job(job.id, {
-            "status": "PENDING_APPROVAL",
-            "estimated_cost": existing_job.estimated_cost,
-            "actual_cost": existing_job.actual_cost,
-            "processed_documents": existing_job.processed_documents,
-            "raw_content": contents
-        })
-        message = "An identical file has been processed before. You can approve to re-use the result or cancel."
-    else:
-        # If it's a new file, create a job and calculate the cost.
-        job = await job_repo.create_job(
-            user_id=user.id,
-            framework_name=framework_name,
-            llm_config_id=llm_config_id,
-            file_hash=file_hash,
-        )
-        await job_repo.update_job(job.id, {"raw_content": contents})
-        estimated_cost = await preprocessor.estimate_cost(contents, llm_config_id)
-        await job_repo.update_job(
-            job.id, {"status": "PENDING_APPROVAL", "estimated_cost": estimated_cost}
-        )
-        message = "Cost estimated. Please approve to start processing."
+    # Always treat as a new job and calculate the cost.
+    job = await job_repo.create_job(
+        user_id=user.id,
+        framework_name=framework_name,
+        llm_config_id=llm_config_id,
+        file_hash=file_hash,
+    )
+    await job_repo.update_job(job.id, {"raw_content": contents})
+    estimated_cost = await preprocessor.estimate_cost(contents, llm_config_id)
+    await job_repo.update_job(
+        job.id, {"status": "PENDING_APPROVAL", "estimated_cost": estimated_cost}
+    )
+    message = "Cost estimated. Please approve to start processing."
 
     final_job_state = await job_repo.get_job_by_id(job.id, user.id)
     if not final_job_state:
