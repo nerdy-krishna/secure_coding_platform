@@ -23,6 +23,7 @@ from app.infrastructure.auth.backend import auth_backend
 from app.infrastructure.auth.core import fastapi_users
 from app.infrastructure.auth.schemas import UserCreate, UserRead, UserUpdate
 from app.config.config import settings
+from app.infrastructure.llm_client_rate_limiter import initialize_rate_limiters
 from app.config.logging_config import LOGGING_CONFIG, correlation_id_var
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
@@ -38,6 +39,9 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     # This code runs on application startup
     logger.info("Application startup...")
+
+    # Initialize global rate limiters for LLM providers
+    initialize_rate_limiters()
 
     if settings.ASYNC_DATABASE_URL:
         logger.info("Setting up database checkpointer tables...")

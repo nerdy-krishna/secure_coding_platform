@@ -2,14 +2,15 @@
 
 import logging
 import uuid
-import time 
+import time
 from typing import Type, TypeVar, Optional, NamedTuple, Any, Dict, cast
 
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 from app.infrastructure.database import AsyncSessionLocal as async_session_factory
 from app.infrastructure.database.models import LLMConfiguration as DB_LLMConfiguration
 from app.shared.lib import cost_estimation
 from app.infrastructure.database.repositories.llm_config_repo import LLMConfigRepository
+from app.infrastructure.llm_client_rate_limiter import get_rate_limiter_for_provider
 
 # LangChain imports
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -82,6 +83,7 @@ class LLMClient:
     model_name_for_cost: str
     provider_name: str
     db_llm_config: DB_LLMConfiguration
+    decrypted_api_key: str # ADDED: Store the key directly
 
     def __init__(self, llm_config: DB_LLMConfiguration):
         """
@@ -93,14 +95,15 @@ class LLMClient:
         if not decrypted_api_key:
             raise ValueError(f"API key for LLM config {llm_config.id} is missing or not decrypted.")
 
+        self.decrypted_api_key = decrypted_api_key # ADDED: Assign the key
         self.model_name_for_cost = llm_config.model_name
 
         if self.provider_name == "openai":
-            self.chat_model = ChatOpenAI(api_key=decrypted_api_key, model=llm_config.model_name)
+            self.chat_model = ChatOpenAI(api_key=SecretStr(self.decrypted_api_key), model=llm_config.model_name)
         elif self.provider_name == "anthropic":
-            self.chat_model = ChatAnthropic(api_key=decrypted_api_key, model_name=llm_config.model_name, timeout=120, stop=None)
+            self.chat_model = ChatAnthropic(api_key=SecretStr(self.decrypted_api_key), model_name=llm_config.model_name, timeout=120, stop=None)
         elif self.provider_name == "google":
-            self.chat_model = ChatGoogleGenerativeAI(google_api_key=decrypted_api_key, model=llm_config.model_name)
+            self.chat_model = ChatGoogleGenerativeAI(google_api_key=SecretStr(self.decrypted_api_key), model=llm_config.model_name)
         else:
             raise ValueError(f"Unsupported LLM provider: {self.provider_name}")
 
@@ -122,6 +125,15 @@ class LLMClient:
                 "response_model": response_model.__name__,
             },
         )
+
+        # Acquire a permit from the provider-specific rate limiter
+        rate_limiter = get_rate_limiter_for_provider(self.provider_name)
+        if rate_limiter:
+            # First, count tokens for the prompt to pass to the limiter
+            prompt_tokens = await cost_estimation.count_tokens(
+                prompt, self.db_llm_config, self.decrypted_api_key
+            )
+            await rate_limiter.acquire(tokens=prompt_tokens)
         
         structured_llm = self.chat_model.with_structured_output(response_model)
         token_callback = TokenUsageCallbackHandler(provider_name=self.provider_name)
