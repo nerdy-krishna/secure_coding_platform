@@ -96,28 +96,50 @@ AGENT_DEFINITIONS = [
 PROMPT_TEMPLATES = []
 for agent in AGENT_DEFINITIONS:
     agent_name = agent["name"]
-    prompt_name = agent_name.replace("Agent", "")
     
+    # Define the template strings clearly
+    quick_audit_template = """You are an expert security auditor. Your task is to audit the provided code for vulnerabilities.
+1.  Analyze the `<CODE_BUNDLE>` below.
+2.  Use the `<VULNERABILITY_PATTERNS>` to identify specific anti-patterns and vulnerabilities.
+3.  For each vulnerability you find, provide a detailed finding with a concise 'title'. Do NOT suggest code fixes.
+
+<VULNERABILITY_PATTERNS>
+{vulnerability_patterns}
+</VULNERABILITY_PATTERNS>
+
+<CODE_BUNDLE>
+{code_bundle}
+</CODE_BUNDLE>
+
+Respond ONLY with a valid JSON object that conforms to the AuditResponse schema."""
+
+    detailed_remediation_template = """You are an expert security engineer. Your task is to find and fix vulnerabilities in the provided code.
+1.  Analyze the `<CODE_BUNDLE>` below.
+2.  Use the `<VULNERABILITY_PATTERNS>` to identify specific anti-patterns and vulnerabilities.
+3.  Use the `<SECURE_PATTERNS>` as a guide to write correct and secure code.
+4.  For each vulnerability you find, provide a 'finding' and a 'suggestion' with a precise 'original_snippet' to be replaced.
+
+<VULNERABILITY_PATTERNS>
+{vulnerability_patterns}
+</VULNERABILITY_PATTERNS>
+
+<SECURE_PATTERNS>
+{secure_patterns}
+</SECURE_PATTERNS>
+
+<CODE_BUNDLE>
+{code_bundle}
+</CODE_BUNDLE>
+
+Respond ONLY with a valid JSON object that conforms to the RemediateResponse schema."""
+
     # QUICK_AUDIT Template
     PROMPT_TEMPLATES.append({
         "name": f"{agent_name} - Quick Audit",
         "template_type": "QUICK_AUDIT",
         "agent_name": agent_name,
         "version": 1,
-        "template_text": f"""You are a security expert specializing in {prompt_name}.
-Your task is to perform a read-only audit of the provided code bundle.
-Analyze the code for vulnerabilities related to your domain, using the provided security guidelines.
-For each vulnerability found, provide a detailed finding with a concise 'title'. Do NOT suggest code fixes.
-
-<SECURITY_GUIDELINES>
-{{security_guidelines}}
-</SECURITY_GUIDELINES>
-
-<CODE_BUNDLE>
-{{code_bundle}}
-</CODE_BUNDLE>
-
-Respond ONLY with a valid JSON object that conforms to the AuditResponse schema."""
+        "template_text": quick_audit_template
     })
     
     # DETAILED_REMEDIATION Template
@@ -126,24 +148,7 @@ Respond ONLY with a valid JSON object that conforms to the AuditResponse schema.
         "template_type": "DETAILED_REMEDIATION",
         "agent_name": agent_name,
         "version": 1,
-        "template_text": f"""You are a security expert specializing in {prompt_name}.
-Your task is to find vulnerabilities and provide complete, secure code replacements.
-Analyze the code in the <CODE_BUNDLE> using the provided <SECURITY_GUIDELINES>.
-For each vulnerability you identify:
-1.  Provide a detailed 'finding' object, including a concise 'title', 'cwe', 'severity', and 'description'.
-2.  Provide a 'suggestion' object that includes the 'original_snippet' of code to be replaced and the new 'code' that fixes the vulnerability. The 'original_snippet' must be an EXACT continuous block of code from the source file.
-
-IMPORTANT: To ensure a complete response, please limit your output to the top 7 most critical findings you identify in the code.
-
-<SECURITY_GUIDELINES>
-{{security_guidelines}}
-</SECURITY_GUIDELINES>
-
-<CODE_BUNDLE>
-{{code_bundle}}
-</CODE_BUNDLE>
-
-Respond ONLY with a valid JSON object that conforms to the RemediateResponse schema. Each result must contain both the finding and the suggestion."""
+        "template_text": detailed_remediation_template
     })
     
 # Add the common CHAT prompt template
