@@ -1,5 +1,6 @@
 # src/app/infrastructure/agents/generic_specialized_agent.py
 import logging
+import re
 from typing import Dict, Any, Optional, cast, List
 
 from langgraph.graph import StateGraph, END
@@ -70,8 +71,24 @@ async def analysis_node(state: SpecializedAgentState, config: Dict[str, Any]) ->
         return {"error": error_msg}
 
     retrieved_guidelines = rag_service.query_asvs(query_texts=[domain_query], n_results=10)
-    documents = retrieved_guidelines.get("documents")
-    context_str = "\n".join(documents[0]) if documents and documents[0] else "No relevant security guidelines found."
+    documents = retrieved_guidelines.get("documents", [[]])[0]
+
+    # Parse the structured documents from RAG
+    vulnerability_patterns = []
+    secure_patterns = []
+    if documents:
+        for doc in documents:
+            vp_match = re.search(r'\*\*Vulnerability Pattern \(What to look for\):\*\*(.*?)(?=\*\*Secure Pattern|\Z)', doc, re.DOTALL)
+            sp_match = re.search(r'\*\*Secure Pattern \(What to enforce\):\*\*(.*)', doc, re.DOTALL)
+            
+            if vp_match:
+                vulnerability_patterns.append(vp_match.group(1).strip())
+            if sp_match:
+                secure_patterns.append(sp_match.group(1).strip())
+    
+    vulnerability_patterns_str = "\n- ".join(vulnerability_patterns) if vulnerability_patterns else "No specific vulnerability patterns found."
+    secure_patterns_str = "\n- ".join(secure_patterns) if secure_patterns else "No specific secure patterns found."
+
 
     # 2. Get the prompt template from the database
     async with AsyncSessionLocal() as db:
@@ -84,7 +101,8 @@ async def analysis_node(state: SpecializedAgentState, config: Dict[str, Any]) ->
         return {"error": error_msg}
 
     prompt_text = prompt_template.template_text.format(
-        security_guidelines=context_str,
+        vulnerability_patterns=vulnerability_patterns_str,
+        secure_patterns=secure_patterns_str,
         code_bundle=code_bundle
     )
     
@@ -105,7 +123,11 @@ async def analysis_node(state: SpecializedAgentState, config: Dict[str, Any]) ->
 
     # 4. Log the interaction
     parsed_output_dict = llm_response.parsed_output.model_dump() if llm_response.parsed_output else None
-    prompt_context_for_log = {"code_bundle_length": len(code_bundle), "security_guidelines_length": len(context_str)}
+    prompt_context_for_log = {
+        "code_bundle_length": len(code_bundle), 
+        "vulnerability_patterns_length": len(vulnerability_patterns_str),
+        "secure_patterns_length": len(secure_patterns_str)
+    }
     interaction = LLMInteraction(
         scan_id=scan_id,
         agent_name=agent_name,

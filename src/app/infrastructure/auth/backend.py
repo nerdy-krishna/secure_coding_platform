@@ -41,7 +41,7 @@ class CustomCookieJWTStrategy(
         )
         self.refresh_token_lifetime_seconds = refresh_token_lifetime_seconds
         self.cookie_name = "SecureCodePlatformRefresh"
-        self.cookie_path = "/api/v1/auth"
+        self.cookie_path = "/"
         self.cookie_secure = settings.ENVIRONMENT == "production"
         self.cookie_httponly = True
         self.cookie_samesite: Literal["lax", "strict", "none"] = "lax"
