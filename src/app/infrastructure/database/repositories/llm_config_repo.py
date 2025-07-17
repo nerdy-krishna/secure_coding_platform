@@ -79,14 +79,13 @@ class LLMConfigRepository:
         self, config: api_models.LLMConfigurationCreate
     ) -> db_models.LLMConfiguration:
         """Creates a new LLM configuration in the database with an encrypted API key."""
-        logger.info("Creating new LLM config in DB.", extra={"name": config.name})
+        logger.info("Creating new LLM config in DB.", extra={"config_name": config.name})
         encrypted_key = FernetEncrypt.encrypt(config.api_key)
         db_config = db_models.LLMConfiguration(
             name=config.name,
             provider=config.provider,
             model_name=config.model_name,
             encrypted_api_key=encrypted_key,
-            tokenizer_encoding=config.tokenizer_encoding,
             input_cost_per_million=config.input_cost_per_million,
             output_cost_per_million=config.output_cost_per_million,
         )

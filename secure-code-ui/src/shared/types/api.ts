@@ -53,7 +53,6 @@ export interface LLMConfigurationCreate {
   api_key: string;
   input_cost_per_million: number;
   output_cost_per_million: number;
-  tokenizer_encoding: string;
 }
 
 // --- Chat Schemas (NEW) ---
