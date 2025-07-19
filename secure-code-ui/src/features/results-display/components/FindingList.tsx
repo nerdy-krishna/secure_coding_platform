@@ -7,6 +7,15 @@ import EnhancedDiffViewer from "./EnhancedDiffViewer";
 const { Text } = Typography;
 const { Panel } = Collapse;
 
+const getCvssScoreColor = (score: number | undefined): string => {
+  if (score === undefined) return 'default';
+  if (score >= 9.0) return SeverityColors.CRITICAL;
+  if (score >= 7.0) return SeverityColors.HIGH;
+  if (score >= 4.0) return SeverityColors.MEDIUM;
+  if (score > 0.0) return SeverityColors.LOW;
+  return 'default';
+};
+
 interface FindingListProps {
   findings: Finding[];
   onRemediateFinding: (findingId: number) => void;
@@ -62,10 +71,14 @@ const FindingList: React.FC<FindingListProps> = ({ findings, onRemediateFinding,
           }
         >
             <Descriptions bordered column={2} size="small" labelStyle={{ backgroundColor: '#fafafa' }}>
-                <Descriptions.Item label="Severity" span={1}>{finding.severity}</Descriptions.Item>
+                <Descriptions.Item label="Severity" span={1}><Tag color={SeverityColors[finding.severity?.toUpperCase() || "DEFAULT"]}>{finding.severity}</Tag></Descriptions.Item>
                 <Descriptions.Item label="Confidence" span={1}>{finding.confidence}</Descriptions.Item>
                 <Descriptions.Item label="CWE" span={1}>{finding.cwe}</Descriptions.Item>
-                <Descriptions.Item label="Agent" span={1}><RobotOutlined style={{marginRight: '8px'}}/>{finding.agent_name || 'Unknown'}</Descriptions.Item>
+                <Descriptions.Item label="CVSS Score" span={1}>
+                  <Tag color={getCvssScoreColor(finding.cvss_score)}>{finding.cvss_score?.toFixed(1) || 'N/A'}</Tag>
+                </Descriptions.Item>
+                <Descriptions.Item label="CVSS Vector" span={2}><Text code copyable>{finding.cvss_vector || 'N/A'}</Text></Descriptions.Item>
+                <Descriptions.Item label="Agent" span={2}><RobotOutlined style={{marginRight: '8px'}}/>{finding.agent_name || 'Unknown'}</Descriptions.Item>
                 <Descriptions.Item label="File Path" span={2}><Text code>{finding.file_path}</Text></Descriptions.Item>
                 <Descriptions.Item label="Line Number" span={2}>{finding.line_number}</Descriptions.Item>
                 <Descriptions.Item label="Description" span={2}>{finding.description}</Descriptions.Item>

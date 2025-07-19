@@ -100,6 +100,8 @@ class Finding(Base):
     cwe: Mapped[Optional[str]] = mapped_column(String(50))
     confidence: Mapped[Optional[str]] = mapped_column(String(50))
     agent_name: Mapped[Optional[str]] = mapped_column(String(100))
+    cvss_score: Mapped[Optional[float]] = mapped_column(DECIMAL(3, 1))
+    cvss_vector: Mapped[Optional[str]] = mapped_column(String(100))
     references: Mapped[Optional[List[str]]] = mapped_column(JSONB)
     fixes: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB)
 
@@ -215,3 +217,23 @@ class RAGPreprocessingJob(Base):
 
     user: Mapped["User"] = relationship()
     llm_configuration: Mapped["LLMConfiguration"] = relationship()
+
+class CweDetail(Base):
+    __tablename__ = "cwe_details"
+    id: Mapped[str] = mapped_column(String(20), primary_key=True)  # e.g., "CWE-22"
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    abstraction: Mapped[Optional[str]] = mapped_column(String(50))
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    rag_document_text: Mapped[str] = mapped_column(Text, nullable=False)
+
+    owasp_mapping: Mapped[Optional["CweOwaspMapping"]] = relationship(back_populates="cwe_detail")
+
+
+class CweOwaspMapping(Base):
+    __tablename__ = "cwe_owasp_mappings"
+    cwe_id: Mapped[str] = mapped_column(ForeignKey("cwe_details.id"), primary_key=True)
+    owasp_category_id: Mapped[str] = mapped_column(String(10), nullable=False)  # e.g., "A01"
+    owasp_category_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    owasp_rank: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    cwe_detail: Mapped["CweDetail"] = relationship(back_populates="owasp_mapping")

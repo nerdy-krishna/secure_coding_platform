@@ -1,10 +1,12 @@
 # src/app/scripts/populate_agents_and_frameworks.py
 import asyncio
 import logging
-
+from sqlalchemy import delete, select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 from app.config.config import settings
+from app.infrastructure.database import models as db_models
 from app.infrastructure.database.repositories.agent_repo import AgentRepository
 from app.infrastructure.database.repositories.framework_repo import FrameworkRepository
 from app.infrastructure.database.repositories.prompt_template_repo import PromptTemplateRepository
@@ -97,11 +99,19 @@ PROMPT_TEMPLATES = []
 for agent in AGENT_DEFINITIONS:
     agent_name = agent["name"]
     
-    # Define the template strings clearly
-    quick_audit_template = """You are an expert security auditor. Your task is to audit the provided code for vulnerabilities.
+    # Define the new template strings
+    audit_template = """You are an expert security auditor. Your task is to audit the provided code for vulnerabilities based on the given patterns.
 1.  Analyze the `<CODE_BUNDLE>` below.
 2.  Use the `<VULNERABILITY_PATTERNS>` to identify specific anti-patterns and vulnerabilities.
-3.  For each vulnerability you find, provide a detailed finding with a concise 'title'. Do NOT suggest code fixes.
+3.  For each vulnerability you find, provide a detailed finding. This MUST include:
+    - A concise 'title'.
+    - A 'description' of the root cause.
+    - 'severity' and 'confidence' ratings.
+    - The 'line_number' where the vulnerability occurs.
+    - A full CVSS 3.1 'cvss_vector' string (e.g., 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H').
+    - A detailed 'remediation' guide.
+    - A list of technical 'keywords' that characterize the vulnerability.
+4.  Do NOT suggest any code fixes.
 
 <VULNERABILITY_PATTERNS>
 {vulnerability_patterns}
@@ -111,13 +121,22 @@ for agent in AGENT_DEFINITIONS:
 {code_bundle}
 </CODE_BUNDLE>
 
-Respond ONLY with a valid JSON object that conforms to the AuditResponse schema."""
+Respond ONLY with a valid JSON object that conforms to the InitialAnalysisResponse schema, containing a list of findings.
+"""
 
-    detailed_remediation_template = """You are an expert security engineer. Your task is to find and fix vulnerabilities in the provided code.
+    remediation_template = """You are an expert security engineer. Your task is to find and fix vulnerabilities in the provided code.
 1.  Analyze the `<CODE_BUNDLE>` below.
 2.  Use the `<VULNERABILITY_PATTERNS>` to identify specific anti-patterns and vulnerabilities.
 3.  Use the `<SECURE_PATTERNS>` as a guide to write correct and secure code.
-4.  For each vulnerability you find, provide a 'finding' and a 'suggestion' with a precise 'original_snippet' to be replaced.
+4.  For each vulnerability you find, provide a detailed finding AND a suggested code fix. The finding MUST include:
+    - A concise 'title'.
+    - A 'description' of the root cause.
+    - 'severity' and 'confidence' ratings.
+    - The 'line_number' where the vulnerability occurs.
+    - A full CVSS 3.1 'cvss_vector' string (e.g., 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H').
+    - A detailed 'remediation' guide.
+    - A list of technical 'keywords' that characterize the vulnerability.
+    - A 'fix' object containing the exact 'original_snippet' to be replaced and the new 'code'.
 
 <VULNERABILITY_PATTERNS>
 {vulnerability_patterns}
@@ -131,7 +150,8 @@ Respond ONLY with a valid JSON object that conforms to the AuditResponse schema.
 {code_bundle}
 </CODE_BUNDLE>
 
-Respond ONLY with a valid JSON object that conforms to the RemediateResponse schema."""
+Respond ONLY with a valid JSON object that conforms to the InitialAnalysisResponse schema, containing a list of findings with their associated fixes.
+"""
 
     # QUICK_AUDIT Template
     PROMPT_TEMPLATES.append({
@@ -139,7 +159,7 @@ Respond ONLY with a valid JSON object that conforms to the RemediateResponse sch
         "template_type": "QUICK_AUDIT",
         "agent_name": agent_name,
         "version": 1,
-        "template_text": quick_audit_template
+        "template_text": audit_template
     })
     
     # DETAILED_REMEDIATION Template
@@ -148,10 +168,10 @@ Respond ONLY with a valid JSON object that conforms to the RemediateResponse sch
         "template_type": "DETAILED_REMEDIATION",
         "agent_name": agent_name,
         "version": 1,
-        "template_text": detailed_remediation_template
+        "template_text": remediation_template
     })
     
-# Add the common CHAT prompt template
+# Add the common CHAT prompt template (this one remains unchanged)
 PROMPT_TEMPLATES.append({
     "name": "SecurityAdvisorPrompt",
     "template_type": "CHAT",
@@ -189,43 +209,61 @@ async def main():
         agent_repo = AgentRepository(session)
         prompt_repo = PromptTemplateRepository(session)
 
+        # --- DELETION LOGIC ---
+        # Get names of all items to be managed by this script
+        framework_name = FRAMEWORK_DATA['name']
+        agent_names = [agent['name'] for agent in AGENT_DEFINITIONS] + ["SecurityAdvisorAgent"]
+
+        logger.info("Deleting existing data managed by this script to ensure a clean slate...")
+        # Delete in reverse order of dependency: mappings -> prompts -> agents -> frameworks
+        # This is safer than deleting all records from the tables.
+        
+        # 1. Delete framework-agent mappings associated with the framework
+        framework_to_delete = await session.execute(
+            select(db_models.Framework)
+            .options(selectinload(db_models.Framework.agents))
+            .where(db_models.Framework.name == framework_name)
+        )
+        framework_obj = framework_to_delete.scalars().first()
+        if framework_obj:
+            framework_obj.agents = []
+            await session.commit()
+
+        # 2. Delete prompt templates
+        await session.execute(delete(db_models.PromptTemplate).where(db_models.PromptTemplate.agent_name.in_(agent_names)))
+
+        # 3. Delete agents
+        await session.execute(delete(db_models.Agent).where(db_models.Agent.name.in_(agent_names)))
+
+        # 4. Delete framework
+        await session.execute(delete(db_models.Framework).where(db_models.Framework.name == framework_name))
+        
+        await session.commit()
+        logger.info("Deletion of old data complete.")
+        # --- END DELETION LOGIC ---
+
+
         # 1. Create Framework
         logger.info(f"Creating framework: {FRAMEWORK_DATA['name']}")
         framework_create_model = api_models.FrameworkCreate(**FRAMEWORK_DATA)
-        try:
-            db_framework = await framework_repo.create_framework(framework_create_model)
-            logger.info(f"Framework '{db_framework.name}' created with ID: {db_framework.id}")
-        except Exception:
-            logger.warning(f"Framework '{FRAMEWORK_DATA['name']}' likely already exists. Fetching it.")
-            fw_list = await framework_repo.get_all_frameworks()
-            db_framework = next((f for f in fw_list if f.name == FRAMEWORK_DATA['name']), None)
-            if not db_framework:
-                logger.error("Could not create or fetch framework. Exiting.")
-                return
+        # Removed try/except to ensure it fails loudly if something is wrong
+        db_framework = await framework_repo.create_framework(framework_create_model)
+        logger.info(f"Framework '{db_framework.name}' created with ID: {db_framework.id}")
 
         # 2. Create Agents
         created_agent_ids = []
         for agent_def in AGENT_DEFINITIONS:
             logger.info(f"Creating agent: {agent_def['name']}")
             agent_create_model = api_models.AgentCreate(**agent_def)
-            try:
-                db_agent = await agent_repo.create_agent(agent_create_model)
-                created_agent_ids.append(db_agent.id)
-            except Exception:
-                logger.warning(f"Agent '{agent_def['name']}' likely already exists. Skipping creation.")
-                all_agents = await agent_repo.get_all_agents()
-                existing_agent = next((a for a in all_agents if a.name == agent_def['name']), None)
-                if existing_agent:
-                    created_agent_ids.append(existing_agent.id)
+            # Removed try/except
+            db_agent = await agent_repo.create_agent(agent_create_model)
+            created_agent_ids.append(db_agent.id)
 
-        # 3. Create Prompt Templates
+        # 3. Create New Prompt Templates
         for template_def in PROMPT_TEMPLATES:
             logger.info(f"Creating prompt template: {template_def['name']}")
             template_create_model = api_models.PromptTemplateCreate(**template_def)
-            try:
-                await prompt_repo.create_template(template_create_model)
-            except Exception:
-                logger.warning(f"Prompt template '{template_def['name']}' likely already exists. Skipping.")
+            await prompt_repo.create_template(template_create_model)
 
         # 4. Associate Agents with Framework
         logger.info(f"Associating {len(created_agent_ids)} agents with framework '{db_framework.name}'.")
@@ -233,7 +271,6 @@ async def main():
             await framework_repo.update_agent_mappings_for_framework(db_framework.id, created_agent_ids)
         
         logger.info("Database population script finished successfully!")
-
 
 if __name__ == "__main__":
     asyncio.run(main())

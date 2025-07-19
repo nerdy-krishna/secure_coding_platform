@@ -230,6 +230,8 @@ export interface Finding {
   remediation: string;
   confidence: string;
   agent_name?: string;
+  cvss_score?: number;
+  cvss_vector?: string;
   references: string[];
   fixes?: SuggestedFix;
 }

@@ -49,6 +49,8 @@ class VulnerabilityFinding(BaseModel):
     references: List[str] = Field(
         default_factory=list, description="A list of URLs or reference links."
     )
+    cvss_score: Optional[float] = Field(None, description="The calculated CVSS 3.1 score.")
+    cvss_vector: Optional[str] = Field(None, description="The CVSS 3.1 vector string.")
     file_path: str
     fixes: Optional[FixSuggestion] = Field(
         default=None, description="The suggested code fix, including original and new snippets."
