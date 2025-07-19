@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 CHROMA_HOST = os.getenv("CHROMA_HOST", "vector_db")
 CHROMA_PORT = int(os.getenv("CHROMA_PORT", 8000))
 ASVS_COLLECTION_NAME = "asvs_v5"
+CWE_COLLECTION_NAME = "cwe_collection"
 MODEL_NAME = "all-MiniLM-L6-v2"
 
 
@@ -52,11 +53,12 @@ class RAGService:
     """A service for interacting with the ChromaDB vector store."""
     _client: Optional[ClientAPI] = None
     _asvs_collection: Optional[Any] = None
+    _cwe_collection: Optional[Any] = None
 
     def __init__(self):
         """Initializes the RAGService, raising an exception on failure."""
         try:
-            logger.info(f"RAGService attempting to connect to ChromaDB at {CHROMA_HOST}:{CHROMA_PORT}")
+            logging.info(f"RAGService attempting to connect to ChromaDB at {CHROMA_HOST}:{CHROMA_PORT}")
             
             # Test basic connectivity first
             if not test_connection(CHROMA_HOST, CHROMA_PORT):
@@ -70,35 +72,35 @@ class RAGService:
                 headers={"Connection": "keep-alive"}
             )
             
-            logger.info("Testing ChromaDB heartbeat...")
+            logging.info("Testing ChromaDB heartbeat...")
             heartbeat_result = client.heartbeat()
-            logger.info(f"✓ ChromaDB heartbeat successful: {heartbeat_result}")
+            logging.info(f"✓ ChromaDB heartbeat successful: {heartbeat_result}")
             
             # Define the embedding function, same as in the ingestion script
             embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
                 model_name=MODEL_NAME
             )
             
-            logger.info(f"Getting or creating collection: {ASVS_COLLECTION_NAME}")
-            collection = client.get_or_create_collection(
+            logging.info(f"Getting or creating collection: {ASVS_COLLECTION_NAME}")
+            asvs_collection = client.get_or_create_collection(
                 name=ASVS_COLLECTION_NAME, embedding_function=embedding_function  # type: ignore
             )
-            logger.info(f"✓ Collection '{ASVS_COLLECTION_NAME}' ready")
-            
-            # Test collection accessibility
-            try:
-                collection_count = collection.count()
-                logger.info(f"✓ Collection contains {collection_count} documents")
-            except Exception as e:
-                logger.warning(f"⚠ Could not get collection count: {e}")
+            logging.info(f"✓ Collection '{ASVS_COLLECTION_NAME}' ready. Count: {asvs_collection.count()}")
+
+            logging.info(f"Getting or creating collection: {CWE_COLLECTION_NAME}")
+            cwe_collection = client.get_or_create_collection(
+                name=CWE_COLLECTION_NAME, embedding_function=embedding_function  # type: ignore
+            )
+            logging.info(f"✓ Collection '{CWE_COLLECTION_NAME}' ready. Count: {cwe_collection.count()}")
             
             self._client = client
-            self._asvs_collection = collection
+            self._asvs_collection = asvs_collection
+            self._cwe_collection = cwe_collection
 
-            logger.info(f"✓ RAGService fully initialized and collection '{ASVS_COLLECTION_NAME}' loaded.")
+            logging.info(f"✓ RAGService fully initialized and collections loaded.")
             
         except Exception as e:
-            logger.critical(f"CRITICAL: Failed to initialize RAGService. Error details:")
+            logging.critical(f"CRITICAL: Failed to initialize RAGService. Error details:")
             logger.critical(f"  Host: {CHROMA_HOST}")
             logger.critical(f"  Port: {CHROMA_PORT}")
             logger.critical(f"  Error: {str(e)}")
@@ -159,6 +161,23 @@ class RAGService:
         if not self._asvs_collection:
             raise ConnectionError("ChromaDB collection is not available.")
         self._asvs_collection.delete(ids=ids)
+
+    def query_cwe_collection(self, query_texts: List[str], n_results: int = 3) -> Dict[str, Any]:
+        """Queries the CWE collection for semantic matches."""
+        if not self._cwe_collection:
+            logger.error("CWE collection is not available.")
+            raise ConnectionError("CWE collection not available in RAGService.")
+        
+        try:
+            logger.debug(f"Querying CWE collection with {len(query_texts)} queries, n_results={n_results}")
+            results = self._cwe_collection.query(
+                query_texts=query_texts, 
+                n_results=n_results
+            )
+            return results
+        except Exception as e:
+            logger.error(f"Failed to query ChromaDB collection '{CWE_COLLECTION_NAME}': {e}", exc_info=True)
+            raise
 
     def query_asvs(self, query_texts: List[str], n_results: int = 5, where: Optional[Where] = None) -> Dict[str, Any]:
         """Queries the ASVS collection."""

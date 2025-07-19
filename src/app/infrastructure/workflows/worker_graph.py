@@ -4,7 +4,7 @@ import logging
 import psycopg
 import uuid
 import networkx as nx
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import Any, Dict, List, Optional, TypedDict, cast
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -16,6 +16,10 @@ from sqlalchemy.orm import selectinload
 
 from app.config.config import settings
 from app.core.schemas import FixResult, SpecializedAgentState, VulnerabilityFinding, CodeChunk
+# Add the following imports
+from app.infrastructure.database import AsyncSessionLocal
+from app.infrastructure.database.models import CweOwaspMapping
+# End of added imports
 from app.infrastructure.agents.generic_specialized_agent import build_generic_specialized_agent_graph
 from app.infrastructure.agents.impact_reporting_agent import ImpactReportingAgentState, build_impact_reporting_agent_graph
 from app.infrastructure.agents.symbol_map_agent import generate_symbol_map
@@ -57,6 +61,7 @@ class WorkerState(TypedDict):
     relevant_agents: Dict[str, str]
     live_codebase: Optional[Dict[str, str]]
     findings: List[VulnerabilityFinding]
+    agent_results: Optional[List[Dict[str, Any]]]
     impact_report: Optional[Dict[str, Any]]
     sarif_report: Optional[Dict[str, Any]]
     error_message: Optional[str]
@@ -239,68 +244,91 @@ async def estimate_cost_node(state: WorkerState) -> Dict[str, Any]:
     return {}
 
 
-async def consolidation_node(scan_id: uuid.UUID, agent_results: List[Dict], scan_type: str) -> Dict[str, Any]:
+async def consolidation_node(state: WorkerState) -> Dict[str, Any]:
     """
-    A node to de-duplicate findings (Audit) or merge conflicting fixes (Remediate).
+    Consolidates agent results.
+    - For AUDIT mode, it now passes all findings through without de-duplication.
+    - For REMEDIATE mode, it uses a deterministic, offline algorithm to select the best
+      fix from conflicting/overlapping suggestions.
     """
+    scan_id = state['scan_id']
+    scan_type = state['scan_type']
+    agent_results = state.get("agent_results") or []
+    
     all_findings = [item for sublist in (res.get("findings", []) for res in agent_results) for item in sublist]
-
-    if scan_type == 'AUDIT':
-        # De-duplicate findings based on file, CWE, and line number proximity
-        unique_findings_map: Dict[tuple, VulnerabilityFinding] = {}
-        for finding in all_findings:
-            key = (finding.file_path, finding.cwe, finding.line_number // 5) # Group lines in proximity of 5
-            if key not in unique_findings_map:
-                unique_findings_map[key] = finding
-        
-        final_findings = list(unique_findings_map.values())
-        logger.info(f"De-duplicated findings for scan {scan_id}: from {len(all_findings)} to {len(final_findings)}.")
-        return {"findings": final_findings}
-
-    # --- Logic for REMEDIATE mode ---
     all_fixes = [item for sublist in (res.get("fixes", []) for res in agent_results) for item in sublist]
-    if not all_fixes:
+
+    if scan_type != 'REMEDIATE' or not all_fixes:
         return {"findings": all_findings, "fixes": []}
 
-    # This implementation will now correctly handle merging conflicts
+    # --- New Prioritized Fix Selection Logic for REMEDIATE mode ---
     sorted_fixes = sorted(all_fixes, key=lambda f: f.finding.line_number)
     final_fixes: List[FixResult] = []
+    
+    # Define confidence order for sorting
+    confidence_map = {"High": 3, "Medium": 2, "Low": 1}
+
+    # Fetch all OWASP ranks in a single query for efficiency
+    async with AsyncSessionLocal() as session:
+        cwe_ids = [f.finding.cwe for f in sorted_fixes]
+        stmt = select(CweOwaspMapping).where(CweOwaspMapping.cwe_id.in_(cwe_ids))
+        result = await session.execute(stmt)
+        owasp_rank_map = {mapping.cwe_id: mapping.owasp_rank for mapping in result.scalars().all()}
+
     i = 0
     while i < len(sorted_fixes):
         current_fix = sorted_fixes[i]
-        start_line = current_fix.finding.line_number
         
+        # Skip fixes from findings with Low confidence
+        if (current_fix.finding.confidence or "Medium").capitalize() == "Low":
+            i += 1
+            continue
+        
+        # Determine the boundary of the current fix
+        start_line = current_fix.finding.line_number
         if not current_fix.suggestion.original_snippet:
             i += 1
             continue
-            
-        num_lines = len(current_fix.suggestion.original_snippet.splitlines())
-        end_line = start_line + num_lines - 1
+        end_line = start_line + len(current_fix.suggestion.original_snippet.splitlines()) - 1
 
-        # Check for conflicts with the next fixes
+        # Identify all fixes that overlap with this one
         conflict_group = [current_fix]
         j = i + 1
         while j < len(sorted_fixes):
             next_fix = sorted_fixes[j]
-            next_start_line = next_fix.finding.line_number
-            if next_start_line <= end_line: # Overlap detected
-                conflict_group.append(next_fix)
-                # Extend the conflict window if the next fix is larger
+            if next_fix.finding.line_number <= end_line:
+                # Add to conflict group if confidence is not Low
+                if (next_fix.finding.confidence or "Medium").capitalize() != "Low":
+                    conflict_group.append(next_fix)
+                
+                # Extend the conflict window if the next fix ends later
                 if next_fix.suggestion.original_snippet:
-                     end_line = max(end_line, next_start_line + len(next_fix.suggestion.original_snippet.splitlines()) -1)
+                    end_line = max(end_line, next_fix.finding.line_number + len(next_fix.suggestion.original_snippet.splitlines()) - 1)
                 j += 1
             else:
                 break
         
+        # If there's a conflict, select the best fix from the group
         if len(conflict_group) > 1:
-            logger.info(f"Found a conflict group with {len(conflict_group)} fixes for file {current_fix.finding.file_path}. Attempting to merge.")
-            # For now, we will select the first fix in a conflict as the winner.
-            # The _run_merge_agent logic can be enabled for more advanced merging.
-            final_fixes.append(conflict_group[0])
-        else:
-            final_fixes.append(current_fix)
+            logger.info(f"Resolving conflict among {len(conflict_group)} fixes for scan {scan_id}.")
             
-        i = j # Move the main cursor past the processed group
+            # Sort the conflict group by CVSS score (desc), OWASP rank (asc), and confidence (desc)
+            conflict_group.sort(
+                key=lambda f: (
+                    f.finding.cvss_score or 0,
+                    owasp_rank_map.get(f.finding.cwe, 99),
+                    confidence_map.get((f.finding.confidence or "Medium").capitalize(), 0)
+                ),
+                reverse=True
+            )
+            winner = conflict_group[0]
+            final_fixes.append(winner)
+        else:
+            # If no conflict, just add the single fix
+            final_fixes.append(current_fix)
+        
+        # Move the main cursor past the entire processed group
+        i = j
 
     logger.info(f"Consolidated fixes for scan {scan_id}: from {len(all_fixes)} to {len(final_fixes)} non-overlapping fixes.")
     final_findings = [f.finding for f in final_fixes]
@@ -381,16 +409,25 @@ async def dependency_aware_analysis_orchestrator(state: WorkerState) -> Dict[str
             agent_raw_results = await asyncio.gather(*tasks, return_exceptions=True)
             agent_results = [r for r in agent_raw_results if not isinstance(r, BaseException) and r is not None]
 
-            consolidation_result = await consolidation_node(scan_id, agent_results, scan_type)
-            all_scan_findings.extend(consolidation_result.get("findings", []))
+            # The consolidation node is now async and takes the state directly
+            # Create a temporary copy of the state to pass to the helper function
+            temp_state_for_consolidation = cast(WorkerState, {**state, "agent_results": agent_results})
+            consolidation_result = await consolidation_node(temp_state_for_consolidation)
             
+            # Aggregate all findings from all agents before consolidation
+            chunk_findings = [item for sublist in (res.get("findings", []) for res in agent_results) for item in sublist]
+            all_scan_findings.extend(chunk_findings)
             
+            # Apply only the winning, consolidated fixes
             if scan_type == 'REMEDIATE' and consolidation_result.get("fixes"):
                 temp_file_content = live_codebase[file_path]
-                for fix in consolidation_result["fixes"]:
-                    temp_file_content = temp_file_content.replace(fix.suggestion.original_snippet, fix.suggestion.code, 1)
+                # Sort fixes by line number to apply them in order
+                sorted_fixes_to_apply = sorted(consolidation_result["fixes"], key=lambda f: f.finding.line_number)
+                for fix in sorted_fixes_to_apply:
+                    if fix.suggestion.original_snippet and fix.suggestion.original_snippet in temp_file_content:
+                        temp_file_content = temp_file_content.replace(fix.suggestion.original_snippet, fix.suggestion.code, 1)
                 live_codebase[file_path] = temp_file_content
-                logger.info(f"Applied {len(consolidation_result['fixes'])} fixes in-memory for {file_path}", extra={"scan_id": str(scan_id)})
+                logger.info(f"Applied {len(consolidation_result['fixes'])} winning fixes in-memory for {file_path}", extra={"scan_id": str(scan_id)})
 
     return {"findings": all_scan_findings, "live_codebase": live_codebase}
 

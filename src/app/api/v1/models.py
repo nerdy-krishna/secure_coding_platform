@@ -211,6 +211,8 @@ class VulnerabilityFindingResponse(BaseModel):
     remediation: str
     confidence: str
     agent_name: Optional[str] = None
+    cvss_score: Optional[float] = None
+    cvss_vector: Optional[str] = None
     references: List[str]
     fixes: Optional[Dict[str, Any]] = None
 

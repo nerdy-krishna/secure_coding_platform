@@ -167,6 +167,7 @@ def pika_message_callback(
             "relevant_agents": {},
             "live_codebase": None,
             "findings": [],
+            "agent_results": None,
             "impact_report": None,
             "sarif_report": None,
             "error_message": None,
