@@ -158,13 +158,14 @@ def pika_message_callback(
         initial_worker_state: WorkerState = {
             "scan_id": scan_uuid,
             "scan_type": "AUDIT", # This will be overwritten by the DB value
-            "llm_config_id": None,
-            "specialized_llm_config_id": None,
-            "files": None,
             "current_scan_status": None,
+            "utility_llm_config_id": None,
+            "fast_llm_config_id": None,
+            "reasoning_llm_config_id": None,
+            "files": None,
             "repository_map": None,
             "dependency_graph": None,
-            "relevant_agents": {},
+            "triaged_agents_per_file": {},
             "live_codebase": None,
             "findings": [],
             "agent_results": None,

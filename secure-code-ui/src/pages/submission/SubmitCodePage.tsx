@@ -164,11 +164,9 @@ const SubmitCodePage: React.FC = () => {
       const formData = new FormData();
       formData.append("project_name", values.project_name);
       formData.append("scan_type", values.scan_type);
-      formData.append("main_llm_config_id", values.main_llm_config_id);
-      formData.append(
-        "specialized_llm_config_id",
-        values.specialized_llm_config_id,
-      );
+      formData.append("utility_llm_config_id", values.utility_llm_config_id);
+      formData.append("fast_llm_config_id", values.fast_llm_config_id);
+      formData.append("reasoning_llm_config_id", values.reasoning_llm_config_id);
       formData.append("frameworks", values.frameworks.join(','));
 
       if (submissionMode === "upload") {
@@ -300,23 +298,38 @@ const SubmitCodePage: React.FC = () => {
           </Form.Item>
 
           <Row gutter={24}>
-            <Col xs={24} md={12}>
-              <Form.Item name="main_llm_config_id" label={<><RobotOutlined style={{ marginRight: 8 }} /> Main Analysis LLM</>} rules={[{ required: true, message: "Please select the main analysis LLM." }]}>
-                <Select loading={isLoadingLLMs} placeholder="Select an LLM for primary analysis" disabled={isLoadingLLMs || isLlmError}>
-                  {llmConfigs?.map((config) => (
-                    <Option key={config.id} value={config.id}>{config.name} ({config.provider})</Option>
-                  ))}
-                </Select>
-              </Form.Item>
+            <Col xs={24} md={8}>
+                <Tooltip title="Used for high-throughput, simple tasks like pre-analysis triage and code summarization.">
+                    <Form.Item name="utility_llm_config_id" label={<><ToolOutlined style={{ marginRight: 8 }} /> Utility Model</>} rules={[{ required: true, message: "Please select the Utility LLM." }]}>
+                        <Select loading={isLoadingLLMs} placeholder="Select a lightweight LLM" disabled={isLoadingLLMs || isLlmError}>
+                        {llmConfigs?.map((config) => (
+                            <Option key={config.id} value={config.id}>{config.name} ({config.provider})</Option>
+                        ))}
+                        </Select>
+                    </Form.Item>
+                </Tooltip>
             </Col>
-            <Col xs={24} md={12}>
-              <Form.Item name="specialized_llm_config_id" label={<><ToolOutlined style={{ marginRight: 8 }} /> Specialized Agent LLM</>} rules={[{ required: true, message: "Please select the LLM for specialized agents."}]}>
-                <Select loading={isLoadingLLMs} placeholder="Select an LLM for specialized agents" disabled={isLoadingLLMs || isLlmError}>
-                  {llmConfigs?.map((config) => (
-                    <Option key={config.id} value={config.id}>{config.name} ({config.provider})</Option>
-                  ))}
-                </Select>
-              </Form.Item>
+            <Col xs={24} md={8}>
+                <Tooltip title="A balanced model for interactive tasks like the Security Advisor Chat and RAG data processing.">
+                    <Form.Item name="fast_llm_config_id" label={<><RobotOutlined style={{ marginRight: 8 }} /> Fast Model</>} rules={[{ required: true, message: "Please select the Fast LLM." }]}>
+                        <Select loading={isLoadingLLMs} placeholder="Select a balanced LLM" disabled={isLoadingLLMs || isLlmError}>
+                        {llmConfigs?.map((config) => (
+                            <Option key={config.id} value={config.id}>{config.name} ({config.provider})</Option>
+                        ))}
+                        </Select>
+                    </Form.Item>
+                </Tooltip>
+            </Col>
+            <Col xs={24} md={8}>
+                <Tooltip title="The most powerful model, used for core security analysis, generating fixes, and writing the executive summary.">
+                    <Form.Item name="reasoning_llm_config_id" label={<><SafetyCertificateOutlined style={{ marginRight: 8 }} /> Reasoning Model</>} rules={[{ required: true, message: "Please select the Reasoning LLM."}]}>
+                        <Select loading={isLoadingLLMs} placeholder="Select a powerful LLM" disabled={isLoadingLLMs || isLlmError}>
+                        {llmConfigs?.map((config) => (
+                            <Option key={config.id} value={config.id}>{config.name} ({config.provider})</Option>
+                        ))}
+                        </Select>
+                    </Form.Item>
+                </Tooltip>
             </Col>
           </Row>
 

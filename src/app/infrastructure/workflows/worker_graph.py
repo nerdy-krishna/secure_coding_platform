@@ -46,17 +46,27 @@ STATUS_GENERATING_REPORTS = "GENERATING_REPORTS"
 STATUS_REMEDIATION_COMPLETED = "REMEDIATION_COMPLETED"
 STATUS_COMPLETED = "COMPLETED"
 
+class RelevantAgent(TypedDict):
+    name: str
+    description: str
+    domain_query: Dict[str, Any]
+
+class TriageResult(BaseModel):
+    relevant_agent_names: List[str] = Field(description="A list of the names of the agents that are relevant for analyzing the given file.")
+
 class WorkerState(TypedDict):
-    """The updated, simplified state for the workflow."""
+    """The updated, three-tier state for the workflow."""
     scan_id: uuid.UUID
     scan_type: str
     current_scan_status: Optional[str]
-    llm_config_id: Optional[uuid.UUID]
-    specialized_llm_config_id: Optional[uuid.UUID]
+    utility_llm_config_id: Optional[uuid.UUID]
+    fast_llm_config_id: Optional[uuid.UUID]
+    reasoning_llm_config_id: Optional[uuid.UUID]
     files: Optional[Dict[str, str]]
     repository_map: Optional[Any]
     dependency_graph: Optional[Any]
-    relevant_agents: Dict[str, str]
+    # This now holds a mapping of file_path -> list of relevant agents for that file
+    triaged_agents_per_file: Dict[str, List[RelevantAgent]]
     live_codebase: Optional[Dict[str, str]]
     findings: List[VulnerabilityFinding]
     agent_results: Optional[List[Dict[str, Any]]]
@@ -104,19 +114,23 @@ async def retrieve_and_prepare_data_node(state: WorkerState) -> Dict[str, Any]:
             framework_details = await db.execute(
                 select(db_models.Framework).options(selectinload(db_models.Framework.agents)).where(db_models.Framework.name.in_(scan.frameworks or []))
             )
-            relevant_agents = {agent.name: agent.domain_query for framework in framework_details.scalars().all() for agent in framework.agents}
+            # Store full agent details for the triage step
+            all_relevant_agents = {agent.name: RelevantAgent(name=agent.name, description=agent.description, domain_query=agent.domain_query) for framework in framework_details.scalars().all() for agent in framework.agents}
+
 
             return {
                 "scan_type": scan.scan_type,
                 "current_scan_status": current_status,
-                "llm_config_id": scan.main_llm_config_id,
-                "specialized_llm_config_id": scan.specialized_llm_config_id,
+                "utility_llm_config_id": scan.utility_llm_config_id,
+                "fast_llm_config_id": scan.fast_llm_config_id,
+                "reasoning_llm_config_id": scan.reasoning_llm_config_id,
                 "files": files,
                 "live_codebase": files.copy(), 
                 "repository_map": repository_map,
                 "dependency_graph": nx.node_link_data(dependency_graph),
-                "relevant_agents": relevant_agents,
+                "triaged_agents_per_file": {}, # To be populated by triage node
                 "findings": [],
+                "all_relevant_agents": all_relevant_agents, # Temp field for triage
             }
     except Exception as e:
         logger.error(f"Error preparing data for scan {scan_id}: {e}", exc_info=True)
@@ -124,14 +138,14 @@ async def retrieve_and_prepare_data_node(state: WorkerState) -> Dict[str, Any]:
 
 
 async def _run_merge_agent(
-    specialized_llm_config_id: uuid.UUID,
+    reasoning_llm_config_id: uuid.UUID,
     code_block: str,
     conflicting_fixes: List[FixResult],
 ) -> Optional[FixResult]:
     """
     Invokes an LLM to merge multiple conflicting fix suggestions into a single, superior fix.
     """
-    llm_client = await get_llm_client(specialized_llm_config_id)
+    llm_client = await get_llm_client(reasoning_llm_config_id)
     if not llm_client:
         return None
 
@@ -155,7 +169,7 @@ ORIGINAL VULNERABLE CODE BLOCK:
 CONFLICTING SUGGESTIONS:
 {suggestions_str}
 
-Respond ONLY with a valid JSON object conforming to the MergedFixResponse schema, containing the final 'merged_code' and a 'description' of why your version is superior and how it addresses all issues.
+Respond ONLY with a valid JSON object conforming to the MergedFixResponse schema, containing the final 'merged_code' and an 'explanation' of why your version is superior and how it addresses all issues.
 """
     response = await llm_client.generate_structured_output(prompt, MergedFixResponse)
     if not response.parsed_output or not isinstance(
@@ -177,6 +191,62 @@ Respond ONLY with a valid JSON object conforming to the MergedFixResponse schema
     return FixResult(finding=merged_finding, suggestion=merged_suggestion)
 
 
+async def triage_agents_node(state: WorkerState) -> Dict[str, Any]:
+    """
+    Uses a lightweight LLM to determine which specialized agents are relevant for each file.
+    """
+    scan_id = state['scan_id']
+    logger.info(f"Entering triage node for scan {scan_id}.")
+    
+    repository_map = state.get('repository_map')
+    all_relevant_agents = state.get('all_relevant_agents', {})
+    utility_llm_config_id = state.get('utility_llm_config_id')
+
+    if not all_relevant_agents or not utility_llm_config_id or not repository_map:
+        return {"error_message": "Triage node is missing required inputs (agents, llm_config, or repository_map)."}
+
+    llm_client = await get_llm_client(utility_llm_config_id)
+    if not llm_client:
+        return {"error_message": "Failed to initialize utility LLM client for triage."}
+
+    agent_descriptions = "\n".join([f"- **{agent['name']}**: {agent['description']}" for agent in all_relevant_agents.values()])
+    triaged_agents_per_file = {}
+
+    for file_path, file_summary in repository_map.files.items():
+        if not file_summary.symbols:
+            # If file has no parsable symbols, assume all agents are potentially relevant
+            triaged_agents_per_file[file_path] = list(all_relevant_agents.values())
+            continue
+        
+        file_summary_text = f"File: `{file_path}`\nSymbols:\n" + "\n".join([f"- {s.type} {s.name}" for s in file_summary.symbols])
+        
+        prompt = f"""
+Based on the following summary of a code file, select the most relevant security agents to run from the provided list.
+
+FILE SUMMARY:
+{file_summary_text}
+
+AVAILABLE AGENTS:
+{agent_descriptions}
+
+Your task is to return a JSON object containing a list of the names of the agents that are most relevant for analyzing this specific file.
+Respond ONLY with a valid JSON object conforming to the TriageResult schema.
+"""
+        try:
+            response = await llm_client.generate_structured_output(prompt, TriageResult)
+            if response.parsed_output and isinstance(response.parsed_output, TriageResult):
+                relevant_names = response.parsed_output.relevant_agent_names
+                triaged_agents_per_file[file_path] = [all_relevant_agents[name] for name in relevant_names if name in all_relevant_agents]
+            else:
+                logger.warning(f"Triage LLM failed for {file_path}. Defaulting to all agents. Error: {response.error}")
+                triaged_agents_per_file[file_path] = list(all_relevant_agents.values())
+        except Exception as e:
+            logger.error(f"Exception during triage for {file_path}: {e}. Defaulting to all agents.")
+            triaged_agents_per_file[file_path] = list(all_relevant_agents.values())
+            
+    return {"triaged_agents_per_file": triaged_agents_per_file}
+
+
 async def estimate_cost_node(state: WorkerState) -> Dict[str, Any]:
     """
     Performs a dry run of the analysis to generate a highly accurate cost estimate.
@@ -191,8 +261,8 @@ async def estimate_cost_node(state: WorkerState) -> Dict[str, Any]:
     dependency_graph_data = state.get('dependency_graph')
     if not dependency_graph_data: return {"error_message": "Cost estimation missing 'dependency_graph'."}
 
-    llm_config_id = state.get('llm_config_id')
-    if not llm_config_id: return {"error_message": "Cost estimation missing 'llm_config_id'."}
+    llm_config_id = state.get('reasoning_llm_config_id')
+    if not llm_config_id: return {"error_message": "Cost estimation missing 'reasoning_llm_config_id'."}
     
     live_codebase = state.get('live_codebase')
     if not live_codebase: return {"error_message": "Cost estimation missing 'live_codebase'."}
@@ -246,10 +316,10 @@ async def consolidation_node(state: WorkerState) -> Dict[str, Any]:
     - For REMEDIATE mode, it identifies overlapping fixes, uses an LLM to merge them,
       and returns a list of final, non-overlapping fixes to be applied.
     """
-    scan_id = state["scan_id"]
-    scan_type = state["scan_type"]
+    scan_id = state['scan_id']
+    scan_type = state['scan_type']
     agent_results = state.get("agent_results") or []
-    specialized_llm_config_id = state.get("specialized_llm_config_id")
+    reasoning_llm_config_id = state.get("reasoning_llm_config_id")
 
     all_findings = [
         item for sublist in (res.get("findings", []) for res in agent_results) for item in sublist
@@ -262,8 +332,8 @@ async def consolidation_node(state: WorkerState) -> Dict[str, Any]:
     if scan_type != "REMEDIATE" or not all_fixes:
         return {"findings": all_findings, "fixes_to_apply": []}
     
-    if not specialized_llm_config_id:
-        return {"error_message": "Consolidation node requires specialized_llm_config_id for REMEDIATE mode."}
+    if not reasoning_llm_config_id:
+        return {"error_message": "Consolidation node requires reasoning_llm_config_id for REMEDIATE mode."}
 
     # --- New Prioritized Fix Selection & Merging Logic for REMEDIATE mode ---
     sorted_fixes = sorted(all_fixes, key=lambda f: f.finding.line_number)
@@ -306,7 +376,7 @@ async def consolidation_node(state: WorkerState) -> Dict[str, Any]:
         
         winner = None
         if len(conflict_group) > 1:
-            logger.info(f"Resolving conflict among {len(conflict_group)} fixes for scan {scan_id}.")
+            logger.info(f"Resolving conflict among {len(conflict_group)} fixes via Merge Agent for scan {scan_id}.")
             
             conflict_group.sort(
                 key=lambda f: (
@@ -317,10 +387,21 @@ async def consolidation_node(state: WorkerState) -> Dict[str, Any]:
                 reverse=True
             )
             
-            # For now, we will use the highest priority fix as the winner
-            # In a future iteration, this is where the `_run_merge_agent` would be called.
-            # Let's keep the logic simpler for this step to ensure stability.
-            winner = conflict_group[0]
+            # Since the orchestrator passes the full file for verification, we can use it here.
+            # Note: This assumes all conflicts are within the same file, which is guaranteed by the logic.
+            code_to_search = state.get("file_content_for_verification", "")
+            if code_to_search:
+                # Determine the full code block spanning all conflicting fixes
+                min_line = min(f.finding.line_number for f in conflict_group)
+                max_line = max(f.finding.line_number + len(f.suggestion.original_snippet.splitlines()) -1 for f in conflict_group)
+                code_lines = code_to_search.splitlines(keepends=True)
+                original_block = "".join(code_lines[min_line-1:max_line])
+
+                winner = await _run_merge_agent(reasoning_llm_config_id, original_block, conflict_group)
+            
+            # Fallback to highest-priority if merge agent fails or context is missing
+            if not winner:
+                winner = conflict_group[0]
         else:
             winner = current_fix
         
@@ -354,14 +435,14 @@ async def dependency_aware_analysis_orchestrator(state: WorkerState) -> Dict[str
     if not graph_data: return {"error_message": "Orchestrator is missing 'dependency_graph'."}
     dependency_graph = nx.node_link_graph(graph_data) # Deserialize the graph
 
-    relevant_agents = state.get('relevant_agents')
-    if not relevant_agents: return {"error_message": "Orchestrator is missing 'relevant_agents'."}
+    triaged_agents_per_file = state.get('triaged_agents_per_file')
+    if not triaged_agents_per_file: return {"error_message": "Orchestrator is missing 'triaged_agents_per_file'."}
 
-    llm_config_id = state.get('llm_config_id')
-    if not llm_config_id: return {"error_message": "Orchestrator is missing 'llm_config_id'."}
+    utility_llm_config_id = state.get('utility_llm_config_id')
+    if not utility_llm_config_id: return {"error_message": "Orchestrator is missing 'utility_llm_config_id'."}
     
-    specialized_llm_id = state.get('specialized_llm_config_id')
-    if not specialized_llm_id: return {"error_message": "Orchestrator is missing 'specialized_llm_config_id'."}
+    reasoning_llm_id = state.get('reasoning_llm_config_id')
+    if not reasoning_llm_id: return {"error_message": "Orchestrator is missing 'reasoning_llm_config_id'."}
     # --- END REVISED GUARD CLAUSE BLOCK ---
     
     await ScanRepository(AsyncSessionLocal()).update_status(scan_id, STATUS_RUNNING_AGENTS)
@@ -388,23 +469,28 @@ async def dependency_aware_analysis_orchestrator(state: WorkerState) -> Dict[str
         if is_large_file:
             logger.info(f"{file_path} is a large file, applying chunking.", extra={"scan_id": str(scan_id)})
             chunks = semantic_chunker(file_content, file_summary)
-            symbol_map = await generate_symbol_map(llm_config_id, chunks, file_path)
+            symbol_map = await generate_symbol_map(utility_llm_config_id, chunks, file_path)
         else:
             chunks = [{"symbol_name": file_path, "code": file_content, "start_line": 1, "end_line": len(file_content.splitlines())}]
 
+        relevant_agents_for_file = triaged_agents_per_file.get(file_path, [])
+        if not relevant_agents_for_file:
+            logger.info(f"No agents triaged for file {file_path}, skipping.", extra={"scan_id": str(scan_id)})
+            continue
+
         for chunk in chunks:
             tasks = []
-            for agent_name, domain_query in relevant_agents.items():
+            for agent in relevant_agents_for_file:
                 async def run_with_semaphore(coro):
                     async with semaphore: return await coro
                 
                 initial_agent_state: SpecializedAgentState = {
-                    "scan_id": scan_id, "llm_config_id": specialized_llm_id, "filename": file_path,
+                    "scan_id": scan_id, "llm_config_id": reasoning_llm_id, "filename": file_path,
                     "code_snippet": chunk['code'], "file_content_for_verification": file_content,
                     "workflow_mode": "remediate" if scan_type in ("REMEDIATE", "SUGGEST") else "audit",
                     "findings": [], "fixes": [], "error": None
                 }
-                tasks.append(run_with_semaphore(generic_agent_graph.ainvoke(initial_agent_state, config={"configurable": {"agent_name": agent_name, "domain_query": domain_query}})))
+                tasks.append(run_with_semaphore(generic_agent_graph.ainvoke(initial_agent_state, config={"configurable": cast(dict, agent)})))
             
             agent_raw_results = await asyncio.gather(*tasks, return_exceptions=True)
             agent_results = [r for r in agent_raw_results if not isinstance(r, BaseException) and r is not None]
@@ -413,7 +499,8 @@ async def dependency_aware_analysis_orchestrator(state: WorkerState) -> Dict[str
                 "scan_id": scan_id,
                 "scan_type": scan_type,
                 "agent_results": agent_results,
-                "specialized_llm_config_id": specialized_llm_id
+                "reasoning_llm_config_id": reasoning_llm_id,
+                "file_content_for_verification": file_content
             })
             consolidation_result = await consolidation_node(temp_state_for_consolidation)
             
@@ -435,6 +522,46 @@ async def dependency_aware_analysis_orchestrator(state: WorkerState) -> Dict[str
 
     return {"findings": all_scan_findings, "live_codebase": live_codebase}
 
+
+async def correlate_findings_node(state: WorkerState) -> Dict[str, Any]:
+    """
+    Merges findings for the same vulnerability from different agents into a single, higher-confidence finding.
+    """
+    findings = state.get("findings", [])
+    if not findings:
+        return {"findings": []}
+
+    # Group findings by a signature: file, CWE, and line number
+    finding_groups: Dict[str, List[VulnerabilityFinding]] = {}
+    for finding in findings:
+        signature = f"{finding.file_path}|{finding.cwe}|{finding.line_number}"
+        if signature not in finding_groups:
+            finding_groups[signature] = []
+        finding_groups[signature].append(finding)
+
+    correlated_findings: List[VulnerabilityFinding] = []
+    for signature, group in finding_groups.items():
+        if len(group) == 1:
+            # If only one agent found it, just use it as is but format agents as a list
+            final_finding = group[0]
+            final_finding.corroborating_agents = [final_finding.agent_name] if final_finding.agent_name else []
+            correlated_findings.append(final_finding)
+        else:
+            # If multiple agents found it, merge them
+            # Use the finding from the group with the highest severity as the base
+            base_finding = max(group, key=lambda f: {"High": 3, "Medium": 2, "Low": 1}.get(f.severity, 0))
+            
+            # Create a new merged finding
+            merged_finding = base_finding.model_copy(deep=True)
+            merged_finding.confidence = "High" # Confidence is high due to corroboration
+            merged_finding.corroborating_agents = sorted(list(set(f.agent_name for f in group if f.agent_name)))
+            
+            # You could potentially merge descriptions or other fields here if needed
+            correlated_findings.append(merged_finding)
+            
+    return {"findings": correlated_findings}
+
+
 async def save_results_node(state: WorkerState) -> Dict[str, Any]:
     scan_id, scan_type, findings, live_codebase = state['scan_id'], state['scan_type'], state.get('findings', []), state.get('live_codebase')
     logger.info(f"Saving final results for scan {scan_id}.")
@@ -454,7 +581,7 @@ async def run_impact_reporting(state: WorkerState) -> Dict[str, Any]:
     logger.info(f"Entering node to run ImpactReportingAgent for scan {scan_id}.")
     await ScanRepository(AsyncSessionLocal()).update_status(scan_id, STATUS_GENERATING_REPORTS)
     reporting_input_state: ImpactReportingAgentState = {
-        "scan_id": scan_id, "llm_config_id": state.get("llm_config_id"),
+        "scan_id": scan_id, "llm_config_id": state.get("reasoning_llm_config_id"),
         "findings": state.get("findings", []), "impact_report": None, "sarif_report": None, "error": None
     }
     report_output_state = await build_impact_reporting_agent_graph().ainvoke(reporting_input_state)
@@ -498,7 +625,9 @@ workflow = StateGraph(WorkerState)
 # Define all nodes
 workflow.add_node("retrieve_and_prepare_data", retrieve_and_prepare_data_node)
 workflow.add_node("estimate_cost", estimate_cost_node)
+workflow.add_node("triage_agents", triage_agents_node)
 workflow.add_node("dependency_aware_analysis_orchestrator", dependency_aware_analysis_orchestrator)
+workflow.add_node("correlate_findings", correlate_findings_node)
 workflow.add_node("save_results", save_results_node)
 workflow.add_node("run_impact_reporting", run_impact_reporting)
 workflow.add_node("save_final_report", save_final_report_node)
@@ -530,7 +659,7 @@ workflow.add_conditional_edges(
     should_estimate_cost_or_run,
     {
         "estimate_cost": "estimate_cost",
-        "run_analysis": "dependency_aware_analysis_orchestrator",
+        "run_analysis": "triage_agents",
         "handle_error": "handle_error"
     }
 )
@@ -539,17 +668,23 @@ workflow.add_conditional_edges(
 workflow.add_edge("estimate_cost", END)
 
 workflow.add_conditional_edges(
+    "triage_agents",
+    should_continue,
+    {"continue": "dependency_aware_analysis_orchestrator", "handle_error": "handle_error"}
+)
+
+workflow.add_conditional_edges(
     "dependency_aware_analysis_orchestrator",
+    should_continue,
+    {"continue": "correlate_findings", "handle_error": "handle_error"}
+)
+workflow.add_conditional_edges(
+    "correlate_findings",
     should_continue,
     {"continue": "save_results", "handle_error": "handle_error"}
 )
 workflow.add_conditional_edges(
     "save_results",
-    should_continue,
-    {"continue": "run_impact_reporting", "handle_error": "handle_error"}
-)
-workflow.add_conditional_edges(
-    "run_impact_reporting",
     should_continue,
     {"continue": "save_final_report", "handle_error": "handle_error"}
 )

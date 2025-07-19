@@ -86,8 +86,9 @@ async def create_scan(
     user: db_models.User = Depends(current_active_user),
     project_name: str = Form(...),
     scan_type: str = Form(...),
-    main_llm_config_id: uuid.UUID = Form(...),
-    specialized_llm_config_id: uuid.UUID = Form(...),
+    utility_llm_config_id: uuid.UUID = Form(...),
+    fast_llm_config_id: uuid.UUID = Form(...),
+    reasoning_llm_config_id: uuid.UUID = Form(...),
     frameworks: str = Form(...), # Received as a string, will be processed in service
     repo_url: Optional[str] = Form(None),
     files: Optional[List[UploadFile]] = File(None),
@@ -98,8 +99,9 @@ async def create_scan(
         "user_id": user.id, 
         "correlation_id": correlation_id_var.get(),
         "scan_type": scan_type,
-        "main_llm_config_id": main_llm_config_id,
-        "specialized_llm_config_id": specialized_llm_config_id,
+        "utility_llm_config_id": utility_llm_config_id,
+        "fast_llm_config_id": fast_llm_config_id,
+        "reasoning_llm_config_id": reasoning_llm_config_id,
         "frameworks": [fw.strip() for fw in frameworks.split(',')]
     }
 

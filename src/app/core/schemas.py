@@ -62,6 +62,9 @@ class VulnerabilityFinding(BaseModel):
     agent_name: Optional[str] = Field(
         default=None, description="The name of the agent that generated the finding."
     )
+    corroborating_agents: Optional[List[str]] = Field(
+        default=None, description="List of agents that identified this finding."
+    )
     is_applied_in_remediation: bool = Field(
         default=False, description="Flag indicating if this finding's fix was applied in a remediation scan."
     )

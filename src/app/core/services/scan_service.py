@@ -36,8 +36,9 @@ class SubmissionService:
         files_data: List[Dict[str, Any]],
         scan_type: str,
         correlation_id: str,
-        main_llm_config_id: uuid.UUID,
-        specialized_llm_config_id: uuid.UUID,
+        utility_llm_config_id: uuid.UUID,
+        fast_llm_config_id: uuid.UUID,
+        reasoning_llm_config_id: uuid.UUID,
         frameworks: List[str],
         repo_url: Optional[str] = None
     ) -> db_models.Scan:
@@ -62,8 +63,9 @@ class SubmissionService:
             project_id=project.id,
             user_id=user_id,
             scan_type=scan_type,
-            main_llm_config_id=main_llm_config_id,
-            specialized_llm_config_id=specialized_llm_config_id,
+            utility_llm_config_id=utility_llm_config_id,
+            fast_llm_config_id=fast_llm_config_id,
+            reasoning_llm_config_id=reasoning_llm_config_id,
             frameworks=frameworks,
         )
 
