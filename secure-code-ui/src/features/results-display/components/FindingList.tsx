@@ -1,4 +1,4 @@
-import { CheckCircleOutlined, RobotOutlined } from "@ant-design/icons";
+import { CheckCircleFilled, CheckCircleOutlined, RobotOutlined } from "@ant-design/icons";
 import { Button, Col, Collapse, Descriptions, Empty, Popconfirm, Row, Space, Tag, Typography, message } from "antd";
 import React from "react";
 import { SeverityColors } from "../../../shared/lib/severityMappings";
@@ -46,27 +46,31 @@ const FindingList: React.FC<FindingListProps> = ({ findings, onRemediateFinding,
             </Row>
           }
           extra={
-            finding.fixes && (
-               <Popconfirm
-                    title="Apply this fix?"
-                    description="This will create a new remediation commit. Are you sure?"
-                    onConfirm={(e) => {
-                      e?.stopPropagation();
-                      onRemediateFinding(finding.id);
-                      message.info("Fix application has been initiated.");
-                    }}
-                    onCancel={(e) => e?.stopPropagation()}
-                    okText="Yes, Fix it"
-                    cancelText="No"
-                  >
-                    <Button
-                      size="small"
-                      icon={<CheckCircleOutlined />}
-                      onClick={(e) => e.stopPropagation()}
+            finding.is_applied_in_remediation ? (
+                <Tag icon={<CheckCircleFilled />} color="success">Fix Applied</Tag>
+            ) : (
+              finding.fixes && (
+                 <Popconfirm
+                      title="Apply this fix?"
+                      description="This will create a new remediation commit. Are you sure?"
+                      onConfirm={(e) => {
+                        e?.stopPropagation();
+                        onRemediateFinding(finding.id);
+                        message.info("Fix application has been initiated.");
+                      }}
+                      onCancel={(e) => e?.stopPropagation()}
+                      okText="Yes, Fix it"
+                      cancelText="No"
                     >
-                      Fix this
-                    </Button>
-                </Popconfirm>
+                    <Button
+                        size="small"
+                        icon={<CheckCircleOutlined />}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        Fix this
+                      </Button>
+                  </Popconfirm>
+              )
             )
           }
         >
