@@ -234,6 +234,7 @@ export interface Finding {
   cvss_vector?: string;
   references: string[];
   fixes?: SuggestedFix;
+  is_applied_in_remediation?: boolean;
 }
 
 export interface SubmittedFile {

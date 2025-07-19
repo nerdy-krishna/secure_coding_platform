@@ -7,6 +7,10 @@ from pydantic import BaseModel, Field
 
 WorkflowMode = Literal["audit", "suggest", "remediate"]
 
+class MergedFixResponse(BaseModel):
+    merged_code: str = Field(description="A single, cohesive code block that merges conflicting suggestions.")
+    explanation: str = Field(description="A brief explanation of how the fixes were merged.")
+
 
 class CodeChunk(TypedDict):
     symbol_name: str
@@ -57,6 +61,9 @@ class VulnerabilityFinding(BaseModel):
     )
     agent_name: Optional[str] = Field(
         default=None, description="The name of the agent that generated the finding."
+    )
+    is_applied_in_remediation: bool = Field(
+        default=False, description="Flag indicating if this finding's fix was applied in a remediation scan."
     )
 
 

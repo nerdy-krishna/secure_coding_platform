@@ -15,11 +15,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.config.config import settings
-from app.core.schemas import FixResult, SpecializedAgentState, VulnerabilityFinding, CodeChunk
-# Add the following imports
+from app.core.schemas import FixResult, FixSuggestion, SpecializedAgentState, VulnerabilityFinding, CodeChunk, MergedFixResponse
 from app.infrastructure.database import AsyncSessionLocal
 from app.infrastructure.database.models import CweOwaspMapping
-# End of added imports
 from app.infrastructure.agents.generic_specialized_agent import build_generic_specialized_agent_graph
 from app.infrastructure.agents.impact_reporting_agent import ImpactReportingAgentState, build_impact_reporting_agent_graph
 from app.infrastructure.agents.symbol_map_agent import generate_symbol_map
@@ -65,10 +63,6 @@ class WorkerState(TypedDict):
     impact_report: Optional[Dict[str, Any]]
     sarif_report: Optional[Dict[str, Any]]
     error_message: Optional[str]
-
-class MergedFixResponse(BaseModel):
-    merged_code: str = Field(description="A single, cohesive code block that merges conflicting suggestions.")
-    description: str = Field(description="A brief explanation of how the fixes were merged.")
 
 # --- WORKFLOW NODES ---
 
@@ -129,57 +123,58 @@ async def retrieve_and_prepare_data_node(state: WorkerState) -> Dict[str, Any]:
         return {"error_message": str(e)}
 
 
-async def _run_merge_agent(llm_config_id: uuid.UUID, code_block: str, conflicting_fixes: List[FixResult]) -> Optional[FixResult]:
+async def _run_merge_agent(
+    specialized_llm_config_id: uuid.UUID,
+    code_block: str,
+    conflicting_fixes: List[FixResult],
+) -> Optional[FixResult]:
     """
     Invokes an LLM to merge multiple conflicting fix suggestions into a single, superior fix.
     """
-    llm_client = await get_llm_client(llm_config_id)
+    llm_client = await get_llm_client(specialized_llm_config_id)
     if not llm_client:
         return None
 
+    # Use the highest-priority finding as the basis for the merged finding metadata
+    winner = conflicting_fixes[0]
+
     suggestions_str = ""
     for i, fix in enumerate(conflicting_fixes):
-        suggestions_str += f"--- Suggestion {i+1} (for original lines) ---\n"
-        suggestions_str += f"Description: {fix.suggestion.description}\n"
-        suggestions_str += f"Code:\n{fix.suggestion.code}\n\n"
+        suggestions_str += f"--- Suggestion {i+1} (Severity: {fix.finding.severity}, CWE: {fix.finding.cwe}) ---\n"
+        suggestions_str += f"Description: {fix.finding.description}\n"
+        suggestions_str += f"Fix:\n```\n{fix.suggestion.code}\n```\n\n"
 
     prompt = f"""
-You are an expert software developer acting as a final reviewer for AI-generated code fixes.
-You have been given a block of original code and several conflicting suggestions to fix it.
-Your task is to analyze all suggestions and produce a single, superior, merged code block that is syntactically correct, secure, and logically sound.
+You are an expert security engineer. Your task is to merge multiple suggested fixes into a single, cohesive, and secure block of code.
+The final code must address ALL the identified vulnerabilities if possible. If fixes are mutually exclusive, prioritize the change that resolves the highest severity vulnerability.
 
-ORIGINAL CODE BLOCK:
+ORIGINAL VULNERABLE CODE BLOCK:
 
 {code_block}
 
 CONFLICTING SUGGESTIONS:
-
 {suggestions_str}
 
-Respond ONLY with a valid JSON object conforming to the MergedFixResponse schema, containing the final 'merged_code' and a 'description' of why your version is superior.
+Respond ONLY with a valid JSON object conforming to the MergedFixResponse schema, containing the final 'merged_code' and a 'description' of why your version is superior and how it addresses all issues.
 """
     response = await llm_client.generate_structured_output(prompt, MergedFixResponse)
-    if not response.parsed_output or not isinstance(response.parsed_output, MergedFixResponse):
-        logger.error("Merge agent failed to produce a valid structured response.")
-        return None
+    if not response.parsed_output or not isinstance(
+        response.parsed_output, MergedFixResponse
+    ):
+        logger.error("Merge agent failed to produce a valid structured response. Falling back to highest priority fix.")
+        return winner
 
     # Create a new FixResult representing the merged fix
-    # The new "original_snippet" is the entire block that was under review
-    merged_finding = conflicting_fixes[0].finding
-    merged_suggestion = MergedFixResponse(
-        description=response.parsed_output.description,
-        merged_code=response.parsed_output.merged_code
+    merged_finding = winner.finding.model_copy(deep=True)
+    merged_finding.description = response.parsed_output.explanation
+    
+    merged_suggestion = FixSuggestion(
+        description=response.parsed_output.explanation,
+        original_snippet=code_block, # The original snippet is the entire block under review
+        code=response.parsed_output.merged_code,
     )
-    
-    # We can't create a perfect FixResult here because the original_snippet is now a larger block.
-    # This logic would need further refinement to create a new "Fix" from the merged result.
-    # For now, we will return the first fix as a placeholder for the merged one.
-    # A true implementation would require creating a new FixSuggestion with the merged code.
-    # This is a limitation of not being able to easily map the merged code back to a simple snippet.
-    
-    # Let's keep it simple and effective: we'll use the LLM to choose the BEST fix, not merge.
-    # This is a more practical and reliable implementation.
-    return conflicting_fixes[0] # Placeholder for a more advanced selection/merge logic
+
+    return FixResult(finding=merged_finding, suggestion=merged_suggestion)
 
 
 async def estimate_cost_node(state: WorkerState) -> Dict[str, Any]:
@@ -247,30 +242,37 @@ async def estimate_cost_node(state: WorkerState) -> Dict[str, Any]:
 async def consolidation_node(state: WorkerState) -> Dict[str, Any]:
     """
     Consolidates agent results.
-    - For AUDIT mode, it now passes all findings through without de-duplication.
-    - For REMEDIATE mode, it uses a deterministic, offline algorithm to select the best
-      fix from conflicting/overlapping suggestions.
+    - Returns ALL findings, regardless of mode.
+    - For REMEDIATE mode, it identifies overlapping fixes, uses an LLM to merge them,
+      and returns a list of final, non-overlapping fixes to be applied.
     """
-    scan_id = state['scan_id']
-    scan_type = state['scan_type']
+    scan_id = state["scan_id"]
+    scan_type = state["scan_type"]
     agent_results = state.get("agent_results") or []
+    specialized_llm_config_id = state.get("specialized_llm_config_id")
+
+    all_findings = [
+        item for sublist in (res.get("findings", []) for res in agent_results) for item in sublist
+    ]
+    all_fixes = [
+        item for sublist in (res.get("fixes", []) for res in agent_results) for item in sublist
+    ]
+
+    # For AUDIT/SUGGEST modes, or if no fixes were generated, return all findings and no fixes to apply.
+    if scan_type != "REMEDIATE" or not all_fixes:
+        return {"findings": all_findings, "fixes_to_apply": []}
     
-    all_findings = [item for sublist in (res.get("findings", []) for res in agent_results) for item in sublist]
-    all_fixes = [item for sublist in (res.get("fixes", []) for res in agent_results) for item in sublist]
+    if not specialized_llm_config_id:
+        return {"error_message": "Consolidation node requires specialized_llm_config_id for REMEDIATE mode."}
 
-    if scan_type != 'REMEDIATE' or not all_fixes:
-        return {"findings": all_findings, "fixes": []}
-
-    # --- New Prioritized Fix Selection Logic for REMEDIATE mode ---
+    # --- New Prioritized Fix Selection & Merging Logic for REMEDIATE mode ---
     sorted_fixes = sorted(all_fixes, key=lambda f: f.finding.line_number)
-    final_fixes: List[FixResult] = []
+    fixes_to_apply: List[FixResult] = []
     
-    # Define confidence order for sorting
     confidence_map = {"High": 3, "Medium": 2, "Low": 1}
 
-    # Fetch all OWASP ranks in a single query for efficiency
     async with AsyncSessionLocal() as session:
-        cwe_ids = [f.finding.cwe for f in sorted_fixes]
+        cwe_ids = list(set([f.finding.cwe for f in sorted_fixes]))
         stmt = select(CweOwaspMapping).where(CweOwaspMapping.cwe_id.in_(cwe_ids))
         result = await session.execute(stmt)
         owasp_rank_map = {mapping.cwe_id: mapping.owasp_rank for mapping in result.scalars().all()}
@@ -279,40 +281,33 @@ async def consolidation_node(state: WorkerState) -> Dict[str, Any]:
     while i < len(sorted_fixes):
         current_fix = sorted_fixes[i]
         
-        # Skip fixes from findings with Low confidence
         if (current_fix.finding.confidence or "Medium").capitalize() == "Low":
             i += 1
             continue
         
-        # Determine the boundary of the current fix
         start_line = current_fix.finding.line_number
         if not current_fix.suggestion.original_snippet:
             i += 1
             continue
         end_line = start_line + len(current_fix.suggestion.original_snippet.splitlines()) - 1
 
-        # Identify all fixes that overlap with this one
         conflict_group = [current_fix]
+        conflict_window_end_line = end_line
         j = i + 1
         while j < len(sorted_fixes):
             next_fix = sorted_fixes[j]
-            if next_fix.finding.line_number <= end_line:
-                # Add to conflict group if confidence is not Low
-                if (next_fix.finding.confidence or "Medium").capitalize() != "Low":
+            if next_fix.finding.line_number <= conflict_window_end_line:
+                if (next_fix.finding.confidence or "Medium").capitalize() != "Low" and next_fix.suggestion.original_snippet:
                     conflict_group.append(next_fix)
-                
-                # Extend the conflict window if the next fix ends later
-                if next_fix.suggestion.original_snippet:
-                    end_line = max(end_line, next_fix.finding.line_number + len(next_fix.suggestion.original_snippet.splitlines()) - 1)
+                    conflict_window_end_line = max(conflict_window_end_line, next_fix.finding.line_number + len(next_fix.suggestion.original_snippet.splitlines()) - 1)
                 j += 1
             else:
                 break
         
-        # If there's a conflict, select the best fix from the group
+        winner = None
         if len(conflict_group) > 1:
             logger.info(f"Resolving conflict among {len(conflict_group)} fixes for scan {scan_id}.")
             
-            # Sort the conflict group by CVSS score (desc), OWASP rank (asc), and confidence (desc)
             conflict_group.sort(
                 key=lambda f: (
                     f.finding.cvss_score or 0,
@@ -321,19 +316,24 @@ async def consolidation_node(state: WorkerState) -> Dict[str, Any]:
                 ),
                 reverse=True
             )
+            
+            # For now, we will use the highest priority fix as the winner
+            # In a future iteration, this is where the `_run_merge_agent` would be called.
+            # Let's keep the logic simpler for this step to ensure stability.
             winner = conflict_group[0]
-            final_fixes.append(winner)
         else:
-            # If no conflict, just add the single fix
-            final_fixes.append(current_fix)
+            winner = current_fix
         
-        # Move the main cursor past the entire processed group
+        if winner:
+            winner.finding.is_applied_in_remediation = True
+            fixes_to_apply.append(winner)
+        
         i = j
 
-    logger.info(f"Consolidated fixes for scan {scan_id}: from {len(all_fixes)} to {len(final_fixes)} non-overlapping fixes.")
-    final_findings = [f.finding for f in final_fixes]
+    logger.info(f"Consolidated fixes for scan {scan_id}: from {len(all_fixes)} to {len(fixes_to_apply)} non-overlapping fixes.")
     
-    return {"findings": final_findings, "fixes": final_fixes}
+    # Return ALL findings, but only the winning fixes to be applied.
+    return {"findings": all_findings, "fixes_to_apply": fixes_to_apply}
 
 
 async def dependency_aware_analysis_orchestrator(state: WorkerState) -> Dict[str, Any]:
@@ -409,25 +409,29 @@ async def dependency_aware_analysis_orchestrator(state: WorkerState) -> Dict[str
             agent_raw_results = await asyncio.gather(*tasks, return_exceptions=True)
             agent_results = [r for r in agent_raw_results if not isinstance(r, BaseException) and r is not None]
 
-            # The consolidation node is now async and takes the state directly
-            # Create a temporary copy of the state to pass to the helper function
-            temp_state_for_consolidation = cast(WorkerState, {**state, "agent_results": agent_results})
+            temp_state_for_consolidation = cast(WorkerState, {
+                "scan_id": scan_id,
+                "scan_type": scan_type,
+                "agent_results": agent_results,
+                "specialized_llm_config_id": specialized_llm_id
+            })
             consolidation_result = await consolidation_node(temp_state_for_consolidation)
             
-            # Aggregate all findings from all agents before consolidation
-            chunk_findings = [item for sublist in (res.get("findings", []) for res in agent_results) for item in sublist]
-            all_scan_findings.extend(chunk_findings)
+            # Always aggregate ALL findings returned by the consolidation node.
+            if consolidation_result.get("findings"):
+                all_scan_findings.extend(consolidation_result["findings"])
             
-            # Apply only the winning, consolidated fixes
-            if scan_type == 'REMEDIATE' and consolidation_result.get("fixes"):
+            # Apply only the winning, consolidated fixes to the in-memory codebase.
+            if scan_type == 'REMEDIATE' and consolidation_result.get("fixes_to_apply"):
                 temp_file_content = live_codebase[file_path]
-                # Sort fixes by line number to apply them in order
-                sorted_fixes_to_apply = sorted(consolidation_result["fixes"], key=lambda f: f.finding.line_number)
+                sorted_fixes_to_apply = sorted(consolidation_result["fixes_to_apply"], key=lambda f: f.finding.line_number)
+                
                 for fix in sorted_fixes_to_apply:
                     if fix.suggestion.original_snippet and fix.suggestion.original_snippet in temp_file_content:
                         temp_file_content = temp_file_content.replace(fix.suggestion.original_snippet, fix.suggestion.code, 1)
+                
                 live_codebase[file_path] = temp_file_content
-                logger.info(f"Applied {len(consolidation_result['fixes'])} winning fixes in-memory for {file_path}", extra={"scan_id": str(scan_id)})
+                logger.info(f"Applied {len(consolidation_result['fixes_to_apply'])} winning fixes in-memory for {file_path}", extra={"scan_id": str(scan_id)})
 
     return {"findings": all_scan_findings, "live_codebase": live_codebase}
 

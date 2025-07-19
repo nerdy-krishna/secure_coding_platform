@@ -215,6 +215,7 @@ class VulnerabilityFindingResponse(BaseModel):
     cvss_vector: Optional[str] = None
     references: List[str]
     fixes: Optional[Dict[str, Any]] = None
+    is_applied_in_remediation: bool = False
 
     @field_validator("fixes", mode="before")
     @classmethod

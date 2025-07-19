@@ -104,6 +104,7 @@ class Finding(Base):
     cvss_vector: Mapped[Optional[str]] = mapped_column(String(100))
     references: Mapped[Optional[List[str]]] = mapped_column(JSONB)
     fixes: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB)
+    is_applied_in_remediation: Mapped[bool] = mapped_column(sa.Boolean, server_default="false", nullable=False)
 
     scan: Mapped["Scan"] = relationship(back_populates="findings")
 
