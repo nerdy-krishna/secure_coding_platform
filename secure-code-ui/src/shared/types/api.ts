@@ -194,12 +194,14 @@ export interface PromptTemplateUpdate {
 
 // --- Submission Schemas (NEW) ---
 export type ScanType = "AUDIT" | "SUGGEST" | "REMEDIATE";
+
 export interface SubmissionFormValues {
   project_name: string;
   scan_type: ScanType;
   repo_url?: string;
-  main_llm_config_id: string;
-  specialized_llm_config_id: string;
+  utility_llm_config_id: string;
+  fast_llm_config_id: string;
+  reasoning_llm_config_id: string;
   frameworks: string[];
 }
 
@@ -229,7 +231,7 @@ export interface Finding {
   line_number: number;
   remediation: string;
   confidence: string;
-  agent_name?: string;
+  corroborating_agents?: string[];
   cvss_score?: number;
   cvss_vector?: string;
   references: string[];

@@ -99,11 +99,12 @@ async def analysis_node(state: SpecializedAgentState, config: Dict[str, Any]) ->
     A single, unified node that performs analysis, generates CVSS/CWE, and suggests fixes.
     """
     agent_config = config.get("configurable", {})
-    agent_name = agent_config.get("agent_name")
-    domain_query = agent_config.get("domain_query")
+    agent_name = agent_config.get("name")
+    agent_description = agent_config.get("description")
+    domain_query = agent_config.get("domain_query", {})
 
-    if not agent_name or not domain_query:
-        return {"error": "analysis_node requires 'agent_name' and 'domain_query' in its config."}
+    if not agent_name or not domain_query or not agent_description:
+        return {"error": "analysis_node requires 'name', 'description', and 'domain_query' in its config."}
 
     scan_id = state["scan_id"]
     filename = state["filename"]
@@ -122,7 +123,12 @@ async def analysis_node(state: SpecializedAgentState, config: Dict[str, Any]) ->
     if not rag_service:
         return {"error": f"[{agent_name}] Failed to get RAG service."}
 
-    retrieved_guidelines = rag_service.query_asvs(query_texts=[domain_query], n_results=10)
+    query_keywords = domain_query.get("keywords", "")
+    metadata_filter = domain_query.get("metadata_filter") # This can be passed as 'where'
+
+    retrieved_guidelines = rag_service.query_asvs(
+        query_texts=[query_keywords], n_results=10, where=metadata_filter
+    )
     documents = retrieved_guidelines.get("documents", [[]])[0]
 
     vulnerability_patterns = []
@@ -145,10 +151,15 @@ async def analysis_node(state: SpecializedAgentState, config: Dict[str, Any]) ->
     if not prompt_template:
         return {"error": f"No prompt template found for agent '{agent_name}' with type '{template_type}'."}
 
-    prompt_text = prompt_template.template_text.format(
-        vulnerability_patterns=vulnerability_patterns_str,
-        secure_patterns=secure_patterns_str,
-        code_bundle=code_bundle
+    domain_scoping_instruction = f"You are an expert security auditor specializing in the following domain: '{agent_description}'. Your sole focus is on vulnerabilities related to this domain. Do not report findings outside of this specific scope."
+
+    prompt_text = (
+        f"{domain_scoping_instruction}\n\n" +
+        prompt_template.template_text.format(
+            vulnerability_patterns=vulnerability_patterns_str,
+            secure_patterns=secure_patterns_str,
+            code_bundle=code_bundle
+        )
     )
     
     llm_config_id = state.get("llm_config_id")

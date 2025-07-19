@@ -38,7 +38,7 @@ class ScanRepository:
         
         return project
 
-    async def create_scan(self, project_id: uuid.UUID, user_id: int, scan_type: str, main_llm_config_id: uuid.UUID, specialized_llm_config_id: uuid.UUID, frameworks: List[str]) -> db_models.Scan:
+    async def create_scan(self, project_id: uuid.UUID, user_id: int, scan_type: str, utility_llm_config_id: uuid.UUID, fast_llm_config_id: uuid.UUID, reasoning_llm_config_id: uuid.UUID, frameworks: List[str]) -> db_models.Scan:
         """Creates a new Scan record."""
         logger.info(f"Creating new scan for project {project_id} with type '{scan_type}'.")
         scan = db_models.Scan(
@@ -46,8 +46,9 @@ class ScanRepository:
             user_id=user_id, 
             scan_type=scan_type, 
             status="QUEUED",
-            main_llm_config_id=main_llm_config_id,
-            specialized_llm_config_id=specialized_llm_config_id,
+            utility_llm_config_id=utility_llm_config_id,
+            fast_llm_config_id=fast_llm_config_id,
+            reasoning_llm_config_id=reasoning_llm_config_id,
             frameworks=frameworks
         )
         self.db.add(scan)

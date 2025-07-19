@@ -82,7 +82,15 @@ const FindingList: React.FC<FindingListProps> = ({ findings, onRemediateFinding,
                   <Tag color={getCvssScoreColor(finding.cvss_score)}>{finding.cvss_score?.toFixed(1) || 'N/A'}</Tag>
                 </Descriptions.Item>
                 <Descriptions.Item label="CVSS Vector" span={2}><Text code copyable>{finding.cvss_vector || 'N/A'}</Text></Descriptions.Item>
-                <Descriptions.Item label="Agent" span={2}><RobotOutlined style={{marginRight: '8px'}}/>{finding.agent_name || 'Unknown'}</Descriptions.Item>
+                <Descriptions.Item label="Corroborating Agents" span={2}>
+                    <RobotOutlined style={{marginRight: '8px'}}/>
+                    <Space wrap>
+                        {finding.corroborating_agents && finding.corroborating_agents.length > 0
+                            ? finding.corroborating_agents.map(agent => <Tag key={agent}>{agent}</Tag>)
+                            : <Tag>Unknown</Tag>
+                        }
+                    </Space>
+                </Descriptions.Item>
                 <Descriptions.Item label="File Path" span={2}><Text code>{finding.file_path}</Text></Descriptions.Item>
                 <Descriptions.Item label="Line Number" span={2}>{finding.line_number}</Descriptions.Item>
                 <Descriptions.Item label="Description" span={2}>{finding.description}</Descriptions.Item>

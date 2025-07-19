@@ -210,7 +210,7 @@ class VulnerabilityFindingResponse(BaseModel):
     line_number: int
     remediation: str
     confidence: str
-    agent_name: Optional[str] = None
+    corroborating_agents: Optional[List[str]] = None
     cvss_score: Optional[float] = None
     cvss_vector: Optional[str] = None
     references: List[str]
