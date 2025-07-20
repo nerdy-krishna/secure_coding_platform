@@ -69,7 +69,7 @@ class LLMConfigurationRead(LLMConfigurationBase):
 class AgentBase(BaseModel):
     name: str
     description: str
-    domain_query: str
+    domain_query: Dict[str, Any]
 
 class AgentCreate(AgentBase):
     pass
@@ -391,6 +391,7 @@ class SubmittedFileReportItem(BaseModel):
     findings: List[VulnerabilityFindingResponse] = []
     language: Optional[str] = None
     analysis_summary: Optional[str] = None
+    skipped_reason: Optional[str] = None
     identified_components: Optional[List[str]] = None
     asvs_analysis: Optional[Dict[str, Any]] = None
 

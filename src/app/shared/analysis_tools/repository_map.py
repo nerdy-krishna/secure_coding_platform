@@ -3,6 +3,7 @@
 import logging
 from pathlib import Path
 from typing import Dict, List, Tuple
+import fnmatch
 
 from pydantic import BaseModel, Field
 import tree_sitter_languages
@@ -13,6 +14,21 @@ from tree_sitter_languages import get_language, get_parser
 # Custom exception for grammar loading issues
 class GrammarLoadingError(Exception):
     pass
+
+
+# --- ADD a global ignore list ---
+IGNORE_PATTERNS = {
+    # Lock files
+    "*.lock", "package-lock.json", "yarn.lock", "go.sum", "Pipfile.lock", "poetry.lock",
+    # Dependency directories
+    "node_modules/*", "venv/*", ".venv/*", "vendor/*",
+    # Build artifacts
+    "dist/*", "build/*", "*.pyc", "*.pyo", "*.o",
+    # IDE/Editor configs
+    ".vscode/*", ".idea/*",
+    # OS files
+    ".DS_Store", "Thumbs.db",
+}
 
 
 # --- Pydantic Models for Repository Structure ---
@@ -210,6 +226,12 @@ LANGUAGE_QUERIES = {
             (output_block name: (string_literal) @name) @type
         """,
     },
+    # --- ADDED for new file types ---
+    "yaml": {"imports": "", "symbols": ""},
+    "json": {"imports": "", "symbols": ""},
+    "dockerfile": {"imports": "", "symbols": ""},
+    "ini": {"imports": "", "symbols": ""},
+    "toml": {"imports": "", "symbols": ""},
 }
 
 
@@ -230,39 +252,50 @@ class RepositoryMappingEngine:
         Determines the tree-sitter language based on the file extension.
         Raises GrammarLoadingError if the language cannot be loaded.
         """
-        lang_map = {
-            ".py": "python",
-            ".java": "java",
-            ".js": "javascript",
-            ".mjs": "javascript",
-            ".cs": "c_sharp",
-            ".sql": "sql",
-            ".ts": "typescript",
-            ".go": "go",
-            ".cpp": "c_plus_plus",
-            ".hpp": "c_plus_plus",
-            ".h": "c_plus_plus",
-            ".c": "c",
-            ".php": "php",
-            ".kt": "kotlin",
-            ".kts": "kotlin",
-            ".swift": "swift",
-            ".rb": "ruby",
-            ".r": "r",
-            ".rs": "rust",
-            ".m": "matlab",
-            ".sh": "bash",
-            ".html": "html",
-            ".css": "css",
-            ".tf": "terraform",
-            ".tfvars": "terraform",
-        }
-        extension = Path(file_path).suffix
-        lang_name = lang_map.get(extension)
+        # Handle extension-less files first
+        filename = Path(file_path).name
+        if filename == 'Dockerfile':
+            lang_name = 'dockerfile'
+        else:
+            lang_map = {
+                ".py": "python",
+                ".java": "java",
+                ".js": "javascript",
+                ".mjs": "javascript",
+                ".cs": "c_sharp",
+                ".sql": "sql",
+                ".ts": "typescript",
+                ".tsx": "typescript",
+                ".go": "go",
+                ".cpp": "c_plus_plus",
+                ".hpp": "c_plus_plus",
+                ".h": "c_plus_plus",
+                ".c": "c",
+                ".php": "php",
+                ".kt": "kotlin",
+                ".kts": "kotlin",
+                ".swift": "swift",
+                ".rb": "ruby",
+                ".r": "r",
+                ".rs": "rust",
+                ".m": "matlab",
+                ".sh": "bash",
+                ".html": "html",
+                ".css": "css",
+                ".tf": "terraform",
+                ".tfvars": "terraform",
+                ".yml": "yaml",
+                ".yaml": "yaml",
+                ".json": "json",
+                ".ini": "ini",
+                ".conf": "toml",
+            }
+            extension = Path(file_path).suffix
+            lang_name = lang_map.get(extension)
 
         if not lang_name:
             raise GrammarLoadingError(
-                f"No language configured for file extension '{extension}' (file: {file_path})"
+                f"No language configured for file: {file_path}"
             )
 
         try:
@@ -376,6 +409,14 @@ class RepositoryMappingEngine:
         self.logger.info(f"Starting repository mapping for {len(files)} files.")
         repo_map = RepositoryMap()
         for file_path, content in files.items():
+            # Check against ignore patterns first
+            if any(fnmatch.fnmatch(file_path, pattern) for pattern in IGNORE_PATTERNS):
+                self.logger.info(f"Skipping ignored file: {file_path}")
+                repo_map.files[file_path] = FileSummary(
+                    path=file_path, errors=["Skipped: File matches global ignore pattern."]
+                )
+                continue
+
             if not content.strip():
                 self.logger.info(f"Skipping empty file: {file_path}")
                 repo_map.files[file_path] = FileSummary(
@@ -388,14 +429,13 @@ class RepositoryMappingEngine:
                 file_summary = self._parse_file(file_path, content)
                 repo_map.files[file_path] = file_summary
             except GrammarLoadingError as e:
-                # Log as a critical error before raising. This ensures the error is captured
-                # in our observability stack before the process halts.
-                self.logger.critical(
-                    f"Halting process due to critical parser failure for file '{file_path}'. Error: {e}",
-                    exc_info=True,
+                # Instead of halting, log a warning and create a placeholder summary.
+                self.logger.warning(
+                    f"Could not determine language for '{file_path}'. It will be skipped from parsing. Error: {e}"
                 )
-                # Re-raise the exception to be caught by the calling agent/workflow.
-                raise
+                repo_map.files[file_path] = FileSummary(
+                    path=file_path, errors=[f"Skipped: No language grammar found for this file type. Error: {e}"]
+                )
             except Exception as e:  # Catch other unexpected errors during _parse_file for this specific file
                 self.logger.error(
                     f"Unexpected error parsing file {file_path}, skipping this file: {e}",

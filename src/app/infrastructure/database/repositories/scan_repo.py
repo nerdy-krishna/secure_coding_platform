@@ -63,6 +63,7 @@ class ScanRepository:
         """
         file_hashes = []
         new_files_to_add = []
+        hashes_to_add = set()
         for file_data in files_data:
             content = file_data["content"]
             hasher = hashlib.sha256()
@@ -72,7 +73,8 @@ class ScanRepository:
 
             # Check if this file hash already exists
             existing_file = await self.db.get(db_models.SourceCodeFile, file_hash)
-            if not existing_file:
+            if not existing_file and file_hash not in hashes_to_add:
+                hashes_to_add.add(file_hash)
                 new_files_to_add.append(
                     db_models.SourceCodeFile(
                         hash=file_hash,
@@ -161,7 +163,13 @@ class ScanRepository:
         if not findings:
             return
         logger.info("Saving vulnerability findings to DB.", extra={"scan_id": str(scan_id), "finding_count": len(findings)})
-        db_findings = [db_models.Finding(scan_id=scan_id, **f.model_dump()) for f in findings]
+        
+        db_findings = []
+        for f in findings:
+            finding_dict = f.model_dump()
+            finding_dict.pop('agent_name', None) # Safely remove the old key before saving
+            db_findings.append(db_models.Finding(scan_id=scan_id, **finding_dict))
+
         self.db.add_all(db_findings)
         await self.db.commit()
 

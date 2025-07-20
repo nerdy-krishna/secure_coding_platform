@@ -93,7 +93,10 @@ async def create_scan(
     repo_url: Optional[str] = Form(None),
     files: Optional[List[UploadFile]] = File(None),
     archive_file: Optional[UploadFile] = File(None),
+    selected_files: Optional[str] = Form(None),
 ):
+    selected_files_list = selected_files.split(',') if selected_files else None
+
     common_args = {
         "project_name": project_name, 
         "user_id": user.id, 
@@ -102,7 +105,8 @@ async def create_scan(
         "utility_llm_config_id": utility_llm_config_id,
         "fast_llm_config_id": fast_llm_config_id,
         "reasoning_llm_config_id": reasoning_llm_config_id,
-        "frameworks": [fw.strip() for fw in frameworks.split(',')]
+        "frameworks": [fw.strip() for fw in frameworks.split(',')],
+        "selected_files": selected_files_list,
     }
 
     submission_methods_count = sum(1 for method in [files, repo_url, archive_file] if method)

@@ -244,6 +244,7 @@ export interface SubmittedFile {
   findings: Finding[];
   language?: string;
   analysis_summary?: string;
+  skipped_reason?: string;
 }
 
 export interface SeverityCounts {
