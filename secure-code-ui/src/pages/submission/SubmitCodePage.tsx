@@ -174,7 +174,6 @@ const SubmitCodePage: React.FC = () => {
         const filesToSubmit = fileList.filter((file) =>
           checkedFilePaths.has((file.originFileObj as RcFile)?.webkitRelativePath || file.name)
         );
-
         if (filesToSubmit.length === 0) {
           message.error("Please select at least one file for analysis.");
           setIsSubmitting(false);
@@ -186,12 +185,14 @@ const SubmitCodePage: React.FC = () => {
             formData.append("files", file.originFileObj as RcFile);
           }
         });
-
+        formData.append("selected_files", treeCheckedKeys.join(','));
       } else if (submissionMode === "repo" && values.repo_url) {
         formData.append("repo_url", values.repo_url.trim());
+        formData.append("selected_files", treeCheckedKeys.join(','));
       } else if (submissionMode === "archive" && archiveFileList.length > 0) {
         if(archiveFileList[0].originFileObj) {
             formData.append("archive_file", archiveFileList[0].originFileObj as RcFile);
+            formData.append("selected_files", treeCheckedKeys.join(','));
         }
       }
 

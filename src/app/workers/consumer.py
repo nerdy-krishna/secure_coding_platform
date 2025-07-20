@@ -165,6 +165,7 @@ def pika_message_callback(
             "files": None,
             "repository_map": None,
             "dependency_graph": None,
+            "all_relevant_agents": {},
             "triaged_agents_per_file": {},
             "live_codebase": None,
             "findings": [],

@@ -65,7 +65,7 @@ class WorkerState(TypedDict):
     files: Optional[Dict[str, str]]
     repository_map: Optional[Any]
     dependency_graph: Optional[Any]
-    # This now holds a mapping of file_path -> list of relevant agents for that file
+    all_relevant_agents: Dict[str, RelevantAgent]
     triaged_agents_per_file: Dict[str, List[RelevantAgent]]
     live_codebase: Optional[Dict[str, str]]
     findings: List[VulnerabilityFinding]
@@ -261,14 +261,14 @@ async def estimate_cost_node(state: WorkerState) -> Dict[str, Any]:
     dependency_graph_data = state.get('dependency_graph')
     if not dependency_graph_data: return {"error_message": "Cost estimation missing 'dependency_graph'."}
 
-    llm_config_id = state.get('reasoning_llm_config_id')
-    if not llm_config_id: return {"error_message": "Cost estimation missing 'reasoning_llm_config_id'."}
+    reasoning_llm_config_id = state.get('reasoning_llm_config_id')
+    if not reasoning_llm_config_id: return {"error_message": "Cost estimation missing 'reasoning_llm_config_id'."}
     
     live_codebase = state.get('live_codebase')
     if not live_codebase: return {"error_message": "Cost estimation missing 'live_codebase'."}
     
-    relevant_agents = state.get('relevant_agents')
-    if not relevant_agents: return {"error_message": "Cost estimation missing 'relevant_agents'."}
+    all_relevant_agents = state.get('all_relevant_agents')
+    if not all_relevant_agents: return {"error_message": "Cost estimation missing 'all_relevant_agents'."}
     # --- END REVISED GUARD CLAUSE BLOCK ---
 
     try:
@@ -279,9 +279,9 @@ async def estimate_cost_node(state: WorkerState) -> Dict[str, Any]:
 
     total_input_tokens = 0
     async with AsyncSessionLocal() as db:
-        llm_config = await LLMConfigRepository(db).get_by_id_with_decrypted_key(llm_config_id)
+        llm_config = await LLMConfigRepository(db).get_by_id_with_decrypted_key(reasoning_llm_config_id)
         if not llm_config:
-            return {"error_message": f"LLM Config {llm_config_id} not found for cost estimation."}
+            return {"error_message": f"LLM Config {reasoning_llm_config_id} not found for cost estimation."}
 
         for file_path in processing_order:
             file_content = live_codebase[file_path]
@@ -295,10 +295,8 @@ async def estimate_cost_node(state: WorkerState) -> Dict[str, Any]:
                 chunks = [{"symbol_name": file_path, "code": file_content, "start_line": 1, "end_line": 1}]
 
             for chunk in chunks:
-                # In a dry run, we don't need the symbol map or external dependencies,
-                # as the chunk code itself is the primary driver of token count.
-                # A more advanced estimator could include them for perfect accuracy.
-                for _ in relevant_agents:
+                # In a dry run, we estimate based on all potentially relevant agents.
+                for _ in all_relevant_agents:
                     total_input_tokens += await cost_estimation.count_tokens(chunk['code'], llm_config, llm_config.decrypted_api_key)
 
     cost_details = cost_estimation.estimate_cost_for_prompt(llm_config, total_input_tokens)

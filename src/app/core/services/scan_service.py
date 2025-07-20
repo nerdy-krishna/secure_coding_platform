@@ -40,12 +40,23 @@ class SubmissionService:
         fast_llm_config_id: uuid.UUID,
         reasoning_llm_config_id: uuid.UUID,
         frameworks: List[str],
-        repo_url: Optional[str] = None
+        repo_url: Optional[str] = None,
+        selected_files: Optional[List[str]] = None,
     ) -> db_models.Scan:
         """
         A private helper to process submission data, create all necessary DB records,
         and publish a message to kick off the workflow.
         """
+        if selected_files:
+            # Filter the files_data to only include user-selected files
+            selected_files_set = set(selected_files)
+            original_count = len(files_data)
+            files_data = [f for f in files_data if f["path"] in selected_files_set]
+            logger.info(
+                f"Filtered submission based on user selection. "
+                f"Original files: {original_count}, Selected files: {len(files_data)}."
+            )
+
         if not files_data:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No files were provided for analysis.")
 
@@ -250,14 +261,22 @@ class SubmissionService:
         if scan.summary:
             files_analyzed_map: Dict[str, api_models.SubmittedFileReportItem] = {}
             
-            # Initialize the map with ALL submitted files to include clean files.
-            if original_snapshot:
-                for file_path in original_snapshot.file_map.keys():
-                    files_analyzed_map[file_path] = api_models.SubmittedFileReportItem(
-                        file_path=file_path,
-                        findings=[],
-                        language=get_language_from_filename(file_path)
-                    )
+            # Use repository_map (if available) to initialize the file list
+            # This ensures we account for skipped files.
+            repository_map = scan.repository_map or {}
+            all_files_in_scan = repository_map.get("files", {})
+
+            for file_path, file_summary_dict in all_files_in_scan.items():
+                skipped_reason = None
+                if file_summary_dict.get("errors"):
+                    skipped_reason = file_summary_dict["errors"][0]
+
+                files_analyzed_map[file_path] = api_models.SubmittedFileReportItem(
+                    file_path=file_path,
+                    findings=[],
+                    language=get_language_from_filename(file_path),
+                    skipped_reason=skipped_reason,
+                )
 
             # FIX: Use a robust groupby to associate findings with files.
             # Sort findings by file_path to prepare for grouping.
@@ -494,7 +513,16 @@ class SubmissionService:
             return None
 
         # Re-construct Pydantic models from the JSON data for type safety
-        impact_report_model = agent_schemas.ImpactReport(**scan.impact_report)
+        impact_report_data = scan.impact_report or {}
+        impact_report_model = agent_schemas.ImpactReport(
+            executive_summary=impact_report_data.get("executive_summary", "N/A"),
+            vulnerability_overview=impact_report_data.get("vulnerability_overview", "N/A"),
+            high_risk_findings_summary=impact_report_data.get("high_risk_findings_summary", []),
+            remediation_strategy=impact_report_data.get("remediation_strategy", "N/A"),
+            vulnerability_categories=impact_report_data.get("vulnerability_categories", []),
+            estimated_remediation_effort=impact_report_data.get("estimated_remediation_effort", "N/A"),
+            required_architectural_changes=impact_report_data.get("required_architectural_changes", []),
+        )
 
         # Build the summary report model from all necessary sources
         summary_data_from_db = scan.summary or {}
@@ -506,7 +534,9 @@ class SubmissionService:
             analysis_timestamp=scan.completed_at,
             selected_frameworks=scan.frameworks or [],
             summary=summary_data_from_db.get("summary", {}),
-            overall_risk_score=summary_data_from_db.get("overall_risk_score", {})
+            overall_risk_score=summary_data_from_db.get("overall_risk_score", {}),
+            # This is a bit of a hack for PDF generation, we don't need the files here
+            files_analyzed=[]
         )
 
         # Generate the HTML and then the PDF
