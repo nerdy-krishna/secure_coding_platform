@@ -30,7 +30,6 @@ const getLanguageFromPath = (filePath?: string): string => {
     }
 };
 
-
 const EnhancedDiffViewer: React.FC<EnhancedDiffViewerProps> = ({
   oldCode,
   newCode,

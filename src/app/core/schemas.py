@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 WorkflowMode = Literal["audit", "suggest", "remediate"]
 
 class MergedFixResponse(BaseModel):
+    original_snippet_for_replacement: str = Field(description="The exact, complete, and unmodified original code block that should be replaced.")
     merged_code: str = Field(description="A single, cohesive code block that merges conflicting suggestions.")
     explanation: str = Field(description="A brief explanation of how the fixes were merged.")
 

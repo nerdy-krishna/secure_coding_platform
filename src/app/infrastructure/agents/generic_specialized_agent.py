@@ -103,6 +103,8 @@ async def analysis_node(state: SpecializedAgentState, config: Dict[str, Any]) ->
     agent_description = agent_config.get("description")
     domain_query = agent_config.get("domain_query", {})
 
+    logger.info(f"DEBUG: [{agent_name}] domain_query: {domain_query}")
+
     if not agent_name or not domain_query or not agent_description:
         return {"error": "analysis_node requires 'name', 'description', and 'domain_query' in its config."}
 
@@ -125,6 +127,8 @@ async def analysis_node(state: SpecializedAgentState, config: Dict[str, Any]) ->
 
     query_keywords = domain_query.get("keywords", "")
     metadata_filter = domain_query.get("metadata_filter") # This can be passed as 'where'
+    logger.info(f"DEBUG: [{agent_name}] query_keywords: '{query_keywords}'")
+    logger.info(f"DEBUG: [{agent_name}] metadata_filter: {metadata_filter}")
 
     retrieved_guidelines = rag_service.query_asvs(
         query_texts=[query_keywords], n_results=10, where=metadata_filter
@@ -162,6 +166,8 @@ async def analysis_node(state: SpecializedAgentState, config: Dict[str, Any]) ->
         )
     )
     
+    logger.info(f"DEBUG: [{agent_name}] Final prompt_text (first 500 chars):\n{prompt_text[:500]}")
+
     llm_config_id = state.get("llm_config_id")
     if not llm_config_id:
         return {"error": f"[{agent_name}] LLM configuration ID not provided."}

@@ -18,6 +18,9 @@ class LLMConfigurationBase(BaseModel):
     model_name: str = Field(
         ..., description="The specific model name (e.g., 'gpt-4o', 'gemini-1.5-pro')."
     )
+    tokenizer: Optional[str] = Field(
+        None, description="The tokenizer to use for token counting (e.g., 'cl100k_base'). Defaults to model-specific or a general tokenizer if not provided."
+    )
     input_cost_per_million: float = Field(
         default=0.0, description="Cost per 1 million input tokens in USD."
     )
@@ -40,6 +43,9 @@ class LLMConfigurationUpdate(BaseModel):
     )
     model_name: Optional[str] = Field(
         None, description="The specific model name (e.g., 'gpt-4o', 'gemini-1.5-pro')."
+    )
+    tokenizer: Optional[str] = Field(
+        None, description="The tokenizer to use for token counting (e.g., 'cl100k_base')."
     )
     api_key: Optional[str] = Field(
         None,

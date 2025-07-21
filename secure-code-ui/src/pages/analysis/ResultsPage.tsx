@@ -14,6 +14,7 @@ import {
   Col,
   Divider,
   Empty,
+  Input,
   Layout,
   Row,
   Select,
@@ -36,9 +37,8 @@ import type { Finding, ScanResultResponse } from "../../shared/types/api";
 const { Content, Sider } = Layout;
 const { Title, Paragraph } = Typography;
 const { Option } = Select;
-
-type GroupableFields = keyof Pick<Finding, 'severity' | 'confidence' | 'cwe' | 'agent_name' | 'title'>;
-type FilterableFields = keyof Pick<Finding, 'severity' | 'confidence' | 'agent_name' | 'title'>;
+type GroupableFields = keyof Pick<Finding, 'severity' | 'confidence' | 'cwe' | 'corroborating_agents' | 'title'>;
+type FilterableFields = keyof Pick<Finding, 'severity' | 'confidence' | 'corroborating_agents' | 'title'>;
 
 const ResultsPage: React.FC = () => {
   const { scanId } = useParams<{ scanId: string }>();
@@ -48,6 +48,7 @@ const ResultsPage: React.FC = () => {
   const [sortConfig, setSortConfig] = useState<{ field: keyof Finding; order: 'asc' | 'desc' }>({ field: 'severity', order: 'desc' });
   const [filters, setFilters] = useState<Partial<Record<FilterableFields, string[]>>>({});
   const [groupBy, setGroupBy] = useState<GroupableFields | 'none'>('severity');
+  const [idFilter, setIdFilter] = useState<string>('');
 
   const { data: result, isLoading, isError, error, refetch } = useQuery<ScanResultResponse, Error>({
     queryKey: ["scanResult", scanId],
@@ -78,7 +79,7 @@ const ResultsPage: React.FC = () => {
   }, [result, selectedFilePath]);
 
   const dynamicFilterOptions = useMemo(() => {
-    const options: Record<FilterableFields, string[]> = { severity: [], confidence: [], agent_name: [], title: [] };
+    const options: Record<string, string[]> = { severity: [], confidence: [], corroborating_agents: [], title: [] };
     const activeFilters = Object.entries(filters).filter(([, values]) => values && values.length > 0);
 
     for (const key in options) {
@@ -86,10 +87,17 @@ const ResultsPage: React.FC = () => {
       const relevantFindings = allFindingsInFile.filter(finding => {
         return otherFilters.every(([filterKey, values]) => {
           const findingValue = finding[filterKey as FilterableFields];
-          return findingValue ? values.includes(findingValue) : false;
+          if (filterKey === 'corroborating_agents' && Array.isArray(findingValue)) {
+            return findingValue.some(agent => values.includes(agent));
+          }
+          return findingValue ? values.includes(String(findingValue)) : false;
         });
       });
-      options[key as FilterableFields] = [...new Set(relevantFindings.map(f => f[key as FilterableFields]).filter(Boolean))] as string[];
+      if (key === 'corroborating_agents') {
+        options[key] = [...new Set(relevantFindings.flatMap(f => f.corroborating_agents || []))];
+      } else {
+        options[key as FilterableFields] = [...new Set(relevantFindings.map(f => f[key as FilterableFields]).filter(Boolean))] as string[];
+      }
     }
     return options;
   }, [allFindingsInFile, filters]);
@@ -97,11 +105,23 @@ const ResultsPage: React.FC = () => {
   const filteredAndSortedFindings = useMemo(() => {
     let findings = [...allFindingsInFile];
 
+    // Apply ID filter first if it exists
+    if (idFilter.trim()) {
+      findings = findings.filter(finding => String(finding.id).includes(idFilter.trim()));
+    }
+
+    // Then, apply the multi-select filters
     findings = findings.filter(finding => {
       return Object.entries(filters).every(([key, values]) => {
         if (!values || values.length === 0) return true;
-        const findingValue = finding[key as FilterableFields];
-        return findingValue ? values.includes(findingValue) : false;
+        const keyTyped = key as FilterableFields;
+
+        if (keyTyped === 'corroborating_agents') {
+            return (finding.corroborating_agents || []).some(agent => values.includes(agent));
+        }
+        
+        const findingValue = finding[keyTyped];
+        return findingValue ? values.includes(String(findingValue)) : false;
       });
     });
 
@@ -130,18 +150,26 @@ const ResultsPage: React.FC = () => {
     });
 
     return findings;
-  }, [allFindingsInFile, sortConfig, filters]);
+  }, [allFindingsInFile, sortConfig, filters, idFilter]);
 
   const groupedFindings = useMemo(() => {
     if (groupBy === 'none') {
       return { 'all': filteredAndSortedFindings };
     }
     return filteredAndSortedFindings.reduce((acc, finding) => {
-      const key = finding[groupBy] || 'Unknown';
-      if (!acc[key]) {
-        acc[key] = [];
+      if (groupBy === 'corroborating_agents') {
+          const agents = finding.corroborating_agents && finding.corroborating_agents.length > 0 ? finding.corroborating_agents : ['Unknown'];
+          agents.forEach(agent => {
+              if (!acc[agent]) acc[agent] = [];
+              acc[agent].push(finding);
+          });
+      } else {
+          const key = String(finding[groupBy as keyof Finding] ?? 'Unknown');
+          if (!acc[key]) {
+            acc[key] = [];
+          }
+          acc[key].push(finding);
       }
-      acc[key].push(finding);
       return acc;
     }, {} as Record<string, Finding[]>);
   }, [filteredAndSortedFindings, groupBy]);
@@ -202,7 +230,7 @@ const ResultsPage: React.FC = () => {
                 <Option value="none">None</Option>
                 <Option value="severity">Severity</Option>
                 <Option value="confidence">Confidence</Option>
-                <Option value="agent_name">Agent</Option>
+                <Option value="corroborating_agents">Agent</Option>
                 <Option value="title">Finding Title</Option>
             </Select>
           </Col>
@@ -235,12 +263,21 @@ const ResultsPage: React.FC = () => {
             </Select>
           </Col>
           <Col xs={12} sm={12} md={6}>
+            <Typography.Text>Filter by Finding ID:</Typography.Text>
+            <Input.Search
+                placeholder="Enter ID"
+                value={idFilter}
+                onChange={(e) => setIdFilter(e.target.value)}
+                allowClear
+            />
+          </Col>
+          <Col xs={12} sm={12} md={6}>
             <Typography.Text>Filter by Agent:</Typography.Text>
-            <Select mode="multiple" allowClear style={{ width: '100%' }} placeholder="All Agents" onChange={(values) => handleFilterChange('agent_name', values)} value={filters.agent_name}>
-                {dynamicFilterOptions.agent_name.map(s => <Option key={s} value={s}>{s}</Option>)}
+            <Select mode="multiple" allowClear style={{ width: '100%' }} placeholder="All Agents" onChange={(values) => handleFilterChange('corroborating_agents', values)} value={filters.corroborating_agents}>
+                {dynamicFilterOptions.corroborating_agents.map(s => <Option key={s} value={s}>{s}</Option>)}
             </Select>
           </Col>
-          <Col xs={24} sm={12} md={12}>
+          <Col xs={24} sm={24} md={12}>
             <Typography.Text>Filter by Finding Title:</Typography.Text>
             <Select mode="multiple" allowClear style={{ width: '100%' }} placeholder="All Titles" onChange={(values) => handleFilterChange('title', values)} value={filters.title}>
                 {dynamicFilterOptions.title.map(s => <Option key={s} value={s}>{s}</Option>)}
@@ -285,6 +322,7 @@ const ResultsPage: React.FC = () => {
                             <FindingList 
                                 findings={findingsInGroup} 
                                 onRemediateFinding={(id) => applyFixesMutation.mutate([id])}
+                                scanType={summary_report.scan_type}
                                 activeKeys={activeFindingKeys}
                                 onActiveKeyChange={(keys) => setActiveFindingKeys(keys as string[])}
                             />
