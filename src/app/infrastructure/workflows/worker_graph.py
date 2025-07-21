@@ -105,10 +105,12 @@ async def retrieve_and_prepare_data_node(state: WorkerState) -> Dict[str, Any]:
             # Create Repo Map
             mapping_engine = RepositoryMappingEngine()
             repository_map = mapping_engine.create_map(files)
+            logger.info(f"DEBUG: repository_map content: {repository_map.model_dump()}")
 
             # Create Dependency Graph
             bundling_engine = ContextBundlingEngine(repository_map, files)
             dependency_graph = bundling_engine.graph 
+            logger.info(f"DEBUG: dependency_graph content: {nx.node_link_data(dependency_graph)}")
 
             # Determine Relevant Agents
             framework_details = await db.execute(
@@ -117,6 +119,16 @@ async def retrieve_and_prepare_data_node(state: WorkerState) -> Dict[str, Any]:
             # Store full agent details for the triage step
             all_relevant_agents = {agent.name: RelevantAgent(name=agent.name, description=agent.description, domain_query=agent.domain_query) for framework in framework_details.scalars().all() for agent in framework.agents}
 
+            # --- FIX: Add this block to explicitly save the artifacts ---
+            serialized_graph = nx.node_link_data(dependency_graph)
+            await repo.update_scan_artifacts(
+                scan_id,
+                {
+                    "repository_map": repository_map.model_dump(),
+                    "dependency_graph": serialized_graph,
+                },
+            )
+            # --- End of FIX ---
 
             return {
                 "scan_type": scan.scan_type,
@@ -141,13 +153,19 @@ async def _run_merge_agent(
     reasoning_llm_config_id: uuid.UUID,
     code_block: str,
     conflicting_fixes: List[FixResult],
+    code_to_search_in: str,
 ) -> Optional[FixResult]:
     """
     Invokes an LLM to merge multiple conflicting fix suggestions into a single, superior fix.
+    Includes verification and retry logic.
     """
     llm_client = await get_llm_client(reasoning_llm_config_id)
     if not llm_client:
         return None
+
+    logger.info(f"DEBUG: _run_merge_agent code_block:\n{code_block}")
+    logger.info(f"DEBUG: _run_merge_agent conflicting_fixes: {[fix.model_dump() for fix in conflicting_fixes]}")
+    logger.info(f"DEBUG: _run_merge_agent code_to_search_in (first 500 chars): {code_to_search_in[:500]}")
 
     # Use the highest-priority finding as the basis for the merged finding metadata
     winner = conflicting_fixes[0]
@@ -160,7 +178,8 @@ async def _run_merge_agent(
 
     prompt = f"""
 You are an expert security engineer. Your task is to merge multiple suggested fixes into a single, cohesive, and secure block of code.
-The final code must address ALL the identified vulnerabilities if possible. If fixes are mutually exclusive, prioritize the change that resolves the highest severity vulnerability.
+The final code must address ALL the identified vulnerabilities if possible.
+If fixes are mutually exclusive, prioritize the change that resolves the highest severity vulnerability.
 
 ORIGINAL VULNERABLE CODE BLOCK:
 
@@ -169,26 +188,45 @@ ORIGINAL VULNERABLE CODE BLOCK:
 CONFLICTING SUGGESTIONS:
 {suggestions_str}
 
-Respond ONLY with a valid JSON object conforming to the MergedFixResponse schema, containing the final 'merged_code' and an 'explanation' of why your version is superior and how it addresses all issues.
+Respond ONLY with a valid JSON object conforming to the MergedFixResponse schema.
+Crucially, the `original_snippet_for_replacement` field in your JSON response MUST be an EXACT, character-for-character copy of the 'ORIGINAL VULNERABLE CODE BLOCK' provided above.
+The `merged_code` field should contain ONLY the final, corrected code that will replace the original block. DO NOT include the original code in the `merged_code` field.
 """
-    response = await llm_client.generate_structured_output(prompt, MergedFixResponse)
-    if not response.parsed_output or not isinstance(
-        response.parsed_output, MergedFixResponse
-    ):
-        logger.error("Merge agent failed to produce a valid structured response. Falling back to highest priority fix.")
-        return winner
+    for attempt in range(3): # 1 initial try + 2 retries
+        response = await llm_client.generate_structured_output(prompt, MergedFixResponse)
+        
+        if (
+            response.parsed_output and 
+            isinstance(response.parsed_output, MergedFixResponse) and
+            response.parsed_output.original_snippet_for_replacement in code_to_search_in
+        ):
+            logger.info(f"Merge agent produced a verified snippet on attempt {attempt + 1}.")
+            # Create a new FixResult representing the merged fix
+            merged_finding = winner.finding.model_copy(deep=True)
 
-    # Create a new FixResult representing the merged fix
-    merged_finding = winner.finding.model_copy(deep=True)
-    merged_finding.description = response.parsed_output.explanation
-    
-    merged_suggestion = FixSuggestion(
-        description=response.parsed_output.explanation,
-        original_snippet=code_block, # The original snippet is the entire block under review
-        code=response.parsed_output.merged_code,
-    )
+            # --- START: Build detailed explanation ---
+            conflicts_summary = "The following conflicting suggestions were considered:\n"
+            for i, fix in enumerate(conflicting_fixes):
+                conflicts_summary += f"- Suggestion {i+1} (CWE: {fix.finding.cwe}, Severity: {fix.finding.severity}): {fix.finding.remediation}\n"
+            
+            final_explanation = f"{conflicts_summary}\nMerge Reasoning:\n{response.parsed_output.explanation}"
+            # --- END: Build detailed explanation ---
 
-    return FixResult(finding=merged_finding, suggestion=merged_suggestion)
+            merged_finding.description = final_explanation # Update description with the detailed explanation
+            
+            merged_suggestion = FixSuggestion(
+                description=final_explanation,
+                original_snippet=response.parsed_output.original_snippet_for_replacement,
+                code=response.parsed_output.merged_code,
+            )
+
+            logger.info(f"DEBUG: _run_merge_agent merged_suggestion: {merged_suggestion.model_dump()}")
+            return FixResult(finding=merged_finding, suggestion=merged_suggestion)
+        
+        logger.warning(f"Merge agent failed to produce a valid, verifiable snippet on attempt {attempt + 1}.")
+
+    logger.error("Merge agent failed after 3 attempts. Falling back to highest priority fix.")
+    return None
 
 
 async def triage_agents_node(state: WorkerState) -> Dict[str, Any]:
@@ -210,6 +248,7 @@ async def triage_agents_node(state: WorkerState) -> Dict[str, Any]:
         return {"error_message": "Failed to initialize utility LLM client for triage."}
 
     agent_descriptions = "\n".join([f"- **{agent['name']}**: {agent['description']}" for agent in all_relevant_agents.values()])
+    logger.info(f"DEBUG: agent_descriptions content:\n{agent_descriptions}")
     triaged_agents_per_file = {}
 
     for file_path, file_summary in repository_map.files.items():
@@ -219,6 +258,7 @@ async def triage_agents_node(state: WorkerState) -> Dict[str, Any]:
             continue
         
         file_summary_text = f"File: `{file_path}`\nSymbols:\n" + "\n".join([f"- {s.type} {s.name}" for s in file_summary.symbols])
+        logger.info(f"DEBUG: file_summary_text for {file_path}:\n{file_summary_text}")
         
         prompt = f"""
 Based on the following summary of a code file, select the most relevant security agents to run from the provided list.
@@ -234,6 +274,7 @@ Respond ONLY with a valid JSON object conforming to the TriageResult schema.
 """
         try:
             response = await llm_client.generate_structured_output(prompt, TriageResult)
+            logger.info(f"DEBUG: Triage LLM response for {file_path}: {response.parsed_output.model_dump() if response.parsed_output else 'None'}")
             if response.parsed_output and isinstance(response.parsed_output, TriageResult):
                 relevant_names = response.parsed_output.relevant_agent_names
                 triaged_agents_per_file[file_path] = [all_relevant_agents[name] for name in relevant_names if name in all_relevant_agents]
@@ -244,6 +285,7 @@ Respond ONLY with a valid JSON object conforming to the TriageResult schema.
             logger.error(f"Exception during triage for {file_path}: {e}. Defaulting to all agents.")
             triaged_agents_per_file[file_path] = list(all_relevant_agents.values())
             
+    logger.info(f"DEBUG: final triaged_agents_per_file content: {triaged_agents_per_file}")
     return {"triaged_agents_per_file": triaged_agents_per_file}
 
 
@@ -297,7 +339,7 @@ async def estimate_cost_node(state: WorkerState) -> Dict[str, Any]:
             for chunk in chunks:
                 # In a dry run, we estimate based on all potentially relevant agents.
                 for _ in all_relevant_agents:
-                    total_input_tokens += await cost_estimation.count_tokens(chunk['code'], llm_config, llm_config.decrypted_api_key)
+                    total_input_tokens += cost_estimation.count_tokens(chunk['code'], llm_config)
 
     cost_details = cost_estimation.estimate_cost_for_prompt(llm_config, total_input_tokens)
     
@@ -395,7 +437,7 @@ async def consolidation_node(state: WorkerState) -> Dict[str, Any]:
                 code_lines = code_to_search.splitlines(keepends=True)
                 original_block = "".join(code_lines[min_line-1:max_line])
 
-                winner = await _run_merge_agent(reasoning_llm_config_id, original_block, conflict_group)
+                winner = await _run_merge_agent(reasoning_llm_config_id, original_block, conflict_group, code_to_search)
             
             # Fallback to highest-priority if merge agent fails or context is missing
             if not winner:
@@ -451,6 +493,7 @@ async def dependency_aware_analysis_orchestrator(state: WorkerState) -> Dict[str
         logger.warning(f"Circular dependency in scan {scan_id}, falling back to alphabetical order.")
         processing_order = sorted(list(dependency_graph.nodes()))
 
+    logger.info(f"DEBUG: processing_order: {processing_order}")
     all_scan_findings: List[VulnerabilityFinding] = []
     generic_agent_graph = build_generic_specialized_agent_graph()
     semaphore = asyncio.Semaphore(CONCURRENT_LLM_LIMIT)
@@ -460,6 +503,7 @@ async def dependency_aware_analysis_orchestrator(state: WorkerState) -> Dict[str
         file_summary = repository_map.files.get(file_path)
         if not file_summary: continue
 
+        # nkp link token count to use tiktoken method for counting
         token_count = len(file_content) / 4
         is_large_file = token_count > CHUNK_TOKEN_THRESHOLD
         
@@ -510,6 +554,7 @@ async def dependency_aware_analysis_orchestrator(state: WorkerState) -> Dict[str
             if scan_type == 'REMEDIATE' and consolidation_result.get("fixes_to_apply"):
                 temp_file_content = live_codebase[file_path]
                 sorted_fixes_to_apply = sorted(consolidation_result["fixes_to_apply"], key=lambda f: f.finding.line_number)
+                logger.info(f"DEBUG: sorted_fixes_to_apply for {file_path}: {[fix.model_dump() for fix in sorted_fixes_to_apply]}")
                 
                 for fix in sorted_fixes_to_apply:
                     if fix.suggestion.original_snippet and fix.suggestion.original_snippet in temp_file_content:
@@ -518,6 +563,8 @@ async def dependency_aware_analysis_orchestrator(state: WorkerState) -> Dict[str
                 live_codebase[file_path] = temp_file_content
                 logger.info(f"Applied {len(consolidation_result['fixes_to_apply'])} winning fixes in-memory for {file_path}", extra={"scan_id": str(scan_id)})
 
+    logger.info(f"DEBUG: final all_scan_findings count: {len(all_scan_findings)}")
+    logger.info(f"DEBUG: final live_codebase file keys: {list(live_codebase.keys())}")
     return {"findings": all_scan_findings, "live_codebase": live_codebase}
 
 
@@ -553,6 +600,10 @@ async def correlate_findings_node(state: WorkerState) -> Dict[str, Any]:
             merged_finding = base_finding.model_copy(deep=True)
             merged_finding.confidence = "High" # Confidence is high due to corroboration
             merged_finding.corroborating_agents = sorted(list(set(f.agent_name for f in group if f.agent_name)))
+            
+            # FIX: Preserve the 'is_applied_in_remediation' flag from the group.
+            if any(f.is_applied_in_remediation for f in group):
+                merged_finding.is_applied_in_remediation = True
             
             # You could potentially merge descriptions or other fields here if needed
             correlated_findings.append(merged_finding)

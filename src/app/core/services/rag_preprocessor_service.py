@@ -120,8 +120,8 @@ Respond ONLY with a valid JSON object conforming to the schema. Do not include a
         for _, row in df.iterrows():
             metadata = row.drop(["id", "document"]).to_dict()
             prompt = self._create_enrichment_prompt(str(row["document"]), metadata)
-            total_input_tokens += await count_tokens(
-                prompt, llm_config, llm_config.decrypted_api_key
+            total_input_tokens += count_tokens(
+                prompt, llm_config
             )
 
         return estimate_cost_for_prompt(llm_config, total_input_tokens)

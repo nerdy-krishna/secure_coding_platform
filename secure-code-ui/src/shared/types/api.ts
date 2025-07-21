@@ -40,6 +40,7 @@ export interface LLMConfiguration {
   name: string;
   provider: string;
   model_name: string;
+  tokenizer?: string;
   input_cost_per_million: number;
   output_cost_per_million: number;
   created_at: string;
@@ -50,6 +51,7 @@ export interface LLMConfigurationCreate {
   name: string;
   provider: string;
   model_name: string;
+  tokenizer?: string;
   api_key: string;
   input_cost_per_million: number;
   output_cost_per_million: number;

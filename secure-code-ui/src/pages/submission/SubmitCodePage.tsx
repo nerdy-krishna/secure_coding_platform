@@ -268,7 +268,7 @@ const SubmitCodePage: React.FC = () => {
           beforeUpload={() => false}
         >
           <p className="ant-upload-drag-icon"><InboxOutlined /></p>
-          <p className="ant-upload-text">Click or drag files or a folder to this area to upload</p>
+          <p className="ant-upload-text">Click to select files, or drag and drop files and folders here</p>
         </Dragger>
       </Form.Item>
     );

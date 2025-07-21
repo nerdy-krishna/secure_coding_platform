@@ -115,6 +115,7 @@ class LLMConfiguration(Base):
     name: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     provider: Mapped[str] = mapped_column(String(50), nullable=False)
     model_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    tokenizer: Mapped[Optional[str]] = mapped_column(String(100))
     encrypted_api_key: Mapped[str] = mapped_column(Text, nullable=False)
     input_cost_per_million: Mapped[float] = mapped_column(DECIMAL(10, 6), nullable=False, server_default="0.0")
     output_cost_per_million: Mapped[float] = mapped_column(DECIMAL(10, 6), nullable=False, server_default="0.0")

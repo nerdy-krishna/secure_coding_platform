@@ -130,8 +130,8 @@ class LLMClient:
         rate_limiter = get_rate_limiter_for_provider(self.provider_name)
         if rate_limiter:
             # First, count tokens for the prompt to pass to the limiter
-            prompt_tokens = await cost_estimation.count_tokens(
-                prompt, self.db_llm_config, self.decrypted_api_key
+            prompt_tokens = cost_estimation.count_tokens(
+                prompt, self.db_llm_config
             )
             await rate_limiter.acquire(tokens=prompt_tokens)
         
