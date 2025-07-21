@@ -86,6 +86,16 @@ async def run_graph_task_wrapper(initial_state: WorkerState, delivery_tag: int):
             exc_info=True,
         )
         success = False
+        # FIX: On any crash, update the scan status to FAILED in the main DB.
+        try:
+            from app.infrastructure.database import AsyncSessionLocal
+            from app.infrastructure.database.repositories.scan_repo import ScanRepository
+            async with AsyncSessionLocal() as db:
+                repo = ScanRepository(db)
+                await repo.update_status(scan_id_uuid, "FAILED")
+            logger.info(f"ASYNC WRAPPER: Set scan status to FAILED in DB for SID: {scan_id_str_log}")
+        except Exception as db_err:
+            logger.error(f"ASYNC WRAPPER: FAILED TO UPDATE STATUS IN DB for SID: {scan_id_str_log}. Error: {db_err}")
 
     if _pika_connection and _pika_connection.is_open:
         def pika_finalize_message():
@@ -163,6 +173,8 @@ def pika_message_callback(
             "fast_llm_config_id": None,
             "reasoning_llm_config_id": None,
             "files": None,
+            "initial_file_map": None,
+            "final_file_map": None,
             "repository_map": None,
             "dependency_graph": None,
             "all_relevant_agents": {},

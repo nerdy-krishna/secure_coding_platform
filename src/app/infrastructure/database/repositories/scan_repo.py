@@ -162,15 +162,61 @@ class ScanRepository:
         """Saves a list of vulnerability findings for a scan."""
         if not findings:
             return
-        logger.info("Saving vulnerability findings to DB.", extra={"scan_id": str(scan_id), "finding_count": len(findings)})
         
         db_findings = []
         for f in findings:
-            finding_dict = f.model_dump()
-            finding_dict.pop('agent_name', None) # Safely remove the old key before saving
+            # For new findings, ensure ID is not set
+            finding_dict = f.model_dump(exclude_unset=True, exclude={'id'})
+            
+            # FIX: Preserve the generating agent's name in the corroborating_agents list
+            agent_name = finding_dict.pop('agent_name', None)
+            if agent_name and not finding_dict.get('corroborating_agents'):
+                finding_dict['corroborating_agents'] = [agent_name]
+
             db_findings.append(db_models.Finding(scan_id=scan_id, **finding_dict))
 
         self.db.add_all(db_findings)
+        await self.db.commit()
+
+    async def update_correlated_findings(self, findings: List[agent_schemas.VulnerabilityFinding]):
+        """Updates existing findings with new correlation data (agents and confidence)."""
+        if not findings:
+            return
+
+        for finding in findings:
+            if finding.id:  # Ensure we have an ID to perform the update
+                stmt = (
+                    update(db_models.Finding)
+                    .where(db_models.Finding.id == finding.id)
+                    .values(
+                        corroborating_agents=finding.corroborating_agents,
+                        confidence=finding.confidence
+                    )
+                )
+                await self.db.execute(stmt)
+        
+        await self.db.commit()
+
+
+    async def get_findings_for_scan_and_file(self, scan_id: uuid.UUID, file_path: str) -> List[db_models.Finding]:
+        """Retrieves all findings for a specific file within a scan."""
+        stmt = select(db_models.Finding).where(
+            db_models.Finding.scan_id == scan_id,
+            db_models.Finding.file_path == file_path
+        )
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def mark_findings_as_applied(self, finding_ids: List[int]):
+        """Sets the is_applied_in_remediation flag to true for a list of finding IDs."""
+        if not finding_ids:
+            return
+        stmt = (
+            update(db_models.Finding)
+            .where(db_models.Finding.id.in_(finding_ids))
+            .values(is_applied_in_remediation=True)
+        )
+        await self.db.execute(stmt)
         await self.db.commit()
 
     async def update_cost_and_status(self, scan_id: uuid.UUID, status: str, estimated_cost: Dict[str, Any]):

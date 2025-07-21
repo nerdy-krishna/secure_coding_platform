@@ -34,6 +34,7 @@ class FixSuggestion(BaseModel):
     )
 
 class VulnerabilityFinding(BaseModel):
+    id: Optional[int] = None
     cwe: str = Field(description="The CWE ID for the vulnerability (e.g., 'CWE-22').")
     title: str = Field(description="A concise, one-line title for the vulnerability.")
     description: str = Field(

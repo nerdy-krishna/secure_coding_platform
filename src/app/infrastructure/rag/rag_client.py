@@ -181,6 +181,7 @@ class RAGService:
 
     def query_asvs(self, query_texts: List[str], n_results: int = 5, where: Optional[Where] = None) -> Dict[str, Any]:
         """Queries the ASVS collection."""
+        logger.info(f"DEBUG: Executing RAG query_asvs. Query texts: {query_texts}, Where filter: {where}")
         if not self._asvs_collection:
             logger.error("ASVS collection is not available.")
             raise ConnectionError("ASVS collection not available in RAGService.")

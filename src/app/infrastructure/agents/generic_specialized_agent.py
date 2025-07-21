@@ -126,14 +126,33 @@ async def analysis_node(state: SpecializedAgentState, config: Dict[str, Any]) ->
         return {"error": f"[{agent_name}] Failed to get RAG service."}
 
     query_keywords = domain_query.get("keywords", "")
-    metadata_filter = domain_query.get("metadata_filter") # This can be passed as 'where'
-    logger.info(f"DEBUG: [{agent_name}] query_keywords: '{query_keywords}'")
-    logger.info(f"DEBUG: [{agent_name}] metadata_filter: {metadata_filter}")
+    metadata_filter = domain_query.get("metadata_filter")
+
+    # Transform the filter for ChromaDB's '$in' or '$eq' operators
+    chroma_where_filter = {}
+    if metadata_filter:
+        or_clauses = []
+        for key, value in metadata_filter.items():
+            if isinstance(value, list):
+                if len(value) == 1:
+                    # Use a simple $eq for single-item lists
+                    chroma_where_filter[key] = {"$eq": value[0]}
+                else:
+                    # Build a list of $eq clauses for an $or operation
+                    for item in value:
+                        or_clauses.append({key: {"$eq": item}})
+            else:
+                # Handle non-list values as a simple equality check
+                chroma_where_filter[key] = {"$eq": value}
+        
+        if or_clauses:
+            chroma_where_filter["$or"] = or_clauses
 
     retrieved_guidelines = rag_service.query_asvs(
-        query_texts=[query_keywords], n_results=10, where=metadata_filter
+        query_texts=[query_keywords], n_results=10, where=chroma_where_filter
     )
     documents = retrieved_guidelines.get("documents", [[]])[0]
+    logger.info(f"[{agent_name}] RAG query retrieved {len(documents)} documents for context.")
 
     vulnerability_patterns = []
     secure_patterns = []
