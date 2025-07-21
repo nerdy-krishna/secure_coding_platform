@@ -1,5 +1,5 @@
-import { CheckCircleFilled, CheckCircleOutlined, RobotOutlined } from "@ant-design/icons";
-import { Alert, Button, Col, Collapse, Descriptions, Empty, Popconfirm, Row, Space, Tag, Typography, message } from "antd";
+import { CheckCircleFilled, RobotOutlined } from "@ant-design/icons";
+import { Alert, Col, Collapse, Descriptions, Empty, Row, Space, Tag, Typography } from "antd";
 import React from "react";
 import { SeverityColors } from "../../../shared/lib/severityMappings";
 import type { Finding } from "../../../shared/types/api";
@@ -19,13 +19,11 @@ const getCvssScoreColor = (score: number | undefined): string => {
 
 interface FindingListProps {
   findings: Finding[];
-  onRemediateFinding: (findingId: number) => void;
-  scanType: string;
   activeKeys: string[];
   onActiveKeyChange: (keys: string | string[]) => void;
 }
 
-const FindingList: React.FC<FindingListProps> = ({ findings, onRemediateFinding, scanType, activeKeys, onActiveKeyChange }) => {
+const FindingList: React.FC<FindingListProps> = ({ findings, activeKeys, onActiveKeyChange }) => {
   if (findings.length === 0) {
     return <Empty description="No findings in this file." style={{ marginTop: 48 }} />;
   }
@@ -48,41 +46,18 @@ const FindingList: React.FC<FindingListProps> = ({ findings, onRemediateFinding,
                   <Tag color={SeverityColors[finding.severity?.toUpperCase() || "DEFAULT"]}>
                       {finding.severity}
                   </Tag>
-                  </Space>
-                </Col>
-              </Row>
-            }
-            extra={
-              finding.is_applied_in_remediation ? (
-                  <Tag icon={<CheckCircleFilled />} color="success">Fix Applied</Tag>
-              ) : (
-                scanType.toUpperCase() === 'SUGGEST' && finding.fixes && (
-                   <Popconfirm
-                        title="Apply this fix?"
-                        description="This will create a new remediation commit. Are you sure?"
-                        onConfirm={(e) => {
-                          e?.stopPropagation();
-                          onRemediateFinding(finding.id);
-                          message.info("Fix application has been initiated.");
-                        }}
-                        onCancel={(e) => e?.stopPropagation()}
-                        okText="Yes, Fix it"
-                        cancelText="No"
-                      >
-                      <Button
-                          size="small"
-                          icon={<CheckCircleOutlined />}
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          Fix this
-                        </Button>
-                    </Popconfirm>
-                )
-              )
-            }
-          >
-              <Descriptions bordered column={2} size="small" labelStyle={{ backgroundColor: '#fafafa' }}>
-                  <Descriptions.Item label="Severity" span={1}><Tag color={SeverityColors[finding.severity?.toUpperCase() || "DEFAULT"]}>{finding.severity}</Tag></Descriptions.Item>
+                </Space>
+              </Col>
+            </Row>
+          }
+          extra={
+            finding.is_applied_in_remediation ? (
+                <Tag icon={<CheckCircleFilled />} color="success">Fix Applied</Tag>
+            ) : null
+          }
+        >
+            <Descriptions bordered column={2} size="small" labelStyle={{ backgroundColor: '#fafafa' }}>
+                <Descriptions.Item label="Severity" span={1}><Tag color={SeverityColors[finding.severity?.toUpperCase() || "DEFAULT"]}>{finding.severity}</Tag></Descriptions.Item>
                   <Descriptions.Item label="Confidence" span={1}>{finding.confidence}</Descriptions.Item>
                   <Descriptions.Item label="CWE" span={1}>{finding.cwe}</Descriptions.Item>
                   <Descriptions.Item label="CVSS Score" span={1}>

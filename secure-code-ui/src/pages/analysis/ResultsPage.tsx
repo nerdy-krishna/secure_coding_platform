@@ -6,7 +6,7 @@ import {
   MinusSquareOutlined,
   PlusSquareOutlined,
 } from "@ant-design/icons";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
   Alert,
   Button,
@@ -21,13 +21,13 @@ import {
   Space,
   Spin,
   Tag,
-  Typography,
-  message,
+  Typography
 } from "antd";
 import { saveAs } from "file-saver";
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import EnhancedDiffViewer from "../../features/results-display/components/EnhancedDiffViewer";
+import FileMergeExplanations from "../../features/results-display/components/FileMergeExplanations";
 import FindingList from "../../features/results-display/components/FindingList";
 import ResultsFileTree from "../../features/results-display/components/ResultsFileTree";
 import ScanSummary from "../../features/results-display/components/ScanSummary";
@@ -50,7 +50,7 @@ const ResultsPage: React.FC = () => {
   const [groupBy, setGroupBy] = useState<GroupableFields | 'none'>('severity');
   const [idFilter, setIdFilter] = useState<string>('');
 
-  const { data: result, isLoading, isError, error, refetch } = useQuery<ScanResultResponse, Error>({
+  const { data: result, isLoading, isError, error } = useQuery<ScanResultResponse, Error>({
     queryKey: ["scanResult", scanId],
     queryFn: () => {
       if (!scanId) throw new Error("Scan ID is missing");
@@ -58,15 +58,6 @@ const ResultsPage: React.FC = () => {
     },
     enabled: !!scanId,
     refetchOnWindowFocus: false,
-  });
-
-  const applyFixesMutation = useMutation({
-    mutationFn: (findingIds: number[]) => scanService.applySelectiveFixes(scanId!, findingIds),
-    onSuccess: (data) => {
-      message.success(data.message || "Remediation process initiated.");
-      refetch();
-    },
-    onError: (err: Error) => message.error(`Failed to apply fixes: ${err.message}`),
   });
 
   const allFindingsForScan = useMemo(() => {
@@ -321,8 +312,6 @@ const ResultsPage: React.FC = () => {
                         {findingsInGroup.length > 0 ? (
                             <FindingList 
                                 findings={findingsInGroup} 
-                                onRemediateFinding={(id) => applyFixesMutation.mutate([id])}
-                                scanType={summary_report.scan_type}
                                 activeKeys={activeFindingKeys}
                                 onActiveKeyChange={(keys) => setActiveFindingKeys(keys as string[])}
                             />
@@ -337,8 +326,9 @@ const ResultsPage: React.FC = () => {
 
         {isRemediationComplete && selectedFilePath && (
           <div style={{ padding: '16px 24px 24px 24px' }}>
+            <FileMergeExplanations findings={allFindingsInFile} />
             <EnhancedDiffViewer
-              title={`Full File Diff: ${selectedFilePath}`}
+               title={`Full File Diff: ${selectedFilePath}`}
                 oldCode={originalCode}
                 newCode={fixedCode}
                 filePath={selectedFilePath}

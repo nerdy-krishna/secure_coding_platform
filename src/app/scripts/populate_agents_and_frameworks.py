@@ -28,7 +28,7 @@ AGENT_DEFINITIONS = [
         "description": "Analyzes for vulnerabilities related to user permissions, authorization, and insecure direct object references.",
         "domain_query": {
             "keywords": "access control, authorization, user permissions, roles, insecure direct object reference (IDOR), privileges, broken object level authorization, function level authorization",
-            "metadata_filter": {"chapter_name": ["V8 Authorization"]}
+            "metadata_filter": {"control_family": ["Authorization"]}
         }
     },
     {
@@ -36,7 +36,7 @@ AGENT_DEFINITIONS = [
         "description": "Focuses on the security of API endpoints, including REST, GraphQL, and other web services.",
         "domain_query": {
             "keywords": "API security, REST, GraphQL, API keys, rate limiting, API authentication, API authorization, endpoint security, JWT, OAuth, mass assignment",
-            "metadata_filter": {"chapter_name": ["V4 API and Web Service", "V10 OAuth and OIDC"]}
+            "metadata_filter": {"control_family": ["API and Web Service", "OAuth and OIDC"]}
         }
     },
     {
@@ -44,7 +44,7 @@ AGENT_DEFINITIONS = [
         "description": "Assesses the overall security architecture, design patterns, and data flow.",
         "domain_query": {
             "keywords": "security architecture, design patterns, data flow, trust boundaries, tiering, segregation, component separation, security principles, microservices security",
-            "metadata_filter": {"chapter_name": ["V15 Secure Coding and Architecture"]}
+            "metadata_filter": {"control_family": ["Secure Coding and Architecture"]}
         }
     },
     {
@@ -52,7 +52,7 @@ AGENT_DEFINITIONS = [
         "description": "Scrutinizes login mechanisms, password policies, multi-factor authentication, and credential management.",
         "domain_query": {
             "keywords": "authentication, login, password policies, credential management, multi-factor authentication (MFA), single sign-on (SSO), password hashing, forgot password, remember me",
-            "metadata_filter": {"chapter_name": ["V6 Authentication"]}
+            "metadata_filter": {"control_family": ["Authentication"]}
         }
     },
     {
@@ -60,7 +60,7 @@ AGENT_DEFINITIONS = [
         "description": "Looks for flaws in the application's business logic that could be exploited.",
         "domain_query": {
             "keywords": "business logic vulnerabilities, workflow abuse, race conditions, unexpected application state, feature misuse, price manipulation, excessive computation",
-            "metadata_filter": {"chapter_name": ["V2 Validation and Business Logic"]}
+            "metadata_filter": {"control_family": ["Validation and Business Logic"]}
         }
     },
     {
@@ -68,7 +68,7 @@ AGENT_DEFINITIONS = [
         "description": "Verifies the integrity of code and dependencies to prevent tampering.",
         "domain_query": {
             "keywords": "software integrity, code signing, dependency security, supply chain attacks, insecure deserialization, code tampering, third-party libraries, SCA, software composition analysis",
-            "metadata_filter": {"chapter_name": ["V15 Secure Coding and Architecture"]}
+            "metadata_filter": {"control_family": ["Secure Coding and Architecture"]}
         }
     },
     {
@@ -76,7 +76,7 @@ AGENT_DEFINITIONS = [
         "description": "Checks for secure data transmission, use of TLS, and protection against network-level attacks.",
         "domain_query": {
             "keywords": "secure communication, TLS, SSL, HTTPS, certificate validation, weak ciphers, transport layer security, data in transit, network security protocols",
-            "metadata_filter": {"chapter_name": ["V12 Secure Communication"]}
+            "metadata_filter": {"control_family": ["Secure Communication"]}
         }
     },
     {
@@ -84,7 +84,7 @@ AGENT_DEFINITIONS = [
         "description": "Inspects for misconfigurations in the application, server, or third-party services.",
         "domain_query": {
             "keywords": "security misconfiguration, default credentials, verbose error messages, unnecessary features, improper server hardening, security headers, file permissions",
-            "metadata_filter": {"chapter_name": ["V13 Configuration"]}
+            "metadata_filter": {"control_family": ["Configuration"]}
         }
     },
     {
@@ -92,7 +92,7 @@ AGENT_DEFINITIONS = [
         "description": "Evaluates the use of encryption, hashing algorithms, and key management.",
         "domain_query": {
             "keywords": "cryptography, encryption, hashing algorithms, weak ciphers, key management, PRNG, random number generation, IV, initialization vector, broken cryptography",
-            "metadata_filter": {"chapter_name": ["V11 Cryptography"]}
+            "metadata_filter": {"control_family": ["Cryptography"]}
         }
     },
     {
@@ -100,7 +100,7 @@ AGENT_DEFINITIONS = [
         "description": "Focuses on the protection of sensitive data at rest and in transit, including PII.",
         "domain_query": {
             "keywords": "data protection, sensitive data exposure, PII, personally identifiable information, data at rest, data classification, data masking, tokenization, GDPR, CCPA",
-            "metadata_filter": {"chapter_name": ["V14 Data Protection"]}
+            "metadata_filter": {"control_family": ["Data Protection"]}
         }
     },
     {
@@ -108,7 +108,7 @@ AGENT_DEFINITIONS = [
         "description": "Analyzes error handling routines to prevent information leakage.",
         "domain_query": {
             "keywords": "error handling, information leakage, stack traces, verbose error messages, debugging information exposure, exception handling, logging sensitive information",
-            "metadata_filter": {"chapter_name": ["V16 Security Logging and Error Handling"]}
+            "metadata_filter": {"control_family": ["Security Logging and Error Handling"]}
         }
     },
     {
@@ -116,7 +116,7 @@ AGENT_DEFINITIONS = [
         "description": "Scrutinizes file upload, download, and processing functionality for vulnerabilities.",
         "domain_query": {
             "keywords": "file handling, file upload vulnerabilities, path traversal, directory traversal, unrestricted file upload, malware upload, remote file inclusion (RFI), local file inclusion (LFI)",
-            "metadata_filter": {"chapter_name": ["V5 File Handling"]}
+            "metadata_filter": {"control_family": ["File Handling"]}
         }
     },
     {
@@ -124,7 +124,7 @@ AGENT_DEFINITIONS = [
         "description": "Checks for secure session handling, token management, and protection against session hijacking.",
         "domain_query": {
             "keywords": "session management, session fixation, session hijacking, cookie security, insecure session tokens, session timeout, CSRF, cross-site request forgery, JWT session tokens",
-            "metadata_filter": {"chapter_name": ["V7 Session Management"]}
+            "metadata_filter": {"control_family": ["Session Management"]}
         }
     },
     {
@@ -132,7 +132,7 @@ AGENT_DEFINITIONS = [
         "description": "Focuses on input validation, output encoding, and prevention of injection attacks like SQLi and XSS.",
         "domain_query": {
             "keywords": "input validation, output encoding, SQL injection (SQLi), Cross-Site Scripting (XSS), command injection, type validation, sanitization, denylisting, allowlisting, parameter tampering",
-            "metadata_filter": {"chapter_name": ["V1 Encoding and Sanitization", "V2 Validation and Business Logic"]}
+            "metadata_filter": {"control_family": ["Encoding and Sanitization", "Validation and Business Logic"]}
         }
     }
 ]
@@ -179,7 +179,7 @@ Respond ONLY with a valid JSON object that conforms to the InitialAnalysisRespon
     - A detailed 'remediation' guide.
     - A list of technical 'keywords' that characterize the vulnerability.
     - A 'fix' object containing the exact 'original_snippet' to be replaced and the new 'code'.
-
+5.  The `code` in your `fix` object must be a **surgical, drop-in replacement** for the `original_snippet`. It must ONLY contain the specific lines of code that are changing. Do NOT include any surrounding, unchanged code like function or class definitions, import statements, or block delimiters unless those elements are part of the vulnerable snippet itself.
 <VULNERABILITY_PATTERNS>
 {vulnerability_patterns}
 </VULNERABILITY_PATTERNS>

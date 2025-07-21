@@ -29,6 +29,7 @@ from app.infrastructure.llm_client import get_llm_client
 from app.shared.analysis_tools.context_bundler import ContextBundlingEngine
 from app.shared.analysis_tools.repository_map import RepositoryMappingEngine
 from app.shared.analysis_tools.chunker import semantic_chunker
+from app.shared.lib.files import get_language_from_filename
 from app.shared.lib import cost_estimation
 
 logger = logging.getLogger(__name__)
@@ -63,6 +64,8 @@ class WorkerState(TypedDict):
     fast_llm_config_id: Optional[uuid.UUID]
     reasoning_llm_config_id: Optional[uuid.UUID]
     files: Optional[Dict[str, str]]
+    initial_file_map: Optional[Dict[str, str]]
+    final_file_map: Optional[Dict[str, str]]
     repository_map: Optional[Any]
     dependency_graph: Optional[Any]
     all_relevant_agents: Dict[str, RelevantAgent]
@@ -137,6 +140,7 @@ async def retrieve_and_prepare_data_node(state: WorkerState) -> Dict[str, Any]:
                 "fast_llm_config_id": scan.fast_llm_config_id,
                 "reasoning_llm_config_id": scan.reasoning_llm_config_id,
                 "files": files,
+                "initial_file_map": original_snapshot.file_map,
                 "live_codebase": files.copy(), 
                 "repository_map": repository_map,
                 "dependency_graph": nx.node_link_data(dependency_graph),
@@ -189,6 +193,7 @@ CONFLICTING SUGGESTIONS:
 {suggestions_str}
 
 Respond ONLY with a valid JSON object conforming to the MergedFixResponse schema.
+The `merged_code` you provide must be a surgical, drop-in replacement for the ORIGINAL VULNERABLE CODE BLOCK. It must ONLY contain the specific lines that are changing. Do not include surrounding, unchanged code like function definitions or block delimiters.
 Crucially, the `original_snippet_for_replacement` field in your JSON response MUST be an EXACT, character-for-character copy of the 'ORIGINAL VULNERABLE CODE BLOCK' provided above.
 The `merged_code` field should contain ONLY the final, corrected code that will replace the original block. DO NOT include the original code in the `merged_code` field.
 """
@@ -493,79 +498,108 @@ async def dependency_aware_analysis_orchestrator(state: WorkerState) -> Dict[str
         logger.warning(f"Circular dependency in scan {scan_id}, falling back to alphabetical order.")
         processing_order = sorted(list(dependency_graph.nodes()))
 
-    logger.info(f"DEBUG: processing_order: {processing_order}")
     all_scan_findings: List[VulnerabilityFinding] = []
     generic_agent_graph = build_generic_specialized_agent_graph()
     semaphore = asyncio.Semaphore(CONCURRENT_LLM_LIMIT)
+    
+    # Initialize the file map for REMEDIATE scans from the correct source
+    initial_file_map = state.get('initial_file_map')
+    current_file_map = initial_file_map.copy() if scan_type == 'REMEDIATE' and initial_file_map else {}
 
-    for file_path in processing_order:
-        file_content = live_codebase[file_path]
-        file_summary = repository_map.files.get(file_path)
-        if not file_summary: continue
+    async with AsyncSessionLocal() as db:
+        repo = ScanRepository(db)
 
-        # nkp link token count to use tiktoken method for counting
-        token_count = len(file_content) / 4
-        is_large_file = token_count > CHUNK_TOKEN_THRESHOLD
-        
-        chunks: List[CodeChunk] = []
-        if is_large_file:
-            logger.info(f"{file_path} is a large file, applying chunking.", extra={"scan_id": str(scan_id)})
-            chunks = semantic_chunker(file_content, file_summary)
-            symbol_map = await generate_symbol_map(utility_llm_config_id, chunks, file_path)
-        else:
-            chunks = [{"symbol_name": file_path, "code": file_content, "start_line": 1, "end_line": len(file_content.splitlines())}]
+        for file_path in processing_order:
+            # For REMEDIATE scans, fetch the latest version of the file from DB using the map
+            if scan_type == 'REMEDIATE':
+                file_hash = current_file_map.get(file_path)
+                if not file_hash: continue
+                content_map = await repo.get_source_files_by_hashes([file_hash])
+                file_content = content_map.get(file_hash, "")
+            else:
+                file_content = live_codebase[file_path]
 
-        relevant_agents_for_file = triaged_agents_per_file.get(file_path, [])
-        if not relevant_agents_for_file:
-            logger.info(f"No agents triaged for file {file_path}, skipping.", extra={"scan_id": str(scan_id)})
-            continue
+            file_summary = repository_map.files.get(file_path)
+            if not file_summary: continue
 
-        for chunk in chunks:
-            tasks = []
-            for agent in relevant_agents_for_file:
-                async def run_with_semaphore(coro):
-                    async with semaphore: return await coro
-                
-                initial_agent_state: SpecializedAgentState = {
-                    "scan_id": scan_id, "llm_config_id": reasoning_llm_id, "filename": file_path,
-                    "code_snippet": chunk['code'], "file_content_for_verification": file_content,
-                    "workflow_mode": "remediate" if scan_type in ("REMEDIATE", "SUGGEST") else "audit",
-                    "findings": [], "fixes": [], "error": None
-                }
-                tasks.append(run_with_semaphore(generic_agent_graph.ainvoke(initial_agent_state, config={"configurable": cast(dict, agent)})))
+            token_count = len(file_content) / 4
+            is_large_file = token_count > CHUNK_TOKEN_THRESHOLD
             
-            agent_raw_results = await asyncio.gather(*tasks, return_exceptions=True)
-            agent_results = [r for r in agent_raw_results if not isinstance(r, BaseException) and r is not None]
+            chunks: List[CodeChunk] = []
+            if is_large_file:
+                logger.info(f"{file_path} is a large file, applying chunking.", extra={"scan_id": str(scan_id)})
+                chunks = semantic_chunker(file_content, file_summary)
+            else:
+                chunks = [{"symbol_name": file_path, "code": file_content, "start_line": 1, "end_line": len(file_content.splitlines())}]
 
-            temp_state_for_consolidation = cast(WorkerState, {
-                "scan_id": scan_id,
-                "scan_type": scan_type,
-                "agent_results": agent_results,
-                "reasoning_llm_config_id": reasoning_llm_id,
-                "file_content_for_verification": file_content
-            })
-            consolidation_result = await consolidation_node(temp_state_for_consolidation)
-            
-            # Always aggregate ALL findings returned by the consolidation node.
-            if consolidation_result.get("findings"):
-                all_scan_findings.extend(consolidation_result["findings"])
-            
-            # Apply only the winning, consolidated fixes to the in-memory codebase.
-            if scan_type == 'REMEDIATE' and consolidation_result.get("fixes_to_apply"):
-                temp_file_content = live_codebase[file_path]
-                sorted_fixes_to_apply = sorted(consolidation_result["fixes_to_apply"], key=lambda f: f.finding.line_number)
-                logger.info(f"DEBUG: sorted_fixes_to_apply for {file_path}: {[fix.model_dump() for fix in sorted_fixes_to_apply]}")
-                
-                for fix in sorted_fixes_to_apply:
-                    if fix.suggestion.original_snippet and fix.suggestion.original_snippet in temp_file_content:
-                        temp_file_content = temp_file_content.replace(fix.suggestion.original_snippet, fix.suggestion.code, 1)
-                
-                live_codebase[file_path] = temp_file_content
-                logger.info(f"Applied {len(consolidation_result['fixes_to_apply'])} winning fixes in-memory for {file_path}", extra={"scan_id": str(scan_id)})
+            relevant_agents_for_file = triaged_agents_per_file.get(file_path, [])
+            if not relevant_agents_for_file:
+                logger.info(f"No agents triaged for file {file_path}, skipping.", extra={"scan_id": str(scan_id)})
+                continue
 
-    logger.info(f"DEBUG: final all_scan_findings count: {len(all_scan_findings)}")
-    logger.info(f"DEBUG: final live_codebase file keys: {list(live_codebase.keys())}")
-    return {"findings": all_scan_findings, "live_codebase": live_codebase}
+            findings_for_file: List[VulnerabilityFinding] = []
+
+            for chunk in chunks:
+                tasks = []
+                for agent in relevant_agents_for_file:
+                    async def run_with_semaphore(coro):
+                        async with semaphore: return await coro
+                    
+                    initial_agent_state: SpecializedAgentState = {
+                        "scan_id": scan_id, "llm_config_id": reasoning_llm_id, "filename": file_path,
+                        "code_snippet": chunk['code'], "file_content_for_verification": file_content,
+                        "workflow_mode": "remediate" if scan_type in ("REMEDIATE", "SUGGEST") else "audit",
+                        "findings": [], "fixes": [], "error": None
+                    }
+                    tasks.append(run_with_semaphore(generic_agent_graph.ainvoke(initial_agent_state, config={"configurable": cast(dict, agent)})))
+                
+                agent_raw_results = await asyncio.gather(*tasks, return_exceptions=True)
+                agent_results = [r for r in agent_raw_results if not isinstance(r, BaseException) and r is not None]
+                
+                for result in agent_results:
+                    findings_for_file.extend(result.get("findings", []))
+
+            # --- HYBRID LOGIC ---
+            if scan_type == 'REMEDIATE' and findings_for_file:
+                # 1. Save raw findings for this file
+                await repo.save_findings(scan_id, findings_for_file)
+                
+                # 2. Retrieve them to get DB IDs and state
+                retrieved_findings_db = await repo.get_findings_for_scan_and_file(scan_id, file_path)
+                retrieved_findings = [VulnerabilityFinding.model_validate(f, from_attributes=True) for f in retrieved_findings_db]
+
+                # 3. Consolidate fixes
+                temp_state_for_consolidation = cast(WorkerState, {
+                    "scan_id": scan_id, "scan_type": scan_type,
+                    "reasoning_llm_config_id": reasoning_llm_id,
+                    "file_content_for_verification": file_content,
+                    # agent_results is needed for the FixResult structure
+                    "agent_results": [{"findings": retrieved_findings, "fixes": [FixResult(finding=f, suggestion=f.fixes) for f in retrieved_findings if f.fixes]}]
+                })
+                consolidation_result = await consolidation_node(temp_state_for_consolidation)
+                fixes_to_apply = consolidation_result.get("fixes_to_apply", [])
+
+                # 4. Apply patch and propagate state via DB
+                if fixes_to_apply:
+                    temp_file_content = file_content
+                    applied_finding_ids = []
+                    for fix in sorted(fixes_to_apply, key=lambda f: f.finding.line_number):
+                        applied_finding_ids.append(fix.finding.id)
+                        if fix.suggestion.original_snippet and fix.suggestion.original_snippet in temp_file_content:
+                            temp_file_content = temp_file_content.replace(fix.suggestion.original_snippet, fix.suggestion.code, 1)
+                    
+                    # Persist the new file content and update the in-memory map
+                    new_hashes = await repo.get_or_create_source_files([{"path": file_path, "content": temp_file_content, "language": get_language_from_filename(file_path)}])
+                    current_file_map[file_path] = new_hashes[0]
+                    
+                    # Mark the applied findings in the DB
+                    await repo.mark_findings_as_applied(applied_finding_ids)
+
+                all_scan_findings.extend(retrieved_findings)
+            else:
+                all_scan_findings.extend(findings_for_file)
+
+    return {"findings": all_scan_findings, "final_file_map": current_file_map if scan_type == 'REMEDIATE' else None}
 
 
 async def correlate_findings_node(state: WorkerState) -> Dict[str, Any]:
@@ -612,17 +646,26 @@ async def correlate_findings_node(state: WorkerState) -> Dict[str, Any]:
 
 
 async def save_results_node(state: WorkerState) -> Dict[str, Any]:
-    scan_id, scan_type, findings, live_codebase = state['scan_id'], state['scan_type'], state.get('findings', []), state.get('live_codebase')
+    scan_id = state['scan_id']
+    scan_type = state['scan_type']
+    findings = state.get('findings', [])
+    final_file_map = state.get('final_file_map')
+
     logger.info(f"Saving final results for scan {scan_id}.")
     async with AsyncSessionLocal() as db:
         repo = ScanRepository(db)
+        
         if findings:
-            await repo.save_findings(scan_id, findings)
-        if scan_type == 'REMEDIATE' and live_codebase:
+            if scan_type in ('AUDIT', 'SUGGEST'):
+                # For these modes, we do a bulk insert of new, correlated findings
+                await repo.save_findings(scan_id, findings)
+            else: # For REMEDIATE, we update the existing findings with correlation data
+                await repo.update_correlated_findings(findings)
+            
+        if scan_type == 'REMEDIATE' and final_file_map:
             logger.info(f"Saving POST_REMEDIATION snapshot for scan {scan_id}.")
-            new_hashes = await repo.get_or_create_source_files([{"path": p, "content": c} for p, c in live_codebase.items()])
-            new_file_map = {path: h for path, h in zip(live_codebase.keys(), new_hashes)}
-            await repo.create_code_snapshot(scan_id=scan_id, file_map=new_file_map, snapshot_type="POST_REMEDIATION")
+            await repo.create_code_snapshot(scan_id=scan_id, file_map=final_file_map, snapshot_type="POST_REMEDIATION")
+            
     return {}
 
 async def run_impact_reporting(state: WorkerState) -> Dict[str, Any]:
