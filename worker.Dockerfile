@@ -11,7 +11,12 @@ RUN apt-get update && apt-get install -y build-essential
 COPY ./poetry.lock ./pyproject.toml /app/
 
 # Install poetry and then the project dependencies
-RUN pip install poetry && poetry config virtualenvs.create false && poetry install --no-root --without dev
+# Install poetry and then the project dependencies
+RUN pip install --upgrade pip setuptools wheel \
+    && pip install poetry \
+    && (pip uninstall -y idna charset-normalizer || true) \
+    && poetry config virtualenvs.create false \
+    && poetry install --no-root --without dev
 
 # --- ADDED: Pre-download the embedding model ---
 # This RUN command will download the model and cache it inside the Docker image layer

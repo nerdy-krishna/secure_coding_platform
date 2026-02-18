@@ -11,8 +11,8 @@ ENV POETRY_VERSION=1.8.3
 # Install system dependencies
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        build-essential \
-        git \
+    build-essential \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Poetry
@@ -39,6 +39,9 @@ RUN poetry config virtualenvs.create false --local
 
 # Install dependencies as root. They will be installed to the system Python,
 # which the appuser will have access to.
+RUN pip install --upgrade pip setuptools wheel
+# Force uninstall conflicting system packages to allow Poetry to install its specific versions
+RUN pip uninstall -y idna charset-normalizer || true
 RUN poetry install --no-interaction --no-ansi
 
 # Copy the rest of the application source code
