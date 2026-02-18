@@ -21,7 +21,45 @@ Before you begin, ensure you have the following installed and configured on your
 * **Code Editor**: A code editor like VS Code, Sublime Text, or others for viewing and editing configuration files.
 * **(Optional for specific host commands) Python & Poetry**: If you plan to run backend commands (like Alembic migrations) directly on your host machine instead of inside Docker (not recommended for initial setup), you'll need Python (version 3.12+) and Poetry installed.
 
-## Installation Steps
+
+## Quick Start (Recommended)
+
+The easiest way to get started is by using the automated setup script. This script handles prerequisite checks, environment configuration (generating secure keys), Docker build, database initialization, and UI dependency installation.
+
+### macOS / Linux
+
+1.  **Clone the Repository**:
+    ```bash
+    git clone https://github.com/nerdy-krishna/secure_coding_platform.git
+    cd secure_coding_platform
+    ```
+
+2.  **Run the Setup Script**:
+    ```bash
+    chmod +x setup.sh
+    ./setup.sh
+    ```
+
+### Windows
+
+1.  **Clone the Repository**:
+    ```powershell
+    git clone https://github.com/nerdy-krishna/secure_coding_platform.git
+    cd secure_coding_platform
+    ```
+
+2.  **Run the Setup Script**:
+    Double-click `setup.bat` or run it from the command line:
+    ```cmd
+    setup.bat
+    ```
+
+Once the script completes, you will see a "Setup Complete!" message with the URLs for the application and Grafana.
+
+---
+
+## Manual Installation Steps
+
 
 1.  **Clone the Repository**:
     Open your terminal and clone the Secure Coding Platform repository:
