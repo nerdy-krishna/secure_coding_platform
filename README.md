@@ -27,6 +27,25 @@ This is an open-source, AI-powered tool designed to help developers and security
 6.  **Remediate**: Select vulnerabilities for automatic fixing.
 7.  **Download**: Download the patched codebase.
 
+## Installation
+
+### Automatic Setup (Recommended)
+We provide automated scripts to set up the environment, build containers, and initialize the database.
+
+**macOS / Linux:**
+```bash
+git clone https://github.com/nerdy-krishna/secure_coding_platform.git
+cd secure_coding_platform
+chmod +x setup.sh
+./setup.sh
+```
+
+**Windows:**
+Double-click `setup.bat` or run it from the command line.
+
+### Manual Setup
+For detailed manual installation instructions, please refer to the [Installation Guide](docs/docs/getting-started/installation.md).
+
 ## Getting Started
 
 1.  **Register**: Create an account on the platform.
