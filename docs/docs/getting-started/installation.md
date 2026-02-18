@@ -135,6 +135,31 @@ After adding swap, try running `./setup.sh` again.
 
 ---
 
+## Troubleshooting: "No space left on device" (Disk Full)
+
+If your build fails with disk space errors despite having plenty of free space on your server, the issue is likely **build-time artifacts**. Docker caches every step of the build process, and large dependencies (like machine learning libraries) can quickly fill up the disk with intermediate layers, even if the final running application is small.
+
+**Solution: Prune Docker Data**
+
+1.  **Stop all running containers:**
+    ```bash
+    docker compose down
+    ```
+
+2.  **Prune the Docker system:**
+    This removes all stopped containers, unused networks, and **build cache** (which is usually the culprit).
+    ```bash
+    docker system prune -a
+    ```
+    *Type `y` when prompted.*
+
+3.  **Retry the setup:**
+    ```bash
+    ./setup.sh
+    ```
+
+---
+
 ## Manual Installation Steps
 
 
