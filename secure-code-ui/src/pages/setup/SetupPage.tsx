@@ -30,7 +30,11 @@ const SetupPage: React.FC = () => {
             await apiClient.post('/setup', formData);
             navigate('/login');
         } catch (err: any) {
-            setError(err.response?.data?.detail || 'Setup failed. Please try again.');
+            console.error("Setup failed details:", err);
+            const msg = err.response?.data?.detail
+                ? (typeof err.response.data.detail === 'string' ? err.response.data.detail : JSON.stringify(err.response.data.detail))
+                : (err.message || "Setup failed. Please try again.");
+            setError(msg);
         } finally {
             setLoading(false);
         }
@@ -47,14 +51,14 @@ const SetupPage: React.FC = () => {
     }
 }>
     <div style={
-    {
-        backgroundColor: 'white',
-            padding: '2rem',
-                borderRadius: '8px',
-                    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
-                        width: '100%',
-                            maxWidth: '500px'
-    }
+        {
+            backgroundColor: 'white',
+                padding: '2rem',
+                    borderRadius: '8px',
+                        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+                            width: '100%',
+                                maxWidth: '500px'
+        }
 }>
     <h1 style={ { textAlign: 'center', marginBottom: '1.5rem', color: '#111827' } }>
         Secure Coding Platform Setup
@@ -63,17 +67,17 @@ const SetupPage: React.FC = () => {
 {
     error && (
         <div style={
-        {
-            backgroundColor: '#fee2e2',
-                color: '#b91c1c',
-                    padding: '1rem',
-                        borderRadius: '4px',
-                            marginBottom: '1rem'
-        }
+            {
+                backgroundColor: '#fee2e2',
+                    color: '#b91c1c',
+                        padding: '1rem',
+                            borderRadius: '4px',
+                                marginBottom: '1rem'
+            }
     }>
         { error }
         </div>
-        )
+                )
 }
 
 <div style={ { marginBottom: '1.5rem', display: 'flex', justifyContent: 'center' } }>
@@ -101,7 +105,7 @@ style = {{
             borderRadius: '4px',
                 border: '1px solid #d1d5db'
 }}
-                />
+                                />
     </div>
     < div style = {{ marginBottom: '1.5rem' }}>
         <label style={ { display: 'block', marginBottom: '0.5rem', color: '#374151' } }> Admin Password </label>
@@ -118,7 +122,7 @@ style = {{
             borderRadius: '4px',
                 border: '1px solid #d1d5db'
 }}
-                />
+                                />
     </div>
     < button
 type = "button"
@@ -134,11 +138,11 @@ style = {{
                             cursor: 'pointer',
                                 opacity: (!formData.admin_email || !formData.admin_password) ? 0.5 : 1
 }}
-              >
+                            >
     Next
     </button>
     </>
-          )}
+                    )}
 
 {
     step === 2 && (
@@ -156,7 +160,7 @@ style = {{
                     border: '1px solid #d1d5db'
     }
 }
-                >
+                                >
     <option value="openai" > OpenAI </option>
         < option value = "anthropic" > Anthropic </option>
             < option value = "gemini" > Google Gemini </option>
@@ -176,7 +180,7 @@ style = {{
             borderRadius: '4px',
                 border: '1px solid #d1d5db'
 }}
-                />
+                                />
     </div>
     < div style = {{ marginBottom: '1.5rem' }}>
         <label style={ { display: 'block', marginBottom: '0.5rem', color: '#374151' } }> API Key </label>
@@ -192,11 +196,11 @@ style = {{
             borderRadius: '4px',
                 border: '1px solid #d1d5db'
 }}
-                />
+                                />
     </div>
     < div style = {{ display: 'flex', gap: '1rem' }}>
         <button
-                  type="button"
+                                    type="button"
 onClick = {() => setStep(1)}
 style = {{
     flex: 1,
@@ -207,7 +211,7 @@ style = {{
                         border: 'none',
                             cursor: 'pointer'
 }}
-                >
+                                >
     Back
     </button>
     < button
@@ -223,16 +227,16 @@ style = {{
                             cursor: 'pointer',
                                 opacity: (loading || !formData.llm_api_key) ? 0.5 : 1
 }}
-                >
+                                >
     { loading? 'Completing Setup...': 'Complete Setup' }
     </button>
     </div>
     </>
-          )}
+                    )}
 </form>
     </div>
     </div>
-  );
+    );
 };
 
 export default SetupPage;

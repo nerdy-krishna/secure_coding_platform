@@ -45,9 +45,13 @@ style = {{ padding: "10px 15px", marginTop: "15px", cursor: "pointer" }}
 );
 
 const ProtectedRoutesWithLayout: React.FC = () => {
-  const { accessToken, initialAuthChecked, isLoading } = useAuth();
+  const { accessToken, initialAuthChecked, isLoading, isSetupCompleted } = useAuth();
   if (!initialAuthChecked || isLoading) {
     return <div>Loading authentication status...</div>;
+  }
+
+  if (!isSetupCompleted) {
+    return <Navigate to="/setup" replace />;
   }
 
   if (!accessToken) {
@@ -61,9 +65,14 @@ const ProtectedRoutesWithLayout: React.FC = () => {
 };
 
 const AuthRoutesWithLayout: React.FC = () => {
-  const { accessToken, initialAuthChecked, isLoading } = useAuth();
+  const { accessToken, initialAuthChecked, isLoading, isSetupCompleted } = useAuth();
   if (!initialAuthChecked || isLoading) {
     return <div>Loading authentication status...</div>;
+  }
+
+  // Force redirect to setup if not completed
+  if (!isSetupCompleted) {
+    return <Navigate to="/setup" replace />;
   }
 
   if (accessToken) {

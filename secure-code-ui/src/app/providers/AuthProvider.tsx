@@ -23,7 +23,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [initialAuthChecked, setInitialAuthChecked] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [isSetupCompleted, setIsSetupCompleted] = useState<boolean>(true);
+  const [isSetupCompleted, setIsSetupCompleted] = useState<boolean>(false);
 
   const clearError = useCallback(() => {
     setError(null);
@@ -35,7 +35,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
       setIsSetupCompleted(response.data.is_setup_completed);
     } catch (e) {
       console.error("AuthProvider: Failed to check setup status:", e);
-      setIsSetupCompleted(true);
+      // Fail-safe: If we can't verify setup, assume it's NOT done to prevent unauthorized access.
+      // However, this might block users if the API is just down. 
+      // Given this is a "secure" platform, forcing the setup/check flow is safer.
+      setIsSetupCompleted(false);
     }
   }, []);
 
