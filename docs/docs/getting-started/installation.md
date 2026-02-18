@@ -103,6 +103,38 @@ chmod +x setup.sh
 
 ---
 
+## Troubleshooting: Low RAM VPS (Build Failures)
+
+If your installation fails with a `Killed` message or the connection drops during the build process, your server likely ran out of RAM. This is common on instances with less than 4GB of RAM (e.g., typical 1GB/2GB Droplets or EC2 micro instances).
+
+**Solution: Add Swap Space**
+
+Run the following commands to create a 4GB swap file, which effectively extends your RAM using disk space:
+
+```bash
+# 1. Allocate a 4GB file for swap
+sudo fallocate -l 4G /swapfile
+
+# 2. Secure the file permissions
+sudo chmod 600 /swapfile
+
+# 3. Mark the file as swap space
+sudo mkswap /swapfile
+
+# 4. Enable the swap
+sudo swapon /swapfile
+
+# 5. Make it permanent (persist after reboot)
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+
+# 6. Verify swap is active
+sudo swapon --show
+```
+
+After adding swap, try running `./setup.sh` again.
+
+---
+
 ## Manual Installation Steps
 
 
