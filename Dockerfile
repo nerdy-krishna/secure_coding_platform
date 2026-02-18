@@ -44,6 +44,11 @@ RUN poetry config virtualenvs.create true --local \
     && poetry config virtualenvs.in-project true --local
 # --- END: FIX ---
 
+# --- END: FIX ---
+
+# Refresh lock file to ensure it matches pyproject.toml (since we added pytorch-cpu)
+RUN poetry lock --no-update
+
 # Install dependencies as user.
 RUN poetry install --no-interaction --no-ansi
 

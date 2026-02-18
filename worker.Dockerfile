@@ -16,6 +16,7 @@ RUN pip install --upgrade pip setuptools wheel \
     && pip install poetry \
     && poetry config virtualenvs.create true \
     && poetry config virtualenvs.in-project true \
+    && poetry lock --no-update \
     && poetry install --no-root --without dev
 
 # Add the virtual environment to the PATH so we don't need 'poetry run' for everything
