@@ -93,7 +93,7 @@ class AgentRead(AgentBase):
 
 # --- Framework Schemas (NEW) ---
 class FrameworkBase(BaseModel):
-    name: str = Field(..., description="The unique name of the security framework (e.g., 'OWASP ASVS v5.0').")
+    name: str = Field(..., description="The unique name of the security framework (e.g., 'OWASP ASVS').")
     description: str = Field(..., description="A brief description of the framework.")
 
 class FrameworkCreate(FrameworkBase):

@@ -152,9 +152,9 @@ class SubmissionService:
         if scan.status != "PENDING_COST_APPROVAL":
             raise HTTPException(status_code=400, detail=f"Scan is not pending approval. Current status: {scan.status}")
         
-        publish_message(settings.RABBITMQ_APPROVAL_QUEUE, {"scan_id": str(scan_id), "action": "resume_analysis"})
         await self.repo.update_status(scan_id, "QUEUED_FOR_SCAN")
         await self.repo.create_scan_event(scan_id=scan_id, stage_name="QUEUED_FOR_SCAN", status="COMPLETED")
+        publish_message(settings.RABBITMQ_APPROVAL_QUEUE, {"scan_id": str(scan_id), "action": "resume_analysis"})
         logger.info("Scan approved and queued for processing.", extra={"scan_id": str(scan_id)})
 
     async def cancel_scan(self, scan_id: uuid.UUID, user: db_models.User) -> None:

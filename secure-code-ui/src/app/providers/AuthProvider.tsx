@@ -36,6 +36,31 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
     }
   }, [accessToken]);
 
+  // Effect to detect silent token refreshes performed by the apiClient interceptor.
+  // The interceptor writes the new token directly to localStorage, so we listen
+  // for 'storage' events and also poll for changes to keep React state in sync.
+  useEffect(() => {
+    // Cross-tab sync via the 'storage' event
+    const handleStorageChange = (event: StorageEvent) => {
+      if (event.key === ACCESS_TOKEN_KEY) {
+        setAccessToken(event.newValue);
+      }
+    };
+    window.addEventListener("storage", handleStorageChange);
+
+    // Same-tab sync: the interceptor updates localStorage in the same tab,
+    // which does NOT fire 'storage' events. Poll periodically to catch it.
+    const intervalId = setInterval(() => {
+      const storedToken = localStorage.getItem(ACCESS_TOKEN_KEY);
+      setAccessToken((prev) => (storedToken !== prev ? storedToken : prev));
+    }, 5000); // Check every 5 seconds
+
+    return () => {
+      window.removeEventListener("storage", handleStorageChange);
+      clearInterval(intervalId);
+    };
+  }, []);
+
   const fetchAndSetUser = useCallback(async () => {
     if (!localStorage.getItem(ACCESS_TOKEN_KEY)) {
       setUser(null);
@@ -136,6 +161,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
   };
 
   return (
-    <AuthContext.Provider value={contextValue}>{children}</AuthContext.Provider>
+    <AuthContext.Provider value= { contextValue } > { children } </AuthContext.Provider>
   );
 };

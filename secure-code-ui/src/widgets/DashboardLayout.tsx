@@ -55,27 +55,27 @@ const DashboardLayout: React.FC<{ children?: React.ReactNode }> = ({
   const siderMenuItems = useMemo(() => {
     const items: MenuItem[] = [
       getItem(
-        <Link to="/account/dashboard">Dashboard</Link>,
+        <Link to="/account/dashboard" > Dashboard </Link>,
         "dashboard_overview",
         <PieChartOutlined />,
       ),
       getItem(
-        <Link to="/submission/submit">Submit Code</Link>,
+        <Link to="/submission/submit" > Submit Code </Link>,
         "submit_code",
         <FileTextOutlined />,
       ),
       getItem(
-        <Link to="/analysis/results">Projects</Link>,
+        <Link to="/analysis/results" > Projects </Link>,
         "analysis_results",
         <ProjectOutlined />,
       ),
       getItem(
-        <Link to="/advisor">Security Advisor</Link>,
+        <Link to="/advisor" > Security Advisor </Link>,
         "security_advisor",
         <QuestionCircleOutlined />,
       ),
       getItem(
-        <Link to="/account/history">History</Link>,
+        <Link to="/account/history" > History </Link>,
         "submission_history",
         <CommentOutlined />,
       ),
@@ -86,168 +86,176 @@ const DashboardLayout: React.FC<{ children?: React.ReactNode }> = ({
       items.push(
         getItem("Admin", "admin_section", <ToolOutlined />, [
           getItem(
-            <Link to="/account/settings/llm">LLM Settings</Link>,
+          <Link to="/account/settings/llm" > LLM Settings </Link>,
             "llm_settings_nav",
-          ),
+        ),
           getItem(
-            <Link to="/admin/agents">Agents</Link>,
+            <Link to="/admin/agents" > Agents </Link>,
             "agent_management_nav",
           ),
           getItem(
-            <Link to="/admin/frameworks">Frameworks</Link>,
+            <Link to="/admin/frameworks" > Frameworks </Link>,
             "framework_management_nav",
           ),
           getItem(
-            <Link to="/admin/prompts">Prompts</Link>,
+            <Link to="/admin/prompts" > Prompts </Link>,
             "prompt_management_nav",
           ),
           getItem(
-            <Link to="/admin/rag">RAG</Link>,
+            <Link to="/admin/rag" > Security Standards </Link>,
             "rag_management_nav",
           ),
         ]),
       );
     }
 
-    // Add a divider and user-specific items at the end
-    items.push({ type: "divider" });
-    items.push(
-      getItem(
-        <Link to="/account/profile">User Profile</Link>,
+// Add a divider and user-specific items at the end
+items.push({ type: "divider" });
+items.push(
+  getItem(
+    <Link to="/account/profile" > User Profile </Link>,
         "user_profile_nav",
-        <UserOutlined />,
-      ),
-      getItem(
-        <Link to="/account/settings">Settings</Link>,
+    <UserOutlined />,
+  ),
+  getItem(
+    <Link to="/account/settings" > Settings </Link>,
         "user_settings_nav",
-        <SettingOutlined />,
-      ),
-    );
-    return items;
+    <SettingOutlined />,
+  ),
+);
+return items;
   }, [user?.is_superuser]);
 
-  const handleLogout = async () => {
-    await logout();
-  };
+const handleLogout = async () => {
+  await logout();
+};
 
-  const userAccountMenuItems: MenuProps["items"] = [
-    {
-      key: "profile",
-      label: (
-        <Link to="/account/profile">
-          <UserOutlined style={{ marginRight: 8 }} />
-          Profile
-        </Link>
+const userAccountMenuItems: MenuProps["items"] = [
+  {
+    key: "profile",
+    label: (
+      <Link to= "/account/profile" >
+      <UserOutlined style={{ marginRight: 8 }} />
+Profile
+  </Link>
       ),
     },
-    {
-      key: "settings",
-      label: (
-        <Link to="/account/settings">
-          <SettingOutlined style={{ marginRight: 8 }} />
-          Settings
-        </Link>
+{
+  key: "settings",
+    label: (
+      <Link to= "/account/settings" >
+      <SettingOutlined style={ { marginRight: 8 } } />
+  Settings
+    </Link>
       ),
+},
+{
+  type: "divider",
     },
-    {
-      type: "divider",
-    },
-    {
-      key: "logout",
-      icon: <LogoutOutlined style={{ marginRight: 8 }} />,
-      label: "Logout",
-      onClick: handleLogout,
+{
+  key: "logout",
+    icon: <LogoutOutlined style={ { marginRight: 8 } } />,
+  label: "Logout",
+    onClick: handleLogout,
     },
   ];
 
-  return (
-    <Layout style={{ minHeight: "100vh" }}>
-      <Sider
+return (
+  <Layout style= {{ minHeight: "100vh" }}>
+    <Sider
         collapsible
-        collapsed={collapsed}
-        onCollapse={(value) => setCollapsed(value)}
+collapsed = { collapsed }
+onCollapse = {(value) => setCollapsed(value)}
       >
-        <div
-          style={{
-            height: 32,
-            margin: 16,
-            background: "rgba(255, 255, 255, 0.2)",
-            borderRadius: 6,
+  <div
+          style={
+  {
+    height: 32,
+      margin: 16,
+        background: "rgba(255, 255, 255, 0.2)",
+          borderRadius: 6,
             display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            overflow: "hidden",
-          }}
+              alignItems: "center",
+                justifyContent: "center",
+                  overflow: "hidden",
+          }
+}
         >
-          <Typography.Text
-            style={{
-              color: "white",
-              fontSize: collapsed ? "12px" : "16px",
-              fontWeight: "bold",
-            }}
+  <Typography.Text
+            style={
+  {
+    color: "white",
+      fontSize: collapsed ? "12px" : "16px",
+        fontWeight: "bold",
+            }
+}
           >
-            {collapsed ? "SCP" : "Secure Code"}
-          </Typography.Text>
-        </div>
-        <Menu
-          theme="dark"
-          defaultSelectedKeys={["dashboard_overview"]}
-          mode="inline"
-          items={siderMenuItems} // Use the dynamic menu items here
-        />
-      </Sider>
-      <Layout>
-        <Header
-          style={{
-            padding: "0 24px",
-            background: colorBgContainer,
-            display: "flex",
-            alignItems: "center",
+  { collapsed? "SCP": "Secure Code" }
+  </Typography.Text>
+  </div>
+  < Menu
+theme = "dark"
+defaultSelectedKeys = { ["dashboard_overview"]}
+mode = "inline"
+items = { siderMenuItems } // Use the dynamic menu items here
+  />
+  </Sider>
+  < Layout >
+  <Header
+          style={
+  {
+    padding: "0 24px",
+      background: colorBgContainer,
+        display: "flex",
+          alignItems: "center",
             justifyContent: "flex-end",
-          }}
+          }
+}
         >
-          <Space align="center" size="middle">
-            <Tooltip title="Notifications">
-              <Button shape="circle" icon={<BellOutlined />} />
-            </Tooltip>
-            <Dropdown menu={{ items: userAccountMenuItems }} trigger={["click"]}>
-              <a
-                onClick={(e) => e.preventDefault()}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  cursor: "pointer",
+  <Space align="center" size = "middle" >
+    <Tooltip title="Notifications" >
+      <Button shape="circle" icon = {< BellOutlined />} />
+        </Tooltip>
+        < Dropdown menu = {{ items: userAccountMenuItems }} trigger = { ["click"]} >
+          <a
+                onClick={ (e) => e.preventDefault() }
+style = {{
+  display: "flex",
+    alignItems: "center",
+      cursor: "pointer",
                 }}
               >
-                <Avatar
+  <Avatar
                   size="small"
-                  icon={<UserOutlined />}
-                  style={{ marginRight: 8 }}
+icon = {< UserOutlined />}
+style = {{ marginRight: 8 }}
                 />
-                <Typography.Text>
-                  {user ? user.email : "User"}
-                </Typography.Text>
-              </a>
-            </Dropdown>
-          </Space>
-        </Header>
-        <Content style={{ margin: "24px 16px 0", overflow: "initial" }}>
-          <div
-            style={{
-              padding: 24,
-              background: colorBgContainer,
-              borderRadius: borderRadiusLG,
-              minHeight: "calc(100vh - 64px - 48px - 69px)",
-            }}
+  <Typography.Text>
+{ user ? user.email : "User" }
+</Typography.Text>
+  </a>
+  </Dropdown>
+  </Space>
+  </Header>
+  < Content style = {{ margin: "24px 16px 0", overflow: "initial" }}>
+    <div
+            style={
+  {
+    padding: 24,
+      background: colorBgContainer,
+        borderRadius: borderRadiusLG,
+          minHeight: "calc(100vh - 64px - 48px - 69px)",
+            }
+}
           >
-            {children}
-          </div>
-        </Content>
-        <Footer style={{ textAlign: "center" }}>
-          Secure Coding Platform ©{new Date().getFullYear()}
-        </Footer>
-      </Layout>
-    </Layout>
+  { children }
+  </div>
+  </Content>
+  < Footer style = {{ textAlign: "center" }}>
+    Secure Coding Platform ©{ new Date().getFullYear() }
+</Footer>
+  </Layout>
+  </Layout>
   );
 };
 

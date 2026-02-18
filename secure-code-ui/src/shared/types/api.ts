@@ -1,6 +1,7 @@
 // secure-code-ui/src/shared/types/api.ts
 
-import { type UUID } from "crypto";
+// UUID is a branded string type used for IDs throughout the API
+type UUID = `${string}-${string}-${string}-${string}-${string}`;
 
 // For Login
 export interface UserLoginData {
@@ -151,6 +152,7 @@ export interface PreprocessingResponse {
   framework_name: string;
   llm_config_name: string;
   processed_documents: EnrichedDocument[];
+  scan_ready: boolean;
 }
 
 export interface RAGJobStartResponse {
@@ -208,13 +210,13 @@ export interface SubmissionFormValues {
 }
 
 export interface ScanResponse {
-    scan_id: UUID;
-    project_id: UUID; // ADD THIS
-    message: string;
+  scan_id: UUID;
+  project_id: UUID; // ADD THIS
+  message: string;
 }
 
 export interface GitRepoPreviewRequest {
-    repo_url: string;
+  repo_url: string;
 }
 
 export interface SuggestedFix {
@@ -306,6 +308,7 @@ export interface CostDetails {
   predicted_output_cost: number;
   total_estimated_cost: number;
   predicted_output_tokens: number;
+  total_input_tokens: number;
 }
 
 export interface ScanEventItem {
@@ -335,17 +338,17 @@ export interface PaginatedScanHistoryResponse {
 }
 
 export interface ProjectHistoryItem {
-    id: UUID;
-    name: string;
-    repository_url: string | null;
-    created_at: string;
-    updated_at: string;
-    scans: ScanHistoryItem[];
+  id: UUID;
+  name: string;
+  repository_url: string | null;
+  created_at: string;
+  updated_at: string;
+  scans: ScanHistoryItem[];
 }
 
 export interface PaginatedProjectHistoryResponse {
-    items: ProjectHistoryItem[];
-    total: number;
+  items: ProjectHistoryItem[];
+  total: number;
 }
 
 // Defines a type for any valid JSON value, improving type safety over 'any'

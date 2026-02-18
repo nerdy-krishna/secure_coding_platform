@@ -13,7 +13,7 @@ def run_test():
         # --- 1. Define Connection Settings ---
         host = os.getenv("CHROMA_HOST", "vector_db")
         port = int(os.getenv("CHROMA_PORT", 8000))
-        collection_name = "asvs_v5"
+        collection_name = "security_guidelines_v1"
 
         logging.info(f"Attempting to connect to ChromaDB at: http://{host}:{port}")
 

@@ -17,10 +17,20 @@ logger = logging.getLogger(__name__)
 
 # --- Data Definitions ---
 
-FRAMEWORK_DATA = {
-    "name": "OWASP ASVS v5.0",
-    "description": "The OWASP Application Security Verification Standard (ASVS) v5.0 is a standard for performing application security verifications."
-}
+FRAMEWORKS_DATA = [
+    {
+        "name": "asvs",
+        "description": "The OWASP Application Security Verification Standard (ASVS) is a standard for performing application security verifications."
+    },
+    {
+        "name": "proactive_controls",
+        "description": "OWASP Proactive Controls for Developers."
+    },
+    {
+        "name": "cheatsheets",
+        "description": "OWASP Cheatsheets Series."
+    }
+]
 
 AGENT_DEFINITIONS = [
     {
@@ -134,6 +144,30 @@ AGENT_DEFINITIONS = [
             "keywords": "input validation, output encoding, SQL injection (SQLi), Cross-Site Scripting (XSS), command injection, type validation, sanitization, denylisting, allowlisting, parameter tampering",
             "metadata_filter": {"control_family": ["Encoding and Sanitization", "Validation and Business Logic"]}
         }
+    },
+    {
+        "name": "BuildDeploymentAgent",
+        "description": "Ensures security in the build and deployment pipeline, including CI/CD security and reproducible builds.",
+        "domain_query": {
+            "keywords": "build security, deployment security, CI/CD, pipeline security, reproducible builds, software bill of materials, SBOM, artifact integrity, git security",
+            "metadata_filter": {"control_family": ["Build and Deployment"]}
+        }
+    },
+    {
+        "name": "ClientSideAgent",
+        "description": "Analyzes client-side security risks, including DOM XSS, WebRTC, and modern frontend framework vulnerabilities.",
+        "domain_query": {
+            "keywords": "client-side security, DOM XSS, WebRTC, frontend security, CORS, CSP, subresource integrity, javascript security, browser security",
+            "metadata_filter": {"control_family": ["Client Side"]}
+        }
+    },
+    {
+        "name": "CloudContainerAgent",
+        "description": "Focuses on cloud-native security, container hardening, and orchestration security.",
+        "domain_query": {
+            "keywords": "cloud security, container security, docker security, kubernetes, orchestration, cloud misconfiguration, serverless security, cloud storage, IAM roles",
+            "metadata_filter": {"control_family": ["Cloud and Container"]}
+        }
     }
 ]
 
@@ -143,21 +177,36 @@ for agent in AGENT_DEFINITIONS:
     
     # Define the new template strings
     audit_template = """You are an expert security auditor. Your task is to audit the provided code for vulnerabilities based on the given patterns.
+
+<CONTEXT_EXPLANATION>
+The <VULNERABILITY_PATTERNS> section below contains specific security requirements and anti-patterns retrieved from the knowledge base.
+Each pattern may include:
+- **Description**: The core security requirement.
+- **Vulnerable Code Example**: A snippet showing insecure implementation (Anti-Pattern).
+- **Secure Code Example**: A snippet showing the correct implementation (Reference).
+
+Use these patterns to identify similar vulnerable logic in the <CODE_BUNDLE>.
+</CONTEXT_EXPLANATION>
+
 1.  Analyze the `<CODE_BUNDLE>` below.
-2.  Use the `<VULNERABILITY_PATTERNS>` to identify specific anti-patterns and vulnerabilities.
+2.  Compare the code against the `<VULNERABILITY_PATTERNS>`.
 3.  For each vulnerability you find, provide a detailed finding. This MUST include:
     - A concise 'title'.
-    - A 'description' of the root cause.
+    - A 'description' of the root cause, referencing the specific pattern matched.
     - 'severity' and 'confidence' ratings.
     - The 'line_number' where the vulnerability occurs.
     - A full CVSS 3.1 'cvss_vector' string (e.g., 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H').
     - A detailed 'remediation' guide.
     - A list of technical 'keywords' that characterize the vulnerability.
-4.  Do NOT suggest any code fixes.
+4.  Do NOT suggest any code fixes in this step.
 
 <VULNERABILITY_PATTERNS>
 {vulnerability_patterns}
 </VULNERABILITY_PATTERNS>
+
+<REFERENCE_SECURE_PATTERNS>
+{secure_patterns}
+</REFERENCE_SECURE_PATTERNS>
 
 <CODE_BUNDLE>
 {code_bundle}
@@ -167,19 +216,29 @@ Respond ONLY with a valid JSON object that conforms to the InitialAnalysisRespon
 """
 
     remediation_template = """You are an expert security engineer. Your task is to find and fix vulnerabilities in the provided code.
+
+<CONTEXT_EXPLANATION>
+The data below is retrieved from the specialized security knowledge base:
+- <VULNERABILITY_PATTERNS>: Contains descriptions and examples of insecure code (Anti-Patterns).
+- <SECURE_PATTERNS>: Contains vetted, secure code examples (Positive Patterns) that demonstrate the correct implementation.
+</CONTEXT_EXPLANATION>
+
 1.  Analyze the `<CODE_BUNDLE>` below.
-2.  Use the `<VULNERABILITY_PATTERNS>` to identify specific anti-patterns and vulnerabilities.
-3.  Use the `<SECURE_PATTERNS>` as a guide to write correct and secure code.
+2.  Identify vulnerabilities using the `<VULNERABILITY_PATTERNS>`.
+3.  **CRITICAL**: When generating the fix, you MUST follow the patterns in `<SECURE_PATTERNS>`.
+    - If a specific secure code example is provided for the vulnerability, adapt it to the context of the code bundle.
+    - Ensure your fix addresses the root cause described in the Anti-Pattern.
 4.  For each vulnerability you find, provide a detailed finding AND a suggested code fix. The finding MUST include:
     - A concise 'title'.
     - A 'description' of the root cause.
     - 'severity' and 'confidence' ratings.
     - The 'line_number' where the vulnerability occurs.
-    - A full CVSS 3.1 'cvss_vector' string (e.g., 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H').
+    - A full CVSS 3.1 'cvss_vector' string.
     - A detailed 'remediation' guide.
-    - A list of technical 'keywords' that characterize the vulnerability.
+    - A list of technical 'keywords'.
     - A 'fix' object containing the exact 'original_snippet' to be replaced and the new 'code'.
-5.  The `code` in your `fix` object must be a **surgical, drop-in replacement** for the `original_snippet`. It must ONLY contain the specific lines of code that are changing. Do NOT include any surrounding, unchanged code like function or class definitions, import statements, or block delimiters unless those elements are part of the vulnerable snippet itself.
+5.  The `code` in your `fix` object must be a **surgical, drop-in replacement** for the `original_snippet`. It must ONLY contain the specific lines of code that are changing.
+
 <VULNERABILITY_PATTERNS>
 {vulnerability_patterns}
 </VULNERABILITY_PATTERNS>
@@ -200,7 +259,7 @@ Respond ONLY with a valid JSON object that conforms to the InitialAnalysisRespon
         "name": f"{agent_name} - Quick Audit",
         "template_type": "QUICK_AUDIT",
         "agent_name": agent_name,
-        "version": 1,
+        "version": 2,
         "template_text": audit_template
     })
     
@@ -209,19 +268,34 @@ Respond ONLY with a valid JSON object that conforms to the InitialAnalysisRespon
         "name": f"{agent_name} - Detailed Remediation",
         "template_type": "DETAILED_REMEDIATION",
         "agent_name": agent_name,
-        "version": 1,
+        "version": 2,
         "template_text": remediation_template
     })
     
-# Add the common CHAT prompt template (this one remains unchanged)
+# Add the common CHAT prompt template
 PROMPT_TEMPLATES.append({
     "name": "SecurityAdvisorPrompt",
     "template_type": "CHAT",
     "agent_name": "SecurityAdvisorAgent",
-    "version": 1,
+    "version": 2,
     "template_text": """You are an expert AI Security Advisor. Your role is to provide clear, accurate, and helpful advice on software security.
-Use the provided conversation history and security context to answer the user's question.
-If the context is not relevant, rely on your general security knowledge. Be concise and helpful.
+
+<CONTEXT_EXPLANATION>
+You have access to a specialized security knowledge base.
+The user has enabled the following security frameworks for this session:
+{framework_context}
+</CONTEXT_EXPLANATION>
+
+<INSTRUCTIONS>
+1.  **Analyze the User's Question**.
+2.  **Review the <SECURITY_CONTEXT_FROM_KNOWLEDGE_BASE>**. This section contains retrieved documents relevant to the question.
+    - If you find relevant information in the context, **cite the source** (e.g., "According to the OWASP Cheatsheet on X...", "ASVS Requirement 5.1.2 states...").
+    - Prioritize this context over general knowledge.
+3.  **Look for Code Patterns**: The context may contain `[[LANGUAGE PATTERNS]]` with `Vulnerable` and `Secure` examples.
+    - If the user asks for code examples, prefer using these vetted patterns.
+4.  **Be Practical**: Provide actionable advice. If the context suggests a specific library or approach, recommend it.
+5.  **Fallback**: If the context is empty or irrelevant, rely on your general expert knowledge but mention that you are doing so.
+</INSTRUCTIONS>
 
 <CONVERSATION_HISTORY>
 {history_str}
@@ -233,7 +307,8 @@ If the context is not relevant, rely on your general security knowledge. Be conc
 
 Current User Question: "{user_question}"
 
-Provide your response as a single, helpful answer in a valid JSON object conforming to the ChatResponse schema."""
+Respond ONLY with a valid JSON object conforming to the ChatResponse schema.
+"""
 })
 
 
@@ -253,23 +328,25 @@ async def main():
 
         # --- DELETION LOGIC ---
         # Get names of all items to be managed by this script
-        framework_name = FRAMEWORK_DATA['name']
+        framework_names_in_script = [fw['name'] for fw in FRAMEWORKS_DATA]
         agent_names = [agent['name'] for agent in AGENT_DEFINITIONS] + ["SecurityAdvisorAgent"]
 
         logger.info("Deleting existing data managed by this script to ensure a clean slate...")
-        # Delete in reverse order of dependency: mappings -> prompts -> agents -> frameworks
-        # This is safer than deleting all records from the tables.
         
-        # 1. Delete framework-agent mappings associated with the framework
-        framework_to_delete = await session.execute(
+        # 1. Delete framework-agent mappings associated with ANY of the target frameworks
+        # Also clean up legacy names
+        target_framework_names = framework_names_in_script + ["OWASP ASVS", "OWASP ASVS v5.0", "OWASP Cheatsheets", "OWASP Proactive Controls"]
+        
+        frameworks_to_clear = await session.execute(
             select(db_models.Framework)
             .options(selectinload(db_models.Framework.agents))
-            .where(db_models.Framework.name == framework_name)
+            .where(db_models.Framework.name.in_(target_framework_names))
         )
-        framework_obj = framework_to_delete.scalars().first()
-        if framework_obj:
+        for framework_obj in frameworks_to_clear.scalars().all():
+            logger.info(f"Clearing agent mappings for framework: {framework_obj.name}")
             framework_obj.agents = []
-            await session.commit()
+        
+        await session.commit()
 
         # 2. Delete prompt templates
         await session.execute(delete(db_models.PromptTemplate).where(db_models.PromptTemplate.agent_name.in_(agent_names)))
@@ -277,27 +354,28 @@ async def main():
         # 3. Delete agents
         await session.execute(delete(db_models.Agent).where(db_models.Agent.name.in_(agent_names)))
 
-        # 4. Delete framework
-        await session.execute(delete(db_models.Framework).where(db_models.Framework.name == framework_name))
-        
+        # 4. Delete frameworks managed by this script
+        await session.execute(delete(db_models.Framework).where(db_models.Framework.name.in_(target_framework_names)))
+
         await session.commit()
         logger.info("Deletion of old data complete.")
         # --- END DELETION LOGIC ---
 
 
-        # 1. Create Framework
-        logger.info(f"Creating framework: {FRAMEWORK_DATA['name']}")
-        framework_create_model = api_models.FrameworkCreate(**FRAMEWORK_DATA)
-        # Removed try/except to ensure it fails loudly if something is wrong
-        db_framework = await framework_repo.create_framework(framework_create_model)
-        logger.info(f"Framework '{db_framework.name}' created with ID: {db_framework.id}")
+        # 1. Create Frameworks
+        created_frameworks = {}
+        for fw_def in FRAMEWORKS_DATA:
+            logger.info(f"Creating framework: {fw_def['name']}")
+            framework_create_model = api_models.FrameworkCreate(**fw_def)
+            db_framework = await framework_repo.create_framework(framework_create_model)
+            created_frameworks[fw_def['name']] = db_framework
+            logger.info(f"Framework '{db_framework.name}' created with ID: {db_framework.id}")
 
         # 2. Create Agents
         created_agent_ids = []
         for agent_def in AGENT_DEFINITIONS:
             logger.info(f"Creating agent: {agent_def['name']}")
             agent_create_model = api_models.AgentCreate(**agent_def)
-            # Removed try/except
             db_agent = await agent_repo.create_agent(agent_create_model)
             created_agent_ids.append(db_agent.id)
 
@@ -307,10 +385,25 @@ async def main():
             template_create_model = api_models.PromptTemplateCreate(**template_def)
             await prompt_repo.create_template(template_create_model)
 
-        # 4. Associate Agents with Framework
-        logger.info(f"Associating {len(created_agent_ids)} agents with framework '{db_framework.name}'.")
+        # 4. Associate Agents with Frameworks
+        # For now, we associate ALL agents with ALL frameworks for simplicity, 
+        # or we could strictly associate them with ASVS. 
+        # The user seems to want them "visible", so having agents is good?
+        # Actually, previously only ASVS had agents. 
+        # Proactive Controls and Cheatsheets are "Knowledge Base" (mostly context), 
+        # but agents might reference them if patterns match.
+        # Let's associate agents with ALL of them so they can be selected in the chat modal 
+        # (if the modal filters by "has agents" ?? No, modal just shows frameworks).
+        
+        # Let's associate agents primarily with ASVS as before, 
+        # but maybe also the others so they appear "functional".
+        # If I don't associate agents, they might appear as "None" in the table (which is what the user saw for ASVS? wait).
+        
+        # Let's associate agents with ALL frameworks in this list to be safe and consistent.
         if created_agent_ids:
-            await framework_repo.update_agent_mappings_for_framework(db_framework.id, created_agent_ids)
+            for fw_name, db_fw in created_frameworks.items():
+                logger.info(f"Associating {len(created_agent_ids)} agents with framework '{db_fw.name}'.")
+                await framework_repo.update_agent_mappings_for_framework(db_fw.id, created_agent_ids)
         
         logger.info("Database population script finished successfully!")
 

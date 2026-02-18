@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 CHROMA_HOST = os.getenv("CHROMA_HOST", "vector_db")
 CHROMA_PORT = int(os.getenv("CHROMA_PORT", 8000))
-ASVS_COLLECTION_NAME = "asvs_v5"
+SECURITY_GUIDELINES_COLLECTION = "security_guidelines_v1"
 CWE_COLLECTION_NAME = "cwe_collection"
 MODEL_NAME = "all-MiniLM-L6-v2"
 
@@ -52,7 +52,7 @@ def test_connection(host: str, port: int) -> bool:
 class RAGService:
     """A service for interacting with the ChromaDB vector store."""
     _client: Optional[ClientAPI] = None
-    _asvs_collection: Optional[Any] = None
+    _guidelines_collection: Optional[Any] = None
     _cwe_collection: Optional[Any] = None
 
     def __init__(self):
@@ -81,11 +81,11 @@ class RAGService:
                 model_name=MODEL_NAME
             )
             
-            logging.info(f"Getting or creating collection: {ASVS_COLLECTION_NAME}")
-            asvs_collection = client.get_or_create_collection(
-                name=ASVS_COLLECTION_NAME, embedding_function=embedding_function  # type: ignore
+            logging.info(f"Getting or creating collection: {SECURITY_GUIDELINES_COLLECTION}")
+            guidelines_collection = client.get_or_create_collection(
+                name=SECURITY_GUIDELINES_COLLECTION, embedding_function=embedding_function  # type: ignore
             )
-            logging.info(f"✓ Collection '{ASVS_COLLECTION_NAME}' ready. Count: {asvs_collection.count()}")
+            logging.info(f"✓ Collection '{SECURITY_GUIDELINES_COLLECTION}' ready. Count: {guidelines_collection.count()}")
 
             logging.info(f"Getting or creating collection: {CWE_COLLECTION_NAME}")
             cwe_collection = client.get_or_create_collection(
@@ -94,7 +94,7 @@ class RAGService:
             logging.info(f"✓ Collection '{CWE_COLLECTION_NAME}' ready. Count: {cwe_collection.count()}")
             
             self._client = client
-            self._asvs_collection = asvs_collection
+            self._guidelines_collection = guidelines_collection
             self._cwe_collection = cwe_collection
 
             logging.info(f"✓ RAGService fully initialized and collections loaded.")
@@ -113,35 +113,56 @@ class RAGService:
                     logger.critical(f"  {key}={value}")
             
             self._client = None
-            self._asvs_collection = None
+            self._guidelines_collection = None
             raise
 
     def add(
         self, documents: List[str], metadatas: List[Dict[str, Any]], ids: List[str]
     ):
-        """Adds documents to the collection."""
-        if not self._asvs_collection:
+        """Adds or updates documents in the collection (upsert)."""
+        if not self._guidelines_collection:
             raise ConnectionError("ChromaDB collection is not available.")
-        self._asvs_collection.add(
+        logger.info(
+            f"ChromaDB upsert(): Upserting {len(ids)} documents. IDs: {ids}. "
+            f"Collection count before: {self._guidelines_collection.count()}"
+        )
+        self._guidelines_collection.upsert(
             documents=documents, metadatas=metadatas, ids=ids
+        )
+        logger.info(
+            f"ChromaDB upsert(): Collection count after: {self._guidelines_collection.count()}"
         )
 
     def get_by_framework(self, framework_name: str) -> Dict[str, Any]:
         """Retrieves all documents for a given framework using a metadata filter."""
-        if not self._asvs_collection:
+        if not self._guidelines_collection:
             raise ConnectionError("ChromaDB collection is not available.")
 
         # Use a 'where' filter to efficiently query ChromaDB for documents
         # with the matching framework_name in their metadata.
         where_filter: Where = {"framework_name": {"$eq": framework_name}}
 
-        return self._asvs_collection.get(
+        return self._guidelines_collection.get(
             where=where_filter, include=["metadatas", "documents"]
         )
 
+    def get_framework_stats(self) -> Dict[str, int]:
+        """Returns the document count for each standard framework."""
+        if not self._guidelines_collection:
+            raise ConnectionError("ChromaDB collection is not available.")
+            
+        stats = {}
+        for fw in ["asvs", "proactive_controls", "cheatsheets"]:
+            result = self._guidelines_collection.get(
+                where={"framework_name": {"$eq": fw}},
+                include=[] # Count only
+            )
+            stats[fw] = len(result.get("ids", []))
+        return stats
+
     def delete_by_framework(self, framework_name: str) -> int:
         """Deletes all documents associated with a specific framework."""
-        if not self._asvs_collection:
+        if not self._guidelines_collection:
             raise ConnectionError("ChromaDB collection is not available.")
 
         # Get all document IDs for the framework first
@@ -158,9 +179,9 @@ class RAGService:
 
     def delete(self, ids: List[str]):
         """Deletes documents from the collection by their IDs."""
-        if not self._asvs_collection:
+        if not self._guidelines_collection:
             raise ConnectionError("ChromaDB collection is not available.")
-        self._asvs_collection.delete(ids=ids)
+        self._guidelines_collection.delete(ids=ids)
 
     def query_cwe_collection(self, query_texts: List[str], n_results: int = 3) -> Dict[str, Any]:
         """Queries the CWE collection for semantic matches."""
@@ -179,16 +200,16 @@ class RAGService:
             logger.error(f"Failed to query ChromaDB collection '{CWE_COLLECTION_NAME}': {e}", exc_info=True)
             raise
 
-    def query_asvs(self, query_texts: List[str], n_results: int = 5, where: Optional[Where] = None) -> Dict[str, Any]:
-        """Queries the ASVS collection."""
-        logger.info(f"DEBUG: Executing RAG query_asvs. Query texts: {query_texts}, Where filter: {where}")
-        if not self._asvs_collection:
-            logger.error("ASVS collection is not available.")
-            raise ConnectionError("ASVS collection not available in RAGService.")
+    def query_guidelines(self, query_texts: List[str], n_results: int = 5, where: Optional[Where] = None) -> Dict[str, Any]:
+        """Queries the Security Guidelines collection."""
+        logger.info(f"DEBUG: Executing RAG query_guidelines. Query texts: {query_texts}, Where filter: {where}")
+        if not self._guidelines_collection:
+            logger.error("Security Guidelines collection is not available.")
+            raise ConnectionError("Security Guidelines collection not available in RAGService.")
         
         try:
             logger.debug(f"Querying collection with {len(query_texts)} queries, n_results={n_results}")
-            results = self._asvs_collection.query(
+            results = self._guidelines_collection.query(
                 query_texts=query_texts, 
                 n_results=n_results,
                 where=where
@@ -196,7 +217,7 @@ class RAGService:
             logger.debug(f"Query successful, returned {len(results.get('ids', []))} result sets")
             return results
         except Exception as e:
-            logger.error(f"Failed to query ChromaDB collection '{ASVS_COLLECTION_NAME}': {e}", exc_info=True)
+            logger.error(f"Failed to query ChromaDB collection '{SECURITY_GUIDELINES_COLLECTION}': {e}", exc_info=True)
             raise
 
 

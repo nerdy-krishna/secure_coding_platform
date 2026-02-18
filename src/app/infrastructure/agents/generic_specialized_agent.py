@@ -129,40 +129,83 @@ async def analysis_node(state: SpecializedAgentState, config: Dict[str, Any]) ->
     metadata_filter = domain_query.get("metadata_filter")
 
     # Transform the filter for ChromaDB's '$in' or '$eq' operators
-    chroma_where_filter = {}
+    # Enforce that agents only see 'scan_ready' documents (e.g. ASVS, Custom)
+    # and not 'Chat Only' docs (e.g. Proactive Controls, Cheatsheets) unless explicitly requested?
+    # For now, we enforce scan_ready=True for all agents using this node.
+    
+    # Base condition: scan_ready must be True
+    and_conditions: List[Dict[str, Any]] = [{"scan_ready": {"$eq": True}}]
+
     if metadata_filter:
-        or_clauses = []
         for key, value in metadata_filter.items():
             if isinstance(value, list):
                 if len(value) == 1:
                     # Use a simple $eq for single-item lists
-                    chroma_where_filter[key] = {"$eq": value[0]}
+                    and_conditions.append({key: {"$eq": value[0]}})
                 else:
                     # Build a list of $eq clauses for an $or operation
-                    for item in value:
-                        or_clauses.append({key: {"$eq": item}})
+                    or_clauses = [{key: {"$eq": item}} for item in value]
+                    and_conditions.append({"$or": or_clauses})
             else:
                 # Handle non-list values as a simple equality check
-                chroma_where_filter[key] = {"$eq": value}
-        
-        if or_clauses:
-            chroma_where_filter["$or"] = or_clauses
+                and_conditions.append({key: {"$eq": value}})
+    
+    # If we have multiple conditions, wrap them in an $and
+    if len(and_conditions) > 1:
+        chroma_where_filter = {"$and": and_conditions}
+    else:
+        # Should be just the scan_ready check
+        chroma_where_filter = and_conditions[0]
 
-    retrieved_guidelines = rag_service.query_asvs(
+    retrieved_guidelines = rag_service.query_guidelines(
         query_texts=[query_keywords], n_results=10, where=chroma_where_filter
     )
     documents = retrieved_guidelines.get("documents", [[]])[0]
     logger.info(f"[{agent_name}] RAG query retrieved {len(documents)} documents for context.")
 
+    # Determine language from filename
+    language_map = {
+        ".py": "PYTHON", ".js": "JAVASCRIPT", ".ts": "TYPESCRIPT", ".java": "JAVA",
+        ".cs": "C#", ".go": "GO", ".cpp": "C++", ".c": "C", ".php": "PHP",
+        ".rb": "RUBY", ".rs": "RUST", ".swift": "SWIFT", ".kt": "KOTLIN",
+        ".sh": "BASH", ".sql": "SQL", ".tf": "TERRAFORM"
+    }
+    file_ext = "." + filename.split(".")[-1].lower() if "." in filename else ""
+    target_lang = language_map.get(file_ext, "GENERIC")
+
     vulnerability_patterns = []
     secure_patterns = []
     if documents:
         for doc in documents:
-            vp_match = re.search(r'\*\*Vulnerability Pattern \(What to look for\):\*\*(.*?)(?=\*\*Secure Pattern|\Z)', doc, re.DOTALL)
-            sp_match = re.search(r'\*\*Secure Pattern \(What to enforce\):\*\*(.*)', doc, re.DOTALL)
+            # 1. Extract Generic Patterns (Handle old and new headers)
+            vp_match = re.search(r'\*\*Vulnerability Pattern \(.*?\):\*\*(.*?)(?=\*\*Secure Pattern|\[\[|\Z)', doc, re.DOTALL)
+            sp_match = re.search(r'\*\*Secure Pattern \(.*?\):\*\*(.*?)(?=\[\[|\Z)', doc, re.DOTALL)
             
-            if vp_match: vulnerability_patterns.append(vp_match.group(1).strip())
-            if sp_match: secure_patterns.append(sp_match.group(1).strip())
+            gen_vp = vp_match.group(1).strip() if vp_match else ""
+            gen_sp = sp_match.group(1).strip() if sp_match else ""
+            
+            # 2. Extract Language-Specific Patterns
+            lang_vp = ""
+            lang_sp = ""
+            if target_lang != "GENERIC":
+                lang_header = f"[[{target_lang} PATTERNS]]"
+                lang_match = re.search(re.escape(lang_header) + r'(.*?)(?=\[\[|\Z)', doc, re.DOTALL)
+                if lang_match:
+                    lang_block = lang_match.group(1)
+                    # Extract Vulnerable/Secure code blocks within the language section
+                    # Format: Vulnerable:\n```\n...\n```\nSecure:\n```\n...\n```
+                    lvp = re.search(r'Vulnerable:\s*```(.*?)```', lang_block, re.DOTALL)
+                    lsp = re.search(r'Secure:\s*```(.*?)```', lang_block, re.DOTALL)
+                    
+                    if lvp: lang_vp = lvp.group(1).strip()
+                    if lsp: lang_sp = lsp.group(1).strip()
+
+            # 3. Prioritize: Use Language specific if available, else Generic
+            final_vp = lang_vp if lang_vp else gen_vp
+            final_sp = lang_sp if lang_sp else gen_sp
+            
+            if final_vp: vulnerability_patterns.append(final_vp)
+            if final_sp: secure_patterns.append(final_sp)
     
     vulnerability_patterns_str = "\n- ".join(vulnerability_patterns) if vulnerability_patterns else "No specific vulnerability patterns found."
     secure_patterns_str = "\n- ".join(secure_patterns) if secure_patterns else "No specific secure patterns found."
@@ -174,7 +217,7 @@ async def analysis_node(state: SpecializedAgentState, config: Dict[str, Any]) ->
     if not prompt_template:
         return {"error": f"No prompt template found for agent '{agent_name}' with type '{template_type}'."}
 
-    domain_scoping_instruction = f"You are an expert security auditor specializing in the following domain: '{agent_description}'. Your sole focus is on vulnerabilities related to this domain. Do not report findings outside of this specific scope."
+    domain_scoping_instruction = f"You are an expert security auditor specializing in the following domain: '{agent_description}'. Your sole focus is on vulnerabilities related to this domain. Do not report findings outside of this specific scope. IMPORTANT: If you suggest a fix, the 'fix' code MUST be different from the original code. Do not return a 'fix' that is identical to the source. If the provided code snippet lacks sufficient context to confidently identify a vulnerability or generate a correct fix, skip it rather than guessing. PRESERVE COMMENTS: When generating a fix, you MUST preserve all existing comments unless they pose a security risk. SCAN COMMENTS: Pay special attention to comments for hardcoded secrets, TODOs indicating security flaws, or sensitive data - these SHOULD be reported."
 
     prompt_text = (
         f"{domain_scoping_instruction}\n\n" +
@@ -185,7 +228,7 @@ async def analysis_node(state: SpecializedAgentState, config: Dict[str, Any]) ->
         )
     )
     
-    logger.info(f"DEBUG: [{agent_name}] Final prompt_text (first 500 chars):\n{prompt_text[:500]}")
+    logger.debug(f"[{agent_name}] Final prompt_text:\n{prompt_text}")
 
     llm_config_id = state.get("llm_config_id")
     if not llm_config_id:
@@ -254,6 +297,12 @@ async def analysis_node(state: SpecializedAgentState, config: Dict[str, Any]) ->
         )
 
         if workflow_mode == 'remediate' and initial_finding.fix:
+            # --- STRICT DIFF CHECK ---
+            if initial_finding.fix.code.strip() == initial_finding.fix.original_snippet.strip():
+                logger.warning(f"[{agent_name}] Discarding fix for {initial_finding.title} because the suggested fix is identical to the original snippet.")
+                continue
+            # --- END STRICT DIFF CHECK ---
+
             code_for_verification = state.get("file_content_for_verification")
             verified_suggestion = await _verify_and_correct_snippet(
                 llm_client=llm_client,

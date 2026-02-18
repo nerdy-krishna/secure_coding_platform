@@ -74,3 +74,21 @@ class RAGJobRepository:
         )
         await self.db.execute(stmt)
         await self.db.commit()
+
+    async def get_latest_job_for_framework(
+        self, framework_name: str, user_id: int
+    ) -> Optional[db_models.RAGPreprocessingJob]:
+        """Retrieves the most recent completed job for a framework to access raw content."""
+        stmt = (
+            select(db_models.RAGPreprocessingJob)
+            .where(
+                db_models.RAGPreprocessingJob.framework_name == framework_name,
+                db_models.RAGPreprocessingJob.user_id == user_id,
+                db_models.RAGPreprocessingJob.status == "COMPLETED",
+                db_models.RAGPreprocessingJob.raw_content.isnot(None),
+            )
+            .order_by(db_models.RAGPreprocessingJob.created_at.desc())
+            .limit(1)
+        )
+        result = await self.db.execute(stmt)
+        return result.scalars().first()

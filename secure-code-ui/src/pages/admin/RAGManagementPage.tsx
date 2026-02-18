@@ -1,12 +1,15 @@
-// src/pages/admin/RAGManagementPage.tsx
 import {
+  CloudUploadOutlined,
   DeleteOutlined,
   DownloadOutlined,
   EditOutlined,
   EyeOutlined,
-  InboxOutlined,
   PlusOutlined,
-  SendOutlined,
+  SecurityScanOutlined,
+  CheckOutlined,
+  CloseOutlined,
+  GlobalOutlined,
+  FileTextOutlined,
 } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { TableProps } from "antd";
@@ -15,28 +18,26 @@ import {
   Button,
   Card,
   Col,
-  Divider,
-  Empty,
+
   Form,
   Input,
   Modal,
   Popconfirm,
-  Radio,
   Row,
-  Select,
+
   Space,
   Spin,
-  Statistic,
   Table,
+  Tag,
   Tooltip,
   Typography,
-  Upload,
   message,
+  Switch,
 } from "antd";
 import type { RcFile } from "antd/es/upload";
 import { AxiosError } from "axios";
 import { saveAs } from "file-saver";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { frameworkService } from "../../shared/api/frameworkService";
 import { llmConfigService } from "../../shared/api/llmConfigService";
 import { ragService } from "../../shared/api/ragService";
@@ -48,28 +49,23 @@ import type {
   RAGDocument,
   RAGJobStatusResponse
 } from "../../shared/types/api";
+import { FrameworkIngestionModal } from "./FrameworkIngestionModal";
 
-const { Title, Paragraph, Text } = Typography;
-
-interface PreprocessorFormValues {
-  llm_config_id: string;
-  frameworkName?: string;
-  newFrameworkName?: string;
-}
+const { Title, Paragraph } = Typography;
 
 // --- Sub-component for Viewing Documents ---
 const ViewDocumentsModal: React.FC<{
-  framework: FrameworkRead;
+  frameworkName: string;
   visible: boolean;
   onClose: () => void;
-}> = ({ framework, visible, onClose }) => {
+}> = ({ frameworkName, visible, onClose }) => {
   const {
     data: documents,
     isLoading,
     isError,
   } = useQuery<RAGDocument[], Error>({
-    queryKey: ["ragDocuments", framework.id],
-    queryFn: () => ragService.getDocuments(framework.name),
+    queryKey: ["ragDocuments", frameworkName],
+    queryFn: () => ragService.getDocuments(frameworkName),
     enabled: visible,
   });
 
@@ -81,13 +77,19 @@ const ViewDocumentsModal: React.FC<{
       ];
     }
     const metadataKeys = [
-      ...new Set(documents.flatMap((doc) => Object.keys(doc.metadata))),
+      ...new Set(documents.flatMap((doc: RAGDocument) => Object.keys(doc.metadata))),
     ];
-    const metadataColumns = metadataKeys.map((key) => ({
-      title: key.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase()),
+    const metadataColumns = metadataKeys.map((key: string) => ({
+      title: key.replace(/_/g, " ").replace(/\b\w/g, (l: string) => l.toUpperCase()),
       dataIndex: ["metadata", key],
       key: key,
       ellipsis: true,
+      render: (text: unknown) => {
+        if (typeof text === 'boolean') {
+          return text ? <Tag color="green" > Yes </Tag> : <Tag color="red">No</Tag >;
+        }
+        return text?.toString();
+      }
     }));
 
     return [
@@ -97,6 +99,7 @@ const ViewDocumentsModal: React.FC<{
         dataIndex: "document",
         key: "document",
         ellipsis: true,
+        width: 400,
       },
       ...metadataColumns,
     ];
@@ -104,30 +107,139 @@ const ViewDocumentsModal: React.FC<{
 
   return (
     <Modal
-      title={`Documents for "${framework.name}"`}
-      open={visible}
-      onCancel={onClose}
-      footer={<Button onClick={onClose}>Close</Button>}
-      width={1200}
-      destroyOnClose
-    >
-      <Table
-        loading={isLoading}
-        dataSource={documents}
-        rowKey="id"
-        columns={columns}
-        scroll={{ x: true }}
-        locale={{
-          emptyText: isError
-            ? "Error loading documents."
-            : "No documents found for this framework.",
+      title= {`Documents for "${frameworkName}"`
+}
+open = { visible }
+onCancel = { onClose }
+footer = {< Button onClick = { onClose } > Close </Button>}
+width = { 1200}
+destroyOnClose
+  >
+  <Table
+        loading={ isLoading }
+dataSource = { documents }
+rowKey = "id"
+columns = { columns }
+scroll = {{ x: true }}
+locale = {{
+  emptyText: isError
+    ? "Error loading documents."
+    : "No documents found for this framework.",
         }}
       />
-    </Modal>
+  </Modal>
   );
 };
 
-// --- Sub-component for the main card ---
+// --- Standard Framework Card ---
+const StandardFrameworkCard: React.FC<{
+  name: string;
+  displayName: string;
+  description: string;
+  docCount: number;
+  type: 'scanning' | 'knowledge';
+  onUpdate: (name: string) => void;
+  onDelete: (name: string) => void;
+  onIngest: () => void; // Trigger ingestion/upload
+  isLoading?: boolean;
+}> = ({ name, displayName, description, docCount, type, onUpdate, onDelete, onIngest, isLoading }) => {
+  const [isViewModalVisible, setIsViewModalVisible] = useState(false);
+  const isInstalled = docCount > 0;
+
+  const actions = [];
+
+  if (isInstalled) {
+    actions.push(
+      <Tooltip title="View Documents" key = "view" >
+      <Button
+          type="text"
+          icon = {< EyeOutlined />}
+  onClick = {() => setIsViewModalVisible(true)}
+        />
+  </Tooltip>
+    );
+
+actions.push(
+  <Tooltip title="Edit / Add Languages" key = "update" >
+  <Button
+          type="text"
+          icon = {< EditOutlined />}
+  onClick = {() => onUpdate(name)}
+        />
+  </Tooltip>
+);
+  }
+
+// Update/Install Action (Re-upload / Re-fetch)
+actions.push(
+  <Tooltip title={ isInstalled? "Re-upload / Re-fetch Source": "Upload Framework" } key = "ingest" >
+  <Button
+        type="text"
+        icon = {< CloudUploadOutlined />}
+  onClick = { onIngest }
+        loading = { isLoading }
+  >
+  {!isInstalled && "Upload"}
+  </Button>
+  </Tooltip>
+);
+
+if (isInstalled) {
+  actions.push(
+    <Popconfirm
+        key="delete"
+        title = "Delete Standard Framework?"
+        description = "This will remove all ingested documents for this standard. You can re-ingest them later."
+        onConfirm = {() => onDelete(name)}
+okText = "Yes, Delete"
+cancelText = "No"
+  >
+  <Tooltip title="Delete Documents" >
+    <Button
+            danger
+type = "text"
+icon = {< DeleteOutlined />}
+          />
+  </Tooltip>
+  </Popconfirm>
+    );
+  }
+
+return (
+  <Col xs= { 24} sm = { 12} md = { 8} >
+    <Card
+        title={
+  <Space>
+    { displayName }
+  { docCount > 0 && <Tag color="green" > { docCount } docs </Tag> }
+  </Space>
+}
+actions = { actions }
+style = {{ height: "100%", minHeight: 180 }}
+      >
+  <div style={ { marginBottom: 8 } }>
+    { type === 'scanning' ? (
+      <Tag color= "blue" icon = {< SecurityScanOutlined />}> Scanning Standard </Tag>
+          ) : (
+  <Tag color= "orange" icon = {< FileTextOutlined />}> Knowledge Base </Tag>
+          )}
+</div>
+  < Paragraph ellipsis = {{ rows: 3 }}> { description } </Paragraph>
+    </Card>
+{
+  isViewModalVisible && (
+    <ViewDocumentsModal
+          frameworkName={ name }
+  visible = { isViewModalVisible }
+  onClose = {() => setIsViewModalVisible(false)
+}
+        />
+      )}
+</Col>
+  );
+};
+
+// --- Custom Framework Card ---
 const FrameworkCard: React.FC<{
   framework: FrameworkRead;
   onUpdate: (name: string) => void;
@@ -147,67 +259,107 @@ const FrameworkCard: React.FC<{
   });
 
   const actions = [
-    <Tooltip title="View Documents" key="view">
-      <Button
+    <Tooltip title="View Documents" key = "view" >
+    <Button
         type="text"
-        icon={<EyeOutlined />}
-        onClick={() => setIsViewModalVisible(true)}
+        icon = {< EyeOutlined />}
+onClick = {() => setIsViewModalVisible(true)}
       />
-    </Tooltip>,
-    <Tooltip title="Update Documents" key="update">
-      <Button
+  </Tooltip>,
+  < Tooltip title = "Edit / Add Languages" key = "update" >
+    <Button
         type="text"
-        icon={<EditOutlined />}
-        onClick={() => onUpdate(framework.name)}
+icon = {< EditOutlined />}
+onClick = {() => onUpdate(framework.name)}
       />
-    </Tooltip>,
-    <Popconfirm
-      key="delete"
-      title="Delete Framework?"
-      description="This action cannot be undone. It will remove the framework and its associations."
-      onConfirm={() => deleteMutation.mutate()}
-      okText="Yes, Delete"
-      cancelText="No"
-    >
-      <Tooltip title="Delete Framework">
-        <Button
+  </Tooltip>,
+  < Popconfirm
+key = "delete"
+title = "Delete Framework?"
+description = "This action cannot be undone. It will remove the framework and its associations."
+onConfirm = {() => deleteMutation.mutate()}
+okText = "Yes, Delete"
+cancelText = "No"
+  >
+  <Tooltip title="Delete Framework" >
+    <Button
           danger
-          type="text"
-          icon={<DeleteOutlined />}
-          loading={deleteMutation.isPending}
-        />
-      </Tooltip>
-    </Popconfirm>,
+type = "text"
+icon = {< DeleteOutlined />}
+loading = { deleteMutation.isPending }
+  />
+  </Tooltip>
+  </Popconfirm>,
   ];
 
-  return (
-    <Col xs={24} sm={12} md={8}>
-      <Card
-        title={framework.name}
-        actions={actions}
-        style={{ height: "100%", minHeight: 160 }}
+return (
+  <Col xs= { 24} sm = { 12} md = { 8} >
+    <Card
+        title={ framework.name }
+actions = { actions }
+style = {{ height: "100%", minHeight: 180 }}
       >
-        <Paragraph ellipsis={{ rows: 3 }}>{framework.description}</Paragraph>
-      </Card>
-      {isViewModalVisible && (
-        <ViewDocumentsModal
-          framework={framework}
-          visible={isViewModalVisible}
-          onClose={() => setIsViewModalVisible(false)}
+  <div style={ { marginBottom: 8 } }>
+    <Tag color="purple" icon = {< GlobalOutlined />}> Custom Framework </Tag>
+      </div>
+      < Paragraph ellipsis = {{ rows: 3 }}> { framework.description } </Paragraph>
+        </Card>
+{
+  isViewModalVisible && (
+    <ViewDocumentsModal
+          frameworkName={ framework.name }
+  visible = { isViewModalVisible }
+  onClose = {() => setIsViewModalVisible(false)
+}
         />
       )}
-    </Col>
+</Col>
   );
 };
 
-// --- Main Page Component ---
+// --- Add New Framework Card ---
+const AddFrameworkCard: React.FC<{ onClick: () => void }> = ({ onClick }) => (
+  <Col xs= { 24} sm = { 12} md = { 8} >
+    <Card
+      hoverable
+style = {{
+  height: "100%",
+    minHeight: 180,
+      borderStyle: 'dashed',
+        display: 'flex',
+          justifyContent: 'center',
+            alignItems: 'center',
+              background: '#fafafa'
+}}
+onClick = { onClick }
+  >
+  <div style={ { textAlign: 'center' } }>
+    <PlusOutlined style={ { fontSize: 32, color: '#1890ff', marginBottom: 16 } } />
+      < Paragraph strong style = {{ fontSize: 16, marginBottom: 0 }}> Add Custom Framework </Paragraph>
+        < Paragraph type = "secondary" > Upload CSV or define a new standard </Paragraph>
+          </div>
+          </Card>
+          </Col>
+);
+
 const RAGManagementPage: React.FC = () => {
-  const [form] = Form.useForm();
-  const preprocessorRef = useRef<HTMLDivElement>(null);
-  const [file, setFile] = useState<RcFile | null>(null);
-  const [pollingJobId, setPollingJobId] = useState<string | null>(null);
-  const [frameworkMode, setFrameworkMode] = useState<"existing" | "new">("existing");
   const queryClient = useQueryClient();
+
+  // State
+  const [pollingJobId, setPollingJobId] = useState<string | null>(null);
+  const [ingestionModalVisible, setIngestionModalVisible] = useState(false);
+  const [ingestionInitialValues, setIngestionInitialValues] = useState<{ frameworkName: string; isEdit?: boolean } | undefined>(undefined);
+
+  // Standard Framework Loading States
+  const [ingestLoading, setIngestLoading] = useState<string | null>(null);
+
+  // Modals for Standard Fetch
+  const [proactiveModalVisible, setProactiveModalVisible] = useState(false);
+  const [cheatsheetModalVisible, setCheatsheetModalVisible] = useState(false);
+  const [proactiveUrl, setProactiveUrl] = useState("https://github.com/OWASP/www-project-proactive-controls/tree/master/docs/the-top-10");
+  const [cheatsheetUrl, setCheatsheetUrl] = useState("https://github.com/OWASP/CheatSheetSeries/tree/master/cheatsheets");
+
+  const [scanReady, setScanReady] = useState(true);
 
   useEffect(() => {
     const storedJobId = sessionStorage.getItem("rag_processing_job_id");
@@ -216,14 +368,20 @@ const RAGManagementPage: React.FC = () => {
     }
   }, []);
 
+  // Queries
   const { data: frameworks = [], isLoading: isLoadingFrameworks } = useQuery<FrameworkRead[]>({
     queryKey: ["frameworks"],
     queryFn: frameworkService.getFrameworks,
   });
 
-  const { data: llmConfigs = [], isLoading: isLoadingLLMs } = useQuery<LLMConfiguration[]>({
+  const { data: llmConfigs = [] } = useQuery<LLMConfiguration[]>({
     queryKey: ["llmConfigs"],
     queryFn: llmConfigService.getLlmConfigs,
+  });
+
+  const { data: stats = { asvs: 0, proactive_controls: 0, cheatsheets: 0 }, isLoading: isLoadingStats, refetch: refetchStats } = useQuery<Record<string, number>>({
+    queryKey: ["ragStats"],
+    queryFn: ragService.getStats
   });
 
   const {
@@ -238,22 +396,9 @@ const RAGManagementPage: React.FC = () => {
     },
     enabled: !!pollingJobId,
     refetchOnWindowFocus: true,
-    refetchInterval: (query) => {
+    refetchInterval: (query: any /* eslint-disable-line @typescript-eslint/no-explicit-any */) => {
       const status = query.state.data?.status;
-      return status === "PROCESSING" ? 3000 : false;
-    },
-  });
-
-  const startMutation = useMutation({
-    mutationFn: (vars: FormData) => ragService.startPreprocessing(vars),
-    onSuccess: (data) => {
-      message.info(data.message);
-      sessionStorage.setItem("rag_processing_job_id", data.job_id);
-      setPollingJobId(data.job_id);
-    },
-    onError: (error: AxiosError) => {
-      const errorDetail = (error.response?.data as { detail?: string })?.detail || error.message;
-      message.error(`Failed to start job: ${errorDetail}`);
+      return status === "PROCESSING" || status === "PENDING_APPROVAL" ? 3000 : false;
     },
   });
 
@@ -262,10 +407,6 @@ const RAGManagementPage: React.FC = () => {
     onSuccess: () => {
       message.success("Job approved and is now processing in the background.");
       pollStatus();
-    },
-    onError: (error: AxiosError) => {
-      const errorDetail = (error.response?.data as { detail?: string })?.detail || error.message;
-      message.error(`Failed to approve job: ${errorDetail}`);
     },
   });
 
@@ -282,31 +423,22 @@ const RAGManagementPage: React.FC = () => {
     },
   });
 
-  const handleDownloadSampleCsv = () => {
-    const csvContent = [
-      "id,document,control_family,control_title",
-      '"CWE-79","The web application does not properly neutralize user-controllable input before it is placed in output that is used as a web page that is served to other users.","Improper Neutralization of Input","Cross-site Scripting (XSS)"',
-      '"NIST-AC-1","The organization develops, documents, and disseminates to [Assignment: organization-defined personnel or roles] an access control policy that: a. Is consistent with applicable laws, Executive Orders, directives, policies, regulations, standards, and guidelines; and b. Addresses purpose, scope, roles, responsibilities, management commitment, coordination among organizational entities, and compliance.","Access Control","Access Control Policy and Procedures"',
-    ].join("\n");
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    saveAs(blob, "framework_template.csv");
+  // Actions
+  const handleOpenIngestionModal = (frameworkName?: string, isEdit: boolean = false) => {
+    setIngestionInitialValues(frameworkName ? { frameworkName, isEdit } : undefined);
+    setIngestionModalVisible(true);
   };
 
-  const handleStart = async (values: PreprocessorFormValues) => {
-    if (!file) {
-      message.error("Please upload a CSV file.");
-      return;
-    }
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("llm_config_id", values.llm_config_id);
-    const frameworkName = frameworkMode === "new" ? values.newFrameworkName : values.frameworkName;
-    if (!frameworkName) {
-      message.error("Framework name is required.");
-      return;
-    }
-    formData.append("framework_name", frameworkName);
-    startMutation.mutate(formData);
+  const handleIngestionSuccess = (jobId: string) => {
+    setPollingJobId(jobId);
+    sessionStorage.setItem("rag_processing_job_id", jobId);
+    pollStatus();
+  };
+
+  const handleReset = () => {
+    setPollingJobId(null);
+    sessionStorage.removeItem("rag_processing_job_id");
+    setScanReady(true);
   };
 
   const handleDownload = () => {
@@ -323,276 +455,298 @@ const RAGManagementPage: React.FC = () => {
       });
 
       return [
-          `"${doc.id}"`,
-          `"${doc.enriched_content.replace(/"/g, '""')}"`,
-          ...metadataValues
+        `"${doc.id}"`,
+        `"${doc.enriched_content.replace(/"/g, '""')}"`,
+        ...metadataValues
       ].join(',');
     });
-    
+
     const csvContent = `${header}\n${rows.join("\n")}`;
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     saveAs(blob, `${framework_name}_processed.csv`);
   };
 
-  const handleUpdate = (name: string) => {
-    form.setFieldsValue({ frameworkName: name });
-    setFrameworkMode("existing");
-    preprocessorRef.current?.scrollIntoView({ behavior: "smooth" });
+  // Standard Framework Handlers
+  const handleUploadASVS = async (file: RcFile) => {
+    setIngestLoading('asvs');
+    try {
+      const res = await ragService.ingestASVS(file);
+      message.success(res.message);
+      refetchStats();
+      queryClient.invalidateQueries({ queryKey: ["ragDocuments", "asvs"] });
+    } catch (error: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
+      const errorDetail = (error.response?.data as { detail?: string })?.detail || error.message;
+      message.error(`ASVS ingestion failed: ${errorDetail}`);
+    } finally {
+      setIngestLoading(null);
+    }
   };
 
-  const handleReset = () => {
-    setPollingJobId(null);
-    sessionStorage.removeItem("rag_processing_job_id");
-    setFile(null);
-    form.resetFields();
+  const handleFetchProactive = async () => {
+    setIngestLoading('proactive');
+    try {
+      const res = await ragService.ingestProactiveControls(proactiveUrl);
+      message.success(res.message);
+      refetchStats();
+      setProactiveModalVisible(false);
+      queryClient.invalidateQueries({ queryKey: ["ragDocuments", "proactive_controls"] });
+    } catch (error: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
+      const errorDetail = (error.response?.data as { detail?: string })?.detail || error.message;
+      message.error(`Proactive Controls fetch failed: ${errorDetail}`);
+    } finally {
+      setIngestLoading(null);
+    }
   };
 
-  const renderContent = () => {
-    const currentJob = jobStatus;
+  const handleFetchCheatsheets = async () => {
+    setIngestLoading('cheatsheet');
+    try {
+      const res = await ragService.ingestCheatsheet(cheatsheetUrl);
+      message.success(res.message);
+      refetchStats();
+      setCheatsheetModalVisible(false);
+      queryClient.invalidateQueries({ queryKey: ["ragDocuments", "cheatsheets"] });
+    } catch (error: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
+      const errorDetail = (error.response?.data as { detail?: string })?.detail || error.message;
+      message.error(`Cheatsheets fetch failed: ${errorDetail}`);
+    } finally {
+      setIngestLoading(null);
+    }
+  };
 
-    if (!pollingJobId || !currentJob) {
+  const handleDeleteStandard = async (frameworkName: string) => {
+    try {
+      const docs = await ragService.getDocuments(frameworkName);
+      if (docs && docs.length > 0) {
+        const ids = docs.map(d => d.id);
+        await ragService.deleteDocuments(ids);
+        message.success(`Deleted ${ids.length} documents for ${frameworkName}.`);
+        refetchStats(); // Update counts
+      } else {
+        message.info("No documents to delete.");
+      }
+    } catch (error: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
+      message.error(`Failed to delete standard documents: ${error.message}`);
+    }
+  };
+
+  // --- Render Job Status Banner ---
+  const renderJobStatus = () => {
+    if (!pollingJobId || !jobStatus) return null;
+
+    if (jobStatus.status === "PENDING_APPROVAL") {
+      // This state is mostly handled by the modal now, but if the user closes it early:
       return (
-        <Form form={form} layout="vertical" onFinish={handleStart}>
-          <Row gutter={24} align="bottom">
-            <Col xs={24} md={12}>
-              <Form.Item label="Framework">
-                <Radio.Group value={frameworkMode} onChange={(e) => setFrameworkMode(e.target.value)}>
-                  <Radio value="existing">Update Existing</Radio>
-                  <Radio value="new">Create New</Radio>
-                </Radio.Group>
-              </Form.Item>
-              {frameworkMode === "existing" ? (
-                <Form.Item name="frameworkName" rules={[{ required: true, message: "Please select a framework." }]}>
-                  <Select
-                    showSearch
-                    placeholder="Select framework to update"
-                    loading={isLoadingFrameworks}
-                    options={frameworks.map((f) => ({ label: f.name, value: f.name }))}
-                  />
-                </Form.Item>
-              ) : (
-                <Form.Item name="newFrameworkName" rules={[{ required: true, message: "Please enter a name." }]}>
-                  <Input placeholder="Enter name for the new framework" />
-                </Form.Item>
-              )}
-            </Col>
-            <Col xs={24} md={12}>
-              <Form.Item label="LLM for Processing" name="llm_config_id" rules={[{ required: true, message: "Please select an LLM." }]}>
-                <Select
-                  placeholder="Select LLM"
-                  loading={isLoadingLLMs}
-                  options={llmConfigs.map((c) => ({ label: c.name, value: c.id }))}
-                />
-              </Form.Item>
-            </Col>
-            <Col span={24}>
-              <Alert
-                type="info"
-                style={{ marginBottom: 16 }}
-                message="CSV Format Requirements"
-                description={
-                  <>
-                    Your CSV file <b>must</b> contain an <b>`id`</b> column (for a unique control ID) and a <b>`document`</b> column (for the full control text).
-                    You can add any other columns for metadata (e.g., `control_family`, `cwe`). These will be used to enrich the knowledge base.
-                    <Button size="small" type="link" onClick={handleDownloadSampleCsv} style={{ display: 'block', paddingLeft: 0, marginTop: '8px' }}>
-                      Download Sample Template
-                    </Button>
-                  </>
-                }
-              />
-              <Form.Item label="Upload Raw Framework CSV" required>
-                <Upload.Dragger
-                  name="file"
-                  multiple={false}
-                  accept=".csv"
-                  fileList={file ? [file] : []}
-                  beforeUpload={(f) => { setFile(f); return false; }}
-                  onRemove={() => setFile(null)}
-                >
-                  <p className="ant-upload-drag-icon"><InboxOutlined /></p>
-                  <p>Click or drag CSV file to this area</p>
-                </Upload.Dragger>
-              </Form.Item>
-            </Col>
-          </Row>
-          <Button type="primary" htmlType="submit" loading={startMutation.isPending} disabled={!file}>
-            Get Cost Estimate
-          </Button>
-        </Form>
+        <Alert
+          type= "warning"
+      message = {`Job Pending Approval: ${jobStatus.framework_name}`
+    }
+    action = {
+            < Button size = "small" type = "primary" onClick = {() => approveMutation.mutate(pollingJobId!)} loading = { approveMutation.isPending } >
+  Approve
+  </Button>
+          }
+style = {{ marginBottom: 24 }}
+        />
       );
     }
 
-    if (currentJob.status === "PENDING_APPROVAL") {
-      return (
-        <Card type="inner" title={`Cost Estimation for "${currentJob.framework_name}"`}>
-          <Statistic
-            title="Total Estimated Cost"
-            value={Number(currentJob.estimated_cost?.total_estimated_cost) || 0}
-            precision={6}
-            prefix="$"
-          />
-          <Paragraph type="secondary" style={{ marginTop: 16 }}>
-            Please approve to start processing. This action will incur the estimated cost.
-          </Paragraph>
-          <Space style={{ marginTop: 16 }}>
-            <Popconfirm
-              title="Cancel this job?"
-              description="Are you sure you want to cancel this operation? This cannot be undone."
-              onConfirm={handleReset}
-              okText="Yes, Cancel"
-              cancelText="No"
-            >
-              <Button danger loading={approveMutation.isPending}>Cancel</Button>
-            </Popconfirm>
-            <Button
-              type="primary"
-              onClick={() => approveMutation.mutate(pollingJobId!)}
-              loading={approveMutation.isPending}
-            >
-              Approve & Process
-            </Button>
-          </Space>
-        </Card>
+if (jobStatus.status === "PROCESSING" || isPolling) {
+  return (
+    <Alert
+          type= "info"
+  message = {`Processing Framework: ${jobStatus.framework_name || '...'} `
+}
+description = "Enriching documents with LLM patterns. This may take a few minutes."
+icon = {< Spin />}
+showIcon
+style = {{ marginBottom: 24 }}
+        />
       );
     }
 
-    if (currentJob.status === "PROCESSING" || isPolling) {
-      return (
-        <Card type="inner" title={`Processing Job for "${currentJob?.framework_name || '...'}"`}>
-          <Spin tip="Processing in background... Status will update automatically.">
-            <Alert
-              message="Job is processing"
-              description="This may take a few minutes. You can safely navigate away from this page and come back later to check the status."
-              type="info"
-              showIcon
-            />
-          </Spin>
-        </Card>
-      );
-    }
-
-    if (currentJob.status === "COMPLETED") {
-      const finalPayload: PreprocessingResponse = {
-        framework_name: currentJob.framework_name,
-        llm_config_name: "",
-        processed_documents: currentJob.processed_documents || [],
-      };
-      return (
-        <Card type="inner" title="Processing Complete">
-          <Alert
-            type="success"
-            showIcon
-            message={`Successfully processed ${currentJob.processed_documents?.length || 0} documents for "${currentJob.framework_name}".`}
-            description="You can now download the processed file or ingest it directly into the knowledge base."
-          />
-          <Statistic
-            title="Final Actual Cost"
-            value={currentJob.actual_cost}
-            precision={6}
-            prefix="$"
-            style={{ margin: "16px 0" }}
-          />
-          <Space>
-            <Button icon={<DownloadOutlined />} onClick={handleDownload}>Download CSV</Button>
-            <Button
-              type="primary"
-              icon={<SendOutlined />}
-              onClick={() => ingestMutation.mutate(finalPayload)}
-              loading={ingestMutation.isPending}
-            >
-              Ingest into Database
-            </Button>
-            <Button onClick={handleReset}>Start New Job</Button>
-          </Space>
-        </Card>
-      );
-    }
-
-    if (currentJob.status === "FAILED") {
-      return (
-        <Card type="inner" title="Job Failed">
-          <Alert
-            type="error"
-            showIcon
-            message={`Processing failed for framework "${currentJob.framework_name}".`}
-            description={currentJob.error_message || "An unknown error occurred."}
-          />
-          <Button onClick={handleReset} style={{ marginTop: 16 }}>
-            Start New Job
-          </Button>
-        </Card>
-      );
-    }
-
-    return <Spin tip="Loading job status..."/>;
+if (jobStatus.status === "COMPLETED") {
+  const finalPayload: PreprocessingResponse = {
+    framework_name: jobStatus.framework_name,
+    llm_config_name: "",
+    processed_documents: jobStatus.processed_documents || [],
+    scan_ready: scanReady
   };
 
   return (
-    <Space direction="vertical" style={{ width: "100%" }} size="large">
-      <div ref={preprocessorRef}>
-        <Card
-          title={
-            <Space>
-              <EditOutlined />
-              <Title level={4} style={{ margin: 0 }}>
-                Framework Pre-processor & Ingestion
-              </Title>
-            </Space>
-          }
-        >
-          <Spin
-            spinning={startMutation.isPending || (isPolling && !jobStatus)}
-            tip={startMutation.isPending ? "Estimating cost..." : "Checking job status..."}
-          >
-            {renderContent()}
-          </Spin>
-        </Card>
+    <Card style= {{ marginBottom: 24, borderColor: '#52c41a' }
+}>
+  <Space direction="vertical" style = {{ width: '100%' }}>
+    <Alert type="success" message = {`Preprocessing Complete for ${jobStatus.framework_name}`} showIcon />
+
+      <div style={ { display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 } }>
+        <span>Mark as Scan Ready ? </span>
+          < Switch
+                checkedChildren = {< CheckOutlined />}
+unCheckedChildren = {< CloseOutlined />}
+checked = { scanReady }
+onChange = { setScanReady }
+  />
+  <Tooltip title="If enabled, this framework will be used by the security scanner agent. If disabled, it will be used for chat context only." >
+    <Typography.Text type="secondary" style = {{ fontSize: 12 }}> (?) </Typography.Text>
+      </Tooltip>
       </div>
 
-      <Divider />
+      < Space >
+      <Button icon={
+  <DownloadOutlined />} onClick={handleDownload}>Download Processed CSV</Button >
+    <Button
+                type="primary"
+  icon = {< PlusOutlined />}
+onClick = {() => ingestMutation.mutate(finalPayload)}
+loading = { ingestMutation.isPending }
+  >
+  Finalize Ingestion(Save to DB)
+    </Button>
+    < Button onClick = { handleReset } > Cancel / New </Button>
+      </Space>
+      </Space>
+      </Card>
+      );
+    }
 
-      <Title level={4}>Existing Frameworks</Title>
-      <Spin spinning={isLoadingFrameworks}>
-        <Row gutter={[16, 16]}>
-          {frameworks.length > 0 ? (
-            frameworks.map((fw) => (
-              <FrameworkCard key={fw.id} framework={fw} onUpdate={handleUpdate} />
-            ))
-          ) : (
-            !isLoadingFrameworks && (
-              <Col span={24}>
-                <Empty description="No frameworks found. Use the pre-processor above to create one." />
-              </Col>
-            )
-          )}
-          <Col xs={24} sm={12} md={8}>
-            <Card
-              hoverable
-              style={{
-                height: "100%",
-                border: "2px dashed #d9d9d9",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                minHeight: 150,
-              }}
-              onClick={() => {
-                handleReset();
-                setFrameworkMode("new");
-                preprocessorRef.current?.scrollIntoView({
-                  behavior: "smooth",
-                });
-              }}
-            >
-              <Space direction="vertical" align="center">
-                <PlusOutlined style={{ fontSize: 24, color: "#d9d9d9" }} />
-                <Text type="secondary">Add New Framework</Text>
-              </Space>
-            </Card>
-          </Col>
-        </Row>
-      </Spin>
-    </Space>
+if (jobStatus.status === "FAILED") {
+  return (
+    <Alert
+          type= "error"
+  message = "Job Failed"
+  description = { jobStatus.error_message }
+  action = {< Button size = "small" type = "primary" onClick = { handleReset } > Close </Button>
+}
+style = {{ marginBottom: 24 }}
+        />
+      );
+    }
+
+return null;
+  };
+
+return (
+  <Space direction= "vertical" style = {{ width: "100%" }} size = "large" >
+    <Title level={ 2 }> Framework Management </Title>
+
+{/* Global Job Status */ }
+{ renderJobStatus() }
+
+{/* Grid of Frameworks */ }
+<Spin spinning={ isLoadingFrameworks || isLoadingStats }>
+  <Row gutter={ [16, 16] }>
+
+    {/* 1. Add Custom Framework Card */ }
+    < AddFrameworkCard onClick = {() => handleOpenIngestionModal()} />
+
+{/* 2. Standard Frameworks */ }
+<StandardFrameworkCard
+            name="asvs"
+displayName = "OWASP ASVS"
+description = "Application Security Verification Standard. Best for comprehensive auditing."
+docCount = { stats.asvs || 0 }
+type = "scanning"
+onUpdate = {(name) => handleOpenIngestionModal(name, true)} // ASVS ignores this? No, we need explicit handler.
+onDelete = { handleDeleteStandard }
+onIngest = {() => {
+  document.getElementById('hidden-asvs-input')?.click();
+}}
+isLoading = { ingestLoading === 'asvs'}
+          />
+{/* Hidden Upload for ASVS */ }
+<input
+            type="file"
+id = "hidden-asvs-input"
+accept = ".csv"
+style = {{ display: 'none' }}
+onChange = {(e) => {
+  const file = e.target.files?.[0];
+  if (file) {
+    handleUploadASVS(file as unknown as RcFile);
+  }
+  e.target.value = ''; // Reset
+}}
+          />
+
+  < StandardFrameworkCard
+name = "proactive_controls"
+displayName = "OWASP Proactive Controls"
+description = "Developer-focused controls (C1-C10). Great for chat context."
+docCount = { stats.proactive_controls || 0 }
+type = "knowledge"
+onUpdate = {() => setProactiveModalVisible(true)}
+onDelete = { handleDeleteStandard }
+onIngest = {() => setProactiveModalVisible(true)}
+isLoading = { ingestLoading === 'proactive'}
+          />
+
+  < StandardFrameworkCard
+name = "cheatsheets"
+displayName = "OWASP Cheatsheets"
+description = "Topic-specific security cheatsheets."
+docCount = { stats.cheatsheets || 0 }
+type = "knowledge"
+onUpdate = {() => setCheatsheetModalVisible(true)}
+onDelete = { handleDeleteStandard }
+onIngest = {() => setCheatsheetModalVisible(true)}
+isLoading = { ingestLoading === 'cheatsheet'}
+          />
+
+{/* 3. Custom Frameworks */ }
+{
+  frameworks
+    .filter(fw => !['asvs', 'proactive_controls', 'cheatsheets'].includes(fw.name))
+    .map((fw) => (
+      <FrameworkCard
+                key= { fw.id }
+                framework = { fw }
+                onUpdate = {(name) => handleOpenIngestionModal(name, true)}
+              />
+            ))}
+</Row>
+  </Spin>
+
+{/* Modals */ }
+<FrameworkIngestionModal
+        visible={ ingestionModalVisible }
+onCancel = {() => setIngestionModalVisible(false)}
+onSuccess = { handleIngestionSuccess }
+initialValues = { ingestionInitialValues }
+llmConfigs = { llmConfigs }
+  />
+
+  <Modal
+        title="Fetch Proactive Controls"
+open = { proactiveModalVisible }
+onCancel = {() => setProactiveModalVisible(false)}
+onOk = { handleFetchProactive }
+confirmLoading = { ingestLoading === 'proactive'}
+okText = "Start Fetch"
+  >
+  <Form layout="vertical" >
+    <Form.Item label="GitHub URL" >
+      <Input value={ proactiveUrl } onChange = {(e) => setProactiveUrl(e.target.value)} />
+        </Form.Item>
+        </Form>
+        </Modal>
+
+        < Modal
+title = "Fetch Cheatsheets"
+open = { cheatsheetModalVisible }
+onCancel = {() => setCheatsheetModalVisible(false)}
+onOk = { handleFetchCheatsheets }
+confirmLoading = { ingestLoading === 'cheatsheet'}
+okText = "Start Fetch"
+  >
+  <Form layout="vertical" >
+    <Form.Item label="GitHub URL" >
+      <Input value={ cheatsheetUrl } onChange = {(e) => setCheatsheetUrl(e.target.value)} />
+        </Form.Item>
+        </Form>
+        </Modal>
+
+        </Space>
   );
 };
 

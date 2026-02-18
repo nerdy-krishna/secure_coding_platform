@@ -14,6 +14,7 @@ from app.core.services.admin_service import AdminService
 from app.core.services.scan_service import SubmissionService as ScanService
 from app.core.services.chat_service import ChatService
 from app.core.services.rag_preprocessor_service import RAGPreprocessorService
+from app.core.services.security_standards_service import SecurityStandardsService
 
 
 def get_llm_config_repository(
@@ -87,3 +88,10 @@ def get_scan_service(
     repo: ScanRepository = Depends(get_scan_repository),
 ) -> ScanService:
     return ScanService(repo)
+
+def get_security_standards_service(
+    job_repo: RAGJobRepository = Depends(get_rag_job_repository),
+    llm_config_repo: LLMConfigRepository = Depends(get_llm_config_repository),
+) -> SecurityStandardsService:
+    """Dependency provider for the SecurityStandardsService."""
+    return SecurityStandardsService(job_repo=job_repo, llm_config_repo=llm_config_repo)

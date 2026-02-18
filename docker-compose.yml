@@ -13,6 +13,7 @@ services:
       - SERVICE_NAME=app
     volumes:
       - ./src:/app/src
+      - ./scripts:/app/scripts
       - ./alembic.ini:/app/alembic.ini
       - ./alembic:/app/alembic
     ports:
@@ -138,20 +139,14 @@ services:
   fluentd:
     build: ./fluentd
     container_name: secure_coding_platform_fluentd
-    # --- START: FIX ---
-    # Pass credentials into the container so fluent.conf can access them
-    environment:
-      OPENSEARCH_USER: admin
-      OPENSEARCH_PASSWORD: ${OPENSEARCH_INITIAL_ADMIN_PASSWORD}
-    # --- END: FIX ---
     volumes:
       - ./fluentd/log:/fluentd/log
     ports:
       - "24224:24224"
       - "24224:24224/udp"
     depends_on:
-      opensearch:
-        condition: service_healthy
+      loki:
+        condition: service_started
     # Simple healthcheck that waits for the "fluentd worker is now running" message
     healthcheck:
       test: [ "CMD", "/bin/sh", "-c", "pgrep -f 'fluentd worker' > /dev/null || exit 1" ]
@@ -162,50 +157,32 @@ services:
     networks:
       - scpnetwork
 
-  opensearch:
-    image: opensearchproject/opensearch:2.15.0
-    container_name: secure_coding_platform_opensearch
-    environment:
-      - discovery.type=single-node
-      # --- START: FIX ---
-      # 1. Enable the security plugin
-      - plugins.security.disabled=false
-      # 2. Set the initial admin password. NOTE: This only works on the VERY FIRST RUN when the volume is empty.
-      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=${OPENSEARCH_INITIAL_ADMIN_PASSWORD}
-      # --- END: FIX ---
-      - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
+  loki:
+    image: grafana/loki:3.4.2
+    container_name: secure_coding_platform_loki
     ports:
-      - "9200:9200"
-      - "9600:9600"
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
     volumes:
-      - opensearch-data:/usr/share/opensearch/data
-    healthcheck:
-      # Updated healthcheck to use credentials
-      test: [ "CMD", "curl", "-f", "https://localhost:9200/_cluster/health", "-u", "admin:${OPENSEARCH_INITIAL_ADMIN_PASSWORD}", "--insecure" ]
-      interval: 15s
-      timeout: 5s
-      retries: 10
+      - loki-data:/loki
     networks:
       - scpnetwork
 
-  opensearch-dashboards:
-    image: opensearchproject/opensearch-dashboards:2.15.0
-    container_name: secure_coding_platform_dashboards
+  grafana:
+    image: grafana/grafana:11.5.2
+    container_name: secure_coding_platform_grafana
     ports:
-      - "5601:5601"
+      - "3000:3000"
     environment:
-      # --- START: FIX ---
-      # 1. Update the host to use https
-      OPENSEARCH_HOSTS: '["https://opensearch:9200"]'
-      # 2. Provide the username and password for the dashboard to connect to OpenSearch
-      OPENSEARCH_USERNAME: admin
-      OPENSEARCH_PASSWORD: ${OPENSEARCH_INITIAL_ADMIN_PASSWORD}
-      # 3. Disable SSL verification for the dashboard's internal connection (since we use default self-signed certs)
-      OPENSEARCH_SSL_VERIFICATIONMODE: none
-      # --- END: FIX ---
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
     depends_on:
-      opensearch:
-        condition: service_healthy
+      - loki
     networks:
       - scpnetwork
 
@@ -228,7 +205,8 @@ volumes:
   postgres_data:
   rabbitmq_data:
   chroma_data:
-  opensearch-data:
+  loki-data:
+  grafana-data:
 
 
 networks:

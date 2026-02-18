@@ -49,17 +49,48 @@ LOGGING_CONFIG = {
             "formatter": "json",
             "stream": "ext://sys.stdout",
         },
+        "file": {
+            "class": "logging.FileHandler",
+            "formatter": "json",
+            "filename": "app_debug.log",
+            "mode": "a",
+        },
     },
     "loggers": {
-        "app": {"handlers": ["default"], "level": "INFO", "propagate": False},
+        "app": {"handlers": ["default", "file"], "level": "INFO", "propagate": False},
         "uvicorn": {"handlers": ["default"], "level": "INFO", "propagate": False},
         "uvicorn.error": {"handlers": ["default"], "level": "INFO", "propagate": False},
         "uvicorn.access": {"handlers": ["default"], "level": "INFO", "propagate": False},
         "sqlalchemy": {"handlers": ["default"], "level": "WARNING", "propagate": False},
         "pika": {"handlers": ["default"], "level": "WARNING", "propagate": False},
-        "py.warnings": {"handlers": ["default"], "level": "WARNING", "propagate": False}, # ADDED
+        "py.warnings": {"handlers": ["default"], "level": "WARNING", "propagate": False},
         "langgraph": {"handlers": ["default"], "level": "INFO", "propagate": False},
         # Root logger
-        "": {"handlers": ["default"], "level": "INFO"},
+        "": {"handlers": ["default", "file"], "level": "INFO"},
     },
 }
+
+def update_logging_level(level: str):
+    """
+    Dynamically updates the logging level for the 'app' and root loggers.
+    """
+    level = level.upper()
+    valid_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+    if level not in valid_levels:
+        raise ValueError(f"Invalid log level: {level}")
+
+    # Update the configuration dictionary (for future reference if needed)
+    LOGGING_CONFIG["loggers"]["app"]["level"] = level
+    LOGGING_CONFIG["loggers"][""]["level"] = level
+
+    # Apply changes to active loggers
+    logger = logging.getLogger("app")
+    logger.setLevel(level)
+    logging.getLogger().setLevel(level)
+    
+    # Also update specific third-party loggers if we want them to be verbose in DEBUG
+    # However, for now let's keep it simple and just update the main app loggers
+    # as too much noise from libraries can be overwhelming.
+    
+    logger.info(f"Log level updated to {level}")
+

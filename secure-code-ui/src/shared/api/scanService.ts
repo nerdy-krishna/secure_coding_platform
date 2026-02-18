@@ -60,15 +60,15 @@ export const scanService = {
     search?: string,
   ): Promise<PaginatedProjectHistoryResponse> => {
     const response = await apiClient.get<PaginatedProjectHistoryResponse>("/projects", {
-        params: {
-            skip: (page - 1) * pageSize,
-            limit: pageSize,
-            search: search || undefined,
-        }
+      params: {
+        skip: (page - 1) * pageSize,
+        limit: pageSize,
+        search: search || undefined,
+      }
     });
     return response.data;
   },
-  
+
   /**
    * Searches for projects by name for autocomplete.
    */
@@ -91,13 +91,13 @@ export const scanService = {
     status?: string,
   ): Promise<PaginatedScanHistoryResponse> => {
     const response = await apiClient.get<PaginatedScanHistoryResponse>("/scans/history", {
-        params: {
-            page,
-            page_size: pageSize,
-            search: search || undefined,
-            sort_order: sortOrder,
-            status: status === 'All' ? undefined : status,
-        }
+      params: {
+        page,
+        page_size: pageSize,
+        search: search || undefined,
+        sort_order: sortOrder,
+        status: status === 'All' ? undefined : status,
+      }
     });
     return response.data;
   },
@@ -159,6 +159,11 @@ export const scanService = {
       `/scans/${scanId}/apply-fixes`,
       { finding_ids: findingIds } // Send the finding IDs in the request body
     );
+    return response.data;
+  },
+
+  createProject: async (name: string): Promise<{ id: string; name: string }> => {
+    const response = await apiClient.post<{ id: string; name: string }>("/projects", { name });
     return response.data;
   },
 

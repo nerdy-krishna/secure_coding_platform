@@ -149,7 +149,7 @@ class ChatAgent:
                 try:
                     # This assumes RAG service can filter by a list of frameworks
                     where_filter = {"framework_name": {"$in": frameworks}}
-                    retrieved_docs = rag_service.query_asvs(query_texts=[user_question], n_results=5, where=where_filter) # type: ignore
+                    retrieved_docs = rag_service.query_guidelines(query_texts=[user_question], n_results=5, where=where_filter) # type: ignore
                     docs = retrieved_docs.get("documents")
                     if docs and docs[0]:
                         rag_context = "\n".join(docs[0])
@@ -176,10 +176,18 @@ class ChatAgent:
         history.append(db_models.ChatMessage(role="user", content=user_question, timestamp=datetime.now(timezone.utc)))
         history_str = "\n".join([f"{msg.role}: {msg.content}" for msg in history])
 
+        # Build framework context string for the prompt
+        framework_context_str = "No specific frameworks selected."
+        if frameworks:
+             framework_context_str = "\n".join([f"- {fw}" for fw in frameworks])
+        else:
+             framework_context_str = "- Generic Security Advice (No specific framework selected)"
+
         final_prompt = base_prompt.format(
             history_str=history_str, 
             rag_context=rag_context,
-            user_question=user_question
+            user_question=user_question,
+            framework_context=framework_context_str
         )
 
         # 6. Generate final response

@@ -18,6 +18,7 @@ from app.api.v1.routers.admin_frameworks import framework_router
 from app.api.v1.routers.admin_agents import agent_router
 from app.api.v1.routers.admin_prompts import prompt_router
 from app.api.v1.routers.admin_rag import rag_router
+from app.api.v1.routers.admin_logs import router as logs_router
 from app.api.v1.routers.chat import router as chat_router
 from app.infrastructure.auth.backend import auth_backend
 from app.infrastructure.auth.core import fastapi_users
@@ -121,7 +122,7 @@ app.add_middleware(
     allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["Content-Type", "Authorization"],
+    allow_headers=["*"],
 )
 logger.info(f"CORS middleware configured for origins: {origins}")
 
@@ -170,6 +171,11 @@ app.include_router(
     rag_router, prefix="/api/v1/admin", tags=["Admin: RAG Management"]
 )
 
+# Router for System Logs
+app.include_router(
+    logs_router, prefix="/api/v1/admin", tags=["Admin: System Logs"]
+)
+
 # Router for Chat
 app.include_router(chat_router, prefix="/api/v1/chat", tags=["Chat"])
 
@@ -177,6 +183,14 @@ app.include_router(chat_router, prefix="/api/v1/chat", tags=["Chat"])
 # --- Include FastAPI Users Authentication Routers ---
 app.include_router(
     fastapi_users.get_auth_router(auth_backend),
+    prefix="/api/v1/auth",
+    tags=["Authentication"],
+)
+
+# Custom refresh endpoint (fastapi-users does not provide one with BearerTransport)
+from app.api.v1.routers.refresh import router as refresh_router
+app.include_router(
+    refresh_router,
     prefix="/api/v1/auth",
     tags=["Authentication"],
 )
