@@ -15,6 +15,8 @@ export interface AuthContextType {
   register: (credentials: UserRegisterData) => Promise<UserRead>;
   logout: () => Promise<void>;
   clearError: () => void;
+  isSetupCompleted: boolean;
+  checkSetupStatus: () => Promise<void>;
 }
 
 export const AuthContext = createContext<AuthContextType | undefined>(

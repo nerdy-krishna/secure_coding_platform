@@ -8,6 +8,7 @@ import {
   type UserLoginData,
   type UserRead,
   type UserRegisterData,
+  type SetupStatusResponse,
 } from "../../shared/types/api";
 import { AuthContext, type AuthContextType } from "./AuthContext";
 
@@ -22,9 +23,20 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [initialAuthChecked, setInitialAuthChecked] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [isSetupCompleted, setIsSetupCompleted] = useState<boolean>(true);
 
   const clearError = useCallback(() => {
     setError(null);
+  }, []);
+
+  const checkSetupStatus = useCallback(async () => {
+    try {
+      const response = await apiClient.get<SetupStatusResponse>("/setup/status");
+      setIsSetupCompleted(response.data.is_setup_completed);
+    } catch (e) {
+      console.error("AuthProvider: Failed to check setup status:", e);
+      setIsSetupCompleted(true);
+    }
   }, []);
 
   // Effect to synchronize the accessToken state with localStorage
@@ -76,10 +88,16 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
     }
   }, []);
 
-  // Effect to run on initial load to check for an existing session
+
+
+  // Effect to run on initial load to check for an existing session AND setup status
   useEffect(() => {
     const initializeAuth = async () => {
       setIsLoading(true);
+
+      // Check setup status first
+      await checkSetupStatus();
+
       if (accessToken) {
         await fetchAndSetUser();
       }
@@ -87,7 +105,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
       setIsLoading(false);
     };
     initializeAuth();
-  }, [accessToken, fetchAndSetUser]);
+  }, [accessToken, fetchAndSetUser, checkSetupStatus]);
 
   const login = useCallback(async (credentials: UserLoginData) => {
     setIsLoading(true);
@@ -153,11 +171,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
     accessToken,
     isLoading,
     initialAuthChecked,
+    isSetupCompleted,
     error,
     login,
     register,
     logout,
     clearError,
+    checkSetupStatus
   };
 
   return (

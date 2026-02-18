@@ -376,3 +376,16 @@ export interface LLMInteractionResponse {
   parsed_output?: Record<string, JsonValue> | null;
   error?: string | null;
 }
+
+// --- Setup Schemas ---
+export interface SetupStatusResponse {
+  is_setup_completed: boolean;
+}
+
+export interface SetupRequest {
+  admin_email: string;
+  admin_password: string;
+  llm_provider: string;
+  llm_api_key: string;
+  llm_model: string;
+}
