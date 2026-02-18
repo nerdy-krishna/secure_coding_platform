@@ -14,7 +14,7 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+# lib/
 lib64/
 parts/
 sdist/
@@ -168,7 +168,7 @@ Desktop.ini
 fluentd/log/
 fluentd/buffer/
 *.pos
-# .agent/
+.agent/
 *.txt
 debug_*.py
 check_chroma_count.py
