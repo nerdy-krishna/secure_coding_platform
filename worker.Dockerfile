@@ -18,6 +18,9 @@ RUN pip install --upgrade pip setuptools wheel \
     && poetry config virtualenvs.in-project true \
     && poetry install --no-root --without dev
 
+# Add the virtual environment to the PATH so we don't need 'poetry run' for everything
+ENV PATH="/app/.venv/bin:$PATH"
+
 # --- ADDED: Pre-download the embedding model ---
 # This RUN command will download the model and cache it inside the Docker image layer
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
