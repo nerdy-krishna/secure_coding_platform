@@ -58,6 +58,51 @@ Once the script completes, you will see a "Setup Complete!" message with the URL
 
 ---
 
+## Cloud Deployment / Linux VPS (Fresh Install)
+
+If you are deploying to a fresh Linux virtual machine (e.g., AWS EC2, DigitalOcean Droplet, Google Compute Engine) running Ubuntu or Debian, follow these comprehensive steps to prepare the system and install the platform.
+
+### 1. Update System Packages
+Ensure your system is up to date:
+```bash
+sudo apt update && sudo apt upgrade -y
+```
+
+### 2. Install Dependencies (Git, Python, Node.js)
+The setup script requires Git (to clone), Python 3 (to generate secure secrets), and Node.js (to install frontend dependencies).
+```bash
+sudo apt install -y git python3 python3-venv curl
+# Install Node.js (LTS version recommended)
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+```
+
+### 3. Install Docker & Docker Compose
+We recommend using the official Docker installation script for the latest version.
+```bash
+# Download and run the Docker installation script
+curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
+
+# Add your current user to the 'docker' group (avoids using sudo for docker commands)
+sudo usermod -aG docker $USER
+
+# Apply group changes immediately
+newgrp docker
+```
+
+### 4. Clone and Install
+Now that all dependencies are ready, clone the repository and run the setup script.
+
+```bash
+git clone https://github.com/nerdy-krishna/secure_coding_platform.git
+cd secure_coding_platform
+chmod +x setup.sh
+./setup.sh
+```
+
+---
+
 ## Manual Installation Steps
 
 
