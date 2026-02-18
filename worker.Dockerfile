@@ -21,6 +21,7 @@ RUN pip install --upgrade pip setuptools wheel \
 
 # Add the virtual environment to the PATH so we don't need 'poetry run' for everything
 ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONPATH="/app/src"
 
 # --- ADDED: Pre-download the embedding model ---
 # This RUN command will download the model and cache it inside the Docker image layer
@@ -30,6 +31,9 @@ RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTr
 COPY ./src/ /app/src/
 COPY ./alembic/ /app/alembic/
 COPY ./alembic.ini /app/
+
+# DEBUG: List files to verify structure
+RUN ls -R /app/src/app/shared
 
 # Set the command to run the worker consumer
 CMD ["poetry", "run", "python", "-m", "app.workers.consumer"]

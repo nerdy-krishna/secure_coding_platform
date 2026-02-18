@@ -56,6 +56,9 @@ RUN poetry install --no-interaction --no-ansi --no-root
 COPY --chown=${APP_USER}:${APP_USER} ./src /app/src
 COPY --chown=${APP_USER}:${APP_USER} .env.example /app/.env.example
 
+# DEBUG: List files to verify structure
+RUN ls -R /app/src/app/shared
+
 # Set PYTHONPATH for the non-root user
 # Set PYTHONPATH for the non-root user
 ENV PYTHONPATH=/app/src
