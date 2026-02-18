@@ -21,6 +21,7 @@ from app.api.v1.routers.admin_rag import rag_router
 from app.api.v1.routers.admin_logs import router as logs_router
 from app.api.v1.routers.chat import router as chat_router
 from app.api.v1.routers.refresh import router as refresh_router
+from app.api.v1.routers.setup import router as setup_router
 from app.infrastructure.auth.backend import auth_backend
 from app.infrastructure.auth.core import fastapi_users
 from app.infrastructure.auth.schemas import UserCreate, UserRead, UserUpdate
@@ -198,6 +199,13 @@ app.include_router(
     fastapi_users.get_users_router(UserRead, UserUpdate),
     prefix="/api/v1/users",
     tags=["Users"],
+)
+
+# Router for Initial Setup
+app.include_router(
+    setup_router,
+    prefix="/api/v1/setup",
+    tags=["Setup"],
 )
 
 
