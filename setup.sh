@@ -59,9 +59,36 @@ if [ ! -f .env ]; then
     fi
     
     echo "[+] .env created and configured with new secrets."
+    echo "[+] .env created and configured with new secrets."
 else
     echo "[!] .env already exists. Skipping generation to preserve existing config."
 fi
+
+# Ask for domain/allowed hosts for the UI
+echo ""
+echo "[?] Enter the domain name(s) for the UI (comma-separated, e.g., secure.nerdykrishna.com,localhost):"
+read -p "    Domain(s) [leave empty to allow all/skip]: " ALLOWED_HOSTS_INPUT
+
+if [ -n "$ALLOWED_HOSTS_INPUT" ]; then
+    # Create or update secure-code-ui/.env
+    if [ ! -f secure-code-ui/.env ]; then
+        touch secure-code-ui/.env
+    fi
+    
+    # Check if VITE_ALLOWED_HOSTS exists, if so replace, else append
+    if grep -q "VITE_ALLOWED_HOSTS=" secure-code-ui/.env; then
+        # Escape special characters for sed if necessary, but for valid domains simple replacement should work
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+             sed -i '' "s/VITE_ALLOWED_HOSTS=.*/VITE_ALLOWED_HOSTS=$ALLOWED_HOSTS_INPUT/" secure-code-ui/.env
+        else
+             sed -i "s/VITE_ALLOWED_HOSTS=.*/VITE_ALLOWED_HOSTS=$ALLOWED_HOSTS_INPUT/" secure-code-ui/.env
+        fi
+    else
+        echo "VITE_ALLOWED_HOSTS=$ALLOWED_HOSTS_INPUT" >> secure-code-ui/.env
+    fi
+    echo "[+] Configured UI allowed hosts: $ALLOWED_HOSTS_INPUT"
+fi
+
 echo ""
 
 # 3. Docker Build and Launch
