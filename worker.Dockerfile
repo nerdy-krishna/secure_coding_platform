@@ -11,9 +11,9 @@ RUN apt-get update && apt-get install -y build-essential
 COPY ./poetry.lock ./pyproject.toml /app/
 
 # Install poetry and then the project dependencies
-# Install poetry and then the project dependencies
+# Pin Poetry to 1.8.3 to match Dockerfile and ensure --no-update flag works
 RUN pip install --upgrade pip setuptools wheel \
-    && pip install poetry \
+    && pip install "poetry==1.8.3" \
     && poetry config virtualenvs.create true \
     && poetry config virtualenvs.in-project true \
     && poetry lock --no-update \
