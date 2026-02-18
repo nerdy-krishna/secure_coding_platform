@@ -7,10 +7,17 @@ from pydantic import BaseModel, Field
 
 WorkflowMode = Literal["audit", "suggest", "remediate"]
 
+
 class MergedFixResponse(BaseModel):
-    original_snippet_for_replacement: str = Field(description="The exact, complete, and unmodified original code block that should be replaced.")
-    merged_code: str = Field(description="A single, cohesive code block that merges conflicting suggestions.")
-    explanation: str = Field(description="A brief explanation of how the fixes were merged.")
+    original_snippet_for_replacement: str = Field(
+        description="The exact, complete, and unmodified original code block that should be replaced."
+    )
+    merged_code: str = Field(
+        description="A single, cohesive code block that merges conflicting suggestions."
+    )
+    explanation: str = Field(
+        description="A brief explanation of how the fixes were merged."
+    )
 
 
 class CodeChunk(TypedDict):
@@ -32,6 +39,7 @@ class FixSuggestion(BaseModel):
     code: str = Field(
         description="The secure code snippet to replace the vulnerable part."
     )
+
 
 class VulnerabilityFinding(BaseModel):
     id: Optional[int] = None
@@ -55,11 +63,14 @@ class VulnerabilityFinding(BaseModel):
     references: List[str] = Field(
         default_factory=list, description="A list of URLs or reference links."
     )
-    cvss_score: Optional[float] = Field(None, description="The calculated CVSS 3.1 score.")
+    cvss_score: Optional[float] = Field(
+        None, description="The calculated CVSS 3.1 score."
+    )
     cvss_vector: Optional[str] = Field(None, description="The CVSS 3.1 vector string.")
     file_path: str
     fixes: Optional[FixSuggestion] = Field(
-        default=None, description="The suggested code fix, including original and new snippets."
+        default=None,
+        description="The suggested code fix, including original and new snippets.",
     )
     agent_name: Optional[str] = Field(
         default=None, description="The name of the agent that generated the finding."
@@ -68,7 +79,8 @@ class VulnerabilityFinding(BaseModel):
         default=None, description="List of agents that identified this finding."
     )
     is_applied_in_remediation: bool = Field(
-        default=False, description="Flag indicating if this finding's fix was applied in a remediation scan."
+        default=False,
+        description="Flag indicating if this finding's fix was applied in a remediation scan.",
     )
 
 
@@ -110,15 +122,18 @@ class SpecializedAgentState(TypedDict):
     error: Optional[str]
 
 
-
 class LLMInteraction(BaseModel):
     scan_id: Optional[uuid.UUID] = None
     file_path: Optional[str] = None
     agent_name: str = Field(
         description="The name of the agent that initiated the interaction."
     )
-    prompt_template_name: Optional[str] = Field(None, description="The name of the prompt template used.")
-    prompt_context: Optional[Dict[str, Any]] = Field(None, description="The context data used to format the prompt.")
+    prompt_template_name: Optional[str] = Field(
+        None, description="The name of the prompt template used."
+    )
+    prompt_context: Optional[Dict[str, Any]] = Field(
+        None, description="The context data used to format the prompt."
+    )
     raw_response: str = Field(description="The raw text response from the LLM.")
     parsed_output: Optional[Dict] = Field(
         None, description="The structured output after parsing the response."
@@ -193,6 +208,7 @@ class PreprocessingResponse(BaseModel):
     llm_config_name: str
     processed_documents: List[EnrichedDocument]
     scan_ready: bool = True
+
 
 class RAGJobStartResponse(BaseModel):
     """Response when starting a new RAG preprocessing job."""

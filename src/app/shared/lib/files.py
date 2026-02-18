@@ -42,6 +42,7 @@ LANGUAGE_EXTENSIONS = {
     ".svelte": "svelte",
 }
 
+
 def get_language_from_filename(filename: str) -> Optional[str]:
     """Infers language from file extension."""
     if not filename:

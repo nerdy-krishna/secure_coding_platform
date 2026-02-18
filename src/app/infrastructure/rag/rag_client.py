@@ -25,13 +25,15 @@ def test_connection(host: str, port: int) -> bool:
         sock.settimeout(5)
         result = sock.connect_ex((host, port))
         sock.close()
-        
+
         if result == 0:
             logger.info(f"✓ Socket connection to {host}:{port} successful")
-            
+
             # Test HTTP endpoint
             try:
-                response = requests.get(f"http://{host}:{port}/api/v1/heartbeat", timeout=10)
+                response = requests.get(
+                    f"http://{host}:{port}/api/v1/heartbeat", timeout=10
+                )
                 logger.info(f"✓ HTTP heartbeat response: {response.status_code}")
                 return True
             except requests.exceptions.RequestException as e:
@@ -40,7 +42,7 @@ def test_connection(host: str, port: int) -> bool:
         else:
             logger.error(f"✗ Cannot connect to {host}:{port} - Connection refused")
             return False
-            
+
     except socket.gaierror as e:
         logger.error(f"✗ DNS resolution failed for {host}: {e}")
         return False
@@ -51,6 +53,7 @@ def test_connection(host: str, port: int) -> bool:
 
 class RAGService:
     """A service for interacting with the ChromaDB vector store."""
+
     _client: Optional[ClientAPI] = None
     _guidelines_collection: Optional[Any] = None
     _cwe_collection: Optional[Any] = None
@@ -58,60 +61,76 @@ class RAGService:
     def __init__(self):
         """Initializes the RAGService, raising an exception on failure."""
         try:
-            logging.info(f"RAGService attempting to connect to ChromaDB at {CHROMA_HOST}:{CHROMA_PORT}")
-            
+            logging.info(
+                f"RAGService attempting to connect to ChromaDB at {CHROMA_HOST}:{CHROMA_PORT}"
+            )
+
             # Test basic connectivity first
             if not test_connection(CHROMA_HOST, CHROMA_PORT):
-                raise ConnectionError(f"Cannot establish basic connection to {CHROMA_HOST}:{CHROMA_PORT}")
-            
+                raise ConnectionError(
+                    f"Cannot establish basic connection to {CHROMA_HOST}:{CHROMA_PORT}"
+                )
+
             # Create ChromaDB client with proper settings for v0.5.3
             client = chromadb.HttpClient(
                 host=CHROMA_HOST,
                 port=CHROMA_PORT,
                 ssl=False,
-                headers={"Connection": "keep-alive"}
+                headers={"Connection": "keep-alive"},
             )
-            
+
             logging.info("Testing ChromaDB heartbeat...")
             heartbeat_result = client.heartbeat()
             logging.info(f"✓ ChromaDB heartbeat successful: {heartbeat_result}")
-            
+
             # Define the embedding function, same as in the ingestion script
-            embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
-                model_name=MODEL_NAME
+            embedding_function = (
+                embedding_functions.SentenceTransformerEmbeddingFunction(
+                    model_name=MODEL_NAME
+                )
             )
-            
-            logging.info(f"Getting or creating collection: {SECURITY_GUIDELINES_COLLECTION}")
+
+            logging.info(
+                f"Getting or creating collection: {SECURITY_GUIDELINES_COLLECTION}"
+            )
             guidelines_collection = client.get_or_create_collection(
-                name=SECURITY_GUIDELINES_COLLECTION, embedding_function=embedding_function  # type: ignore
+                name=SECURITY_GUIDELINES_COLLECTION,
+                embedding_function=embedding_function,  # type: ignore
             )
-            logging.info(f"✓ Collection '{SECURITY_GUIDELINES_COLLECTION}' ready. Count: {guidelines_collection.count()}")
+            logging.info(
+                f"✓ Collection '{SECURITY_GUIDELINES_COLLECTION}' ready. Count: {guidelines_collection.count()}"
+            )
 
             logging.info(f"Getting or creating collection: {CWE_COLLECTION_NAME}")
             cwe_collection = client.get_or_create_collection(
-                name=CWE_COLLECTION_NAME, embedding_function=embedding_function  # type: ignore
+                name=CWE_COLLECTION_NAME,
+                embedding_function=embedding_function,  # type: ignore
             )
-            logging.info(f"✓ Collection '{CWE_COLLECTION_NAME}' ready. Count: {cwe_collection.count()}")
-            
+            logging.info(
+                f"✓ Collection '{CWE_COLLECTION_NAME}' ready. Count: {cwe_collection.count()}"
+            )
+
             self._client = client
             self._guidelines_collection = guidelines_collection
             self._cwe_collection = cwe_collection
 
-            logging.info(f"✓ RAGService fully initialized and collections loaded.")
-            
+            logging.info("✓ RAGService fully initialized and collections loaded.")
+
         except Exception as e:
-            logging.critical(f"CRITICAL: Failed to initialize RAGService. Error details:")
+            logging.critical(
+                "CRITICAL: Failed to initialize RAGService. Error details:"
+            )
             logger.critical(f"  Host: {CHROMA_HOST}")
             logger.critical(f"  Port: {CHROMA_PORT}")
             logger.critical(f"  Error: {str(e)}")
             logger.critical(f"  Error type: {type(e).__name__}")
-            
+
             # Additional debugging info
             logger.critical("Environment variables:")
             for key, value in os.environ.items():
-                if 'CHROMA' in key.upper():
+                if "CHROMA" in key.upper():
                     logger.critical(f"  {key}={value}")
-            
+
             self._client = None
             self._guidelines_collection = None
             raise
@@ -150,12 +169,12 @@ class RAGService:
         """Returns the document count for each standard framework."""
         if not self._guidelines_collection:
             raise ConnectionError("ChromaDB collection is not available.")
-            
+
         stats = {}
         for fw in ["asvs", "proactive_controls", "cheatsheets"]:
             result = self._guidelines_collection.get(
                 where={"framework_name": {"$eq": fw}},
-                include=[] # Count only
+                include=[],  # Count only
             )
             stats[fw] = len(result.get("ids", []))
         return stats
@@ -170,11 +189,15 @@ class RAGService:
         ids_to_delete = docs_to_delete.get("ids", [])
 
         if not ids_to_delete:
-            logger.info(f"No documents found for framework '{framework_name}' to delete.")
+            logger.info(
+                f"No documents found for framework '{framework_name}' to delete."
+            )
             return 0
 
         self.delete(ids=ids_to_delete)
-        logger.info(f"Deleted {len(ids_to_delete)} documents for framework '{framework_name}'.")
+        logger.info(
+            f"Deleted {len(ids_to_delete)} documents for framework '{framework_name}'."
+        )
         return len(ids_to_delete)
 
     def delete(self, ids: List[str]):
@@ -183,45 +206,63 @@ class RAGService:
             raise ConnectionError("ChromaDB collection is not available.")
         self._guidelines_collection.delete(ids=ids)
 
-    def query_cwe_collection(self, query_texts: List[str], n_results: int = 3) -> Dict[str, Any]:
+    def query_cwe_collection(
+        self, query_texts: List[str], n_results: int = 3
+    ) -> Dict[str, Any]:
         """Queries the CWE collection for semantic matches."""
         if not self._cwe_collection:
             logger.error("CWE collection is not available.")
             raise ConnectionError("CWE collection not available in RAGService.")
-        
+
         try:
-            logger.debug(f"Querying CWE collection with {len(query_texts)} queries, n_results={n_results}")
+            logger.debug(
+                f"Querying CWE collection with {len(query_texts)} queries, n_results={n_results}"
+            )
             results = self._cwe_collection.query(
-                query_texts=query_texts, 
-                n_results=n_results
+                query_texts=query_texts, n_results=n_results
             )
             return results
         except Exception as e:
-            logger.error(f"Failed to query ChromaDB collection '{CWE_COLLECTION_NAME}': {e}", exc_info=True)
+            logger.error(
+                f"Failed to query ChromaDB collection '{CWE_COLLECTION_NAME}': {e}",
+                exc_info=True,
+            )
             raise
 
-    def query_guidelines(self, query_texts: List[str], n_results: int = 5, where: Optional[Where] = None) -> Dict[str, Any]:
+    def query_guidelines(
+        self, query_texts: List[str], n_results: int = 5, where: Optional[Where] = None
+    ) -> Dict[str, Any]:
         """Queries the Security Guidelines collection."""
-        logger.info(f"DEBUG: Executing RAG query_guidelines. Query texts: {query_texts}, Where filter: {where}")
+        logger.info(
+            f"DEBUG: Executing RAG query_guidelines. Query texts: {query_texts}, Where filter: {where}"
+        )
         if not self._guidelines_collection:
             logger.error("Security Guidelines collection is not available.")
-            raise ConnectionError("Security Guidelines collection not available in RAGService.")
-        
-        try:
-            logger.debug(f"Querying collection with {len(query_texts)} queries, n_results={n_results}")
-            results = self._guidelines_collection.query(
-                query_texts=query_texts, 
-                n_results=n_results,
-                where=where
+            raise ConnectionError(
+                "Security Guidelines collection not available in RAGService."
             )
-            logger.debug(f"Query successful, returned {len(results.get('ids', []))} result sets")
+
+        try:
+            logger.debug(
+                f"Querying collection with {len(query_texts)} queries, n_results={n_results}"
+            )
+            results = self._guidelines_collection.query(
+                query_texts=query_texts, n_results=n_results, where=where
+            )
+            logger.debug(
+                f"Query successful, returned {len(results.get('ids', []))} result sets"
+            )
             return results
         except Exception as e:
-            logger.error(f"Failed to query ChromaDB collection '{SECURITY_GUIDELINES_COLLECTION}': {e}", exc_info=True)
+            logger.error(
+                f"Failed to query ChromaDB collection '{SECURITY_GUIDELINES_COLLECTION}': {e}",
+                exc_info=True,
+            )
             raise
 
 
 _rag_instance: Optional[RAGService] = None
+
 
 def get_rag_service() -> Optional[RAGService]:
     """Factory function to get the singleton instance of RAGService."""

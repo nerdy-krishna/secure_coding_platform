@@ -62,6 +62,12 @@ ruff = "^0.11.11"
 black = "^25.1.0"
 # black = "^24.4.2"
 mypy = "^1.10.0"
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint]
+ignore = ["E501"] # Ignore line length violations as we let black/ruff format handle it best effort
 pytest = "^8.3.5"
 pytest-asyncio = "^0.23.7"
 [build-system]

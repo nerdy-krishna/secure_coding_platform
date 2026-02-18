@@ -8,7 +8,7 @@ import fnmatch
 from pydantic import BaseModel, Field
 import tree_sitter_languages
 from tree_sitter import Language, Node, Parser, Tree
-from tree_sitter_languages import get_language, get_parser
+from tree_sitter_languages import get_language
 
 
 # Custom exception for grammar loading issues
@@ -19,15 +19,29 @@ class GrammarLoadingError(Exception):
 # --- ADD a global ignore list ---
 IGNORE_PATTERNS = {
     # Lock files
-    "*.lock", "package-lock.json", "yarn.lock", "go.sum", "Pipfile.lock", "poetry.lock",
+    "*.lock",
+    "package-lock.json",
+    "yarn.lock",
+    "go.sum",
+    "Pipfile.lock",
+    "poetry.lock",
     # Dependency directories
-    "node_modules/*", "venv/*", ".venv/*", "vendor/*",
+    "node_modules/*",
+    "venv/*",
+    ".venv/*",
+    "vendor/*",
     # Build artifacts
-    "dist/*", "build/*", "*.pyc", "*.pyo", "*.o",
+    "dist/*",
+    "build/*",
+    "*.pyc",
+    "*.pyo",
+    "*.o",
     # IDE/Editor configs
-    ".vscode/*", ".idea/*",
+    ".vscode/*",
+    ".idea/*",
     # OS files
-    ".DS_Store", "Thumbs.db",
+    ".DS_Store",
+    "Thumbs.db",
 }
 
 
@@ -254,8 +268,8 @@ class RepositoryMappingEngine:
         """
         # Handle extension-less files first
         filename = Path(file_path).name
-        if filename == 'Dockerfile':
-            lang_name = 'dockerfile'
+        if filename == "Dockerfile":
+            lang_name = "dockerfile"
         else:
             lang_map = {
                 ".py": "python",
@@ -294,9 +308,7 @@ class RepositoryMappingEngine:
             lang_name = lang_map.get(extension)
 
         if not lang_name:
-            raise GrammarLoadingError(
-                f"No language configured for file: {file_path}"
-            )
+            raise GrammarLoadingError(f"No language configured for file: {file_path}")
 
         try:
             self.logger.info(
@@ -393,11 +405,14 @@ class RepositoryMappingEngine:
 
                     if (symbol_name, line_number) not in processed_symbols:
                         symbol = Symbol(
-                            name=symbol_name, type=symbol_type, line_number=line_number, end_line_number=end_line_number
+                            name=symbol_name,
+                            type=symbol_type,
+                            line_number=line_number,
+                            end_line_number=end_line_number,
                         )
                         summary.symbols.append(symbol)
                         processed_symbols[(symbol_name, line_number)] = symbol
- 
+
         return summary
 
     def create_map(self, files: Dict[str, str]) -> RepositoryMap:
@@ -413,7 +428,8 @@ class RepositoryMappingEngine:
             if any(fnmatch.fnmatch(file_path, pattern) for pattern in IGNORE_PATTERNS):
                 self.logger.info(f"Skipping ignored file: {file_path}")
                 repo_map.files[file_path] = FileSummary(
-                    path=file_path, errors=["Skipped: File matches global ignore pattern."]
+                    path=file_path,
+                    errors=["Skipped: File matches global ignore pattern."],
                 )
                 continue
 
@@ -434,7 +450,10 @@ class RepositoryMappingEngine:
                     f"Could not determine language for '{file_path}'. It will be skipped from parsing. Error: {e}"
                 )
                 repo_map.files[file_path] = FileSummary(
-                    path=file_path, errors=[f"Skipped: No language grammar found for this file type. Error: {e}"]
+                    path=file_path,
+                    errors=[
+                        f"Skipped: No language grammar found for this file type. Error: {e}"
+                    ],
                 )
             except Exception as e:  # Catch other unexpected errors during _parse_file for this specific file
                 self.logger.error(

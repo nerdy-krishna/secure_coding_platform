@@ -20,6 +20,7 @@ from app.api.v1.routers.admin_prompts import prompt_router
 from app.api.v1.routers.admin_rag import rag_router
 from app.api.v1.routers.admin_logs import router as logs_router
 from app.api.v1.routers.chat import router as chat_router
+from app.api.v1.routers.refresh import router as refresh_router
 from app.infrastructure.auth.backend import auth_backend
 from app.infrastructure.auth.core import fastapi_users
 from app.infrastructure.auth.schemas import UserCreate, UserRead, UserUpdate
@@ -152,14 +153,10 @@ app.include_router(
 )
 
 # Router for managing Frameworks
-app.include_router(
-    framework_router, prefix="/api/v1/admin", tags=["Admin: Frameworks"]
-)
+app.include_router(framework_router, prefix="/api/v1/admin", tags=["Admin: Frameworks"])
 
 # Router for managing Agents
-app.include_router(
-    agent_router, prefix="/api/v1/admin", tags=["Admin: Agents"]
-)
+app.include_router(agent_router, prefix="/api/v1/admin", tags=["Admin: Agents"])
 
 # Router for managing Prompt Templates
 app.include_router(
@@ -167,14 +164,10 @@ app.include_router(
 )
 
 # Router for managing RAG
-app.include_router(
-    rag_router, prefix="/api/v1/admin", tags=["Admin: RAG Management"]
-)
+app.include_router(rag_router, prefix="/api/v1/admin", tags=["Admin: RAG Management"])
 
 # Router for System Logs
-app.include_router(
-    logs_router, prefix="/api/v1/admin", tags=["Admin: System Logs"]
-)
+app.include_router(logs_router, prefix="/api/v1/admin", tags=["Admin: System Logs"])
 
 # Router for Chat
 app.include_router(chat_router, prefix="/api/v1/chat", tags=["Chat"])
@@ -188,7 +181,7 @@ app.include_router(
 )
 
 # Custom refresh endpoint (fastapi-users does not provide one with BearerTransport)
-from app.api.v1.routers.refresh import router as refresh_router
+
 app.include_router(
     refresh_router,
     prefix="/api/v1/auth",

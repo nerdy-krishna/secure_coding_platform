@@ -22,15 +22,18 @@ def get_llm_config_repository(
 ) -> LLMConfigRepository:
     return LLMConfigRepository(db)
 
+
 def get_framework_repository(
     db: AsyncSession = Depends(get_db),
 ) -> FrameworkRepository:
     return FrameworkRepository(db)
 
+
 def get_agent_repository(
     db: AsyncSession = Depends(get_db),
 ) -> AgentRepository:
     return AgentRepository(db)
+
 
 def get_prompt_template_repository(
     db: AsyncSession = Depends(get_db),
@@ -53,6 +56,7 @@ def get_admin_service(
         prompt_template_repo=prompt_template_repo,
     )
 
+
 def get_chat_repository(db: AsyncSession = Depends(get_db)) -> ChatRepository:
     """Dependency provider for the ChatRepository."""
     return ChatRepository(db)
@@ -63,6 +67,7 @@ def get_chat_service(
 ) -> ChatService:
     """Dependency provider for the ChatService."""
     return ChatService(chat_repo)
+
 
 def get_rag_job_repository(
     db: AsyncSession = Depends(get_db),
@@ -84,10 +89,12 @@ def get_scan_repository(
 ) -> ScanRepository:
     return ScanRepository(db)
 
+
 def get_scan_service(
     repo: ScanRepository = Depends(get_scan_repository),
 ) -> ScanService:
     return ScanService(repo)
+
 
 def get_security_standards_service(
     job_repo: RAGJobRepository = Depends(get_rag_job_repository),

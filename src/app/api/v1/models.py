@@ -19,7 +19,8 @@ class LLMConfigurationBase(BaseModel):
         ..., description="The specific model name (e.g., 'gpt-4o', 'gemini-1.5-pro')."
     )
     tokenizer: Optional[str] = Field(
-        None, description="The tokenizer to use for token counting (e.g., 'cl100k_base'). Defaults to model-specific or a general tokenizer if not provided."
+        None,
+        description="The tokenizer to use for token counting (e.g., 'cl100k_base'). Defaults to model-specific or a general tokenizer if not provided.",
     )
     input_cost_per_million: float = Field(
         default=0.0, description="Cost per 1 million input tokens in USD."
@@ -45,7 +46,8 @@ class LLMConfigurationUpdate(BaseModel):
         None, description="The specific model name (e.g., 'gpt-4o', 'gemini-1.5-pro')."
     )
     tokenizer: Optional[str] = Field(
-        None, description="The tokenizer to use for token counting (e.g., 'cl100k_base')."
+        None,
+        description="The tokenizer to use for token counting (e.g., 'cl100k_base').",
     )
     api_key: Optional[str] = Field(
         None,
@@ -77,13 +79,16 @@ class AgentBase(BaseModel):
     description: str
     domain_query: Dict[str, Any]
 
+
 class AgentCreate(AgentBase):
     pass
+
 
 class AgentUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     domain_query: Optional[str] = None
+
 
 class AgentRead(AgentBase):
     id: uuid.UUID
@@ -91,17 +96,24 @@ class AgentRead(AgentBase):
     class Config:
         from_attributes = True
 
+
 # --- Framework Schemas (NEW) ---
 class FrameworkBase(BaseModel):
-    name: str = Field(..., description="The unique name of the security framework (e.g., 'OWASP ASVS').")
+    name: str = Field(
+        ...,
+        description="The unique name of the security framework (e.g., 'OWASP ASVS').",
+    )
     description: str = Field(..., description="A brief description of the framework.")
+
 
 class FrameworkCreate(FrameworkBase):
     pass
 
+
 class FrameworkUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+
 
 class FrameworkRead(FrameworkBase):
     id: uuid.UUID
@@ -109,6 +121,7 @@ class FrameworkRead(FrameworkBase):
 
     class Config:
         from_attributes = True
+
 
 # --- Framework-Agent Mapping Schema (NEW) ---
 class FrameworkAgentMappingUpdate(BaseModel):
@@ -123,13 +136,20 @@ class RAGDocumentDeleteRequest(BaseModel):
 # --- Prompt Template Schemas (NEW) ---
 class PromptTemplateBase(BaseModel):
     name: str = Field(..., description="The unique name for the prompt template.")
-    template_type: str = Field(..., description="The type of template (e.g., 'QUICK_AUDIT', 'DETAILED_REMEDIATION').")
-    agent_name: Optional[str] = Field(None, description="The name of the agent this prompt is for.")
+    template_type: str = Field(
+        ...,
+        description="The type of template (e.g., 'QUICK_AUDIT', 'DETAILED_REMEDIATION').",
+    )
+    agent_name: Optional[str] = Field(
+        None, description="The name of the agent this prompt is for."
+    )
     version: int = Field(1, description="The version of the prompt template.")
     template_text: str = Field(..., description="The content of the prompt template.")
 
+
 class PromptTemplateCreate(PromptTemplateBase):
     pass
+
 
 class PromptTemplateUpdate(BaseModel):
     name: Optional[str] = None
@@ -137,6 +157,7 @@ class PromptTemplateUpdate(BaseModel):
     agent_name: Optional[str] = None
     version: Optional[int] = None
     template_text: Optional[str] = None
+
 
 class PromptTemplateRead(PromptTemplateBase):
     id: uuid.UUID
@@ -199,7 +220,7 @@ class SubmissionResponse(BaseModel):
 class FixSuggestionResponse(BaseModel):
     id: int
     description: str
-    original_snippet: str # ADDED
+    original_snippet: str  # ADDED
     suggested_fix: str
 
     class Config:
@@ -441,6 +462,7 @@ class ScanResponse(BaseModel):
     project_id: uuid.UUID
     message: str
 
+
 class ScanEventItem(BaseModel):
     stage_name: str
     status: str
@@ -448,6 +470,7 @@ class ScanEventItem(BaseModel):
 
     class Config:
         from_attributes = True
+
 
 class ScanHistoryItem(BaseModel):
     id: uuid.UUID
@@ -465,9 +488,11 @@ class ScanHistoryItem(BaseModel):
     class Config:
         from_attributes = True
 
+
 class PaginatedScanHistoryResponse(BaseModel):
     items: List[ScanHistoryItem]
     total: int
+
 
 class ProjectHistoryItem(BaseModel):
     id: uuid.UUID
@@ -479,6 +504,7 @@ class ProjectHistoryItem(BaseModel):
 
     class Config:
         from_attributes = True
+
 
 class PaginatedProjectHistoryResponse(BaseModel):
     items: List[ProjectHistoryItem]

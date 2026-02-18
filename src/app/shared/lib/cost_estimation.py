@@ -13,9 +13,9 @@ from app.infrastructure.database import models as db_models
 logger = logging.getLogger(__name__)
 
 
-
 # Cache for Google GenAI clients to reuse connections/sessions
 _google_client_cache: Dict[str, genai.Client] = {}
+
 
 def _get_cached_google_client(api_key: str) -> genai.Client:
     if api_key not in _google_client_cache:
@@ -24,9 +24,7 @@ def _get_cached_google_client(api_key: str) -> genai.Client:
 
 
 async def count_tokens(
-    text: str, 
-    config: db_models.LLMConfiguration, 
-    api_key: Optional[str] = None
+    text: str, config: db_models.LLMConfiguration, api_key: Optional[str] = None
 ) -> int:
     """
     Counts tokens using the provider-specific method for accuracy.
@@ -46,22 +44,25 @@ async def count_tokens(
                 encoding = tiktoken.encoding_for_model(config.model_name)
             except KeyError:
                 # Model not found, use a hardcoded default encoding for OpenAI.
-                logger.warning(f"Could not find a tiktoken tokenizer for '{config.model_name}'. Falling back to 'cl100k_base'.")
+                logger.warning(
+                    f"Could not find a tiktoken tokenizer for '{config.model_name}'. Falling back to 'cl100k_base'."
+                )
                 encoding = tiktoken.get_encoding("cl100k_base")
             return len(encoding.encode(text, disallowed_special=()))
 
         elif provider == "anthropic":
             if not api_key:
-                logger.warning("Anthropic API key not provided for token counting. Falling back to tiktoken estimate.")
+                logger.warning(
+                    "Anthropic API key not provided for token counting. Falling back to tiktoken estimate."
+                )
                 # Use tiktoken as fallback for Anthropic (they use similar tokenization)
                 encoding = tiktoken.get_encoding("cl100k_base")
                 return len(encoding.encode(text, disallowed_special=()))
-            
+
             # Use Anthropic's client to count tokens
             client = anthropic.Anthropic(api_key=api_key)
             response = client.messages.count_tokens(
-                model=config.model_name,
-                messages=[{"role": "user", "content": text}]
+                model=config.model_name, messages=[{"role": "user", "content": text}]
             )
             return response.input_tokens
 
@@ -69,18 +70,19 @@ async def count_tokens(
             # Try to get key from config if not provided explicitly
             effective_api_key = api_key
             if not effective_api_key and hasattr(config, "decrypted_api_key"):
-                 effective_api_key = config.decrypted_api_key
+                effective_api_key = config.decrypted_api_key
 
             if not effective_api_key:
-                logger.warning("Google API key not provided for token counting. Falling back to a rough estimate (len/4).")
+                logger.warning(
+                    "Google API key not provided for token counting. Falling back to a rough estimate (len/4)."
+                )
                 return len(text) // 4
-            
+
             # Simple caching for GenAI client to avoid overhead of recreation
             client = _get_cached_google_client(effective_api_key)
-            
+
             response = await client.aio.models.count_tokens(
-                model=config.model_name,
-                contents=text
+                model=config.model_name, contents=text
             )
             if response.total_tokens is None:
                 return 0
@@ -88,12 +90,17 @@ async def count_tokens(
                 return response.total_tokens
 
         else:
-            logger.warning(f"Unsupported provider '{provider}' for token counting. Falling back to tiktoken.")
+            logger.warning(
+                f"Unsupported provider '{provider}' for token counting. Falling back to tiktoken."
+            )
             encoding = tiktoken.get_encoding(config.tokenizer_encoding or "cl100k_base")
             return len(encoding.encode(text, disallowed_special=()))
-            
+
     except Exception as e:
-        logger.error(f"Failed to count tokens for provider {provider} with model {config.model_name}: {e}. Falling back to len/4 estimate.", exc_info=True)
+        logger.error(
+            f"Failed to count tokens for provider {provider} with model {config.model_name}: {e}. Falling back to len/4 estimate.",
+            exc_info=True,
+        )
         return len(text) // 4
 
 
@@ -113,12 +120,12 @@ def estimate_cost_for_prompt(
 
     # 2. Predict output tokens and calculate their estimated cost
     predicted_output_tokens = int(input_tokens * output_token_percentage)
-    predicted_output_cost = (
-        predicted_output_tokens / 1_000_000
-    ) * float(config.output_cost_per_million)
+    predicted_output_cost = (predicted_output_tokens / 1_000_000) * float(
+        config.output_cost_per_million
+    )
 
     total_estimated_cost = input_cost + predicted_output_cost
-    
+
     logger.debug(
         f"Cost Estimation for {config.model_name}: "
         f"Input Tokens={input_tokens}, Predicted Output Tokens={predicted_output_tokens}"
@@ -143,7 +150,9 @@ def calculate_actual_cost(
     using the precise token counts from the API response.
     """
     input_cost = (prompt_tokens / 1_000_000) * float(config.input_cost_per_million)
-    output_cost = (completion_tokens / 1_000_000) * float(config.output_cost_per_million)
+    output_cost = (completion_tokens / 1_000_000) * float(
+        config.output_cost_per_million
+    )
     total_cost = input_cost + output_cost
 
     logger.info(

@@ -10,13 +10,19 @@ from app.core.schemas import CodeChunk
 
 logger = logging.getLogger(__name__)
 
+
 class SymbolSummary(BaseModel):
     symbol_name: str = Field(description="The exact name of the function or class.")
-    summary: str = Field(description="A concise, one-sentence description of the symbol's purpose.")
+    summary: str = Field(
+        description="A concise, one-sentence description of the symbol's purpose."
+    )
+
 
 class SymbolMapResponse(BaseModel):
     """The expected structured response from the LLM for generating a symbol map."""
+
     symbols: List[SymbolSummary]
+
 
 async def generate_symbol_map(
     llm_config_id: uuid.UUID,
@@ -28,7 +34,9 @@ async def generate_symbol_map(
     """
     llm_client = await get_llm_client(llm_config_id)
     if not llm_client:
-        logger.error(f"Failed to get LLM client for symbol map generation for {file_path}.")
+        logger.error(
+            f"Failed to get LLM client for symbol map generation for {file_path}."
+        )
         return None
 
     # Format the code snippets for the prompt
@@ -47,14 +55,27 @@ async def generate_symbol_map(
     """
 
     try:
-        response = await llm_client.generate_structured_output(prompt, SymbolMapResponse)
-        if response.error or not response.parsed_output or not isinstance(response.parsed_output, SymbolMapResponse):
-            logger.error(f"LLM failed to generate symbol map for {file_path}: {response.error or 'Invalid output schema'}")
+        response = await llm_client.generate_structured_output(
+            prompt, SymbolMapResponse
+        )
+        if (
+            response.error
+            or not response.parsed_output
+            or not isinstance(response.parsed_output, SymbolMapResponse)
+        ):
+            logger.error(
+                f"LLM failed to generate symbol map for {file_path}: {response.error or 'Invalid output schema'}"
+            )
             return None
-        
-        symbol_map = {item.symbol_name: item.summary for item in response.parsed_output.symbols}
+
+        symbol_map = {
+            item.symbol_name: item.summary for item in response.parsed_output.symbols
+        }
         logger.info(f"Successfully generated symbol map for {file_path}.")
         return symbol_map
     except Exception as e:
-        logger.error(f"Exception during symbol map generation for {file_path}: {e}", exc_info=True)
+        logger.error(
+            f"Exception during symbol map generation for {file_path}: {e}",
+            exc_info=True,
+        )
         return None

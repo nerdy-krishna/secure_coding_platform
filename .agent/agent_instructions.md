@@ -27,6 +27,6 @@ This document serves as the primary instruction set for the Antigravity agent wh
   - Verify implementation before asking to proceed to the next feature.
 
 ## 5. Git Workflow
-- **Always Push Changes**: After completing a task or a significant unit of work, you MUST commit and push your changes to the git repository.
+- **Always Push Changes**: After completing a task, you MUST commit and push your changes to the git repository.
 - **Commit Messages**: Use descriptive, conventional commit messages (e.g., `feat: Add new user service`, `fix: Resolve log truncation`).
 - **No Manual Handoffs**: Do not ask the user to push changes unless there is a specific authentication issue. Assume you have the authority and capability to push.

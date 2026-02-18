@@ -121,6 +121,7 @@ export const FrameworkIngestionModal: React.FC<FrameworkIngestionModalProps> = (
 
             setJobData(response);
             setCurrentStep(1); // Move to review step
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } catch (error: any) {
             console.error("Estimation failed:", error);
             message.error(error.response?.data?.detail || "Failed to get cost estimate.");
@@ -137,6 +138,7 @@ export const FrameworkIngestionModal: React.FC<FrameworkIngestionModalProps> = (
             message.success("Ingestion job started successfully!");
             onSuccess(jobData.job_id);
             onCancel();
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } catch (error: any) {
             console.error("Job approval failed:", error);
             message.error("Failed to start job.");

@@ -27,7 +27,9 @@ class FrameworkRepository:
         self.db.add(db_framework)
         await self.db.commit()
         await self.db.refresh(db_framework)
-        logger.info(f"Created framework '{db_framework.name}' with ID {db_framework.id}.")
+        logger.info(
+            f"Created framework '{db_framework.name}' with ID {db_framework.id}."
+        )
         return db_framework
 
     async def get_framework_by_id(
@@ -42,9 +44,7 @@ class FrameworkRepository:
         result = await self.db.execute(stmt)
         return result.scalars().first()
 
-    async def get_framework_by_name(
-        self, name: str
-    ) -> Optional[db_models.Framework]:
+    async def get_framework_by_name(self, name: str) -> Optional[db_models.Framework]:
         """Retrieves a single framework by its name."""
         stmt = (
             select(db_models.Framework)
@@ -104,7 +104,7 @@ class FrameworkRepository:
             stmt = select(db_models.Agent).where(db_models.Agent.id.in_(agent_ids))
             result = await self.db.execute(stmt)
             agents_to_map = list(result.scalars().all())
-            
+
             if len(agents_to_map) != len(agent_ids):
                 logger.warning("Some agent IDs provided for mapping were not found.")
         else:
