@@ -130,8 +130,8 @@ class LLMClient:
         rate_limiter = get_rate_limiter_for_provider(self.provider_name)
         if rate_limiter:
             # First, count tokens for the prompt to pass to the limiter
-            prompt_tokens = cost_estimation.count_tokens(
-                prompt, self.db_llm_config
+            prompt_tokens = await cost_estimation.count_tokens(
+                prompt, self.db_llm_config, api_key=self.decrypted_api_key
             )
             await rate_limiter.acquire(tokens=prompt_tokens)
         
@@ -142,6 +142,12 @@ class LLMClient:
         parsed_output_value: Optional[T] = None
         error_message: Optional[str] = None
 
+        # [DEBUG LOGGING]
+        # This will only show up if the log level is set to DEBUG via the Admin API.
+        logger.debug(
+            f"LLM PROMPT [{self.provider_name}/{self.db_llm_config.model_name}]:\n{prompt}\n---END PROMPT---"
+        )
+
         try:
             invoked_result = cast(T, await structured_llm.ainvoke(
                 prompt, config={"callbacks": [token_callback]}
@@ -151,13 +157,59 @@ class LLMClient:
             logger.error(f"LLM generation or parsing with LangChain failed: {e}", exc_info=True)
             error_message = str(e)
         
+        # [DEBUG LOGGING]
+        if parsed_output_value:
+            logger.debug(
+                f"LLM RESPONSE [{self.provider_name}/{self.db_llm_config.model_name}]:\n{parsed_output_value}\n---END RESPONSE---"
+            )
+        elif error_message:
+             logger.debug(
+                f"LLM ERROR response [{self.provider_name}]: {error_message}"
+            )
+        
         end_time = time.perf_counter()
         latency_ms = int((end_time - start_time) * 1000)
 
+        # FIX: Ensure we have token usage even if callback failed to capture it (common with Google/OpenAI integrations)
+        start_prompt_tokens = token_callback.prompt_tokens
+        completion_tokens = token_callback.completion_tokens
+
+        # Fallback for prompt tokens: use the ones calculated for rate limiting
+        if not start_prompt_tokens and 'prompt_tokens' in locals():
+            start_prompt_tokens = prompt_tokens
+        elif not start_prompt_tokens:
+             # Estimate if we really have nothing
+             start_prompt_tokens = len(prompt) // 4
+        
+        # Fallback for completion tokens: count from parsed output if available, or rough estimate
+        if not completion_tokens:
+            if parsed_output_value:
+                 # Best effort: dump model to json string and count
+                 try:
+                     output_str = parsed_output_value.model_dump_json()
+                     # We assume same encoding/cost as input for simplicity if we can't call API
+                     # Or just use len/4 for speed/safety
+                     completion_tokens = len(output_str) // 4
+                 except:
+                     completion_tokens = 0
+            elif error_message:
+                completion_tokens = 0
+        
         cost = cost_estimation.calculate_actual_cost(
             config=self.db_llm_config,
-            prompt_tokens=token_callback.prompt_tokens,
-            completion_tokens=token_callback.completion_tokens,
+            prompt_tokens=start_prompt_tokens,
+            completion_tokens=completion_tokens,
+        )
+
+        return AgentLLMResult(
+            raw_output="[Structured output - raw text not directly available]",
+            parsed_output=parsed_output_value,
+            error=error_message,
+            cost=cost,
+            prompt_tokens=start_prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=start_prompt_tokens + completion_tokens,
+            latency_ms=latency_ms,
         )
 
         return AgentLLMResult(

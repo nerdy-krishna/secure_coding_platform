@@ -28,6 +28,12 @@ from app.infrastructure.database.repositories.scan_repo import ScanRepository
 from app.infrastructure.llm_client import get_llm_client
 from app.shared.analysis_tools.context_bundler import ContextBundlingEngine
 from app.shared.analysis_tools.repository_map import RepositoryMappingEngine
+
+try:
+    from tree_sitter_languages import get_parser as ts_get_parser
+    HAS_TREE_SITTER = True
+except ImportError:
+    HAS_TREE_SITTER = False
 from app.shared.analysis_tools.chunker import semantic_chunker
 from app.shared.lib.files import get_language_from_filename
 from app.shared.lib import cost_estimation
@@ -153,6 +159,30 @@ async def retrieve_and_prepare_data_node(state: WorkerState) -> Dict[str, Any]:
         return {"error_message": str(e)}
 
 
+def _verify_syntax_with_treesitter(full_code: str, filename: str) -> bool:
+    """Quick syntax check using tree-sitter. Returns True if code parses without errors."""
+    if not HAS_TREE_SITTER:
+        return True  # Skip check if tree-sitter not available
+
+    lang_map = {
+        ".py": "python", ".js": "javascript", ".ts": "typescript", ".java": "java",
+        ".go": "go", ".rb": "ruby", ".rs": "rust", ".c": "c", ".cpp": "cpp",
+        ".cs": "c_sharp", ".php": "php", ".swift": "swift", ".kt": "kotlin",
+    }
+    ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    lang = lang_map.get(ext)
+    if not lang:
+        return True  # Unknown language, skip check
+
+    try:
+        parser = ts_get_parser(lang)
+        tree = parser.parse(full_code.encode("utf-8"))
+        return not tree.root_node.has_error
+    except Exception as e:
+        logger.warning(f"Tree-sitter syntax check failed for {filename}: {e}")
+        return True  # Don't block on tree-sitter errors
+
+
 async def _run_merge_agent(
     reasoning_llm_config_id: uuid.UUID,
     code_block: str,
@@ -161,7 +191,7 @@ async def _run_merge_agent(
 ) -> Optional[FixResult]:
     """
     Invokes an LLM to merge multiple conflicting fix suggestions into a single, superior fix.
-    Includes verification and retry logic.
+    Includes verification, syntax checking, and retry logic.
     """
     llm_client = await get_llm_client(reasoning_llm_config_id)
     if not llm_client:
@@ -173,6 +203,7 @@ async def _run_merge_agent(
 
     # Use the highest-priority finding as the basis for the merged finding metadata
     winner = conflicting_fixes[0]
+    filename = winner.finding.file_path or ""
 
     suggestions_str = ""
     for i, fix in enumerate(conflicting_fixes):
@@ -182,8 +213,15 @@ async def _run_merge_agent(
 
     prompt = f"""
 You are an expert security engineer. Your task is to merge multiple suggested fixes into a single, cohesive, and secure block of code.
-The final code must address ALL the identified vulnerabilities if possible.
-If fixes are mutually exclusive, prioritize the change that resolves the highest severity vulnerability.
+
+RULES:
+1. The final code must address ALL the identified vulnerabilities if possible.
+2. If fixes are mutually exclusive, prioritize the change that resolves the highest severity vulnerability.
+3. PRESERVE all existing comments unless they pose a security risk (e.g., hardcoded secrets).
+4. Produce the most optimized, idiomatic code possible — do not just concatenate fixes.
+5. Ensure any imports or dependencies referenced in the fix already exist in the file context.
+6. Do NOT introduce new vulnerabilities (e.g., removing error handling, weakening validation).
+7. The merged code MUST be syntactically valid and ready to compile/run.
 
 ORIGINAL VULNERABLE CODE BLOCK:
 
@@ -206,6 +244,24 @@ The `merged_code` field should contain ONLY the final, corrected code that will 
             response.parsed_output.original_snippet_for_replacement in code_to_search_in
         ):
             logger.info(f"Merge agent produced a verified snippet on attempt {attempt + 1}.")
+
+            # --- STRICT DIFF CHECK ---
+            if response.parsed_output.merged_code.strip() == response.parsed_output.original_snippet_for_replacement.strip():
+                logger.warning(f"Merge agent returned a fix identical to the original code on attempt {attempt + 1}. Retrying.")
+                continue
+            # --- END STRICT DIFF CHECK ---
+
+            # --- SYNTAX VERIFICATION ---
+            candidate_code = code_to_search_in.replace(
+                response.parsed_output.original_snippet_for_replacement,
+                response.parsed_output.merged_code,
+                1  # Replace only the first occurrence
+            )
+            if not _verify_syntax_with_treesitter(candidate_code, filename):
+                logger.warning(f"Merge agent produced syntactically invalid code on attempt {attempt + 1}. Retrying.")
+                continue
+            # --- END SYNTAX VERIFICATION ---
+
             # Create a new FixResult representing the merged fix
             merged_finding = winner.finding.model_copy(deep=True)
 
@@ -217,7 +273,7 @@ The `merged_code` field should contain ONLY the final, corrected code that will 
             final_explanation = f"{conflicts_summary}\nMerge Reasoning:\n{response.parsed_output.explanation}"
             # --- END: Build detailed explanation ---
 
-            merged_finding.description = final_explanation # Update description with the detailed explanation
+            merged_finding.description = final_explanation
             
             merged_suggestion = FixSuggestion(
                 description=final_explanation,
@@ -225,12 +281,19 @@ The `merged_code` field should contain ONLY the final, corrected code that will 
                 code=response.parsed_output.merged_code,
             )
 
-            logger.info(f"DEBUG: _run_merge_agent merged_suggestion: {merged_suggestion.model_dump()}")
+            logger.info(f"Merge agent succeeded on attempt {attempt + 1} with syntax-verified code.")
             return FixResult(finding=merged_finding, suggestion=merged_suggestion)
         
-        logger.warning(f"Merge agent failed to produce a valid, verifiable snippet on attempt {attempt + 1}.")
+        logger.warning(
+            f"Merge agent failed to produce a valid, verifiable snippet on attempt {attempt + 1}. "
+            f"Parsed: {response.parsed_output is not None}, Error: {response.error}"
+        )
 
-    logger.error("Merge agent failed after 3 attempts. Falling back to highest priority fix.")
+    logger.error(
+        f"Merge agent failed after 3 attempts for {filename}. "
+        f"Conflicts: {len(conflicting_fixes)} fixes, CWEs: {[f.finding.cwe for f in conflicting_fixes]}. "
+        f"Falling back to highest priority fix."
+    )
     return None
 
 
@@ -344,7 +407,7 @@ async def estimate_cost_node(state: WorkerState) -> Dict[str, Any]:
             for chunk in chunks:
                 # In a dry run, we estimate based on all potentially relevant agents.
                 for _ in all_relevant_agents:
-                    total_input_tokens += cost_estimation.count_tokens(chunk['code'], llm_config)
+                    total_input_tokens += await cost_estimation.count_tokens(chunk['code'], llm_config)
 
     cost_details = cost_estimation.estimate_cost_for_prompt(llm_config, total_input_tokens)
     
@@ -532,6 +595,19 @@ async def dependency_aware_analysis_orchestrator(state: WorkerState) -> Dict[str
             else:
                 chunks = [{"symbol_name": file_path, "code": file_content, "start_line": 1, "end_line": len(file_content.splitlines())}]
 
+            # --- Build Dependency Summary from existing graph + repository_map ---
+            dep_summary = ""
+            if file_path in dependency_graph:
+                dep_parts = []
+                for dep_path in dependency_graph.successors(file_path):
+                    dep_file_summary = repository_map.files.get(dep_path)
+                    if dep_file_summary and dep_file_summary.symbols:
+                        symbol_sigs = [f"  - {s.type} {s.name} (line {s.line_number})" for s in dep_file_summary.symbols[:15]]
+                        dep_parts.append(f"# File: {dep_path}\n" + "\n".join(symbol_sigs))
+                if dep_parts:
+                    dep_summary = "# --- [DEPENDENCY CONTEXT: symbols from imported files] ---\n" + "\n".join(dep_parts) + "\n# --- [END DEPENDENCY CONTEXT] ---\n\n"
+            # --- End Dependency Summary ---
+
             relevant_agents_for_file = triaged_agents_per_file.get(file_path, [])
             if not relevant_agents_for_file:
                 logger.info(f"No agents triaged for file {file_path}, skipping.", extra={"scan_id": str(scan_id)})
@@ -545,9 +621,12 @@ async def dependency_aware_analysis_orchestrator(state: WorkerState) -> Dict[str
                     async def run_with_semaphore(coro):
                         async with semaphore: return await coro
                     
+                    # Prepend dependency summary to the chunk code for richer LLM context
+                    enriched_code = f"{dep_summary}{chunk['code']}" if dep_summary else chunk['code']
+
                     initial_agent_state: SpecializedAgentState = {
                         "scan_id": scan_id, "llm_config_id": reasoning_llm_id, "filename": file_path,
-                        "code_snippet": chunk['code'], "file_content_for_verification": file_content,
+                        "code_snippet": enriched_code, "file_content_for_verification": file_content,
                         "workflow_mode": "remediate" if scan_type in ("REMEDIATE", "SUGGEST") else "audit",
                         "findings": [], "fixes": [], "error": None
                     }
@@ -620,10 +699,25 @@ async def correlate_findings_node(state: WorkerState) -> Dict[str, Any]:
 
     correlated_findings: List[VulnerabilityFinding] = []
     for signature, group in finding_groups.items():
+        # Collect all agents from the group, checking both agent_name and existing corroborating_agents
+        all_agents = set()
+        for f in group:
+            if f.agent_name:
+                all_agents.add(f.agent_name)
+            if f.corroborating_agents:
+                all_agents.update(f.corroborating_agents)
+        
+        sorted_agents = sorted(list(all_agents))
+
         if len(group) == 1:
-            # If only one agent found it, just use it as is but format agents as a list
+            # If only one finding exists, presume it's the "group"
             final_finding = group[0]
-            final_finding.corroborating_agents = [final_finding.agent_name] if final_finding.agent_name else []
+            # Ensure corroborating_agents is populated with all known agents for this finding
+            if sorted_agents:
+                final_finding.corroborating_agents = sorted_agents
+            elif final_finding.agent_name:
+                 final_finding.corroborating_agents = [final_finding.agent_name]
+            
             correlated_findings.append(final_finding)
         else:
             # If multiple agents found it, merge them
@@ -633,7 +727,7 @@ async def correlate_findings_node(state: WorkerState) -> Dict[str, Any]:
             # Create a new merged finding
             merged_finding = base_finding.model_copy(deep=True)
             merged_finding.confidence = "High" # Confidence is high due to corroboration
-            merged_finding.corroborating_agents = sorted(list(set(f.agent_name for f in group if f.agent_name)))
+            merged_finding.corroborating_agents = sorted_agents
             
             # FIX: Preserve the 'is_applied_in_remediation' flag from the group.
             if any(f.is_applied_in_remediation for f in group):
@@ -738,9 +832,12 @@ def should_estimate_cost_or_run(state: WorkerState) -> str:
     
     # This value is fetched from the DB in the first step
     status = state.get("current_scan_status")
+    logger.info(f"DEBUG: should_estimate_cost_or_run routing with status='{status}'")
     if status == "QUEUED":
         return "estimate_cost"
-    elif status == "QUEUED_FOR_SCAN":
+    elif status in ("QUEUED_FOR_SCAN", "PENDING_COST_APPROVAL"):
+        # PENDING_COST_APPROVAL is accepted as a fallback in case the worker
+        # picks up the message before the DB status update commits.
         return "run_analysis"
     else:
         logger.error(f"Routing failed due to unexpected status: {status}")

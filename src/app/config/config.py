@@ -58,7 +58,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str
     ENCRYPTION_KEY: str
     ENVIRONMENT: str = "development"
-    ACCESS_TOKEN_LIFETIME_SECONDS: int = 60 * 30  # 30 minutes
+    ACCESS_TOKEN_LIFETIME_SECONDS: int = 60 * 60  # 60 minutes
     REFRESH_TOKEN_LIFETIME_SECONDS: int = 60 * 60 * 24 * 7  # 7 days
 
     ALLOWED_ORIGINS_STR: str = Field(alias="ALLOWED_ORIGINS")

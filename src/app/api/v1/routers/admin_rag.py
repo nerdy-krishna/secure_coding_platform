@@ -1,8 +1,9 @@
 # src/app/api/v1/routers/admin_rag.py
 import logging
+import math
 import uuid
 import io
-from typing import Any, Dict, List, cast
+from typing import Any, Dict, List, cast, Optional
 from fastapi import (
     APIRouter,
     Depends,
@@ -16,10 +17,14 @@ from fastapi import (
 import pandas as pd
 
 from app.api.v1.dependencies import (
+    get_framework_repository,
     get_llm_config_repository,
     get_rag_job_repository,
     get_rag_preprocessor_service,
+    get_security_standards_service,
 )
+from app.api.v1 import models as api_models
+from app.core.services.security_standards_service import SecurityStandardsService
 from app.core.schemas import (
     EnrichedDocument,
     PreprocessingResponse,
@@ -30,6 +35,7 @@ from app.core.services.rag_preprocessor_service import RAGPreprocessorService
 from app.infrastructure.auth.core import current_superuser
 from app.infrastructure.database import models as db_models
 from app.infrastructure.database.repositories.llm_config_repo import LLMConfigRepository
+from app.infrastructure.database.repositories.framework_repo import FrameworkRepository
 from app.infrastructure.database.repositories.rag_job_repo import RAGJobRepository
 from app.infrastructure.rag.rag_client import get_rag_service, RAGService
 from app.api.v1.models import RAGDocumentDeleteRequest
@@ -40,12 +46,73 @@ rag_router = APIRouter(prefix="/rag", tags=["Admin: RAG Management"])
 
 # --- NEW Pre-processing Workflow Endpoints ---
 
+from pydantic import BaseModel
+
+class ReprocessRequest(BaseModel):
+    framework_name: str
+    target_languages: List[str]
+    llm_config_id: uuid.UUID
+    
+    
+@rag_router.post("/preprocess/reprocess", response_model=RAGJobStartResponse)
+async def reprocess_framework(
+    request: ReprocessRequest,
+    user: db_models.User = Depends(current_superuser),
+    job_repo: RAGJobRepository = Depends(get_rag_job_repository),
+    preprocessor: RAGPreprocessorService = Depends(get_rag_preprocessor_service),
+):
+    """
+    Restart a preprocessing job using the original content from the latest completed job
+    for the given framework. This enables "Editing" without re-uploading the file.
+    """
+    latest_job = await job_repo.get_latest_job_for_framework(request.framework_name, user.id)
+    
+    if not latest_job or not latest_job.raw_content:
+        raise HTTPException(
+            status_code=404, 
+            detail=f"No previous completed job found for framework '{request.framework_name}' with content. Please upload the file again."
+        )
+
+    # Calculate new cost estimate with potentially new parameters
+    estimated_cost = await preprocessor.estimate_cost(
+        latest_job.raw_content, 
+        request.llm_config_id, 
+        request.target_languages,
+        previous_job_state=latest_job
+    )
+
+    # Create a NEW job with the OLD content
+    new_job = await job_repo.create_job(
+        user_id=user.id,
+        framework_name=request.framework_name,
+        llm_config_id=request.llm_config_id,
+        file_hash=latest_job.original_file_hash,
+    )
+    
+    # Store the content and update status
+    await job_repo.update_job(new_job.id, {
+        "raw_content": latest_job.raw_content,
+        "status": "PENDING_APPROVAL",
+        "estimated_cost": estimated_cost
+    })
+    
+    message = "Cost re-estimated for updated configuration. Please approve to start processing."
+
+    return RAGJobStartResponse(
+        job_id=new_job.id,
+        framework_name=new_job.framework_name,
+        status="PENDING_APPROVAL",
+        estimated_cost=estimated_cost,
+        message=message,
+    )
+
 
 @rag_router.post("/preprocess/start", response_model=RAGJobStartResponse)
 async def start_preprocessing_job(
     file: UploadFile = File(...),
     llm_config_id: uuid.UUID = Form(...),
     framework_name: str = Form(...),
+    target_languages: List[str] = Form([]),
     user: db_models.User = Depends(current_superuser),
     job_repo: RAGJobRepository = Depends(get_rag_job_repository),
     preprocessor: RAGPreprocessorService = Depends(get_rag_preprocessor_service),
@@ -66,7 +133,9 @@ async def start_preprocessing_job(
         file_hash=file_hash,
     )
     await job_repo.update_job(job.id, {"raw_content": contents})
-    estimated_cost = await preprocessor.estimate_cost(contents, llm_config_id)
+    
+    estimated_cost = await preprocessor.estimate_cost(contents, llm_config_id, target_languages)
+    
     await job_repo.update_job(
         job.id, {"status": "PENDING_APPROVAL", "estimated_cost": estimated_cost}
     )
@@ -83,8 +152,6 @@ async def start_preprocessing_job(
         estimated_cost=final_job_state.estimated_cost,
         message=message,
     )
-
-
 @rag_router.post("/preprocess/{job_id}/approve", status_code=status.HTTP_202_ACCEPTED)
 async def approve_preprocessing_job(
     job_id: uuid.UUID,
@@ -165,10 +232,12 @@ async def ingest_processed_documents(
     payload: PreprocessingResponse,
     user: db_models.User = Depends(current_superuser),
     rag_service: RAGService = Depends(get_rag_service),
+    framework_repo: FrameworkRepository = Depends(get_framework_repository),
 ):
     """
     Deletes all existing documents for a framework and ingests the new,
     processed documents. This is the final step after a job is complete.
+    Also creates a Framework database record if one doesn't already exist.
     """
     try:
         framework_name = payload.framework_name
@@ -176,14 +245,49 @@ async def ingest_processed_documents(
 
         rag_service.delete_by_framework(framework_name)
 
-        ids = [doc.id for doc in documents]
+        # Namespace IDs with framework name to avoid collisions in the shared collection.
+        # E.g., "CWE-79" in a custom framework would collide with "CWE-79" in OWASP ASVS.
+        ids = [f"{framework_name}::{doc.id}" for doc in documents]
         docs_to_add = [doc.enriched_content for doc in documents]
         metadatas = [doc.metadata for doc in documents]
 
-        for meta in metadatas:
+        for i, meta in enumerate(metadatas):
             meta["framework_name"] = framework_name
+            meta["scan_ready"] = payload.scan_ready
+            meta["original_id"] = documents[i].id
 
-        rag_service.add(documents=docs_to_add, metadatas=metadatas, ids=ids)
+        # Sanitize metadata: ChromaDB rejects NaN, None, and non-primitive values.
+        # Pandas DataFrames produce NaN for empty cells which silently breaks ChromaDB add().
+        sanitized_metadatas = []
+        for meta in metadatas:
+            clean = {}
+            for k, v in meta.items():
+                if v is None:
+                    clean[k] = ""
+                elif isinstance(v, float) and math.isnan(v):
+                    clean[k] = ""
+                elif isinstance(v, (str, int, float, bool)):
+                    clean[k] = v
+                else:
+                    clean[k] = str(v)
+            sanitized_metadatas.append(clean)
+
+        logger.info(
+            f"Ingesting {len(ids)} documents for framework '{framework_name}'. "
+            f"IDs: {ids}, Metadata keys: {list(sanitized_metadatas[0].keys()) if sanitized_metadatas else []}"
+        )
+
+        rag_service.add(documents=docs_to_add, metadatas=sanitized_metadatas, ids=ids)
+
+        # Auto-create a Framework DB record so it appears in the Knowledge Base
+        existing_framework = await framework_repo.get_framework_by_name(framework_name)
+        if not existing_framework:
+            framework_data = api_models.FrameworkCreate(
+                name=framework_name,
+                description=f"Custom framework with {len(documents)} enriched documents.",
+            )
+            await framework_repo.create_framework(framework_data)
+            logger.info(f"Auto-created framework record for '{framework_name}'.")
 
         return {
             "message": f"Successfully deleted old documents and ingested {len(documents)} new processed documents for framework '{framework_name}'."
@@ -231,6 +335,7 @@ async def ingest_documents(
 
         for metadata in metadatas:
             metadata["framework_name"] = framework_name
+            metadata["scan_ready"] = True
 
         rag_service.add(documents=documents, metadatas=metadatas, ids=ids)
         return {
@@ -286,3 +391,63 @@ async def delete_rag_documents(
         raise HTTPException(
             status_code=500, detail="Failed to delete documents from RAG service."
         )
+
+
+# --- NEW Security Standards Ingestion Endpoints ---
+
+@rag_router.get("/ingest/stats", response_model=Dict[str, int])
+async def get_rag_stats(
+    rag_service: RAGService = Depends(get_rag_service),
+    user: db_models.User = Depends(current_superuser),
+):
+    """
+    Get document counts for standard security frameworks.
+    """
+    if not rag_service:
+        raise HTTPException(status_code=503, detail="RAG Service not available")
+    
+    return rag_service.get_framework_stats()
+
+
+@rag_router.post("/ingest/standards/{standard_type}", status_code=status.HTTP_201_CREATED)
+async def ingest_security_standard(
+    standard_type: str,
+    file: Optional[UploadFile] = File(None),
+    url: Optional[str] = Form(None),
+    user: db_models.User = Depends(current_superuser),
+    standards_service: SecurityStandardsService = Depends(get_security_standards_service),
+):
+    """
+    Ingests a security standard into the RAG knowledge base.
+    
+    - **standard_type**: 'asvs', 'proactive-controls', 'cheatsheets'
+    - **asvs**: Requires 'file' (CSV).
+    - **proactive-controls**: Requires 'url' (GitHub Repo URL).
+    - **cheatsheets**: Requires 'url' (GitHub Repo URL).
+    """
+    try:
+        if standard_type == "asvs":
+            if not file:
+                raise HTTPException(status_code=400, detail="ASVS requires a CSV file upload.")
+            if not file.filename.endswith(".csv"):
+                 raise HTTPException(status_code=400, detail="ASVS file must be a CSV file.")
+            return await standards_service.ingest_asvs_csv(file, user_id=user.id)
+            
+        elif standard_type == "proactive-controls":
+            if not url:
+                raise HTTPException(status_code=400, detail="Proactive Controls requires a GitHub URL.")
+            return await standards_service.ingest_proactive_controls_github(url, user_id=user.id)
+            
+        elif standard_type == "cheatsheets":
+            if not url:
+                raise HTTPException(status_code=400, detail="Cheatsheets requires a GitHub URL.")
+            return await standards_service.ingest_cheatsheets_github(url, user_id=user.id)
+            
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported standard type: {standard_type}")
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Failed to ingest standard '{standard_type}': {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to ingest standard: {str(e)}")

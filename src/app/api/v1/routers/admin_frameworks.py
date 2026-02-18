@@ -1,12 +1,16 @@
 # src/app/api/v1/routers/admin_frameworks.py
+import logging
 import uuid
-from typing import List
+from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from app.api.v1 import models as api_models
 from app.infrastructure.database import models as db_models
 from app.infrastructure.auth.core import current_superuser
 from app.core.services.admin_service import AdminService
 from app.api.v1.dependencies import get_admin_service
+from app.infrastructure.rag.rag_client import get_rag_service, RAGService
+
+logger = logging.getLogger(__name__)
 
 framework_router = APIRouter(prefix="/frameworks", tags=["Admin: Frameworks"])
 
@@ -65,9 +69,30 @@ async def update_framework(
 async def delete_framework(
     framework_id: uuid.UUID,
     admin_service: AdminService = Depends(get_admin_service),
+    rag_service: Optional[RAGService] = Depends(get_rag_service),
     user: db_models.User = Depends(current_superuser),
 ):
-    """Deletes a security framework."""
+    """Deletes a security framework and its associated ChromaDB documents."""
+    # Look up the framework name before deleting, so we can clean up ChromaDB
+    db_framework = await admin_service.get_framework_by_id(framework_id)
+    if not db_framework:
+        raise HTTPException(status_code=404, detail="Framework not found")
+
+    framework_name = db_framework.name
+
+    # Clean up ChromaDB documents associated with this framework
+    if rag_service:
+        try:
+            deleted_count = rag_service.delete_by_framework(framework_name)
+            logger.info(
+                f"Deleted {deleted_count} ChromaDB documents for framework '{framework_name}'."
+            )
+        except Exception as e:
+            logger.warning(
+                f"Failed to delete ChromaDB documents for framework '{framework_name}': {e}"
+            )
+
+    # Delete the database record
     deleted = await admin_service.delete_framework(framework_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Framework not found")

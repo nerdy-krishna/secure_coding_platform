@@ -29,11 +29,6 @@ export const ragService = {
     const response = await apiClient.post<{ message: string }>(
       "/admin/rag/ingest",
       formData,
-      {
-        headers: {
-          "Content-Type": "multipart/form-data",
-        },
-      },
     );
     return response.data;
   },
@@ -50,7 +45,7 @@ export const ragService = {
     const documents = response.data?.documents || [];
     const metadatas = response.data?.metadatas || [];
 
-    return ids.map((id, index) => ({
+    return ids.map((id: string, index: number) => ({
       id,
       document: documents[index] || "",
       metadata: metadatas[index] || {},
@@ -72,9 +67,6 @@ export const ragService = {
     const response = await apiClient.post<PreprocessingResponse>(
       "/admin/rag/preprocess-framework",
       formData,
-      {
-        headers: { "Content-Type": "multipart/form-data" },
-      },
     );
     return response.data;
   },
@@ -91,10 +83,28 @@ export const ragService = {
 
   startPreprocessing: async (
     formData: FormData,
+    targetLanguages: string[] = []
   ): Promise<RAGJobStartResponse> => {
+    targetLanguages.forEach(lang => formData.append('target_languages', lang));
     const response = await apiClient.post<RAGJobStartResponse>(
       "/admin/rag/preprocess/start",
       formData,
+    );
+    return response.data;
+  },
+
+  reprocessFramework: async (
+    frameworkName: string,
+    targetLanguages: string[],
+    llmConfigId: string
+  ): Promise<RAGJobStartResponse> => {
+    const response = await apiClient.post<RAGJobStartResponse>(
+      "/admin/rag/preprocess/reprocess",
+      {
+        framework_name: frameworkName,
+        target_languages: targetLanguages,
+        llm_config_id: llmConfigId,
+      }
     );
     return response.data;
   },
@@ -110,6 +120,43 @@ export const ragService = {
     const response = await apiClient.get<RAGJobStatusResponse>(
       `/admin/rag/preprocess/${jobId}/status`,
     );
+    return response.data;
+  },
+
+  // --- Security Standards Ingestion ---
+
+  ingestASVS: async (file: File): Promise<{ message: string; count: number }> => {
+    const formData = new FormData();
+    formData.append("file", file);
+    const response = await apiClient.post<{ message: string; count: number }>(
+      "/admin/rag/ingest/standards/asvs",
+      formData,
+    );
+    return response.data;
+  },
+
+  ingestProactiveControls: async (url: string): Promise<{ message: string; count: number }> => {
+    const formData = new FormData();
+    formData.append("url", url);
+    const response = await apiClient.post<{ message: string; count: number }>(
+      "/admin/rag/ingest/standards/proactive-controls",
+      formData,
+    );
+    return response.data;
+  },
+
+  ingestCheatsheet: async (url: string): Promise<{ message: string; count: number }> => {
+    const formData = new FormData();
+    formData.append("url", url);
+    const response = await apiClient.post<{ message: string; count: number }>(
+      "/admin/rag/ingest/standards/cheatsheets",
+      formData,
+    );
+    return response.data;
+  },
+
+  getStats: async (): Promise<Record<string, number>> => {
+    const response = await apiClient.get<Record<string, number>>("/admin/rag/ingest/stats");
     return response.data;
   },
 };

@@ -42,6 +42,18 @@ class FrameworkRepository:
         result = await self.db.execute(stmt)
         return result.scalars().first()
 
+    async def get_framework_by_name(
+        self, name: str
+    ) -> Optional[db_models.Framework]:
+        """Retrieves a single framework by its name."""
+        stmt = (
+            select(db_models.Framework)
+            .options(selectinload(db_models.Framework.agents))
+            .filter(db_models.Framework.name == name)
+        )
+        result = await self.db.execute(stmt)
+        return result.scalars().first()
+
     async def get_all_frameworks(self) -> List[db_models.Framework]:
         """Retrieves all frameworks, including their related agents."""
         stmt = select(db_models.Framework).options(

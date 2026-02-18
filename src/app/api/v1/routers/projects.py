@@ -37,6 +37,27 @@ async def get_all_projects(
 ):
     return await service.get_paginated_projects(user.id, skip, limit, search)
 
+class CreateProjectRequest(BaseModel):
+    name: str
+
+@router.post("/projects", response_model=api_models.ProjectHistoryItem, status_code=status.HTTP_201_CREATED)
+async def create_project(
+    request: CreateProjectRequest,
+    user: db_models.User = Depends(current_active_user),
+    service: SubmissionService = Depends(get_scan_service),
+):
+    """Creates a new empty project."""
+    project = await service.repo.get_or_create_project(name=request.name, user_id=user.id)
+    return api_models.ProjectHistoryItem(
+        id=project.id,
+        name=project.name,
+        repository_url=project.repository_url,
+        created_at=project.created_at,
+        updated_at=project.updated_at,
+        scans=[],
+    )
+
+
 @router.get("/projects/search", response_model=List[str])
 async def search_projects_for_user(
     q: str = Query(..., min_length=1, max_length=100),

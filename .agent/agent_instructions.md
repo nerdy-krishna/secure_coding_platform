@@ -12,4 +12,16 @@ This document serves as the primary instruction set for the Antigravity agent wh
 
 ## 3. Version Control
 - **Requirement:** All changes must be committed to GitHub.
-- **Action:** After completing a task or a logical unit of work, stage and commit the changes with a clear, descriptive commit message. Ensure these changes are pushed to the remote repository.
+- **Action:** After completing a task or a logical unit of work, stage and commit the changes with a clear, descriptive commit message.
+
+<!-- ## 4. **Linting & Code Quality**
+- **Requirement:** Ensure no lint errors are introduced during code changes.
+- **Action:** If existing code has lint errors, fix them immediately. If new code creates lint errors, fix them before proceeding. Use `ESLint` for frontend code and `flake8` for backend code. -->
+
+## 4. Feature Requests
+- **Requirement:** New features are documented in `.agent/features.md`.
+- **Action:**
+  - Refer to `.agent/features.md` for technical implementation details.
+  - Always ask the user **which feature to implement first**.
+  - Implement strictly **ONE** feature at a time.
+  - Verify implementation before asking to proceed to the next feature.

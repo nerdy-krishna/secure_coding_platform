@@ -192,6 +192,7 @@ class PreprocessingResponse(BaseModel):
     framework_name: str
     llm_config_name: str
     processed_documents: List[EnrichedDocument]
+    scan_ready: bool = True
 
 class RAGJobStartResponse(BaseModel):
     """Response when starting a new RAG preprocessing job."""

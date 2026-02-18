@@ -23,7 +23,7 @@ USER fluent
 
 # --- Continue with gem installation (as fluent user) ---
 # Now, install the gem. It should use the GEM_HOME set above.
-RUN fluent-gem install fluent-plugin-opensearch
+RUN fluent-gem install fluent-plugin-grafana-loki fluent-plugin-multi-format-parser
 
 # --- End of version-agnostic gem installation setup ---
 
