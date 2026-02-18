@@ -49,8 +49,8 @@ RUN poetry config virtualenvs.create true --local \
 # Refresh lock file to ensure it matches pyproject.toml (since we added pytorch-cpu)
 RUN poetry lock --no-update
 
-# Install dependencies as user.
-RUN poetry install --no-interaction --no-ansi
+# Install dependencies as user (excluding the root package itself).
+RUN poetry install --no-interaction --no-ansi --no-root
 
 # Copy the rest of the application source code
 COPY --chown=${APP_USER}:${APP_USER} ./src /app/src
