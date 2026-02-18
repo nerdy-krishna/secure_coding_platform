@@ -18,9 +18,6 @@ RUN apt-get update \
 # Install Poetry
 RUN pip install "poetry==${POETRY_VERSION}"
 
-# Set the working directory
-WORKDIR /app
-
 # --- Create a non-root user ---
 ARG APP_USER=appuser
 ARG APP_UID=1001
@@ -28,8 +25,17 @@ ARG APP_GID=1001
 RUN groupadd --gid ${APP_GID} ${APP_USER} \
     && useradd --uid ${APP_UID} --gid ${APP_GID} --create-home --shell /bin/bash ${APP_USER}
 
+# Set the working directory
+WORKDIR /app
+
+# Change ownership of /app to the new user
+RUN chown -R ${APP_USER}:${APP_USER} /app
+
+# Switch to the non-root user for all subsequent commands
+USER ${APP_USER}
+
 # Copy dependency files first to leverage Docker cache
-COPY pyproject.toml poetry.lock ./
+COPY --chown=${APP_USER}:${APP_USER} pyproject.toml poetry.lock ./
 
 # --- START: FIX ---
 # Create a project-local configuration. 
@@ -38,18 +44,12 @@ RUN poetry config virtualenvs.create true --local \
     && poetry config virtualenvs.in-project true --local
 # --- END: FIX ---
 
-# Install dependencies as root.
+# Install dependencies as user.
 RUN poetry install --no-interaction --no-ansi
 
 # Copy the rest of the application source code
-COPY ./src /app/src
-COPY .env.example /app/.env.example
-
-# Change ownership of the entire /app directory to the new non-root user
-RUN chown -R ${APP_USER}:${APP_USER} /app
-
-# Switch to the non-root user for all subsequent commands
-USER ${APP_USER}
+COPY --chown=${APP_USER}:${APP_USER} ./src /app/src
+COPY --chown=${APP_USER}:${APP_USER} .env.example /app/.env.example
 
 # Set PYTHONPATH for the non-root user
 # Set PYTHONPATH for the non-root user
