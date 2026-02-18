@@ -7,7 +7,7 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.infrastructure.database.database import get_db, AsyncSessionLocal
+from app.infrastructure.database.database import AsyncSessionLocal
 from app.infrastructure.database import models as db_models
 from app.api.v1 import models as api_models
 from app.shared.lib.encryption import FernetEncrypt
@@ -43,7 +43,10 @@ class LLMConfigRepository:
         self, config_id: uuid.UUID
     ) -> Optional[db_models.LLMConfiguration]:
         """Retrieves a single LLM configuration and decrypts its API key."""
-        logger.debug("Fetching LLM config by ID with decrypted key.", extra={"config_id": str(config_id)})
+        logger.debug(
+            "Fetching LLM config by ID with decrypted key.",
+            extra={"config_id": str(config_id)},
+        )
         config = await self.get_by_id(config_id)
         if config:
             # Use a try-except block for safer decryption
@@ -56,7 +59,7 @@ class LLMConfigRepository:
             except Exception as e:
                 logger.error(
                     "Failed to decrypt API key for LLM config.",
-                    extra={"config_id": str(config_id), "error": str(e)}
+                    extra={"config_id": str(config_id), "error": str(e)},
                 )
                 # Set key to None or handle error as per security policy
                 setattr(config, "decrypted_api_key", None)
@@ -66,7 +69,9 @@ class LLMConfigRepository:
         self, skip: int = 0, limit: int = 100
     ) -> List[db_models.LLMConfiguration]:
         """Retrieves all LLM configurations, with pagination."""
-        logger.debug("Fetching all LLM configs from DB.", extra={"skip": skip, "limit": limit})
+        logger.debug(
+            "Fetching all LLM configs from DB.", extra={"skip": skip, "limit": limit}
+        )
         result = await self.db.execute(
             select(db_models.LLMConfiguration)
             .order_by(db_models.LLMConfiguration.name)
@@ -79,7 +84,9 @@ class LLMConfigRepository:
         self, config: api_models.LLMConfigurationCreate
     ) -> db_models.LLMConfiguration:
         """Creates a new LLM configuration in the database with an encrypted API key."""
-        logger.info("Creating new LLM config in DB.", extra={"config_name": config.name})
+        logger.info(
+            "Creating new LLM config in DB.", extra={"config_name": config.name}
+        )
         encrypted_key = FernetEncrypt.encrypt(config.api_key)
         db_config = db_models.LLMConfiguration(
             name=config.name,
@@ -92,7 +99,10 @@ class LLMConfigRepository:
         self.db.add(db_config)
         await self.db.commit()
         await self.db.refresh(db_config)
-        logger.info("Successfully created new LLM config in DB.", extra={"config_id": str(db_config.id)})
+        logger.info(
+            "Successfully created new LLM config in DB.",
+            extra={"config_id": str(db_config.id)},
+        )
         return db_config
 
     async def update(
@@ -102,7 +112,9 @@ class LLMConfigRepository:
         logger.info("Updating LLM config in DB.", extra={"config_id": str(config_id)})
         db_config = await self.get_by_id(config_id)
         if not db_config:
-            logger.warning("LLM config not found for update.", extra={"config_id": str(config_id)})
+            logger.warning(
+                "LLM config not found for update.", extra={"config_id": str(config_id)}
+            )
             return None
         update_data = config_update.model_dump(exclude_unset=True)
         for key, value in update_data.items():
@@ -113,7 +125,10 @@ class LLMConfigRepository:
                 setattr(db_config, key, value)
         await self.db.commit()
         await self.db.refresh(db_config)
-        logger.info("Successfully updated LLM config in DB.", extra={"config_id": str(db_config.id)})
+        logger.info(
+            "Successfully updated LLM config in DB.",
+            extra={"config_id": str(db_config.id)},
+        )
         return db_config
 
     async def delete(
@@ -125,5 +140,8 @@ class LLMConfigRepository:
         if config:
             await self.db.delete(config)
             await self.db.commit()
-            logger.info("LLM config deleted successfully from DB.", extra={"config_id": str(config_id)})
+            logger.info(
+                "LLM config deleted successfully from DB.",
+                extra={"config_id": str(config_id)},
+            )
         return config

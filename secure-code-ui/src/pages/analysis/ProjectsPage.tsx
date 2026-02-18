@@ -110,10 +110,10 @@ const AnalysisResultsIndexPage: React.FC = () => {
         key: 'actions',
             render: (_, scan) => (
                 <Space size= "small" wrap >
-                    <Link to={ `/analysis/results/${scan.id}` }> <Button type="primary" size = "small" > View Report < /Button></Link >
-                        { scan.has_impact_report && <Link to={ `/scans/${scan.id}/executive-summary` }> <Button size="small" > Summary < /Button></Link >}
+                    <Link to={ `/analysis/results/${scan.id}` }> <Button type="primary" size = "small" > View Report </Button></Link >
+                        { scan.has_impact_report && <Link to={ `/scans/${scan.id}/executive-summary` }> <Button size="small" > Summary </Button></Link >}
 { scan.has_sarif_report && <Button size="small" icon = {< CodeOutlined />} onClick = {() => handleDownloadSarif(scan.id)}> SARIF </Button>}
-<Link to={ `/scans/${scan.id}/llm-logs` }> <Button size="small" icon = {< FileSearchOutlined />}> Logs < /Button></Link >
+<Link to={ `/scans/${scan.id}/llm-logs` }> <Button size="small" icon = {< FileSearchOutlined />}> Logs </Button></Link >
     </Space>
                 ),
             },
@@ -133,7 +133,7 @@ const mainColumns: TableProps<ProjectHistoryItem>['columns'] = [
         title: 'Repository URL',
         dataIndex: 'repository_url',
         key: 'repository_url',
-        render: (url) => url ? <a href={ url } target = "_blank" rel = "noopener noreferrer" > { url } < /a> : <Typography.Text type="secondary">N/A </Typography.Text>,
+        render: (url) => url ? <a href={ url } target = "_blank" rel = "noopener noreferrer" > { url } </a> : <Typography.Text type="secondary">N/A </Typography.Text>,
             ellipsis: true,
         },
 {
@@ -194,21 +194,21 @@ return (
             <ProjectOutlined style={ { marginRight: 16 } } />
 Projects
     </Title>
-    < Paragraph type = "secondary" >
+   <Paragraph type = "secondary" >
         Browse all projects and expand to see their scan histories.
                     </Paragraph>
             </Col>
-            < Col >
+           <Col >
             <Space>
             <Button type="primary" onClick = {() => setNewProjectModalVisible(true)}> New Project </Button>
-                < Link to = "/submission/submit" >
+               <Link to = "/submission/submit" >
                     <Button type="primary" > New Scan </Button>
                         </Link>
                         </Space>
                         </Col>
                         </Row>
 
-                        < Search
+                       <Search
 placeholder = "Search by Project Name..."
 value = { searchTerm }
 onChange = {(e) => setSearchTerm(e.target.value)}
@@ -241,7 +241,7 @@ locale = {{
 }}
             />
 
-    < Modal
+   <Modal
 title = "Create New Project"
 open = { newProjectModalVisible }
 onOk = {() => {

@@ -13,7 +13,7 @@ from fastapi import UploadFile, HTTPException
 # Assuming get_language_from_filename can be imported from git_utils
 # If this causes circular dependency issues or feels misplaced,
 # it should be moved to a more general location.
-from app.shared.lib.files import get_language_from_filename # UPDATED IMPORT
+from app.shared.lib.files import get_language_from_filename  # UPDATED IMPORT
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,9 @@ def _is_path_safe(base_dir: str, target_path_within_archive: str) -> bool:
     """
     abs_base_dir = os.path.abspath(base_dir)
     # Create the prospective absolute path of the extracted file
-    abs_target_path = os.path.abspath(os.path.join(base_dir, target_path_within_archive))
+    abs_target_path = os.path.abspath(
+        os.path.join(base_dir, target_path_within_archive)
+    )
     # Check if the prospective absolute path is still within the base directory
     return abs_target_path.startswith(abs_base_dir)
 
@@ -91,14 +93,14 @@ def extract_archive_to_files(archive_file: UploadFile) -> List[Dict[str, Any]]:
     for ext in ALLOWED_ARCHIVE_EXTENSIONS:
         if filename_lower.endswith(ext):
             is_supported_archive = True
-            file_extension = ext # Use the matched extension for clarity
+            file_extension = ext  # Use the matched extension for clarity
             break
 
     if not is_supported_archive:
         raise HTTPException(
             status_code=400,
             detail=f"Unsupported archive format for file: {archive_file.filename}. "
-                   f"Supported formats: {', '.join(ALLOWED_ARCHIVE_EXTENSIONS)}",
+            f"Supported formats: {', '.join(ALLOWED_ARCHIVE_EXTENSIONS)}",
         )
 
     extracted_files_data: List[Dict[str, Any]] = []
@@ -112,9 +114,11 @@ def extract_archive_to_files(archive_file: UploadFile) -> List[Dict[str, Any]]:
                 shutil.copyfileobj(archive_file.file, f_out)
         except Exception as e:
             logger.error(f"Failed to save uploaded archive: {e}")
-            raise HTTPException(status_code=500, detail="Error saving uploaded archive.")
+            raise HTTPException(
+                status_code=500, detail="Error saving uploaded archive."
+            )
         finally:
-            archive_file.file.close() # Ensure the UploadFile stream is closed
+            archive_file.file.close()  # Ensure the UploadFile stream is closed
 
         extraction_target_dir = os.path.join(temp_dir, "extracted_content")
         os.makedirs(extraction_target_dir, exist_ok=True)
@@ -137,10 +141,12 @@ def extract_archive_to_files(archive_file: UploadFile) -> List[Dict[str, Any]]:
                         if total_uncompressed_size > MAX_UNCOMPRESSED_SIZE_BYTES:
                             raise HTTPException(
                                 status_code=400,
-                                detail=f"Archive uncompressed size exceeds limit ({MAX_UNCOMPRESSED_SIZE_BYTES // (1024*1024)} MB).",
+                                detail=f"Archive uncompressed size exceeds limit ({MAX_UNCOMPRESSED_SIZE_BYTES // (1024 * 1024)} MB).",
                             )
 
-                        if not _is_path_safe(extraction_target_dir, member_info.filename):
+                        if not _is_path_safe(
+                            extraction_target_dir, member_info.filename
+                        ):
                             logger.warning(
                                 f"Skipping potentially unsafe path in ZIP: {member_info.filename}"
                             )
@@ -149,25 +155,38 @@ def extract_archive_to_files(archive_file: UploadFile) -> List[Dict[str, Any]]:
                         # Extract then read
                         try:
                             # Ensure target directory for the file exists
-                            member_extract_path = os.path.join(extraction_target_dir, member_info.filename)
-                            os.makedirs(os.path.dirname(member_extract_path), exist_ok=True)
+                            member_extract_path = os.path.join(
+                                extraction_target_dir, member_info.filename
+                            )
+                            os.makedirs(
+                                os.path.dirname(member_extract_path), exist_ok=True
+                            )
                             zf.extract(member_info, path=extraction_target_dir)
 
                             with open(member_extract_path, "rb") as extracted_f:
                                 content_bytes = extracted_f.read()
                         except Exception as e:
-                            logger.error(f"Error extracting/reading file {member_info.filename} from zip: {e}")
-                            continue # Skip this file
+                            logger.error(
+                                f"Error extracting/reading file {member_info.filename} from zip: {e}"
+                            )
+                            continue  # Skip this file
 
                         content_str = _sanitize_extracted_content(content_bytes)
                         language = get_language_from_filename(member_info.filename)
-                        extracted_files_data.append({
-                            "path": member_info.filename,
-                            "content": content_str,
-                            "language": language or "unknown",
-                        })
+                        extracted_files_data.append(
+                            {
+                                "path": member_info.filename,
+                                "content": content_str,
+                                "language": language or "unknown",
+                            }
+                        )
 
-            elif file_extension.startswith(".tar") or file_extension == ".tgz" or file_extension == ".tbz2" or file_extension == ".txz":
+            elif (
+                file_extension.startswith(".tar")
+                or file_extension == ".tgz"
+                or file_extension == ".tbz2"
+                or file_extension == ".txz"
+            ):
                 # tarfile.open can handle .tar, .tar.gz, .tar.bz2, .tar.xz automatically
                 with tarfile.open(archive_path, "r:*") as tf:
                     for member_info in tf.getmembers():
@@ -185,7 +204,7 @@ def extract_archive_to_files(archive_file: UploadFile) -> List[Dict[str, Any]]:
                         if total_uncompressed_size > MAX_UNCOMPRESSED_SIZE_BYTES:
                             raise HTTPException(
                                 status_code=400,
-                                detail=f"Archive uncompressed size exceeds limit ({MAX_UNCOMPRESSED_SIZE_BYTES // (1024*1024)} MB).",
+                                detail=f"Archive uncompressed size exceeds limit ({MAX_UNCOMPRESSED_SIZE_BYTES // (1024 * 1024)} MB).",
                             )
 
                         if not _is_path_safe(extraction_target_dir, member_info.name):
@@ -197,8 +216,12 @@ def extract_archive_to_files(archive_file: UploadFile) -> List[Dict[str, Any]]:
                         try:
                             # Extract then read
                             # Ensure target directory for the file exists
-                            member_extract_path = os.path.join(extraction_target_dir, member_info.name)
-                            os.makedirs(os.path.dirname(member_extract_path), exist_ok=True)
+                            member_extract_path = os.path.join(
+                                extraction_target_dir, member_info.name
+                            )
+                            os.makedirs(
+                                os.path.dirname(member_extract_path), exist_ok=True
+                            )
 
                             # Extract file object
                             extracted_fo = tf.extractfile(member_info)
@@ -211,28 +234,40 @@ def extract_archive_to_files(archive_file: UploadFile) -> List[Dict[str, Any]]:
                                     disk_f.write(content_bytes)
                             else:
                                 # Should not happen if member_info.isfile() is true and no error
-                                logger.warning(f"Could not extract file object for {member_info.name} from tar.")
+                                logger.warning(
+                                    f"Could not extract file object for {member_info.name} from tar."
+                                )
                                 continue
                         except Exception as e:
-                            logger.error(f"Error extracting/reading file {member_info.name} from tar: {e}")
-                            continue # Skip this file
+                            logger.error(
+                                f"Error extracting/reading file {member_info.name} from tar: {e}"
+                            )
+                            continue  # Skip this file
 
                         content_str = _sanitize_extracted_content(content_bytes)
                         language = get_language_from_filename(member_info.name)
-                        extracted_files_data.append({
-                            "path": member_info.name,
-                            "content": content_str,
-                            "language": language or "unknown",
-                        })
+                        extracted_files_data.append(
+                            {
+                                "path": member_info.name,
+                                "content": content_str,
+                                "language": language or "unknown",
+                            }
+                        )
             else:
                 # This case should be caught by the initial extension check
-                raise HTTPException(status_code=400, detail="Internal error: Unhandled archive type.")
+                raise HTTPException(
+                    status_code=400, detail="Internal error: Unhandled archive type."
+                )
 
-        except HTTPException: # Re-raise HTTPExceptions
+        except HTTPException:  # Re-raise HTTPExceptions
             raise
         except Exception as e:
-            logger.error(f"Error processing archive {archive_file.filename}: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=f"Error processing archive: {str(e)}")
+            logger.error(
+                f"Error processing archive {archive_file.filename}: {e}", exc_info=True
+            )
+            raise HTTPException(
+                status_code=500, detail=f"Error processing archive: {str(e)}"
+            )
 
     if not extracted_files_data:
         raise HTTPException(

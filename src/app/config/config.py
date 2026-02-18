@@ -70,12 +70,24 @@ class Settings(BaseSettings):
     # --- Rate Limiting (NEW) ---
     # Requests Per Minute (RPM) for each LLM provider.
     # A value of 0 or less will effectively disable the rate limiter for that provider.
-    OPENAI_REQUESTS_PER_MINUTE: int = Field(default=60, description="Max RPM for OpenAI models.")
-    OPENAI_TOKENS_PER_MINUTE: int = Field(default=30000, description="Max TPM for OpenAI models.")
-    GOOGLE_REQUESTS_PER_MINUTE: int = Field(default=60, description="Max RPM for Google models.")
-    GOOGLE_TOKENS_PER_MINUTE: int = Field(default=60000, description="Max TPM for Google models.")
-    ANTHROPIC_REQUESTS_PER_MINUTE: int = Field(default=30, description="Max RPM for Anthropic models.")
-    ANTHROPIC_TOKENS_PER_MINUTE: int = Field(default=20000, description="Max TPM for Anthropic models.")
+    OPENAI_REQUESTS_PER_MINUTE: int = Field(
+        default=60, description="Max RPM for OpenAI models."
+    )
+    OPENAI_TOKENS_PER_MINUTE: int = Field(
+        default=30000, description="Max TPM for OpenAI models."
+    )
+    GOOGLE_REQUESTS_PER_MINUTE: int = Field(
+        default=60, description="Max RPM for Google models."
+    )
+    GOOGLE_TOKENS_PER_MINUTE: int = Field(
+        default=60000, description="Max TPM for Google models."
+    )
+    ANTHROPIC_REQUESTS_PER_MINUTE: int = Field(
+        default=30, description="Max RPM for Anthropic models."
+    )
+    ANTHROPIC_TOKENS_PER_MINUTE: int = Field(
+        default=20000, description="Max TPM for Anthropic models."
+    )
 
 
 settings = Settings()  # type: ignore

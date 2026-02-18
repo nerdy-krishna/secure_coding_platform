@@ -36,9 +36,10 @@ async def manage_user(email: str, superuser: bool, verified: bool):
 
     async with session_factory() as session:
         db_adapter_generator = get_user_db(session)
-        db = await anext(db_adapter_generator)
+        # anext is a builtin in Python 3.10+
+        db = await anext(db_adapter_generator) # noqa: F821
         user_manager_generator = get_user_manager(db)
-        user_manager = await anext(user_manager_generator)
+        user_manager = await anext(user_manager_generator) # noqa: F821
 
         user_to_update = await user_manager.get_by_email(email)
 

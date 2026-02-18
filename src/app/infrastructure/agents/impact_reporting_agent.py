@@ -69,7 +69,7 @@ async def generate_impact_report_node(
             required_architectural_changes=[],
             vulnerability_overview="The scan completed successfully without finding any vulnerabilities.",
             high_risk_findings_summary=[],
-            remediation_strategy="No remediation is necessary at this time."
+            remediation_strategy="No remediation is necessary at this time.",
         )
         return {"impact_report": report.model_dump()}
 
@@ -106,7 +106,7 @@ async def generate_impact_report_node(
         prompt, ImpactReport
     )
 
-    prompt_context_for_log = { "findings": findings_for_prompt }
+    prompt_context_for_log = {"findings": findings_for_prompt}
     interaction = LLMInteraction(
         scan_id=scan_id,
         agent_name=AGENT_NAME,

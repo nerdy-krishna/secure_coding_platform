@@ -19,12 +19,14 @@ async def create_llm_configuration(
 ):
     return await admin_service.create_config(config)
 
+
 @llm_router.get("/", response_model=List[api_models.LLMConfigurationRead])
 async def read_llm_configurations(
     admin_service: AdminService = Depends(get_admin_service),
     user: db_models.User = Depends(current_active_user),
 ):
     return await admin_service.get_all_configs()
+
 
 @llm_router.patch("/{config_id}", response_model=api_models.LLMConfigurationRead)
 async def update_llm_configuration(
@@ -38,6 +40,7 @@ async def update_llm_configuration(
     if updated_config is None:
         raise HTTPException(status_code=404, detail="LLM Configuration not found")
     return updated_config
+
 
 @llm_router.delete("/{config_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_llm_configuration(

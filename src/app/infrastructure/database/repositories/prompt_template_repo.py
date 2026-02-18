@@ -26,7 +26,9 @@ class PromptTemplateRepository:
         self.db.add(db_template)
         await self.db.commit()
         await self.db.refresh(db_template)
-        logger.info(f"Created prompt template '{db_template.name}' with ID {db_template.id}.")
+        logger.info(
+            f"Created prompt template '{db_template.name}' with ID {db_template.id}."
+        )
         return db_template
 
     async def get_template_by_id(
@@ -44,8 +46,7 @@ class PromptTemplateRepository:
     ) -> Optional[db_models.PromptTemplate]:
         """Retrieves a single prompt template by its unique agent_name and type."""
         stmt = select(db_models.PromptTemplate).filter_by(
-            agent_name=agent_name,
-            template_type=template_type
+            agent_name=agent_name, template_type=template_type
         )
         result = await self.db.execute(stmt)
         return result.scalars().first()

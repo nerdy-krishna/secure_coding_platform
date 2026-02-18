@@ -17,10 +17,21 @@ router = APIRouter()
 
 # --- Pydantic Models for Chat API ---
 class ChatSessionCreateRequest(BaseModel):
-    title: str = Field(..., min_length=1, max_length=100, description="The title for the new chat session.")
-    llm_config_id: uuid.UUID = Field(..., description="The ID of the LLM to use for this session.")
-    frameworks: List[str] = Field([], description="A list of security framework names to provide context.")
-    project_id: Optional[uuid.UUID] = Field(None, description="Optional project ID to associate with the chat.")
+    title: str = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        description="The title for the new chat session.",
+    )
+    llm_config_id: uuid.UUID = Field(
+        ..., description="The ID of the LLM to use for this session."
+    )
+    frameworks: List[str] = Field(
+        [], description="A list of security framework names to provide context."
+    )
+    project_id: Optional[uuid.UUID] = Field(
+        None, description="Optional project ID to associate with the chat."
+    )
 
 
 class ChatSessionResponse(BaseModel):
@@ -51,7 +62,9 @@ class ChatMessageResponse(BaseModel):
 
 
 # --- API Endpoints ---
-@router.post("/sessions", response_model=ChatSessionResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/sessions", response_model=ChatSessionResponse, status_code=status.HTTP_201_CREATED
+)
 async def create_chat_session(
     request: ChatSessionCreateRequest,
     user: db_models.User = Depends(current_active_user),

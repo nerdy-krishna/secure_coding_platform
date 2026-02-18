@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 # This ensures that all parts of the application share the same limiters.
 provider_rate_limiters: Dict[str, AsyncRateLimiter] = {}
 
+
 def initialize_rate_limiters():
     """
     Initializes the rate limiters based on the application settings.
@@ -22,26 +23,30 @@ def initialize_rate_limiters():
         return
 
     logger.info("Initializing global LLM provider rate limiters...")
-    
-    provider_rate_limiters['openai'] = AsyncRateLimiter(
-        settings.OPENAI_REQUESTS_PER_MINUTE,
-        settings.OPENAI_TOKENS_PER_MINUTE
-    )
-    logger.info(f"OpenAI rate limit set to {settings.OPENAI_REQUESTS_PER_MINUTE} RPM and {settings.OPENAI_TOKENS_PER_MINUTE} TPM.")
-    
-    provider_rate_limiters['google'] = AsyncRateLimiter(
-        settings.GOOGLE_REQUESTS_PER_MINUTE,
-        settings.GOOGLE_TOKENS_PER_MINUTE
-    )
-    logger.info(f"Google rate limit set to {settings.GOOGLE_REQUESTS_PER_MINUTE} RPM and {settings.GOOGLE_TOKENS_PER_MINUTE} TPM.")
 
-    provider_rate_limiters['anthropic'] = AsyncRateLimiter(
-        settings.ANTHROPIC_REQUESTS_PER_MINUTE,
-        settings.ANTHROPIC_TOKENS_PER_MINUTE
+    provider_rate_limiters["openai"] = AsyncRateLimiter(
+        settings.OPENAI_REQUESTS_PER_MINUTE, settings.OPENAI_TOKENS_PER_MINUTE
     )
-    logger.info(f"Anthropic rate limit set to {settings.ANTHROPIC_REQUESTS_PER_MINUTE} RPM and {settings.ANTHROPIC_TOKENS_PER_MINUTE} TPM.")
-    
+    logger.info(
+        f"OpenAI rate limit set to {settings.OPENAI_REQUESTS_PER_MINUTE} RPM and {settings.OPENAI_TOKENS_PER_MINUTE} TPM."
+    )
+
+    provider_rate_limiters["google"] = AsyncRateLimiter(
+        settings.GOOGLE_REQUESTS_PER_MINUTE, settings.GOOGLE_TOKENS_PER_MINUTE
+    )
+    logger.info(
+        f"Google rate limit set to {settings.GOOGLE_REQUESTS_PER_MINUTE} RPM and {settings.GOOGLE_TOKENS_PER_MINUTE} TPM."
+    )
+
+    provider_rate_limiters["anthropic"] = AsyncRateLimiter(
+        settings.ANTHROPIC_REQUESTS_PER_MINUTE, settings.ANTHROPIC_TOKENS_PER_MINUTE
+    )
+    logger.info(
+        f"Anthropic rate limit set to {settings.ANTHROPIC_REQUESTS_PER_MINUTE} RPM and {settings.ANTHROPIC_TOKENS_PER_MINUTE} TPM."
+    )
+
     logger.info("Global LLM rate limiters initialization complete.")
+
 
 def get_rate_limiter_for_provider(provider_name: str) -> Optional[AsyncRateLimiter]:
     """

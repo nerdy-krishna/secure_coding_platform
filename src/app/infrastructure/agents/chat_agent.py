@@ -18,7 +18,7 @@ from app.infrastructure.database.repositories.prompt_template_repo import (
 )
 from app.infrastructure.database.repositories.scan_repo import ScanRepository
 from app.infrastructure.database import AsyncSessionLocal as async_session_factory
-from app.infrastructure.llm_client import get_llm_client, AgentLLMResult
+from app.infrastructure.llm_client import get_llm_client
 from app.infrastructure.rag.rag_client import get_rag_service
 
 logger = logging.getLogger(__name__)
@@ -35,11 +35,13 @@ MESSAGES_TO_PRESERVE = 6
 
 class ChatResponse(BaseModel):
     """A simple Pydantic model for the chat response."""
+
     response: str = Field(description="The AI's response to the user's query.")
 
 
 class SummaryResponse(BaseModel):
     """A Pydantic model for the summarization call."""
+
     summary: str = Field(description="A concise summary of the conversation.")
 
 
@@ -75,7 +77,9 @@ class ChatAgent:
         """Internal method to perform the summarization call and update the DB."""
         llm_client = await get_llm_client(llm_config_id)
         if not llm_client:
-            logger.error(f"[{SUMMARIZER_AGENT_NAME}] Could not get LLM client for summarization.")
+            logger.error(
+                f"[{SUMMARIZER_AGENT_NAME}] Could not get LLM client for summarization."
+            )
             return False
 
         conversation_text = "\n".join(
@@ -87,7 +91,9 @@ class ChatAgent:
             prompt, SummaryResponse
         )
 
-        if llm_response.error or not isinstance(llm_response.parsed_output, SummaryResponse):
+        if llm_response.error or not isinstance(
+            llm_response.parsed_output, SummaryResponse
+        ):
             logger.error(f"[{SUMMARIZER_AGENT_NAME}] Failed to get summary from LLM.")
             return False
 
@@ -101,14 +107,13 @@ class ChatAgent:
             )
         return True
 
-
     async def generate_response(
         self,
         session_id: uuid.UUID,
         user_question: str,
         history: List[db_models.ChatMessage],
         llm_config_id: Optional[uuid.UUID],
-        frameworks: Optional[List[str]] = None
+        frameworks: Optional[List[str]] = None,
     ) -> Tuple[str, Optional[int], Optional[float]]:
         """
         Generates a context-aware response, applying summarization if needed.
@@ -117,9 +122,11 @@ class ChatAgent:
             A tuple containing (response_content, llm_interaction_id, cost).
         """
         logger.info(f"[{AGENT_NAME}] Generating response for session {session_id}.")
-        
+
         # Ensure we have an LLM config to work with
-        effective_llm_config_id = llm_config_id or await self._get_default_llm_config_id()
+        effective_llm_config_id = (
+            llm_config_id or await self._get_default_llm_config_id()
+        )
         if not effective_llm_config_id:
             logger.error(f"[{AGENT_NAME}] No LLM configuration available.")
             return "Error: The AI language model is not configured.", None, None
@@ -129,17 +136,25 @@ class ChatAgent:
         history_tokens = self._estimate_tokens(history_text + user_question)
 
         if history_tokens > HISTORY_TOKEN_LIMIT and len(history) > MESSAGES_TO_PRESERVE:
-            logger.info(f"[{AGENT_NAME}] History for session {session_id} exceeds token limit. Triggering summarization.")
+            logger.info(
+                f"[{AGENT_NAME}] History for session {session_id} exceeds token limit. Triggering summarization."
+            )
             messages_to_summarize = history[:-MESSAGES_TO_PRESERVE]
-            
-            success = await self._summarize_history(session_id, messages_to_summarize, effective_llm_config_id)
+
+            success = await self._summarize_history(
+                session_id, messages_to_summarize, effective_llm_config_id
+            )
             if success:
                 # Refresh history from DB after summarization
                 async with async_session_factory() as db:
                     repo = ChatRepository(db)
-                    session_owner = await repo.get_session_by_id(session_id, history[0].session.user_id)
+                    session_owner = await repo.get_session_by_id(
+                        session_id, history[0].session.user_id
+                    )
                     if session_owner:
-                        history = sorted(session_owner.messages, key=lambda m: m.timestamp)
+                        history = sorted(
+                            session_owner.messages, key=lambda m: m.timestamp
+                        )
 
         # 2. Get RAG context
         rag_context = "No specific security context found."
@@ -149,14 +164,20 @@ class ChatAgent:
                 try:
                     # This assumes RAG service can filter by a list of frameworks
                     where_filter = {"framework_name": {"$in": frameworks}}
-                    retrieved_docs = rag_service.query_guidelines(query_texts=[user_question], n_results=5, where=where_filter) # type: ignore
+                    retrieved_docs = rag_service.query_guidelines(
+                        query_texts=[user_question], n_results=5, where=where_filter
+                    )  # type: ignore
                     docs = retrieved_docs.get("documents")
                     if docs and docs[0]:
                         rag_context = "\n".join(docs[0])
                 except Exception as e:
-                    logger.error(f"[{AGENT_NAME}] Failed to query RAG service with framework filter: {e}")
-                    rag_context = "Warning: Could not retrieve filtered info from knowledge base."
-        
+                    logger.error(
+                        f"[{AGENT_NAME}] Failed to query RAG service with framework filter: {e}"
+                    )
+                    rag_context = (
+                        "Warning: Could not retrieve filtered info from knowledge base."
+                    )
+
         # 3. Get LLM Client for the final response
         llm_client = await get_llm_client(effective_llm_config_id)
         if not llm_client:
@@ -165,50 +186,73 @@ class ChatAgent:
         # 4. Fetch the prompt template from the database
         async with async_session_factory() as db:
             prompt_repo = PromptTemplateRepository(db)
-        
+
             # This assumes a template with this name and type exists
-            template_obj = await prompt_repo.get_template_by_name_and_type(AGENT_NAME, "CHAT")
+            template_obj = await prompt_repo.get_template_by_name_and_type(
+                AGENT_NAME, "CHAT"
+            )
             if not template_obj:
                 return "Error: Chat prompt template not found in database.", None, None
             base_prompt = template_obj.template_text
-        
+
         # 5. Build final prompt
-        history.append(db_models.ChatMessage(role="user", content=user_question, timestamp=datetime.now(timezone.utc)))
+        history.append(
+            db_models.ChatMessage(
+                role="user", content=user_question, timestamp=datetime.now(timezone.utc)
+            )
+        )
         history_str = "\n".join([f"{msg.role}: {msg.content}" for msg in history])
 
         # Build framework context string for the prompt
         framework_context_str = "No specific frameworks selected."
         if frameworks:
-             framework_context_str = "\n".join([f"- {fw}" for fw in frameworks])
+            framework_context_str = "\n".join([f"- {fw}" for fw in frameworks])
         else:
-             framework_context_str = "- Generic Security Advice (No specific framework selected)"
+            framework_context_str = (
+                "- Generic Security Advice (No specific framework selected)"
+            )
 
         final_prompt = base_prompt.format(
-            history_str=history_str, 
+            history_str=history_str,
             rag_context=rag_context,
             user_question=user_question,
-            framework_context=framework_context_str
+            framework_context=framework_context_str,
         )
 
         # 6. Generate final response
-        llm_response = await llm_client.generate_structured_output(final_prompt, ChatResponse)
-        
-        ai_response_content = "I am having trouble processing this request. Please try again."
+        llm_response = await llm_client.generate_structured_output(
+            final_prompt, ChatResponse
+        )
+
+        ai_response_content = (
+            "I am having trouble processing this request. Please try again."
+        )
         if isinstance(llm_response.parsed_output, ChatResponse):
             ai_response_content = llm_response.parsed_output.response
         elif llm_response.error:
-            logger.error(f"[{AGENT_NAME}] LLM error for session {session_id}: {llm_response.error}")
-        
+            logger.error(
+                f"[{AGENT_NAME}] LLM error for session {session_id}: {llm_response.error}"
+            )
+
         # 7. Log interaction and return
         llm_interaction_id = None
         async with async_session_factory() as db:
-            repo = ScanRepository(db) # ScanRepo has the generic save_llm_interaction method
+            repo = ScanRepository(
+                db
+            )  # ScanRepo has the generic save_llm_interaction method
             interaction = LLMInteraction(
                 agent_name=AGENT_NAME,
                 prompt_template_name=CHAT_PROMPT_TEMPLATE_NAME,
-                prompt_context={"question": user_question, "history_length": len(history)-1, "rag_context_length": len(rag_context), "frameworks": frameworks},
+                prompt_context={
+                    "question": user_question,
+                    "history_length": len(history) - 1,
+                    "rag_context_length": len(rag_context),
+                    "frameworks": frameworks,
+                },
                 raw_response=llm_response.raw_output,
-                parsed_output=llm_response.parsed_output.model_dump() if llm_response.parsed_output else None,
+                parsed_output=llm_response.parsed_output.model_dump()
+                if llm_response.parsed_output
+                else None,
                 error=llm_response.error,
                 cost=llm_response.cost,
                 input_tokens=llm_response.prompt_tokens,

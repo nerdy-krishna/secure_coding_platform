@@ -47,6 +47,7 @@ _pika_channel: Optional[BlockingChannel] = None
 
 _stop_event = threading.Event()
 
+
 async def run_graph_task_wrapper(initial_state: WorkerState, delivery_tag: int):
     """
     Gets the compiled workflow and executes it with a checkpointer configuration.
@@ -89,15 +90,23 @@ async def run_graph_task_wrapper(initial_state: WorkerState, delivery_tag: int):
         # FIX: On any crash, update the scan status to FAILED in the main DB.
         try:
             from app.infrastructure.database import AsyncSessionLocal
-            from app.infrastructure.database.repositories.scan_repo import ScanRepository
+            from app.infrastructure.database.repositories.scan_repo import (
+                ScanRepository,
+            )
+
             async with AsyncSessionLocal() as db:
                 repo = ScanRepository(db)
                 await repo.update_status(scan_id_uuid, "FAILED")
-            logger.info(f"ASYNC WRAPPER: Set scan status to FAILED in DB for SID: {scan_id_str_log}")
+            logger.info(
+                f"ASYNC WRAPPER: Set scan status to FAILED in DB for SID: {scan_id_str_log}"
+            )
         except Exception as db_err:
-            logger.error(f"ASYNC WRAPPER: FAILED TO UPDATE STATUS IN DB for SID: {scan_id_str_log}. Error: {db_err}")
+            logger.error(
+                f"ASYNC WRAPPER: FAILED TO UPDATE STATUS IN DB for SID: {scan_id_str_log}. Error: {db_err}"
+            )
 
     if _pika_connection and _pika_connection.is_open:
+
         def pika_finalize_message():
             try:
                 if success:
@@ -124,6 +133,7 @@ def schedule_task_on_async_loop(target_coroutine_func: Callable, *args, **kwargs
     """
     global _async_loop
     if _async_loop and _async_loop.is_running():
+
         def _scheduler():
             asyncio.create_task(target_coroutine_func(*args, **kwargs))
             logger.debug(
@@ -153,7 +163,7 @@ def pika_message_callback(
 
         corr_id = message_data.get("correlation_id") or str(uuid.uuid4())
         correlation_id_var.set(corr_id)
-        
+
         logger.info(
             f"PIKA CB: Received message from queue '{method.routing_key}'. Delivery Tag: {method.delivery_tag}."
         )
@@ -167,7 +177,7 @@ def pika_message_callback(
 
         initial_worker_state: WorkerState = {
             "scan_id": scan_uuid,
-            "scan_type": "AUDIT", # This will be overwritten by the DB value
+            "scan_type": "AUDIT",  # This will be overwritten by the DB value
             "current_scan_status": None,
             "utility_llm_config_id": None,
             "fast_llm_config_id": None,
@@ -195,15 +205,11 @@ def pika_message_callback(
             )
             initial_worker_state["scan_type"] = "AUDIT_AND_REMEDIATE"
         elif queue_name == settings.RABBITMQ_APPROVAL_QUEUE:
-            logger.info(
-                f"PIKA CB: Resuming ANALYSIS for scan_id: {scan_uuid}"
-            )
+            logger.info(f"PIKA CB: Resuming ANALYSIS for scan_id: {scan_uuid}")
             # The scan_type is already set from the DB, no need to change it here
-            pass 
+            pass
         else:
-            logger.info(
-                f"PIKA CB: Starting new ANALYSIS for scan_id: {scan_uuid}"
-            )
+            logger.info(f"PIKA CB: Starting new ANALYSIS for scan_id: {scan_uuid}")
             # The scan_type will be correctly read from the DB in the first step
             pass
 
@@ -233,15 +239,11 @@ def asyncio_thread_worker_target():
         )
     finally:
         logger.info("ASYNCIO THREAD: loop.run_forever() exited.")
-        if (
-            _async_loop.is_running()
-        ):
+        if _async_loop.is_running():
             logger.warning(
                 "ASYNCIO THREAD: Loop still shows as running after run_forever exited; attempting to stop again."
             )
-            _async_loop.call_soon_threadsafe(
-                _async_loop.stop
-            )
+            _async_loop.call_soon_threadsafe(_async_loop.stop)
 
         try:
             logger.info("ASYNCIO THREAD: Cleaning up remaining tasks...")

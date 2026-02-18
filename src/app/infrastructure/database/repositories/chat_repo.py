@@ -27,9 +27,7 @@ class ChatRepository:
         project_id: Optional[uuid.UUID] = None,
     ) -> db_models.ChatSession:
         """Creates a new chat session."""
-        logger.info(
-            f"Creating new chat session titled '{title}' for user {user_id}."
-        )
+        logger.info(f"Creating new chat session titled '{title}' for user {user_id}.")
         session = db_models.ChatSession(
             user_id=user_id,
             project_id=project_id,
@@ -65,7 +63,11 @@ class ChatRepository:
         return list(result.scalars().all())
 
     async def add_message(
-        self, session_id: uuid.UUID, role: str, content: str, cost: Optional[float] = None
+        self,
+        session_id: uuid.UUID,
+        role: str,
+        content: str,
+        cost: Optional[float] = None,
     ) -> db_models.ChatMessage:
         """Adds a new message to a chat session."""
         logger.debug(f"Adding '{role}' message to session {session_id}.")
@@ -99,7 +101,9 @@ class ChatRepository:
         Atomically deletes a list of messages and inserts a new system message
         with the summary of the deleted content.
         """
-        logger.info(f"Summarizing {len(message_ids_to_delete)} messages for session {session_id}.")
+        logger.info(
+            f"Summarizing {len(message_ids_to_delete)} messages for session {session_id}."
+        )
         # First, nullify any LLM interaction foreign keys to avoid constraint violations
         stmt_nullify_fk = (
             update(db_models.LLMInteraction)
@@ -122,18 +126,22 @@ class ChatRepository:
         )
         self.db.add(summary_message)
         await self.db.commit()
-        logger.info(f"Successfully replaced old messages with summary for session {session_id}.")
-
+        logger.info(
+            f"Successfully replaced old messages with summary for session {session_id}."
+        )
 
     async def delete_session(self, session_id: uuid.UUID, user_id: int) -> bool:
         """Deletes a chat session and all its messages, ensuring user owns it."""
-        logger.info(f"Attempting to delete chat session {session_id} for user {user_id}.")
+        logger.info(
+            f"Attempting to delete chat session {session_id} for user {user_id}."
+        )
         # First, get the session with its messages and their LLM interactions
         stmt = (
             select(db_models.ChatSession)
             .options(
-                selectinload(db_models.ChatSession.messages)
-                .selectinload(db_models.ChatMessage.llm_interaction)
+                selectinload(db_models.ChatSession.messages).selectinload(
+                    db_models.ChatMessage.llm_interaction
+                )
             )
             .filter_by(id=session_id, user_id=user_id)
         )
@@ -141,7 +149,9 @@ class ChatRepository:
         session = result.scalars().first()
 
         if not session:
-            logger.warning(f"Delete failed: Session {session_id} not found for user {user_id}.")
+            logger.warning(
+                f"Delete failed: Session {session_id} not found for user {user_id}."
+            )
             return False
 
         # The relationships are configured with cascade="all, delete-orphan",

@@ -9,15 +9,15 @@ This router adds a /refresh endpoint that:
   3. Issues a new access token
   4. Rotates the refresh cookie
 """
+
 import logging
 from datetime import datetime, timezone
 
 import jwt
 from fastapi import APIRouter, Request, Response, HTTPException, status, Depends
-from fastapi_users import models as fu_models
 
 from app.config.config import settings
-from app.infrastructure.auth.backend import get_custom_cookie_jwt_strategy, CustomCookieJWTStrategy
+from app.infrastructure.auth.backend import get_custom_cookie_jwt_strategy
 from app.infrastructure.auth.manager import get_user_manager, UserManager
 
 logger = logging.getLogger(__name__)
@@ -100,7 +100,8 @@ async def refresh_access_token(
     new_refresh_payload = {
         "sub": str(user.id),
         "aud": AUDIENCE,
-        "exp": datetime.now(timezone.utc).timestamp() + settings.REFRESH_TOKEN_LIFETIME_SECONDS,
+        "exp": datetime.now(timezone.utc).timestamp()
+        + settings.REFRESH_TOKEN_LIFETIME_SECONDS,
     }
     new_refresh_token = jwt.encode(
         new_refresh_payload,

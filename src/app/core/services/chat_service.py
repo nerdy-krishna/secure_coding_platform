@@ -40,7 +40,9 @@ class ChatService:
             frameworks=frameworks,
         )
 
-    async def get_user_sessions(self, user: db_models.User) -> List[db_models.ChatSession]:
+    async def get_user_sessions(
+        self, user: db_models.User
+    ) -> List[db_models.ChatSession]:
         """Retrieves all chat sessions for a user."""
         return await self.chat_repo.get_sessions_for_user(user.id)
 
@@ -51,12 +53,14 @@ class ChatService:
         messages = await self.chat_repo.get_messages_for_session(
             session_id=session_id, user_id=user.id
         )
-        if not messages and not await self.chat_repo.get_session_by_id(session_id, user.id):
-             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Chat session not found or not authorized."
+        if not messages and not await self.chat_repo.get_session_by_id(
+            session_id, user.id
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Chat session not found or not authorized.",
             )
         return messages
-
 
     async def post_message_to_session(
         self, session_id: uuid.UUID, question: str, user: db_models.User
@@ -69,7 +73,8 @@ class ChatService:
         session = await self.chat_repo.get_session_by_id(session_id, user.id)
         if not session:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Chat session not found or not authorized."
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Chat session not found or not authorized.",
             )
 
         # 2. Save the user's message (without cost)
@@ -82,19 +87,26 @@ class ChatService:
 
         # 4. Invoke the ChatAgent to get a response
         logger.info(f"Invoking ChatAgent for session {session_id}.")
-        ai_response_content, llm_interaction_id, cost = await self.chat_agent.generate_response(
+        (
+            ai_response_content,
+            llm_interaction_id,
+            cost,
+        ) = await self.chat_agent.generate_response(
             session_id=session_id,
             user_question=question,
             history=history,
             llm_config_id=session.llm_config_id,
-            frameworks=session.frameworks
+            frameworks=session.frameworks,
         )
-        
+
         # 5. Save the AI's response with the calculated cost
         ai_message = await self.chat_repo.add_message(
-            session_id=session_id, role="assistant", content=ai_response_content, cost=cost
+            session_id=session_id,
+            role="assistant",
+            content=ai_response_content,
+            cost=cost,
         )
-        
+
         # 6. Link the LLM interaction to the AI's chat message
         if llm_interaction_id:
             await self.chat_repo.link_llm_interaction(ai_message.id, llm_interaction_id)

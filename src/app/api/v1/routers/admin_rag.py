@@ -15,10 +15,10 @@ from fastapi import (
     BackgroundTasks,
 )
 import pandas as pd
+from pydantic import BaseModel
 
 from app.api.v1.dependencies import (
     get_framework_repository,
-    get_llm_config_repository,
     get_rag_job_repository,
     get_rag_preprocessor_service,
     get_security_standards_service,
@@ -34,7 +34,6 @@ from app.core.schemas import (
 from app.core.services.rag_preprocessor_service import RAGPreprocessorService
 from app.infrastructure.auth.core import current_superuser
 from app.infrastructure.database import models as db_models
-from app.infrastructure.database.repositories.llm_config_repo import LLMConfigRepository
 from app.infrastructure.database.repositories.framework_repo import FrameworkRepository
 from app.infrastructure.database.repositories.rag_job_repo import RAGJobRepository
 from app.infrastructure.rag.rag_client import get_rag_service, RAGService
@@ -44,16 +43,15 @@ logger = logging.getLogger(__name__)
 rag_router = APIRouter(prefix="/rag", tags=["Admin: RAG Management"])
 
 
-# --- NEW Pre-processing Workflow Endpoints ---
 
-from pydantic import BaseModel
+
 
 class ReprocessRequest(BaseModel):
     framework_name: str
     target_languages: List[str]
     llm_config_id: uuid.UUID
-    
-    
+
+
 @rag_router.post("/preprocess/reprocess", response_model=RAGJobStartResponse)
 async def reprocess_framework(
     request: ReprocessRequest,
@@ -65,20 +63,22 @@ async def reprocess_framework(
     Restart a preprocessing job using the original content from the latest completed job
     for the given framework. This enables "Editing" without re-uploading the file.
     """
-    latest_job = await job_repo.get_latest_job_for_framework(request.framework_name, user.id)
-    
+    latest_job = await job_repo.get_latest_job_for_framework(
+        request.framework_name, user.id
+    )
+
     if not latest_job or not latest_job.raw_content:
         raise HTTPException(
-            status_code=404, 
-            detail=f"No previous completed job found for framework '{request.framework_name}' with content. Please upload the file again."
+            status_code=404,
+            detail=f"No previous completed job found for framework '{request.framework_name}' with content. Please upload the file again.",
         )
 
     # Calculate new cost estimate with potentially new parameters
     estimated_cost = await preprocessor.estimate_cost(
-        latest_job.raw_content, 
-        request.llm_config_id, 
+        latest_job.raw_content,
+        request.llm_config_id,
         request.target_languages,
-        previous_job_state=latest_job
+        previous_job_state=latest_job,
     )
 
     # Create a NEW job with the OLD content
@@ -88,14 +88,17 @@ async def reprocess_framework(
         llm_config_id=request.llm_config_id,
         file_hash=latest_job.original_file_hash,
     )
-    
+
     # Store the content and update status
-    await job_repo.update_job(new_job.id, {
-        "raw_content": latest_job.raw_content,
-        "status": "PENDING_APPROVAL",
-        "estimated_cost": estimated_cost
-    })
-    
+    await job_repo.update_job(
+        new_job.id,
+        {
+            "raw_content": latest_job.raw_content,
+            "status": "PENDING_APPROVAL",
+            "estimated_cost": estimated_cost,
+        },
+    )
+
     message = "Cost re-estimated for updated configuration. Please approve to start processing."
 
     return RAGJobStartResponse(
@@ -133,9 +136,11 @@ async def start_preprocessing_job(
         file_hash=file_hash,
     )
     await job_repo.update_job(job.id, {"raw_content": contents})
-    
-    estimated_cost = await preprocessor.estimate_cost(contents, llm_config_id, target_languages)
-    
+
+    estimated_cost = await preprocessor.estimate_cost(
+        contents, llm_config_id, target_languages
+    )
+
     await job_repo.update_job(
         job.id, {"status": "PENDING_APPROVAL", "estimated_cost": estimated_cost}
     )
@@ -143,7 +148,9 @@ async def start_preprocessing_job(
 
     final_job_state = await job_repo.get_job_by_id(job.id, user.id)
     if not final_job_state:
-        raise HTTPException(status_code=500, detail="Failed to retrieve job state after creation.")
+        raise HTTPException(
+            status_code=500, detail="Failed to retrieve job state after creation."
+        )
 
     return RAGJobStartResponse(
         job_id=final_job_state.id,
@@ -152,6 +159,8 @@ async def start_preprocessing_job(
         estimated_cost=final_job_state.estimated_cost,
         message=message,
     )
+
+
 @rag_router.post("/preprocess/{job_id}/approve", status_code=status.HTTP_202_ACCEPTED)
 async def approve_preprocessing_job(
     job_id: uuid.UUID,
@@ -169,7 +178,8 @@ async def approve_preprocessing_job(
 
     if job.status != "PENDING_APPROVAL":
         raise HTTPException(
-            status_code=400, detail=f"Job is not awaiting approval. Status: {job.status}"
+            status_code=400,
+            detail=f"Job is not awaiting approval. Status: {job.status}",
         )
 
     # If the job already has processed documents (from a duplicate run), we can complete it immediately.
@@ -179,9 +189,13 @@ async def approve_preprocessing_job(
 
     raw_content = job.raw_content
     if not raw_content:
-        await job_repo.update_job(job_id, {"status": "FAILED", "error_message": "Original file content is missing."})
+        await job_repo.update_job(
+            job_id,
+            {"status": "FAILED", "error_message": "Original file content is missing."},
+        )
         raise HTTPException(
-            status_code=400, detail="Cannot process job, original file content is missing."
+            status_code=400,
+            detail="Cannot process job, original file content is missing.",
         )
 
     await job_repo.update_job(job_id, {"status": "PROCESSING"})
@@ -206,10 +220,6 @@ async def get_preprocessing_job_status(
     job = await job_repo.get_job_by_id(job_id, user.id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found.")
-
-    processed_docs = None
-    if job.processed_documents:
-        processed_docs = [EnrichedDocument(**doc) for doc in job.processed_documents]
 
     return RAGJobStatusResponse(
         job_id=job.id,
@@ -343,7 +353,9 @@ async def ingest_documents(
         }
 
     except Exception as e:
-        logger.error(f"Failed to ingest documents for {framework_name}: {e}", exc_info=True)
+        logger.error(
+            f"Failed to ingest documents for {framework_name}: {e}", exc_info=True
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An error occurred during ingestion: {e}",
@@ -395,6 +407,7 @@ async def delete_rag_documents(
 
 # --- NEW Security Standards Ingestion Endpoints ---
 
+
 @rag_router.get("/ingest/stats", response_model=Dict[str, int])
 async def get_rag_stats(
     rag_service: RAGService = Depends(get_rag_service),
@@ -405,21 +418,25 @@ async def get_rag_stats(
     """
     if not rag_service:
         raise HTTPException(status_code=503, detail="RAG Service not available")
-    
+
     return rag_service.get_framework_stats()
 
 
-@rag_router.post("/ingest/standards/{standard_type}", status_code=status.HTTP_201_CREATED)
+@rag_router.post(
+    "/ingest/standards/{standard_type}", status_code=status.HTTP_201_CREATED
+)
 async def ingest_security_standard(
     standard_type: str,
     file: Optional[UploadFile] = File(None),
     url: Optional[str] = Form(None),
     user: db_models.User = Depends(current_superuser),
-    standards_service: SecurityStandardsService = Depends(get_security_standards_service),
+    standards_service: SecurityStandardsService = Depends(
+        get_security_standards_service
+    ),
 ):
     """
     Ingests a security standard into the RAG knowledge base.
-    
+
     - **standard_type**: 'asvs', 'proactive-controls', 'cheatsheets'
     - **asvs**: Requires 'file' (CSV).
     - **proactive-controls**: Requires 'url' (GitHub Repo URL).
@@ -428,26 +445,42 @@ async def ingest_security_standard(
     try:
         if standard_type == "asvs":
             if not file:
-                raise HTTPException(status_code=400, detail="ASVS requires a CSV file upload.")
+                raise HTTPException(
+                    status_code=400, detail="ASVS requires a CSV file upload."
+                )
             if not file.filename.endswith(".csv"):
-                 raise HTTPException(status_code=400, detail="ASVS file must be a CSV file.")
+                raise HTTPException(
+                    status_code=400, detail="ASVS file must be a CSV file."
+                )
             return await standards_service.ingest_asvs_csv(file, user_id=user.id)
-            
+
         elif standard_type == "proactive-controls":
             if not url:
-                raise HTTPException(status_code=400, detail="Proactive Controls requires a GitHub URL.")
-            return await standards_service.ingest_proactive_controls_github(url, user_id=user.id)
-            
+                raise HTTPException(
+                    status_code=400, detail="Proactive Controls requires a GitHub URL."
+                )
+            return await standards_service.ingest_proactive_controls_github(
+                url, user_id=user.id
+            )
+
         elif standard_type == "cheatsheets":
             if not url:
-                raise HTTPException(status_code=400, detail="Cheatsheets requires a GitHub URL.")
-            return await standards_service.ingest_cheatsheets_github(url, user_id=user.id)
-            
+                raise HTTPException(
+                    status_code=400, detail="Cheatsheets requires a GitHub URL."
+                )
+            return await standards_service.ingest_cheatsheets_github(
+                url, user_id=user.id
+            )
+
         else:
-            raise HTTPException(status_code=400, detail=f"Unsupported standard type: {standard_type}")
+            raise HTTPException(
+                status_code=400, detail=f"Unsupported standard type: {standard_type}"
+            )
 
     except HTTPException as e:
         raise e
     except Exception as e:
         logger.error(f"Failed to ingest standard '{standard_type}': {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to ingest standard: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to ingest standard: {str(e)}"
+        )

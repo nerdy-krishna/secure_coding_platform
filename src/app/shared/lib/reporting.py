@@ -7,6 +7,7 @@ from xhtml2pdf import pisa
 from app.core.schemas import VulnerabilityFinding, ImpactReport
 from app.api.v1.models import SummaryReportResponse
 
+
 def generate_pdf_from_html(html_content: str) -> bytes:
     """
     Converts an HTML string into a PDF byte stream.
@@ -14,16 +15,19 @@ def generate_pdf_from_html(html_content: str) -> bytes:
     pdf_buffer = io.BytesIO()
     pisa_status = pisa.CreatePDF(
         src=io.StringIO(html_content),  # a readable source
-        dest=pdf_buffer,                # a writeable dest
-        encoding='utf-8'
+        dest=pdf_buffer,  # a writeable dest
+        encoding="utf-8",
     )
-    if pisa_status.err: # type: ignore
-        raise IOError(f"PDF generation failed: {pisa_status.err}") # type: ignore
-    
+    if pisa_status.err:  # type: ignore
+        raise IOError(f"PDF generation failed: {pisa_status.err}")  # type: ignore
+
     pdf_buffer.seek(0)
     return pdf_buffer.getvalue()
 
-def create_executive_summary_html(impact_report: ImpactReport, summary_report: SummaryReportResponse) -> str:
+
+def create_executive_summary_html(
+    impact_report: ImpactReport, summary_report: SummaryReportResponse
+) -> str:
     """
     Generates an HTML string for the executive summary PDF report.
     """
@@ -63,7 +67,7 @@ def create_executive_summary_html(impact_report: ImpactReport, summary_report: S
 
     <h2>High-Risk Findings</h2>
     <ul class="findings-list">
-        {''.join(f'<li>{item}</li>' for item in impact_report.high_risk_findings_summary)}
+        {"".join(f"<li>{item}</li>" for item in impact_report.high_risk_findings_summary)}
     </ul>
 
     <h2>Remediation Strategy</h2>
@@ -72,12 +76,12 @@ def create_executive_summary_html(impact_report: ImpactReport, summary_report: S
 
     <h2>Architectural Changes</h2>
     <ul class="findings-list">
-         {''.join(f'<li>{item}</li>' for item in impact_report.required_architectural_changes) if impact_report.required_architectural_changes else '<li>None</li>'}
+         {"".join(f"<li>{item}</li>" for item in impact_report.required_architectural_changes) if impact_report.required_architectural_changes else "<li>None</li>"}
     </ul>
 
     <h2>Vulnerability Categories Found</h2>
     <p>
-        {''.join(f'<span class="tag tag-blue">{cat}</span>' for cat in impact_report.vulnerability_categories)}
+        {"".join(f'<span class="tag tag-blue">{cat}</span>' for cat in impact_report.vulnerability_categories)}
     </p>
     """
 
@@ -104,7 +108,7 @@ def create_sarif_report(findings: List[VulnerabilityFinding]) -> Dict[str, Any]:
                 "id": rule_id,
                 "name": f"Vulnerability/{rule_id}",
                 "shortDescription": {"text": f"Vulnerability Type: {rule_id}"},
-                "helpUri": f"https://cwe.mitre.org/data/definitions/{rule_id.split('-')[-1]}.html"
+                "helpUri": f"https://cwe.mitre.org/data/definitions/{rule_id.split('-')[-1]}.html",
             }
 
         result = {
@@ -123,7 +127,7 @@ def create_sarif_report(findings: List[VulnerabilityFinding]) -> Dict[str, Any]:
                 "confidence": finding.confidence,
                 "remediation": finding.remediation,
                 "references": finding.references,
-                "tags": ["security", finding.severity]
+                "tags": ["security", finding.severity],
             },
         }
         results.append(result)

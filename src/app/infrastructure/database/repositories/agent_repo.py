@@ -18,9 +18,7 @@ class AgentRepository:
     def __init__(self, db_session: AsyncSession):
         self.db = db_session
 
-    async def create_agent(
-        self, agent_data: api_models.AgentCreate
-    ) -> db_models.Agent:
+    async def create_agent(self, agent_data: api_models.AgentCreate) -> db_models.Agent:
         """Creates a new Agent in the database."""
         db_agent = db_models.Agent(**agent_data.model_dump())
         self.db.add(db_agent)
@@ -29,9 +27,7 @@ class AgentRepository:
         logger.info(f"Created agent '{db_agent.name}' with ID {db_agent.id}.")
         return db_agent
 
-    async def get_agent_by_id(
-        self, agent_id: uuid.UUID
-    ) -> Optional[db_models.Agent]:
+    async def get_agent_by_id(self, agent_id: uuid.UUID) -> Optional[db_models.Agent]:
         """Retrieves a single agent by its UUID."""
         stmt = select(db_models.Agent).filter(db_models.Agent.id == agent_id)
         result = await self.db.execute(stmt)

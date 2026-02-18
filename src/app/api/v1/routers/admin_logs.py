@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Body
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from typing import Literal
 import logging
@@ -8,12 +8,17 @@ from app.infrastructure.database import models as db_models
 
 router = APIRouter(prefix="/logs", tags=["Admin: Logs"])
 
+
 class LogLevelUpdate(BaseModel):
-    level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(..., description="The new log level to set.")
+    level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
+        ..., description="The new log level to set."
+    )
+
 
 class LogLevelResponse(BaseModel):
     level: str
     message: str
+
 
 @router.get("/level", response_model=LogLevelResponse)
 async def get_log_level(
@@ -27,6 +32,7 @@ async def get_log_level(
     level_name = logging.getLevelName(level_int)
     return {"level": level_name, "message": f"Current log level is {level_name}"}
 
+
 @router.put("/level", response_model=LogLevelResponse)
 async def set_log_level(
     update: LogLevelUpdate,
@@ -38,8 +44,13 @@ async def set_log_level(
     """
     try:
         update_logging_level(update.level)
-        return {"level": update.level, "message": f"Log level successfully updated to {update.level}"}
+        return {
+            "level": update.level,
+            "message": f"Log level successfully updated to {update.level}",
+        }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to update log level: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to update log level: {str(e)}"
+        )
