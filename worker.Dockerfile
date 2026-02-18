@@ -14,8 +14,8 @@ COPY ./poetry.lock ./pyproject.toml /app/
 # Install poetry and then the project dependencies
 RUN pip install --upgrade pip setuptools wheel \
     && pip install poetry \
-    && (pip uninstall -y idna charset-normalizer || true) \
-    && poetry config virtualenvs.create false \
+    && poetry config virtualenvs.create true \
+    && poetry config virtualenvs.in-project true \
     && poetry install --no-root --without dev
 
 # --- ADDED: Pre-download the embedding model ---

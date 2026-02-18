@@ -32,16 +32,13 @@ RUN groupadd --gid ${APP_GID} ${APP_USER} \
 COPY pyproject.toml poetry.lock ./
 
 # --- START: FIX ---
-# Create a project-local configuration. This will be respected by all users (root and appuser).
-# This command creates a poetry.toml file in the current directory (/app).
-RUN poetry config virtualenvs.create false --local
+# Create a project-local configuration. 
+# We enable virtualenvs to avoid conflicts with system packages (PEP 668).
+RUN poetry config virtualenvs.create true --local \
+    && poetry config virtualenvs.in-project true --local
 # --- END: FIX ---
 
-# Install dependencies as root. They will be installed to the system Python,
-# which the appuser will have access to.
-RUN pip install --upgrade pip setuptools wheel
-# Force uninstall conflicting system packages to allow Poetry to install its specific versions
-RUN pip uninstall -y idna charset-normalizer || true
+# Install dependencies as root.
 RUN poetry install --no-interaction --no-ansi
 
 # Copy the rest of the application source code
