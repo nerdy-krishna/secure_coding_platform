@@ -52,6 +52,9 @@ RUN chown -R ${APP_USER}:${APP_USER} /app
 USER ${APP_USER}
 
 # Set PYTHONPATH for the non-root user
+# Set PYTHONPATH for the non-root user
 ENV PYTHONPATH=/app/src
+# Add the virtual environment to the PATH so we don't need 'poetry run' for everything
+ENV PATH="/app/.venv/bin:$PATH"
 
 EXPOSE 8000
