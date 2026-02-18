@@ -70,21 +70,16 @@ echo "[?] Enter the domain name(s) for the UI (comma-separated, e.g., secure.ner
 read -p "    Domain(s) [leave empty to allow all/skip]: " ALLOWED_HOSTS_INPUT
 
 if [ -n "$ALLOWED_HOSTS_INPUT" ]; then
-    # Create or update secure-code-ui/.env
-    if [ ! -f secure-code-ui/.env ]; then
-        touch secure-code-ui/.env
-    fi
-    
-    # Check if VITE_ALLOWED_HOSTS exists, if so replace, else append
-    if grep -q "VITE_ALLOWED_HOSTS=" secure-code-ui/.env; then
+    # Check if VITE_ALLOWED_HOSTS exists in root .env, if so replace, else append
+    if grep -q "VITE_ALLOWED_HOSTS=" .env; then
         # Escape special characters for sed if necessary, but for valid domains simple replacement should work
         if [[ "$OSTYPE" == "darwin"* ]]; then
-             sed -i '' "s/VITE_ALLOWED_HOSTS=.*/VITE_ALLOWED_HOSTS=$ALLOWED_HOSTS_INPUT/" secure-code-ui/.env
+             sed -i '' "s/VITE_ALLOWED_HOSTS=.*/VITE_ALLOWED_HOSTS=$ALLOWED_HOSTS_INPUT/" .env
         else
-             sed -i "s/VITE_ALLOWED_HOSTS=.*/VITE_ALLOWED_HOSTS=$ALLOWED_HOSTS_INPUT/" secure-code-ui/.env
+             sed -i "s/VITE_ALLOWED_HOSTS=.*/VITE_ALLOWED_HOSTS=$ALLOWED_HOSTS_INPUT/" .env
         fi
     else
-        echo "VITE_ALLOWED_HOSTS=$ALLOWED_HOSTS_INPUT" >> secure-code-ui/.env
+        echo "VITE_ALLOWED_HOSTS=$ALLOWED_HOSTS_INPUT" >> .env
     fi
     echo "[+] Configured UI allowed hosts: $ALLOWED_HOSTS_INPUT"
 fi
@@ -93,6 +88,8 @@ echo ""
 
 # 3. Docker Build and Launch
 echo "[*] Launching Docker containers (this may take a few minutes)..."
+# We need to ensure the VITE variables are available to the build context
+# Sourcing .env is one way, but docker compose reads .env automatically
 docker compose up -d --build
 
 echo "[*] Waiting for database to be healthy..."
@@ -123,14 +120,6 @@ docker compose exec app python /app/scripts/create_superuser.py
 echo "[+] Database initialized."
 echo ""
 
-# 5. UI Installation
-echo "[*] Installing UI dependencies..."
-cd secure-code-ui
-npm install
-cd ..
-echo "[+] UI dependencies installed."
-echo ""
-
 echo "=================================================="
 echo "   Setup Complete!"
 echo "=================================================="
@@ -140,7 +129,4 @@ echo "   -> http://localhost:5173"
 echo ""
 echo "Access Grafana at:"
 echo "   -> http://localhost:3000"
-echo ""
-echo "To start the UI development server, run:"
-echo "   cd secure-code-ui && npm run dev"
 echo ""
