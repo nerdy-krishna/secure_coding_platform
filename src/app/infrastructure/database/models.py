@@ -368,3 +368,22 @@ class CweOwaspMapping(Base):
     owasp_rank: Mapped[int] = mapped_column(Integer, nullable=False)
 
     cwe_detail: Mapped["CweDetail"] = relationship(back_populates="owasp_mapping")
+
+
+class SystemConfiguration(Base):
+    __tablename__ = "system_configurations"
+    key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    value: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    is_secret: Mapped[bool] = mapped_column(
+        sa.Boolean, server_default="false", nullable=False
+    )
+    encrypted: Mapped[bool] = mapped_column(
+        sa.Boolean, server_default="false", nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
