@@ -70,6 +70,37 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("Database URL not set, skipping checkpointer setup.")
 
+    # --- Initialize System Configuration Cache ---
+    from app.core.config_cache import SystemConfigCache
+    from app.infrastructure.database.database import AsyncSessionLocal
+    from app.infrastructure.database.repositories.system_config_repo import SystemConfigRepository
+    from app.api.v1.routers.setup import is_setup_completed
+
+    try:
+        async with AsyncSessionLocal() as session:
+            # Check if setup is completed
+            setup_done = await is_setup_completed(session)
+            SystemConfigCache.set_setup_completed(setup_done)
+
+            if setup_done:
+                # Load allowed origins from DB
+                repo = SystemConfigRepository(session)
+                config = await repo.get_by_key("security.allowed_origins")
+                if config and isinstance(config.value, dict) and "origins" in config.value:
+                    SystemConfigCache.set_allowed_origins(config.value["origins"])
+                    logger.info(f"Loaded allowed origins from DB: {config.value['origins']}")
+                else:
+                     # Fallback to env var if DB config missing but setup is done
+                     allowed_origins_str = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
+                     origins = [o.strip() for o in allowed_origins_str.split(",") if o.strip()]
+                     SystemConfigCache.set_allowed_origins(origins)
+                     logger.info(f"Loaded allowed origins from ENV: {origins}")
+            else:
+                logger.info("Setup not completed. Allowing all origins for setup mode.")
+    except Exception as e:
+        logger.error(f"Failed to initialize system config cache: {e}")
+
+
     yield
     # This code runs on shutdown
     logger.info("Application shutdown.")
@@ -103,34 +134,58 @@ async def correlation_id_middleware(request: Request, call_next):
     return response
 
 
-# --- CORS Middleware Configuration ---
-# This is crucial for frontend interaction, especially with credentials (cookies).
-allowed_origins_str = os.getenv(
-    "ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
-)
-origins = [
-    origin.strip() for origin in allowed_origins_str.split(",") if origin.strip()
-]
+# --- Dynamic CORS Middleware Configuration ---
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.types import ASGIApp
+from app.core.config_cache import SystemConfigCache
+from fastapi.responses import PlainTextResponse
 
-if not origins:
-    origins = [
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "https://secure.nerdykrishna.com",
-        "http://secure.nerdykrishna.com",
-    ]
-    logger.warning(
-        f"ALLOWED_ORIGINS environment variable not set or empty. Defaulting to: {origins}"
-    )
+class DynamicCORSMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        # Determine allowed origins based on state
+        if not SystemConfigCache.is_setup_completed():
+            allow_all = True
+            allowed_origins = ["*"]
+        else:
+            allow_all = False
+            allowed_origins = SystemConfigCache.get_allowed_origins()
+            
+        origin = request.headers.get("origin")
+        
+        # Pass request to application
+        response = await call_next(request)
+        
+        # Add CORS headers to response
+        if origin:
+            if allow_all or origin in allowed_origins:
+                response.headers["Access-Control-Allow-Origin"] = origin
+                response.headers["Access-Control-Allow-Credentials"] = "true"
+                response.headers["Access-Control-Allow-Methods"] = "*"
+                response.headers["Access-Control-Allow-Headers"] = "*"
+        
+        return response
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-logger.info(f"CORS middleware configured for origins: {origins}")
+@app.options("/{rest_of_path:path}")
+async def preflight_handler(request: Request, rest_of_path: str):
+    origin = request.headers.get("origin")
+    if not SystemConfigCache.is_setup_completed():
+         allowed = True
+    else:
+         allowed = origin and origin in SystemConfigCache.get_allowed_origins()
+
+    if allowed and origin:
+        response = PlainTextResponse("OK")
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Methods"] = "*"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        return response
+    
+    # If not allowed, we don't return CORS headers, browser will block.
+    return PlainTextResponse("Forbidden", status_code=403)
+
+app.add_middleware(DynamicCORSMiddleware)
+logger.info("Dynamic CORS Middleware configured.")
 
 
 # --- Custom Exception Handler for 422 Errors ---
