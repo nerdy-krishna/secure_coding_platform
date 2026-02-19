@@ -57,7 +57,7 @@ LOGGING_CONFIG = {
         },
     },
     "loggers": {
-        "app": {"handlers": ["default", "file"], "level": "INFO", "propagate": False},
+        "app": {"handlers": ["default", "file"], "level": "DEBUG", "propagate": False},
         "uvicorn": {"handlers": ["default"], "level": "INFO", "propagate": False},
         "uvicorn.error": {"handlers": ["default"], "level": "INFO", "propagate": False},
         "uvicorn.access": {

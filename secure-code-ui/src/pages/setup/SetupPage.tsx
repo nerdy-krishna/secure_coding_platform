@@ -11,6 +11,17 @@ const SetupPage: React.FC = () => {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
+    const [formData, setFormData] = useState<SetupRequest>({
+        admin_email: '',
+        admin_password: '',
+        llm_provider: 'openai',
+        llm_api_key: '',
+        llm_model: 'gpt-4o',
+        allowed_origins: [],
+    });
+
+    const [originInput, setOriginInput] = useState('');
+
     // Redirect to login if setup is already completed
     React.useEffect(() => {
         if (!isLoading && isSetupCompleted) {
@@ -22,17 +33,6 @@ const SetupPage: React.FC = () => {
     if (isLoading) {
         return <div style={ { display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' } }> Loading...</div>;
     }
-
-    const [formData, setFormData] = useState<SetupRequest>({
-        admin_email: '',
-        admin_password: '',
-        llm_provider: 'openai',
-        llm_api_key: '',
-        llm_model: 'gpt-4o',
-        allowed_origins: [],
-    });
-
-    const [originInput, setOriginInput] = useState('');
 
     const handleOriginChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         setOriginInput(e.target.value);
@@ -75,14 +75,14 @@ const SetupPage: React.FC = () => {
     }
 }>
     <div style={
-        {
-            backgroundColor: 'white',
-                padding: '2rem',
-                    borderRadius: '8px',
-                        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
-                            width: '100%',
-                                maxWidth: '500px'
-        }
+    {
+        backgroundColor: 'white',
+            padding: '2rem',
+                borderRadius: '8px',
+                    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+                        width: '100%',
+                            maxWidth: '500px'
+    }
 }>
     <h1 style={ { textAlign: 'center', marginBottom: '1.5rem', color: '#111827' } }>
         Secure Coding Platform Setup
@@ -91,13 +91,13 @@ const SetupPage: React.FC = () => {
 {
     error && (
         <div style={
-            {
-                backgroundColor: '#fee2e2',
-                    color: '#b91c1c',
-                        padding: '1rem',
-                            borderRadius: '4px',
-                                marginBottom: '1rem'
-            }
+        {
+            backgroundColor: '#fee2e2',
+                color: '#b91c1c',
+                    padding: '1rem',
+                        borderRadius: '4px',
+                            marginBottom: '1rem'
+        }
     }>
         { error }
         </div>
