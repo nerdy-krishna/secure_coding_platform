@@ -6,6 +6,11 @@ from app.config.logging_config import update_logging_level
 from app.infrastructure.auth.core import current_superuser
 from app.infrastructure.database import models as db_models
 
+from app.api.v1 import models as api_models
+from app.infrastructure.database.repositories.system_config_repo import SystemConfigRepository
+from app.infrastructure.database.database import get_db
+from sqlalchemy.ext.asyncio import AsyncSession
+
 router = APIRouter(prefix="/logs", tags=["Admin: Logs"])
 
 
@@ -37,16 +42,30 @@ async def get_log_level(
 async def set_log_level(
     update: LogLevelUpdate,
     user: db_models.User = Depends(current_superuser),
+    db: AsyncSession = Depends(get_db),
 ):
     """
-    Update the log level of the application dynamically.
+    Update the log level of the application dynamically and persist it.
     REQUIRES SUPERUSER PRIVILEGES.
     """
     try:
+        # 1. Update Runtime
         update_logging_level(update.level)
+        
+        # 2. Persist to DB
+        repo = SystemConfigRepository(db)
+        config_create = api_models.SystemConfigurationCreate(
+            key="system.log_level",
+            value={"level": update.level},
+            description="System Log Level",
+            is_secret=False,
+            encrypted=False
+        )
+        await repo.set_value(config_create)
+
         return {
             "level": update.level,
-            "message": f"Log level successfully updated to {update.level}",
+            "message": f"Log level successfully updated to {update.level} and saved to configuration.",
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
