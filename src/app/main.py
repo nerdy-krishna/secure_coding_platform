@@ -75,17 +75,56 @@ async def lifespan(app: FastAPI):
     from app.infrastructure.database.database import AsyncSessionLocal
     from app.infrastructure.database.repositories.system_config_repo import SystemConfigRepository
     from app.api.v1.routers.setup import is_setup_completed
+    from app.config.logging_config import update_logging_level
 
     try:
         async with AsyncSessionLocal() as session:
             # Check if setup is completed
             setup_done = await is_setup_completed(session)
             SystemConfigCache.set_setup_completed(setup_done)
+            
+            repo = SystemConfigRepository(session)
+
+            # --- Initialize Log Level ---
+            log_level_config = await repo.get_by_key("system.log_level")
+            if log_level_config and log_level_config.value:
+                 # Extract level from dict or fallback to string (backward compatibility)
+                 val = log_level_config.value
+                 if isinstance(val, dict) and "level" in val:
+                     level_str = str(val["level"]).upper()
+                 else:
+                     level_str = str(val).upper()
+                 
+                 update_logging_level(level_str)
+                 logger.info(f"Initialized log level from DB: {level_str}")
+            else:
+                # Default behavior
+                if not setup_done:
+                    # Setup phase: Force DEBUG
+                    update_logging_level("DEBUG")
+                    logger.info("Setup not completed. Enforcing DEBUG log level.")
+                else:
+                    # Generic default
+                    update_logging_level("INFO")
+                    logger.info("No log level config found. Defaulting to INFO.")
 
             if setup_done:
                 # Load allowed origins from DB
-                repo = SystemConfigRepository(session)
                 config = await repo.get_by_key("security.allowed_origins")
+                cors_enabled_config = await repo.get_by_key("security.cors_enabled")
+                
+                # Load CORS Enabled status
+                cors_enabled = False
+                if cors_enabled_config and cors_enabled_config.value is not None:
+                     val = cors_enabled_config.value
+                     if isinstance(val, dict) and "enabled" in val:
+                         cors_enabled = bool(val["enabled"])
+                     else:
+                         cors_enabled = bool(val)
+                
+                SystemConfigCache.set_cors_enabled(cors_enabled)
+                logger.info(f"CORS Enabled: {cors_enabled}")
+
                 if config and isinstance(config.value, dict) and "origins" in config.value:
                     SystemConfigCache.set_allowed_origins(config.value["origins"])
                     logger.info(f"Loaded allowed origins from DB: {config.value['origins']}")
@@ -97,6 +136,7 @@ async def lifespan(app: FastAPI):
                      logger.info(f"Loaded allowed origins from ENV: {origins}")
             else:
                 logger.info("Setup not completed. Allowing all origins for setup mode.")
+                SystemConfigCache.set_cors_enabled(True) # Enable CORS for setup
     except Exception as e:
         logger.error(f"Failed to initialize system config cache: {e}")
 
@@ -148,7 +188,11 @@ class DynamicCORSMiddleware(BaseHTTPMiddleware):
             allowed_origins = ["*"]
         else:
             allow_all = False
-            allowed_origins = SystemConfigCache.get_allowed_origins()
+            # Check if CORS is explicitly permitted
+            if not SystemConfigCache.is_cors_enabled():
+                 allowed_origins = [] # Block external CORS
+            else:
+                 allowed_origins = SystemConfigCache.get_allowed_origins()
             
         origin = request.headers.get("origin")
         
@@ -171,7 +215,11 @@ async def preflight_handler(request: Request, rest_of_path: str):
     if not SystemConfigCache.is_setup_completed():
          allowed = True
     else:
-         allowed = origin and origin in SystemConfigCache.get_allowed_origins()
+         # Check if CORS is enabled
+         if not SystemConfigCache.is_cors_enabled():
+              allowed = False
+         else:
+              allowed = origin and origin in SystemConfigCache.get_allowed_origins()
 
     if allowed and origin:
         response = PlainTextResponse("OK")

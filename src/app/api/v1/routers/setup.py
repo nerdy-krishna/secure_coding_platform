@@ -11,6 +11,8 @@ from app.infrastructure.database.repositories.system_config_repo import SystemCo
 from app.api.v1 import models as api_models
 from app.api.v1.dependencies import get_llm_config_repository
 
+from app.config.logging_config import update_logging_level
+
 router = APIRouter()
 
 async def is_setup_completed(db: AsyncSession) -> bool:
@@ -77,6 +79,34 @@ async def perform_setup(
         )
 
     # 3. Configure CORS (System Config)
+    sys_conf_repo = SystemConfigRepository(db)
+    
+    # Save CORS Enabled setting
+    cors_enabled_create = api_models.SystemConfigurationCreate(
+        key="security.cors_enabled",
+        value={"enabled": request.enable_cors},
+        description="Enable CORS for allowed origins",
+        is_secret=False,
+        encrypted=False
+    )
+    await sys_conf_repo.set_value(cors_enabled_create)
+
+    # Save Log Level setting (Default to INFO after setup)
+    log_level_create = api_models.SystemConfigurationCreate(
+        key="system.log_level",
+        value={"level": "INFO"},
+        description="System Log Level",
+        is_secret=False,
+        encrypted=False
+    )
+    await sys_conf_repo.set_value(log_level_create)
+    
+    # Update Runtime Config
+    from app.core.config_cache import SystemConfigCache
+    
+    SystemConfigCache.set_cors_enabled(request.enable_cors)
+    update_logging_level("INFO")
+
     if request.allowed_origins:
         try:
              # Create SystemConfigurationCreate object
@@ -87,16 +117,15 @@ async def perform_setup(
                  is_secret=False,
                  encrypted=False
              )
-             sys_conf_repo = SystemConfigRepository(db)
              await sys_conf_repo.set_value(config_create)
 
              # Update Cache immediately so next request works
-             from app.core.config_cache import SystemConfigCache
              SystemConfigCache.set_allowed_origins(request.allowed_origins)
-             SystemConfigCache.set_setup_completed(True) 
         except Exception as e:
              # Log error but don't fail setup as user creation is done
              # In a real app we might want to be more transactional
              pass
+    
+    SystemConfigCache.set_setup_completed(True) 
 
     return {"message": "Setup completed successfully"}
