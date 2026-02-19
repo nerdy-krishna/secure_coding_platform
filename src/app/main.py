@@ -22,6 +22,8 @@ from app.api.v1.routers.admin_logs import router as logs_router
 from app.api.v1.routers.chat import router as chat_router
 from app.api.v1.routers.refresh import router as refresh_router
 from app.api.v1.routers.setup import router as setup_router
+from app.api.v1.routers.admin_config import router as admin_config_router
+from app.api.v1.routers.llm_config import router as admin_llm_config_router
 from app.infrastructure.auth.backend import auth_backend
 from app.infrastructure.auth.core import fastapi_users
 from app.infrastructure.auth.schemas import UserCreate, UserRead, UserUpdate
@@ -208,9 +210,21 @@ app.include_router(
     tags=["Setup"],
 )
 
+# Router for System Configuration
+app.include_router(
+    admin_config_router,
+    prefix="/api/v1",  # Prefix is defined in the router itself as /admin/system-config
+)
+
+# Router for LLM Configuration (Full CRUD)
+app.include_router(
+    admin_llm_config_router,
+    prefix="/api/v1",  # Prefix is defined in the router itself as /admin/llm-config
+)
+
 
 # --- Root Endpoint ---
 @app.get("/", tags=["Root"])
 async def read_root():
     """A simple root endpoint to confirm the API is running."""
-    return {"message": "Welcome to the 5th Secure Coding Platform API!"}
+    return {"message": "Welcome to the Secure Coding Platform API!"}

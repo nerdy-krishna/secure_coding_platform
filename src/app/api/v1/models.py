@@ -31,6 +31,33 @@ class LLMConfigurationBase(BaseModel):
     # --- End of added fields ---
 
 
+class SystemConfigurationBase(BaseModel):
+    key: str = Field(..., description="The unique key for the configuration setting.")
+    value: Dict[str, Any] = Field(..., description="The value of the configuration setting (JSON).")
+    description: Optional[str] = Field(None, description="A description of what this setting controls.")
+    is_secret: bool = Field(False, description="Whether this setting contains sensitive information (masked in UI).")
+    encrypted: bool = Field(False, description="Whether this setting is encrypted in the database.")
+
+
+class SystemConfigurationCreate(SystemConfigurationBase):
+    pass
+
+
+class SystemConfigurationUpdate(BaseModel):
+    value: Optional[Dict[str, Any]] = None
+    description: Optional[str] = None
+    is_secret: Optional[bool] = None
+    encrypted: Optional[bool] = None
+
+
+class SystemConfigurationRead(SystemConfigurationBase):
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class LLMConfigurationCreate(LLMConfigurationBase):
     api_key: str = Field(..., description="The API key for the provider.")
 
