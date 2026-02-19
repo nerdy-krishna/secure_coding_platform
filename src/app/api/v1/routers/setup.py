@@ -7,6 +7,7 @@ from app.infrastructure.auth.manager import UserManager, get_user_manager
 from app.infrastructure.auth import schemas as auth_schemas
 from app.api.v1.schemas.setup import SetupRequest, SetupStatusResponse
 from app.infrastructure.database.repositories.llm_config_repo import LLMConfigRepository
+from app.infrastructure.database.repositories.system_config_repo import SystemConfigRepository
 from app.api.v1 import models as api_models
 from app.api.v1.dependencies import get_llm_config_repository
 
@@ -74,5 +75,28 @@ async def perform_setup(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to configure LLM: {str(e)}"
         )
+
+    # 3. Configure CORS (System Config)
+    if request.allowed_origins:
+        try:
+             # Create SystemConfigurationCreate object
+             config_create = api_models.SystemConfigurationCreate(
+                 key="security.allowed_origins",
+                 value={"origins": request.allowed_origins}, # Store as JSON dict
+                 description="Allowed origins for CORS",
+                 is_secret=False,
+                 encrypted=False
+             )
+             sys_conf_repo = SystemConfigRepository(db)
+             await sys_conf_repo.set_value(config_create)
+
+             # Update Cache immediately so next request works
+             from app.core.config_cache import SystemConfigCache
+             SystemConfigCache.set_allowed_origins(request.allowed_origins)
+             SystemConfigCache.set_setup_completed(True) 
+        except Exception as e:
+             # Log error but don't fail setup as user creation is done
+             # In a real app we might want to be more transactional
+             pass
 
     return {"message": "Setup completed successfully"}

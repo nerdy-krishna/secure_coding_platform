@@ -388,4 +388,5 @@ export interface SetupRequest {
   llm_provider: string;
   llm_api_key: string;
   llm_model: string;
+  allowed_origins?: string[];
 }

@@ -64,27 +64,9 @@ else
     echo "[!] .env already exists. Skipping generation to preserve existing config."
 fi
 
-# Ask for domain/allowed hosts for the UI
-echo ""
-echo "[?] Enter the domain name(s) for the UI (comma-separated, e.g., secure.nerdykrishna.com,localhost):"
-read -p "    Domain(s) [leave empty to allow all/skip]: " ALLOWED_HOSTS_INPUT
+# 2. Environment Setup (Cont.)
+# CORS Configuration is now handled in the Setup Wizard UI.
 
-if [ -n "$ALLOWED_HOSTS_INPUT" ]; then
-    # Check if VITE_ALLOWED_HOSTS exists in root .env, if so replace, else append
-    if grep -q "VITE_ALLOWED_HOSTS=" .env; then
-        # Escape special characters for sed if necessary, but for valid domains simple replacement should work
-        if [[ "$OSTYPE" == "darwin"* ]]; then
-             sed -i '' "s/VITE_ALLOWED_HOSTS=.*/VITE_ALLOWED_HOSTS=$ALLOWED_HOSTS_INPUT/" .env
-        else
-             sed -i "s/VITE_ALLOWED_HOSTS=.*/VITE_ALLOWED_HOSTS=$ALLOWED_HOSTS_INPUT/" .env
-        fi
-    else
-        echo "VITE_ALLOWED_HOSTS=$ALLOWED_HOSTS_INPUT" >> .env
-    fi
-    echo "[+] Configured UI allowed hosts: $ALLOWED_HOSTS_INPUT"
-fi
-
-echo ""
 
 # 3. Docker Build and Launch
 echo "[*] Launching Docker containers (this may take a few minutes)..."
