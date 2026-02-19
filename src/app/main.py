@@ -116,6 +116,8 @@ if not origins:
     origins = [
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "https://secure.nerdykrishna.com",
+        "http://secure.nerdykrishna.com",
     ]
     logger.warning(
         f"ALLOWED_ORIGINS environment variable not set or empty. Defaulting to: {origins}"
