@@ -161,7 +161,7 @@ class DynamicCORSMiddleware(BaseHTTPMiddleware):
                 response.headers["Access-Control-Allow-Origin"] = origin
                 response.headers["Access-Control-Allow-Credentials"] = "true"
                 response.headers["Access-Control-Allow-Methods"] = "*"
-                response.headers["Access-Control-Allow-Headers"] = "*"
+                response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Correlation-ID, Accept, Origin, X-Requested-With"
         
         return response
 
@@ -177,7 +177,7 @@ async def preflight_handler(request: Request, rest_of_path: str):
         response = PlainTextResponse("OK")
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Access-Control-Allow-Methods"] = "*"
-        response.headers["Access-Control-Allow-Headers"] = "*"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Correlation-ID, Accept, Origin, X-Requested-With"
         response.headers["Access-Control-Allow-Credentials"] = "true"
         return response
     
