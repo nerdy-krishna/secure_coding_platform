@@ -1,13 +1,27 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import apiClient from '../../shared/api/apiClient';
+import { useAuth } from '../../shared/hooks/useAuth';
 import { type SetupRequest } from '../../shared/types/api';
 
 const SetupPage: React.FC = () => {
     const navigate = useNavigate();
+    const { isSetupCompleted, isLoading } = useAuth(); // Get setup status from auth context
     const [step, setStep] = useState(1);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+
+    // Redirect to login if setup is already completed
+    React.useEffect(() => {
+        if (!isLoading && isSetupCompleted) {
+            navigate('/login');
+        }
+    }, [isSetupCompleted, isLoading, navigate]);
+
+    // Show loading state while checking status
+    if (isLoading) {
+        return <div style={ { display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' } }> Loading...</div>;
+    }
 
     const [formData, setFormData] = useState<SetupRequest>({
         admin_email: '',
@@ -51,14 +65,14 @@ const SetupPage: React.FC = () => {
     }
 }>
     <div style={
-        {
-            backgroundColor: 'white',
-                padding: '2rem',
-                    borderRadius: '8px',
-                        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
-                            width: '100%',
-                                maxWidth: '500px'
-        }
+    {
+        backgroundColor: 'white',
+            padding: '2rem',
+                borderRadius: '8px',
+                    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+                        width: '100%',
+                            maxWidth: '500px'
+    }
 }>
     <h1 style={ { textAlign: 'center', marginBottom: '1.5rem', color: '#111827' } }>
         Secure Coding Platform Setup
@@ -67,13 +81,13 @@ const SetupPage: React.FC = () => {
 {
     error && (
         <div style={
-            {
-                backgroundColor: '#fee2e2',
-                    color: '#b91c1c',
-                        padding: '1rem',
-                            borderRadius: '4px',
-                                marginBottom: '1rem'
-            }
+        {
+            backgroundColor: '#fee2e2',
+                color: '#b91c1c',
+                    padding: '1rem',
+                        borderRadius: '4px',
+                            marginBottom: '1rem'
+        }
     }>
         { error }
         </div>
