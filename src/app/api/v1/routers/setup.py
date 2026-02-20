@@ -44,21 +44,14 @@ async def perform_setup(
             detail="Setup already completed. Please login."
         )
 
-    # 1. Create Superuser
-    try:
-        user_create = auth_schemas.UserCreate(
-            email=request.admin_email,
-            password=request.admin_password,
-            is_superuser=True,
-            is_active=True,
-            is_verified=True
-        )
-        await user_manager.create(user_create, safe=False)
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create admin user: {str(e)}"
-        )
+    user_create = auth_schemas.UserCreate(
+        email=request.admin_email,
+        password=request.admin_password,
+        is_superuser=True,
+        is_active=True,
+        is_verified=True
+    )
+    await user_manager.create(user_create, safe=False)
 
     # 2. Configure LLM
     try:

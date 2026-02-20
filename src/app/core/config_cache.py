@@ -19,3 +19,13 @@ class SystemConfigCache:
     @classmethod
     def is_setup_completed(cls) -> bool:
         return cls._is_setup_completed
+
+    _cors_enabled: bool = False
+
+    @classmethod
+    def set_cors_enabled(cls, enabled: bool):
+        cls._cors_enabled = enabled
+
+    @classmethod
+    def is_cors_enabled(cls) -> bool:
+        return cls._cors_enabled

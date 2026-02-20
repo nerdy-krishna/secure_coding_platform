@@ -12,6 +12,7 @@ class SetupRequest(BaseModel):
     llm_model: str = Field(..., description="Model name (e.g., gpt-4o, claude-3-opus)")
 
     # System Configuration
+    enable_cors: bool = Field(default=False, description="Enable CORS for allowed origins")
     allowed_origins: Optional[list[str]] = Field(
         default=None, 
         description="List of allowed origins for CORS (e.g., https://my-domain.com). If empty, defaults to restricted set."

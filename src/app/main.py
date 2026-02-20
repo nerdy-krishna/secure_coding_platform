@@ -188,11 +188,14 @@ class DynamicCORSMiddleware(BaseHTTPMiddleware):
             allowed_origins = ["*"]
         else:
             allow_all = False
-            # Check if CORS is explicitly permitted
-            if not SystemConfigCache.is_cors_enabled():
-                 allowed_origins = [] # Block external CORS
-            else:
-                 allowed_origins = SystemConfigCache.get_allowed_origins()
+            
+            # Base local/cloud deployed origins are always permitted
+            allowed_origins_str = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
+            allowed_origins = [o.strip() for o in allowed_origins_str.split(",") if o.strip()]
+            
+            # If external CORS is explicitly permitted, add those origins
+            if SystemConfigCache.is_cors_enabled():
+                 allowed_origins.extend(SystemConfigCache.get_allowed_origins())
             
         origin = request.headers.get("origin")
         
@@ -215,11 +218,13 @@ async def preflight_handler(request: Request, rest_of_path: str):
     if not SystemConfigCache.is_setup_completed():
          allowed = True
     else:
-         # Check if CORS is enabled
-         if not SystemConfigCache.is_cors_enabled():
-              allowed = False
-         else:
-              allowed = origin and origin in SystemConfigCache.get_allowed_origins()
+         allowed_origins_str = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
+         allowed_origins = [o.strip() for o in allowed_origins_str.split(",") if o.strip()]
+         
+         if SystemConfigCache.is_cors_enabled():
+              allowed_origins.extend(SystemConfigCache.get_allowed_origins())
+              
+         allowed = origin and origin in allowed_origins
 
     if allowed and origin:
         response = PlainTextResponse("OK")
