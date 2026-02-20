@@ -388,5 +388,6 @@ export interface SetupRequest {
   llm_provider: string;
   llm_api_key: string;
   llm_model: string;
+  enable_cors?: boolean;
   allowed_origins?: string[];
 }
