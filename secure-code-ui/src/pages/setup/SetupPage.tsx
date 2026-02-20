@@ -114,163 +114,17 @@ const SetupPage: React.FC = () => {
 
 <div style={ { marginBottom: '1.5rem', display: 'flex', justifyContent: 'center' } }>
     <div style={ { display: 'flex', gap: '1rem' } }>
-        <span style={ { fontWeight: step === 1 ? 'bold' : 'normal', color: step === 1 ? '#2563eb' : '#9ca3af' } }> 1. Admin </span>
+        <span style={ { fontWeight: step === 1 ? 'bold' : 'normal', color: step === 1 ? '#2563eb' : '#9ca3af' } }> 1. Deployment </span>
             < span style = {{ color: '#9ca3af' }}>& rarr; </span>
-                < span style = {{ fontWeight: step === 2 ? 'bold' : 'normal', color: step === 2 ? '#2563eb' : '#9ca3af' }}> 2. LLM Config </span>
+                < span style = {{ fontWeight: step === 2 ? 'bold' : 'normal', color: step === 2 ? '#2563eb' : '#9ca3af' }}> 2. Admin </span>
                     < span style = {{ color: '#9ca3af' }}>& rarr; </span>
-                        < span style = {{ fontWeight: step === 3 ? 'bold' : 'normal', color: step === 3 ? '#2563eb' : '#9ca3af' }}> 3. Deployment </span>
+                        < span style = {{ fontWeight: step === 3 ? 'bold' : 'normal', color: step === 3 ? '#2563eb' : '#9ca3af' }}> 3. LLM Config </span>
                             </div>
                             </div>
 
                             < form onSubmit = { handleSubmit } >
-                                { step === 1 && (
-                                    <>
-                                    <div style={ { marginBottom: '1rem' } }>
-                                        <label style={ { display: 'block', marginBottom: '0.5rem', color: '#374151' } }> Admin Email </label>
-                                            < input
-type = "email"
-name = "admin_email"
-value = { formData.admin_email }
-onChange = { handleChange }
-required
-style = {{
-    width: '100%',
-        padding: '0.75rem',
-            borderRadius: '4px',
-                border: '1px solid #d1d5db'
-}}
-                                />
-    </div>
-    < div style = {{ marginBottom: '1.5rem' }}>
-        <label style={ { display: 'block', marginBottom: '0.5rem', color: '#374151' } }> Admin Password </label>
-            < input
-type = "password"
-name = "admin_password"
-value = { formData.admin_password }
-onChange = { handleChange }
-required
-minLength = { 8}
-style = {{
-    width: '100%',
-        padding: '0.75rem',
-            borderRadius: '4px',
-                border: '1px solid #d1d5db'
-}}
-                                />
-    </div>
-    < button
-type = "button"
-onClick = {() => setStep(2)}
-disabled = {!formData.admin_email || !formData.admin_password}
-style = {{
-    width: '100%',
-        backgroundColor: '#2563eb',
-            color: 'white',
-                padding: '0.75rem',
-                    borderRadius: '4px',
-                        border: 'none',
-                            cursor: 'pointer',
-                                opacity: (!formData.admin_email || !formData.admin_password) ? 0.5 : 1
-}}
-                            >
-    Next
-    </button>
-    </>
-                    )}
-
-{
-    step === 2 && (
-        <>
-        <div style={ { marginBottom: '1rem' } }>
-            <label style={ { display: 'block', marginBottom: '0.5rem', color: '#374151' } }> LLM Provider </label>
-                < select
-    name = "llm_provider"
-    value = { formData.llm_provider }
-    onChange = { handleChange }
-    style = {{
-        width: '100%',
-            padding: '0.75rem',
-                borderRadius: '4px',
-                    border: '1px solid #d1d5db'
-    }
-}
-                                >
-    <option value="openai" > OpenAI </option>
-        < option value = "anthropic" > Anthropic </option>
-            < option value = "gemini" > Google Gemini </option>
-                </select>
-                </div>
-                < div style = {{ marginBottom: '1rem' }}>
-                    <label style={ { display: 'block', marginBottom: '0.5rem', color: '#374151' } }> Model Name </label>
-                        < input
-type = "text"
-name = "llm_model"
-value = { formData.llm_model }
-onChange = { handleChange }
-required
-style = {{
-    width: '100%',
-        padding: '0.75rem',
-            borderRadius: '4px',
-                border: '1px solid #d1d5db'
-}}
-                                />
-    </div>
-    < div style = {{ marginBottom: '1.5rem' }}>
-        <label style={ { display: 'block', marginBottom: '0.5rem', color: '#374151' } }> API Key </label>
-            < input
-type = "password"
-name = "llm_api_key"
-value = { formData.llm_api_key }
-onChange = { handleChange }
-required
-style = {{
-    width: '100%',
-        padding: '0.75rem',
-            borderRadius: '4px',
-                border: '1px solid #d1d5db'
-}}
-                                />
-    </div>
-    < div style = {{ display: 'flex', gap: '1rem' }}>
-        <button
-                                    type="button"
-onClick = {() => setStep(1)}
-style = {{
-    flex: 1,
-        backgroundColor: '#9ca3af',
-            color: 'white',
-                padding: '0.75rem',
-                    borderRadius: '4px',
-                        border: 'none',
-                            cursor: 'pointer'
-}}
-                                >
-    Back
-    </button>
-    < button
-type = "button"
-onClick = {() => setStep(3)}
-disabled = {!formData.llm_api_key}
-style = {{
-    flex: 1,
-        backgroundColor: '#2563eb',
-            color: 'white',
-                padding: '0.75rem',
-                    borderRadius: '4px',
-                        border: 'none',
-                            cursor: 'pointer',
-                                opacity: (!formData.llm_api_key) ? 0.5 : 1
-}}
-                                >
-    Next
-    </button>
-    </div>
-    </>
-                    )}
-
-{
-    step === 3 && (
+                                {
+    step === 1 && (
         <>
         <div style={ { marginBottom: '1rem' } }>
             <label style={ { display: 'block', marginBottom: '0.5rem', color: '#374151', fontWeight: 'bold' } }>
@@ -340,39 +194,187 @@ style = {{
                                 )}
 </div>
 
-    < div style = {{ display: 'flex', gap: '1rem' }}>
-        <button
-                                    type="button"
-onClick = {() => setStep(2)}
+    <div style={{ display: 'flex', gap: '1rem' }}>
+                                    <button
+                                        type="button"
+                                        onClick={() => setStep(2)}
+                                        disabled={deploymentType === 'cloud' && !formData.frontend_url}
+                                        style={{
+                                            flex: 1,
+                                            backgroundColor: '#2563eb',
+                                            color: 'white',
+                                            padding: '0.75rem',
+                                            borderRadius: '4px',
+                                            border: 'none',
+                                            cursor: 'pointer',
+                                            opacity: (deploymentType === 'cloud' && !formData.frontend_url) ? 0.5 : 1
+                                        }}
+                                    >
+                                        Next
+                                    </button>
+                                </div>
+    </>
+                    )}
+
+{ step === 2 && (
+                                    <>
+                                    <div style={ { marginBottom: '1rem' } }>
+                                        <label style={ { display: 'block', marginBottom: '0.5rem', color: '#374151' } }> Admin Email </label>
+                                            < input
+type = "email"
+name = "admin_email"
+value = { formData.admin_email }
+onChange = { handleChange }
+required
 style = {{
-    flex: 1,
-        backgroundColor: '#9ca3af',
-            color: 'white',
-                padding: '0.75rem',
-                    borderRadius: '4px',
-                        border: 'none',
-                            cursor: 'pointer'
+    width: '100%',
+        padding: '0.75rem',
+            borderRadius: '4px',
+                border: '1px solid #d1d5db'
 }}
-                                >
-    Back
-    </button>
-    < button
-type = "submit"
-disabled = { loading }
-style = {{
-    flex: 1,
-        backgroundColor: '#2563eb',
-            color: 'white',
-                padding: '0.75rem',
-                    borderRadius: '4px',
-                        border: 'none',
-                            cursor: 'pointer',
-                                opacity: loading ? 0.5 : 1
-}}
-                                >
-    { loading? 'Completing Setup...': 'Finish Setup' }
-    </button>
+                                />
     </div>
+    < div style = {{ marginBottom: '1.5rem' }}>
+        <label style={ { display: 'block', marginBottom: '0.5rem', color: '#374151' } }> Admin Password </label>
+            < input
+type = "password"
+name = "admin_password"
+value = { formData.admin_password }
+onChange = { handleChange }
+required
+minLength = { 8}
+style = {{
+    width: '100%',
+        padding: '0.75rem',
+            borderRadius: '4px',
+                border: '1px solid #d1d5db'
+}}
+                                />
+    </div>
+    <div style={{ display: 'flex', gap: '1rem' }}>
+                                    <button
+                                        type="button"
+                                        onClick={() => setStep(1)}
+                                        style={{
+                                            flex: 1,
+                                            backgroundColor: '#9ca3af',
+                                            color: 'white',
+                                            padding: '0.75rem',
+                                            borderRadius: '4px',
+                                            border: 'none',
+                                            cursor: 'pointer'
+                                        }}
+                                    >
+                                        Back
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setStep(3)}
+                                        disabled={!formData.admin_email || !formData.admin_password}
+                                        style={{
+                                            flex: 1,
+                                            backgroundColor: '#2563eb',
+                                            color: 'white',
+                                            padding: '0.75rem',
+                                            borderRadius: '4px',
+                                            border: 'none',
+                                            cursor: 'pointer',
+                                            opacity: (!formData.admin_email || !formData.admin_password) ? 0.5 : 1
+                                        }}
+                                    >
+                                        Next
+                                    </button>
+                                </div>
+    </>
+                    )}
+
+{
+    step === 3 && (
+        <>
+        <div style={ { marginBottom: '1rem' } }>
+            <label style={ { display: 'block', marginBottom: '0.5rem', color: '#374151' } }> LLM Provider </label>
+                < select
+    name = "llm_provider"
+    value = { formData.llm_provider }
+    onChange = { handleChange }
+    style = {{
+        width: '100%',
+            padding: '0.75rem',
+                borderRadius: '4px',
+                    border: '1px solid #d1d5db'
+    }
+}
+                                >
+    <option value="openai" > OpenAI </option>
+        < option value = "anthropic" > Anthropic </option>
+            < option value = "gemini" > Google Gemini </option>
+                </select>
+                </div>
+                < div style = {{ marginBottom: '1rem' }}>
+                    <label style={ { display: 'block', marginBottom: '0.5rem', color: '#374151' } }> Model Name </label>
+                        < input
+type = "text"
+name = "llm_model"
+value = { formData.llm_model }
+onChange = { handleChange }
+required
+style = {{
+    width: '100%',
+        padding: '0.75rem',
+            borderRadius: '4px',
+                border: '1px solid #d1d5db'
+}}
+                                />
+    </div>
+    < div style = {{ marginBottom: '1.5rem' }}>
+        <label style={ { display: 'block', marginBottom: '0.5rem', color: '#374151' } }> API Key </label>
+            < input
+type = "password"
+name = "llm_api_key"
+value = { formData.llm_api_key }
+onChange = { handleChange }
+required
+style = {{
+    width: '100%',
+        padding: '0.75rem',
+            borderRadius: '4px',
+                border: '1px solid #d1d5db'
+}}
+                                />
+    </div>
+    <div style={{ display: 'flex', gap: '1rem' }}>
+                                    <button
+                                        type="button"
+                                        onClick={() => setStep(2)}
+                                        style={{
+                                            flex: 1,
+                                            backgroundColor: '#9ca3af',
+                                            color: 'white',
+                                            padding: '0.75rem',
+                                            borderRadius: '4px',
+                                            border: 'none',
+                                            cursor: 'pointer'
+                                        }}
+                                    >
+                                        Back
+                                    </button>
+                                    <button
+                                        type="submit"
+                                        disabled={!formData.llm_api_key || loading}
+                                        style={{
+                                            flex: 1,
+                                            backgroundColor: '#2563eb',
+                                            color: 'white',
+                                            padding: '0.75rem',
+                                            borderRadius: '4px',
+                                            border: 'none',
+                                            cursor: 'pointer',
+                                            opacity: (!formData.llm_api_key || loading) ? 0.5 : 1
+                                        }}
+                                    >
+                                        {loading ? 'Completing Setup...' : 'Finish Setup'}
+                                    </button>
+                                </div>
     </>
                     )}
 </form>

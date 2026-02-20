@@ -10,23 +10,23 @@ def test_setup_flow(page: Page):
     # Navigate to setup page
     page.goto("http://localhost/setup")
 
-    # Step 1: Admin
-    page.wait_for_selector('h1:has-text("Secure Coding Platform Setup")')
+    # Step 1: Deployment Environment
+    page.wait_for_selector('label:has-text("Deployment Environment")')
+    # Click Local Development
+    page.click('h3:has-text("Local Development")')
+    page.click('button:has-text("Next")')
+
+    # Step 2: Admin
+    page.wait_for_selector('label:has-text("Admin Email")')
     page.fill('input[name="admin_email"]', 'admin@example.com')
     page.fill('input[name="admin_password"]', 'securepassword123')
     page.click('button:has-text("Next")')
 
-    # Step 2: LLM Config
+    # Step 3: LLM Config
     page.wait_for_selector('label:has-text("LLM Provider")')
     page.select_option('select[name="llm_provider"]', 'openai')
     page.fill('input[name="llm_model"]', 'gpt-4o')
     page.fill('input[name="llm_api_key"]', 'sk-test-key-12345')
-    page.click('button:has-text("Next")')
-
-    # Step 3: Deployment Environment
-    page.wait_for_selector('label:has-text("Deployment Environment")')
-    # Click Local Development
-    page.click('h3:has-text("Local Development")')
     
     # Save a screenshot in the brain directory for walkthrough documentation
     brain_dir = "/Users/overlord/.gemini/antigravity/brain/d4e46eca-adbf-4fb6-b547-a673b4335ed0"
