@@ -3,8 +3,12 @@ import os
 from playwright.sync_api import Page, expect
 
 def test_setup_flow(page: Page):
+    page.on("console", lambda msg: print(f"BROWSER CONSOLE: {msg.type}: {msg.text}"))
+    page.on("request", lambda req: print(f"BROWSER REQUEST: {req.method} {req.url}"))
+    page.on("response", lambda res: print(f"BROWSER RESPONSE: {res.status} {res.url}"))
+
     # Navigate to setup page
-    page.goto("http://localhost:5173/setup")
+    page.goto("http://localhost/setup")
 
     # Step 1: Admin
     page.wait_for_selector('h1:has-text("Secure Coding Platform Setup")')
@@ -19,14 +23,10 @@ def test_setup_flow(page: Page):
     page.fill('input[name="llm_api_key"]', 'sk-test-key-12345')
     page.click('button:has-text("Next")')
 
-    # Step 3: Deployment & CORS
-    page.wait_for_selector('label:has-text("External Deployment / CORS")')
-    # Check "Enable CORS"
-    page.check('input[type="checkbox"]')
-    
-    # Wait for the origin input to appear and fill it
-    page.wait_for_selector('input[placeholder*="https://"]')
-    page.fill('input[placeholder*="https://"]', 'http://localhost:5173, http://127.0.0.1:5173')
+    # Step 3: Deployment Environment
+    page.wait_for_selector('label:has-text("Deployment Environment")')
+    # Click Local Development
+    page.click('h3:has-text("Local Development")')
     
     # Save a screenshot in the brain directory for walkthrough documentation
     brain_dir = "/Users/overlord/.gemini/antigravity/brain/d4e46eca-adbf-4fb6-b547-a673b4335ed0"

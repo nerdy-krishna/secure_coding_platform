@@ -12,10 +12,10 @@ class SetupRequest(BaseModel):
     llm_model: str = Field(..., description="Model name (e.g., gpt-4o, claude-3-opus)")
 
     # System Configuration
-    enable_cors: bool = Field(default=False, description="Enable CORS for allowed origins")
-    allowed_origins: Optional[list[str]] = Field(
+    deployment_type: str = Field(..., description="Type of deployment (local or cloud)")
+    frontend_url: Optional[str] = Field(
         default=None, 
-        description="List of allowed origins for CORS (e.g., https://my-domain.com). If empty, defaults to restricted set."
+        description="Public URL for cloud deployment (e.g., http://123.45.67.89). Required if deployment_type is 'cloud'."
     )
 
 class SetupStatusResponse(BaseModel):

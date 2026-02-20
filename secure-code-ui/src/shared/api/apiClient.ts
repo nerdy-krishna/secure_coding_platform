@@ -2,9 +2,9 @@
 import axios from "axios";
 import { authService } from "./authService";
 
-// Get the API base URL from environment variables
+// Get the API base URL from environment variables, fallback back to relative proxy path
 const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api/v1";
+  import.meta.env.VITE_API_BASE_URL || "/api/v1";
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
   withCredentials: true, // Let Axios handle the Content-Type header per request

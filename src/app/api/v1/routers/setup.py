@@ -74,10 +74,18 @@ async def perform_setup(
     # 3. Configure CORS (System Config)
     sys_conf_repo = SystemConfigRepository(db)
     
+    # Determine CORS settings based on deployment type
+    cors_enabled = True
+    allowed_origins = []
+    if request.deployment_type == "local":
+        allowed_origins = ["http://localhost", "http://127.0.0.1", "http://localhost:5173"]
+    elif request.deployment_type == "cloud" and request.frontend_url:
+        allowed_origins = [request.frontend_url.strip()]
+
     # Save CORS Enabled setting
     cors_enabled_create = api_models.SystemConfigurationCreate(
         key="security.cors_enabled",
-        value={"enabled": request.enable_cors},
+        value={"enabled": cors_enabled},
         description="Enable CORS for allowed origins",
         is_secret=False,
         encrypted=False
@@ -97,15 +105,15 @@ async def perform_setup(
     # Update Runtime Config
     from app.core.config_cache import SystemConfigCache
     
-    SystemConfigCache.set_cors_enabled(request.enable_cors)
+    SystemConfigCache.set_cors_enabled(cors_enabled)
     update_logging_level("INFO")
 
-    if request.allowed_origins:
+    if allowed_origins:
         try:
              # Create SystemConfigurationCreate object
              config_create = api_models.SystemConfigurationCreate(
                  key="security.allowed_origins",
-                 value={"origins": request.allowed_origins}, # Store as JSON dict
+                 value={"origins": allowed_origins}, # Store as JSON dict
                  description="Allowed origins for CORS",
                  is_secret=False,
                  encrypted=False
@@ -113,10 +121,9 @@ async def perform_setup(
              await sys_conf_repo.set_value(config_create)
 
              # Update Cache immediately so next request works
-             SystemConfigCache.set_allowed_origins(request.allowed_origins)
+             SystemConfigCache.set_allowed_origins(allowed_origins)
         except Exception as e:
              # Log error but don't fail setup as user creation is done
-             # In a real app we might want to be more transactional
              pass
     
     SystemConfigCache.set_setup_completed(True) 
