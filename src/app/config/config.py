@@ -54,6 +54,15 @@ class Settings(BaseSettings):
         values = info.data
         return f"amqp://{values.get('RABBITMQ_DEFAULT_USER')}:{values.get('RABBITMQ_DEFAULT_PASS')}@{values.get('RABBITMQ_HOST')}/"
 
+    # --- Email (SMTP) Configuration ---
+    SMTP_HOST: Optional[str] = None
+    SMTP_PORT: int = 587
+    SMTP_USER: Optional[str] = None
+    SMTP_PASSWORD: Optional[str] = None
+    SMTP_FROM: Optional[str] = None
+    SMTP_TLS: bool = True
+    SMTP_SSL: bool = False
+
     # --- Security & Auth ---
     SECRET_KEY: str
     ENCRYPTION_KEY: str

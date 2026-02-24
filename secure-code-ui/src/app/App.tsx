@@ -65,6 +65,9 @@ const ProtectedRoutesWithLayout: React.FC = () => {
   );
 };
 
+import ForgotPasswordPage from "../features/authentication/components/ForgotPasswordPage";
+import ResetPasswordPage from "../features/authentication/components/ResetPasswordPage";
+
 const AuthRoutesWithLayout: React.FC = () => {
   const { accessToken, initialAuthChecked, isLoading, isSetupCompleted } = useAuth();
   if (!initialAuthChecked || isLoading) {
@@ -130,8 +133,9 @@ function AppContent() {
     <Routes>
     <Route element= {< AuthRoutesWithLayout />}>
       <Route path="/login" element = {< LoginPage />} />
-        < Route path = "/register" element = {< RegisterPage />} />
-          </Route>
+        < Route path = "/forgot-password" element = {< ForgotPasswordPage />} />
+          < Route path = "/reset-password" element = {< ResetPasswordPage />} />
+            </Route>
 
 {/* Setup Route */ }
 <Route path="/setup" element = {< SetupPage />} />

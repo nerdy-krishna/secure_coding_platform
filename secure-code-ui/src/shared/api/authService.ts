@@ -60,10 +60,26 @@ export const authService = {
   },
   // Logout
   logoutUser: async (): Promise<unknown> => {
-    // FastAPI Users /auth/logout (or /auth/jwt/logout if JWT strategy specifically prefixes it,
-    // but your docs suggest /auth/logout)
+    // FastAPI Users /auth/logout
     const response = await apiClient.post("/auth/logout");
-    // CORRECT PATH: relative to baseURL
+    return response.data;
+  },
+
+  forgotPassword: async (email: string): Promise<void> => {
+    await apiClient.post("/auth/forgot-password", { email });
+  },
+
+  resetPassword: async (token: string, password: string): Promise<void> => {
+    await apiClient.post("/auth/reset-password", { token, password });
+  },
+
+  adminCreateUser: async (userData: any): Promise<UserRead> => {
+    const response = await apiClient.post<UserRead>("/admin/users", userData);
+    return response.data;
+  },
+
+  adminListUsers: async (): Promise<UserRead[]> => {
+    const response = await apiClient.get<UserRead[]>("/admin/users");
     return response.data;
   },
 };

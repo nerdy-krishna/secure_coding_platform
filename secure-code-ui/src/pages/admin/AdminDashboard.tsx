@@ -3,6 +3,9 @@ import { Layout, Tabs, Typography, theme } from 'antd';
 import { SettingOutlined, RobotOutlined } from '@ant-design/icons';
 import SystemConfigTab from './SystemConfigTab';
 import LLMConfigTab from './LLMConfigTab';
+import UserManagementTab from './UserManagementTab';
+import SMTPSettingsTab from './SMTPSettingsTab';
+import { UserOutlined, MailOutlined } from '@ant-design/icons';
 
 const { Content } = Layout;
 const { Title } = Typography;
@@ -33,6 +36,26 @@ children: <SystemConfigTab />,
         </span>
             ),
     children: <LLMConfigTab />,
+},
+{
+    key: 'users',
+        label: (
+            <span>
+            <UserOutlined />
+                    User Management
+        </span>
+            ),
+    children: <UserManagementTab />,
+},
+{
+    key: 'smtp',
+        label: (
+            <span>
+            <MailOutlined />
+            SMTP Settings
+        </span>
+    ),
+    children: <SMTPSettingsTab />,
 },
     ];
 
