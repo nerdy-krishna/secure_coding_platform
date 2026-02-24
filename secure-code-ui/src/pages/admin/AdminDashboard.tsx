@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Layout, Tabs, Typography, theme } from 'antd';
 import { SettingOutlined, RobotOutlined } from '@ant-design/icons';
 import SystemConfigTab from './SystemConfigTab';
@@ -14,7 +15,20 @@ const AdminDashboard: React.FC = () => {
     const {
         token: { colorBgContainer, borderRadiusLG },
     } = theme.useToken();
-    const [activeTab, setActiveTab] = useState<string>('system');
+    const [searchParams, setSearchParams] = useSearchParams();
+    const [activeTab, setActiveTab] = useState<string>(searchParams.get('tab') || 'system');
+
+    useEffect(() => {
+        const tab = searchParams.get('tab');
+        if (tab && ['system', 'llm', 'users', 'smtp'].includes(tab)) {
+            setActiveTab(tab);
+        }
+    }, [searchParams]);
+
+    const handleTabChange = (key: string) => {
+        setActiveTab(key);
+        setSearchParams({ tab: key });
+    };
 
     const items = [
         {
@@ -75,7 +89,7 @@ style = {{
     <Tabs
                     defaultActiveKey="system"
 activeKey = { activeTab }
-onChange = { setActiveTab }
+onChange = { handleTabChange }
 items = { items }
     />
     </div>

@@ -86,9 +86,21 @@ const DashboardLayout: React.FC<{ children?: React.ReactNode }> = ({
       items.push(
         getItem("Admin", "admin_section", <ToolOutlined />, [
           getItem(
-          <Link to="/account/settings/llm" > LLM Settings </Link>,
-            "llm_settings_nav",
+          <Link to="/admin/dashboard?tab=system" > System Settings </Link>,
+            "system_config_nav",
         ),
+          getItem(
+            <Link to="/admin/dashboard?tab=users" > User Management </Link>,
+            "user_management_nav",
+          ),
+          getItem(
+            <Link to="/admin/dashboard?tab=smtp" > SMTP Settings </Link>,
+            "smtp_settings_nav",
+          ),
+          getItem(
+            <Link to="/account/settings/llm" > LLM Settings </Link>,
+            "llm_settings_nav",
+          ),
           getItem(
             <Link to="/admin/agents" > Agents </Link>,
             "agent_management_nav",
