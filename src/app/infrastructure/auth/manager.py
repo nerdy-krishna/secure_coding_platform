@@ -26,7 +26,17 @@ class UserManager(IntegerIDMixin, BaseUserManager[User, int]):
         logger.info(
             f"User {user.id} ({user.email}) has requested a password reset. Token: {token[:6]}..."
         )
-        pass
+        
+        from app.infrastructure.email_service import send_password_reset_email
+        reset_url_base = "http://localhost:5173/reset-password"
+        # We can dynamically detect the frontend URL if desired, but for now we fallback to local or env config.
+        # Typically the allowed origins contains the front-end, or it's hardcoded. We'll use the origin from the request if available.
+        if request and request.headers.get("origin"):
+            reset_url_base = f'{request.headers.get("origin")}/reset-password'
+        elif settings.ALLOWED_ORIGINS:
+            reset_url_base = f"{settings.ALLOWED_ORIGINS[0]}/reset-password"
+
+        await send_password_reset_email(user.email, token, reset_url_base)
 
     async def on_after_request_verify(
         self, user: User, token: str, request: Optional[Request] = None

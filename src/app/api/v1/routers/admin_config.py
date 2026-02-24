@@ -72,7 +72,23 @@ async def set_system_config(
         }
 
     system_config = api_models.SystemConfigurationCreate(**create_data)
-    return await repo.set_value(system_config)
+    result = await repo.set_value(system_config)
+
+    # Dynamic updates to cache
+    from app.core.config_cache import SystemConfigCache
+    if key == "system.smtp":
+        SystemConfigCache.set_smtp_config(system_config.value)
+    elif key == "security.allowed_origins" and isinstance(system_config.value, dict):
+        if "origins" in system_config.value:
+            SystemConfigCache.set_allowed_origins(system_config.value["origins"])
+    elif key == "security.cors_enabled":
+        val = system_config.value
+        if isinstance(val, dict) and "enabled" in val:
+            SystemConfigCache.set_cors_enabled(bool(val["enabled"]))
+        else:
+            SystemConfigCache.set_cors_enabled(bool(val))
+
+    return result
 
 @router.delete("/{key}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_system_config(

@@ -29,3 +29,13 @@ class SystemConfigCache:
     @classmethod
     def is_cors_enabled(cls) -> bool:
         return cls._cors_enabled
+
+    _smtp_config: dict | None = None
+
+    @classmethod
+    def set_smtp_config(cls, smtp_config: dict | None):
+        cls._smtp_config = smtp_config
+
+    @classmethod
+    def get_smtp_config(cls) -> dict | None:
+        return cls._smtp_config

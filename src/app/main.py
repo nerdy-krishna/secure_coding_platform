@@ -134,6 +134,15 @@ async def lifespan(app: FastAPI):
                      origins = [o.strip() for o in allowed_origins_str.split(",") if o.strip()]
                      SystemConfigCache.set_allowed_origins(origins)
                      logger.info(f"Loaded allowed origins from ENV: {origins}")
+                # Load SMTP Configuration from DB
+                smtp_config = await repo.get_by_key("system.smtp")
+                if smtp_config and isinstance(smtp_config.value, dict):
+                     SystemConfigCache.set_smtp_config(smtp_config.value)
+                     logger.info("Loaded SMTP configuration from DB.")
+                else:
+                     SystemConfigCache.set_smtp_config(None)
+                     logger.info("No SMTP configuration found in DB.")
+
             else:
                 logger.info("Setup not completed. Allowing all origins for setup mode.")
                 SystemConfigCache.set_cors_enabled(True) # Enable CORS for setup
@@ -285,6 +294,9 @@ app.include_router(logs_router, prefix="/api/v1/admin", tags=["Admin: System Log
 # Router for Chat
 app.include_router(chat_router, prefix="/api/v1/chat", tags=["Chat"])
 
+from app.api.v1.routers.admin_users import router as admin_users_router
+app.include_router(admin_users_router, prefix="/api/v1")
+
 
 # --- Include FastAPI Users Authentication Routers ---
 app.include_router(
@@ -302,7 +314,7 @@ app.include_router(
 )
 
 app.include_router(
-    fastapi_users.get_register_router(UserRead, UserCreate),
+    fastapi_users.get_reset_password_router(),
     prefix="/api/v1/auth",
     tags=["Authentication"],
 )
