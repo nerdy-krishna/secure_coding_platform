@@ -11,7 +11,6 @@ import { useAuth } from "../shared/hooks/useAuth";
 import { AuthProvider } from "./providers/AuthProvider";
 
 import LLMSettingsPage from "../features/admin-settings/components/LLMSettingsPage";
-import RegisterPage from "../features/authentication/components/RegisterPage";
 import DashboardPage from "../pages/account/DashboardPage";
 import SettingsPage from "../pages/account/SettingsPage";
 import SubmissionHistoryPage from "../pages/account/SubmissionHistoryPage";
