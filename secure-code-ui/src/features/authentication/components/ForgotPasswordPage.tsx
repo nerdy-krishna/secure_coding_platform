@@ -38,15 +38,15 @@ const ForgotPasswordPage: React.FC = () => {
     <Paragraph>If an account exists for that email, a password reset link has been sent.</Paragraph>
         < Link to = "/login" > Return to login </Link>
             </div>
-          ) : (
+                    ) : (
     <Form name= "forgot-password" onFinish = { onFinish } layout = "vertical" >
-        <Paragraph>Enter your email address and we will send you a link to reset your password.</Paragraph>
+        <Paragraph style={ { textAlign: "center", marginBottom: "20px" } }> Enter your email address and we will send you a link to reset your password.</Paragraph>
             < Form.Item name = "email" rules = { [{ required: true, type: "email", message: "Please enter a valid email address!" }]} >
                 <Input prefix={
-                    <UserOutlined />} placeholder="Email Address" / >
+                    <UserOutlined />} placeholder="Email Address" size="large" / >
                     </Form.Item>
                     < Form.Item >
-                    <Button type="primary" htmlType = "submit" loading = { loading } style = {{ width: "100%" }
+                    <Button type="primary" htmlType = "submit" loading = { loading } size = "large" style = {{ width: "100%" }
 }>
     Send Reset Link
         </Button>
@@ -55,11 +55,11 @@ const ForgotPasswordPage: React.FC = () => {
             <Link to="/login" > Back to Login </Link>
                 </div>
                 </Form>
-          )}
+                    )}
 </div>
     </Col>
     </Row>
-  );
+    );
 };
 
 export default ForgotPasswordPage;
