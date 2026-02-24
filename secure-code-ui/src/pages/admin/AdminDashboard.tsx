@@ -3,7 +3,7 @@ import { Layout, Tabs, Typography, theme } from 'antd';
 import { SettingOutlined, RobotOutlined } from '@ant-design/icons';
 import SystemConfigTab from './SystemConfigTab';
 import LLMConfigTab from './LLMConfigTab';
-import UserManagementTab from './UserManagementTab';
+import UserManagementTab from './UserManagement';
 import SMTPSettingsTab from './SMTPSettingsTab';
 import { UserOutlined, MailOutlined } from '@ant-design/icons';
 
