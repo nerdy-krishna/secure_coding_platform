@@ -15,7 +15,7 @@ export interface AuthContextType {
   register: (credentials: UserRegisterData) => Promise<UserRead>;
   logout: () => Promise<void>;
   clearError: () => void;
-  isSetupCompleted: boolean;
+  isSetupCompleted: boolean | null;
   checkSetupStatus: () => Promise<void>;
 }
 

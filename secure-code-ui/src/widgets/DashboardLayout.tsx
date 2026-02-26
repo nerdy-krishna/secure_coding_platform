@@ -23,8 +23,8 @@ import {
   Typography,
   theme as antdTheme,
 } from "antd";
-import React, { useMemo, useState } from "react"; // <-- useMemo is added
-import { Link } from "react-router-dom";
+import React, { useMemo, useState, useEffect } from "react"; // <-- useMemo is added
+import { Link, useLocation } from "react-router-dom";
 import { useAuth } from "../shared/hooks/useAuth";
 
 const { Header, Content, Footer, Sider } = Layout;
@@ -46,6 +46,41 @@ const DashboardLayout: React.FC<{ children?: React.ReactNode }> = ({
 }) => {
   const [collapsed, setCollapsed] = useState(false);
   const { logout, user } = useAuth(); // Get the user object from our auth hook
+  const location = useLocation();
+  const pathname = location.pathname;
+  const [openKeys, setOpenKeys] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (pathname.startsWith("/admin/") || pathname === "/account/settings/llm") {
+      setOpenKeys(["admin_section"]);
+    } else {
+      setOpenKeys([]);
+    }
+  }, [pathname]);
+
+  const onOpenChange: MenuProps["onOpenChange"] = (keys) => {
+    setOpenKeys(keys);
+  };
+
+  const getSelectedKey = () => {
+    if (pathname.startsWith("/account/dashboard")) return "dashboard_overview";
+    if (pathname.startsWith("/submission/submit")) return "submit_code";
+    if (pathname.startsWith("/analysis/results") || pathname.startsWith("/scans/")) return "analysis_results";
+    if (pathname.startsWith("/advisor")) return "security_advisor";
+    if (pathname.startsWith("/account/history")) return "submission_history";
+    if (pathname.startsWith("/admin/system")) return "system_config_nav";
+    if (pathname.startsWith("/admin/users")) return "user_management_nav";
+    if (pathname.startsWith("/admin/smtp")) return "smtp_settings_nav";
+    if (pathname.startsWith("/account/settings/llm")) return "llm_settings_nav";
+    if (pathname.startsWith("/admin/agents")) return "agent_management_nav";
+    if (pathname.startsWith("/admin/frameworks")) return "framework_management_nav";
+    if (pathname.startsWith("/admin/prompts")) return "prompt_management_nav";
+    if (pathname.startsWith("/admin/rag")) return "rag_management_nav";
+    if (pathname.startsWith("/account/profile")) return "user_profile_nav";
+    if (pathname.startsWith("/account/settings")) return "user_settings_nav";
+    return "";
+  };
+
   const {
     token: { colorBgContainer, borderRadiusLG },
   } = antdTheme.useToken();
@@ -86,15 +121,15 @@ const DashboardLayout: React.FC<{ children?: React.ReactNode }> = ({
       items.push(
         getItem("Admin", "admin_section", <ToolOutlined />, [
           getItem(
-          <Link to="/admin/dashboard?tab=system" > System Settings </Link>,
+          <Link to="/admin/system" > System Settings </Link>,
             "system_config_nav",
         ),
           getItem(
-            <Link to="/admin/dashboard?tab=users" > User Management </Link>,
+            <Link to="/admin/users" > User Management </Link>,
             "user_management_nav",
           ),
           getItem(
-            <Link to="/admin/dashboard?tab=smtp" > SMTP Settings </Link>,
+            <Link to="/admin/smtp" > SMTP Settings </Link>,
             "smtp_settings_nav",
           ),
           getItem(
@@ -207,7 +242,9 @@ onCollapse = {(value) => setCollapsed(value)}
   </div>
   < Menu
 theme = "dark"
-defaultSelectedKeys = { ["dashboard_overview"]}
+selectedKeys = { [getSelectedKey()]}
+openKeys = { openKeys }
+onOpenChange = { onOpenChange }
 mode = "inline"
 items = { siderMenuItems } // Use the dynamic menu items here
   />

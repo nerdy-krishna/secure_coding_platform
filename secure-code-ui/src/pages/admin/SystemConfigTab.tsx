@@ -4,7 +4,7 @@ import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import apiClient from '../../shared/api/apiClient';
 
-const { Text } = Typography;
+const { Text, Title, Paragraph } = Typography;
 
 interface SystemConfig {
     key: string;
@@ -120,8 +120,8 @@ const SystemConfigTab: React.FC = () => {
             render: (_: any, record: SystemConfig) => (
                 <div style= {{ display: 'flex', gap: 8 }}>
                     <Button icon={
-                        <EditOutlined />} size="small" onClick={() => handleEdit(record)} / >
-                        <Popconfirm
+    <EditOutlined />} size="small" onClick={() => handleEdit(record)} / >
+        <Popconfirm
                         title="Delete setting"
     description = "Are you sure you want to delete this setting?"
     onConfirm = {() => handleDelete(record.key)
@@ -130,7 +130,7 @@ okText = "Yes"
 cancelText = "No"
     >
     <Button icon={
-        <DeleteOutlined />} size="small" danger loading={deleteMutation.isPending} / >
+    <DeleteOutlined />} size="small" danger loading={deleteMutation.isPending} / >
         </Popconfirm>
         </div>
             ),
@@ -139,12 +139,14 @@ cancelText = "No"
 
 return (
     <div>
-    <div style= {{ marginBottom: 16, display: 'flex', justifyContent: 'flex-end' }}>
-        <Button type="primary" icon = {< PlusOutlined />} onClick = { handleAdd } >
-            Add Setting
-                </Button>
-                </div>
-                < Table
+    <Title level= { 2} > System Settings </Title>
+        < Paragraph > Configure core system behavior, global variables, and environmental settings.</Paragraph>
+            < div style = {{ marginBottom: 16, display: 'flex', justifyContent: 'flex-end' }}>
+                <Button type="primary" icon = {< PlusOutlined />} onClick = { handleAdd } >
+                    Add Setting
+                        </Button>
+                        </div>
+                        < Table
 columns = { columns }
 dataSource = { configs }
 rowKey = "key"

@@ -15,7 +15,9 @@ import DashboardPage from "../pages/account/DashboardPage";
 import SettingsPage from "../pages/account/SettingsPage";
 import SubmissionHistoryPage from "../pages/account/SubmissionHistoryPage";
 import UserProfilePage from "../pages/account/UserProfilePage";
-import AdminDashboard from "../pages/admin/AdminDashboard";
+import SystemConfigTab from "../pages/admin/SystemConfigTab";
+import UserManagementTab from "../pages/admin/UserManagement";
+import SMTPSettingsTab from "../pages/admin/SMTPSettingsTab";
 import AgentManagementPage from "../pages/admin/AgentManagementPage";
 import FrameworkManagementPage from '../pages/admin/FrameworkManagementPage';
 import PromptManagementPage from '../pages/admin/PromptManagementPage';
@@ -44,13 +46,20 @@ style = {{ padding: "10px 15px", marginTop: "15px", cursor: "pointer" }}
     </div>
 );
 
+const LoadingScreen: React.FC = () => (
+  <div style= {{ display: "flex", justifyContent: "center", alignItems: "center", height: "100vh", flexDirection: "column" }}>
+    <h2>Connecting to Services...</h2>
+      < p > Please wait while the Secure Coding Platform is starting up.</p>
+        </div>
+);
+
 const ProtectedRoutesWithLayout: React.FC = () => {
   const { accessToken, initialAuthChecked, isLoading, isSetupCompleted } = useAuth();
-  if (!initialAuthChecked || isLoading) {
-    return <div>Loading authentication status...</div>;
+  if (!initialAuthChecked || isLoading || isSetupCompleted === null) {
+    return <LoadingScreen />;
   }
 
-  if (!isSetupCompleted) {
+  if (isSetupCompleted === false) {
     return <Navigate to="/setup" replace />;
   }
 
@@ -69,12 +78,12 @@ import ResetPasswordPage from "../features/authentication/components/ResetPasswo
 
 const AuthRoutesWithLayout: React.FC = () => {
   const { accessToken, initialAuthChecked, isLoading, isSetupCompleted } = useAuth();
-  if (!initialAuthChecked || isLoading) {
-    return <div>Loading authentication status...</div>;
+  if (!initialAuthChecked || isLoading || isSetupCompleted === null) {
+    return <LoadingScreen />;
   }
 
   // Force redirect to setup if not completed
-  if (!isSetupCompleted) {
+  if (isSetupCompleted === false) {
     return <Navigate to="/setup" replace />;
   }
 
@@ -90,11 +99,11 @@ const AuthRoutesWithLayout: React.FC = () => {
 
 const RootRedirector: React.FC = () => {
   const { accessToken, initialAuthChecked, isLoading, isSetupCompleted } = useAuth();
-  if (!initialAuthChecked || isLoading) {
-    return <div>Loading...</div>;
+  if (!initialAuthChecked || isLoading || isSetupCompleted === null) {
+    return <LoadingScreen />;
   }
 
-  if (!isSetupCompleted) {
+  if (isSetupCompleted === false) {
     return <Navigate to="/setup" replace />;
   }
 
@@ -106,9 +115,13 @@ const RootRedirector: React.FC = () => {
 };
 
 const SuperuserRoutesWithLayout: React.FC = () => {
-  const { user, accessToken, initialAuthChecked, isLoading } = useAuth();
-  if (!initialAuthChecked || isLoading) {
-    return <div>Loading authentication status...</div>;
+  const { user, accessToken, initialAuthChecked, isLoading, isSetupCompleted } = useAuth();
+  if (!initialAuthChecked || isLoading || isSetupCompleted === null) {
+    return <LoadingScreen />;
+  }
+
+  if (isSetupCompleted === false) {
+    return <Navigate to="/setup" replace />;
   }
 
   if (!accessToken) {
@@ -153,18 +166,20 @@ function AppContent() {
                         </Route>
 
                         < Route element = {< SuperuserRoutesWithLayout />}>
-                          <Route path="/admin/dashboard" element = {< AdminDashboard />} />
-                            < Route path = "/account/settings/llm" element = {< LLMSettingsPage />} />
-                              < Route path = "/admin/agents" element = {< AgentManagementPage />} />
-                                < Route path = "/admin/frameworks" element = {< FrameworkManagementPage />} />
-                                  < Route path = "/admin/prompts" element = {< PromptManagementPage />} />
-                                    < Route path = "/admin/rag" element = {< RAGManagementPage />} />
-                                      </Route>
+                          <Route path="/admin/system" element = {< SystemConfigTab />} />
+                            < Route path = "/admin/users" element = {< UserManagementTab />} />
+                              < Route path = "/admin/smtp" element = {< SMTPSettingsTab />} />
+                                < Route path = "/account/settings/llm" element = {< LLMSettingsPage />} />
+                                  < Route path = "/admin/agents" element = {< AgentManagementPage />} />
+                                    < Route path = "/admin/frameworks" element = {< FrameworkManagementPage />} />
+                                      < Route path = "/admin/prompts" element = {< PromptManagementPage />} />
+                                        < Route path = "/admin/rag" element = {< RAGManagementPage />} />
+                                          </Route>
 
-                                      < Route path = "/" element = {< RootRedirector />} />
-                                        < Route path = "*" element = {< NotFoundPage />} />
-                                          </Routes>
-                                          </Router>
+                                          < Route path = "/" element = {< RootRedirector />} />
+                                            < Route path = "*" element = {< NotFoundPage />} />
+                                              </Routes>
+                                              </Router>
   );
 }
 
