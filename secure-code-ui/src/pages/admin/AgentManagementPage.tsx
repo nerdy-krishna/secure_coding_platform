@@ -1,31 +1,31 @@
 // src/pages/admin/AgentManagementPage.tsx
 import {
-    DeleteOutlined,
-    EditOutlined,
-    PlusOutlined,
-    RobotOutlined,
+  DeleteOutlined,
+  EditOutlined,
+  PlusOutlined,
+  RobotOutlined,
 } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { TableProps } from "antd";
 import {
-    Button,
-    Card,
-    Form,
-    Input,
-    Modal,
-    Popconfirm,
-    Space,
-    Table,
-    Typography,
-    message,
+  Button,
+  Card,
+  Form,
+  Input,
+  Modal,
+  Popconfirm,
+  Space,
+  Table,
+  Typography,
+  message,
 } from "antd";
 import { AxiosError } from "axios";
 import React, { useEffect, useState } from "react";
 import { agentService } from "../../shared/api/agentService";
 import type {
-    AgentCreate,
-    AgentRead,
-    AgentUpdate,
+  AgentCreate,
+  AgentRead,
+  AgentUpdate,
 } from "../../shared/types/api";
 
 const { Title, Paragraph } = Typography;
@@ -139,7 +139,10 @@ const AgentManagementPage: React.FC = () => {
       width: 180,
       render: (_, record) => (
         <Space>
-          <Button icon={<EditOutlined />} onClick={() => setEditingAgent(record)}>
+          <Button
+            icon={<EditOutlined />}
+            onClick={() => setEditingAgent(record)}
+          >
             Edit
           </Button>
           <Popconfirm
@@ -199,23 +202,28 @@ const AgentManagementPage: React.FC = () => {
           <Form.Item
             name="name"
             label="Agent Name"
-            rules={[{ required: true, message: "Please enter the agent name." }]}
+            rules={[
+              { required: true, message: "Please enter the agent name." },
+            ]}
           >
             <Input placeholder="e.g., TerraformSecurityAgent" />
           </Form.Item>
           <Form.Item
             name="description"
             label="Description"
-            rules={[{ required: true, message: "Please provide a description." }]}
+            rules={[
+              { required: true, message: "Please provide a description." },
+            ]}
           >
-            <Input.TextArea rows={3} placeholder="Describe the agent's purpose..." />
+            <Input.TextArea
+              rows={3}
+              placeholder="Describe the agent's purpose..."
+            />
           </Form.Item>
           <Form.Item
             name="domain_query"
             label="Domain Query for RAG"
-            rules={[
-              { required: true, message: "Please provide a RAG query." },
-            ]}
+            rules={[{ required: true, message: "Please provide a RAG query." }]}
           >
             <Input.TextArea
               rows={4}
