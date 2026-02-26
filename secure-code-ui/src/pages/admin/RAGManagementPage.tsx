@@ -18,13 +18,11 @@ import {
   Button,
   Card,
   Col,
-
   Form,
   Input,
   Modal,
   Popconfirm,
   Row,
-
   Space,
   Spin,
   Table,
@@ -47,7 +45,7 @@ import type {
   LLMConfiguration,
   PreprocessingResponse,
   RAGDocument,
-  RAGJobStatusResponse
+  RAGJobStatusResponse,
 } from "../../shared/types/api";
 import { FrameworkIngestionModal } from "./FrameworkIngestionModal";
 
@@ -77,19 +75,27 @@ const ViewDocumentsModal: React.FC<{
       ];
     }
     const metadataKeys = [
-      ...new Set(documents.flatMap((doc: RAGDocument) => Object.keys(doc.metadata))),
+      ...new Set(
+        documents.flatMap((doc: RAGDocument) => Object.keys(doc.metadata)),
+      ),
     ];
     const metadataColumns = metadataKeys.map((key: string) => ({
-      title: key.replace(/_/g, " ").replace(/\b\w/g, (l: string) => l.toUpperCase()),
+      title: key
+        .replace(/_/g, " ")
+        .replace(/\b\w/g, (l: string) => l.toUpperCase()),
       dataIndex: ["metadata", key],
       key: key,
       ellipsis: true,
       render: (text: unknown) => {
-        if (typeof text === 'boolean') {
-          return text ? <Tag color="green" > Yes < /Tag> : <Tag color="red">No</Tag >;
+        if (typeof text === "boolean") {
+          return text ? (
+            <Tag color="green"> Yes </Tag>
+          ) : (
+            <Tag color="red">No</Tag>
+          );
         }
         return text?.toString();
-      }
+      },
     }));
 
     return [
@@ -107,27 +113,26 @@ const ViewDocumentsModal: React.FC<{
 
   return (
     <Modal
-      title= {`Documents for "${frameworkName}"`
-}
-open = { visible }
-onCancel = { onClose }
-footer = {< Button onClick = { onClose } > Close </Button>}
-width = { 1200}
-destroyOnClose
-  >
-  <Table
-        loading={ isLoading }
-dataSource = { documents }
-rowKey = "id"
-columns = { columns }
-scroll = {{ x: true }}
-locale = {{
-  emptyText: isError
-    ? "Error loading documents."
-    : "No documents found for this framework.",
+      title={`Documents for "${frameworkName}"`}
+      open={visible}
+      onCancel={onClose}
+      footer={<Button onClick={onClose}> Close </Button>}
+      width={1200}
+      destroyOnClose
+    >
+      <Table
+        loading={isLoading}
+        dataSource={documents}
+        rowKey="id"
+        columns={columns}
+        scroll={{ x: true }}
+        locale={{
+          emptyText: isError
+            ? "Error loading documents."
+            : "No documents found for this framework.",
         }}
       />
-  </Modal>
+    </Modal>
   );
 };
 
@@ -137,12 +142,22 @@ const StandardFrameworkCard: React.FC<{
   displayName: string;
   description: string;
   docCount: number;
-  type: 'scanning' | 'knowledge';
+  type: "scanning" | "knowledge";
   onUpdate: (name: string) => void;
   onDelete: (name: string) => void;
   onIngest: () => void; // Trigger ingestion/upload
   isLoading?: boolean;
-}> = ({ name, displayName, description, docCount, type, onUpdate, onDelete, onIngest, isLoading }) => {
+}> = ({
+  name,
+  displayName,
+  description,
+  docCount,
+  type,
+  onUpdate,
+  onDelete,
+  onIngest,
+  isLoading,
+}) => {
   const [isViewModalVisible, setIsViewModalVisible] = useState(false);
   const isInstalled = docCount > 0;
 
@@ -150,92 +165,95 @@ const StandardFrameworkCard: React.FC<{
 
   if (isInstalled) {
     actions.push(
-      <Tooltip title="View Documents" key = "view" >
-      <Button
+      <Tooltip title="View Documents" key="view">
+        <Button
           type="text"
-          icon = {< EyeOutlined />}
-  onClick = {() => setIsViewModalVisible(true)}
+          icon={<EyeOutlined />}
+          onClick={() => setIsViewModalVisible(true)}
         />
-  </Tooltip>
+      </Tooltip>,
     );
 
-actions.push(
-  <Tooltip title="Edit / Add Languages" key = "update" >
-  <Button
+    actions.push(
+      <Tooltip title="Edit / Add Languages" key="update">
+        <Button
           type="text"
-          icon = {< EditOutlined />}
-  onClick = {() => onUpdate(name)}
+          icon={<EditOutlined />}
+          onClick={() => onUpdate(name)}
         />
-  </Tooltip>
-);
+      </Tooltip>,
+    );
   }
 
-// Update/Install Action (Re-upload / Re-fetch)
-actions.push(
-  <Tooltip title={ isInstalled? "Re-upload / Re-fetch Source": "Upload Framework" } key = "ingest" >
-  <Button
-        type="text"
-        icon = {< CloudUploadOutlined />}
-  onClick = { onIngest }
-        loading = { isLoading }
-  >
-  {!isInstalled && "Upload"}
-  </Button>
-  </Tooltip>
-);
-
-if (isInstalled) {
+  // Update/Install Action (Re-upload / Re-fetch)
   actions.push(
-    <Popconfirm
+    <Tooltip
+      title={isInstalled ? "Re-upload / Re-fetch Source" : "Upload Framework"}
+      key="ingest"
+    >
+      <Button
+        type="text"
+        icon={<CloudUploadOutlined />}
+        onClick={onIngest}
+        loading={isLoading}
+      >
+        {!isInstalled && "Upload"}
+      </Button>
+    </Tooltip>,
+  );
+
+  if (isInstalled) {
+    actions.push(
+      <Popconfirm
         key="delete"
-        title = "Delete Standard Framework?"
-        description = "This will remove all ingested documents for this standard. You can re-ingest them later."
-        onConfirm = {() => onDelete(name)}
-okText = "Yes, Delete"
-cancelText = "No"
-  >
-  <Tooltip title="Delete Documents" >
-    <Button
-            danger
-type = "text"
-icon = {< DeleteOutlined />}
-          />
-  </Tooltip>
-  </Popconfirm>
+        title="Delete Standard Framework?"
+        description="This will remove all ingested documents for this standard. You can re-ingest them later."
+        onConfirm={() => onDelete(name)}
+        okText="Yes, Delete"
+        cancelText="No"
+      >
+        <Tooltip title="Delete Documents">
+          <Button danger type="text" icon={<DeleteOutlined />} />
+        </Tooltip>
+      </Popconfirm>,
     );
   }
 
-return (
-  <Col xs= { 24} sm = { 12} md = { 8} >
-    <Card
+  return (
+    <Col xs={24} sm={12} md={8}>
+      <Card
         title={
-  <Space>
-    { displayName }
-  { docCount > 0 && <Tag color="green" > { docCount } docs </Tag> }
-  </Space>
-}
-actions = { actions }
-style = {{ height: "100%", minHeight: 180 }}
+          <Space>
+            {displayName}
+            {docCount > 0 && <Tag color="green"> {docCount} docs </Tag>}
+          </Space>
+        }
+        actions={actions}
+        style={{ height: "100%", minHeight: 180 }}
       >
-  <div style={ { marginBottom: 8 } }>
-    { type === 'scanning' ? (
-      <Tag color= "blue" icon = {< SecurityScanOutlined />}> Scanning Standard </Tag>
+        <div style={{ marginBottom: 8 }}>
+          {type === "scanning" ? (
+            <Tag color="blue" icon={<SecurityScanOutlined />}>
+              {" "}
+              Scanning Standard{" "}
+            </Tag>
           ) : (
-  <Tag color= "orange" icon = {< FileTextOutlined />}> Knowledge Base </Tag>
+            <Tag color="orange" icon={<FileTextOutlined />}>
+              {" "}
+              Knowledge Base{" "}
+            </Tag>
           )}
-</div>
-  < Paragraph ellipsis = {{ rows: 3 }}> { description } </Paragraph>
-    </Card>
-{
-  isViewModalVisible && (
-    <ViewDocumentsModal
-          frameworkName={ name }
-  visible = { isViewModalVisible }
-  onClose = {() => setIsViewModalVisible(false)
-}
+        </div>
+        <Paragraph ellipsis={{ rows: 3 }}> {description} </Paragraph>
+      </Card>
+      {isViewModalVisible && (
+        <ViewDocumentsModal
+          frameworkName={name}
+          visible={isViewModalVisible}
+          onClose={() => setIsViewModalVisible(false)}
         />
       )}
-</Col>
+    </Col>
   );
 };
 
@@ -259,87 +277,96 @@ const FrameworkCard: React.FC<{
   });
 
   const actions = [
-    <Tooltip title="View Documents" key = "view" >
-    <Button
+    <Tooltip title="View Documents" key="view">
+      <Button
         type="text"
-        icon = {< EyeOutlined />}
-onClick = {() => setIsViewModalVisible(true)}
+        icon={<EyeOutlined />}
+        onClick={() => setIsViewModalVisible(true)}
       />
-  </Tooltip>,
-  < Tooltip title = "Edit / Add Languages" key = "update" >
-    <Button
+    </Tooltip>,
+    <Tooltip title="Edit / Add Languages" key="update">
+      <Button
         type="text"
-icon = {< EditOutlined />}
-onClick = {() => onUpdate(framework.name)}
+        icon={<EditOutlined />}
+        onClick={() => onUpdate(framework.name)}
       />
-  </Tooltip>,
-  < Popconfirm
-key = "delete"
-title = "Delete Framework?"
-description = "This action cannot be undone. It will remove the framework and its associations."
-onConfirm = {() => deleteMutation.mutate()}
-okText = "Yes, Delete"
-cancelText = "No"
-  >
-  <Tooltip title="Delete Framework" >
-    <Button
+    </Tooltip>,
+    <Popconfirm
+      key="delete"
+      title="Delete Framework?"
+      description="This action cannot be undone. It will remove the framework and its associations."
+      onConfirm={() => deleteMutation.mutate()}
+      okText="Yes, Delete"
+      cancelText="No"
+    >
+      <Tooltip title="Delete Framework">
+        <Button
           danger
-type = "text"
-icon = {< DeleteOutlined />}
-loading = { deleteMutation.isPending }
-  />
-  </Tooltip>
-  </Popconfirm>,
+          type="text"
+          icon={<DeleteOutlined />}
+          loading={deleteMutation.isPending}
+        />
+      </Tooltip>
+    </Popconfirm>,
   ];
 
-return (
-  <Col xs= { 24} sm = { 12} md = { 8} >
-    <Card
-        title={ framework.name }
-actions = { actions }
-style = {{ height: "100%", minHeight: 180 }}
+  return (
+    <Col xs={24} sm={12} md={8}>
+      <Card
+        title={framework.name}
+        actions={actions}
+        style={{ height: "100%", minHeight: 180 }}
       >
-  <div style={ { marginBottom: 8 } }>
-    <Tag color="purple" icon = {< GlobalOutlined />}> Custom Framework </Tag>
-      </div>
-      < Paragraph ellipsis = {{ rows: 3 }}> { framework.description } </Paragraph>
-        </Card>
-{
-  isViewModalVisible && (
-    <ViewDocumentsModal
-          frameworkName={ framework.name }
-  visible = { isViewModalVisible }
-  onClose = {() => setIsViewModalVisible(false)
-}
+        <div style={{ marginBottom: 8 }}>
+          <Tag color="purple" icon={<GlobalOutlined />}>
+            {" "}
+            Custom Framework{" "}
+          </Tag>
+        </div>
+        <Paragraph ellipsis={{ rows: 3 }}> {framework.description} </Paragraph>
+      </Card>
+      {isViewModalVisible && (
+        <ViewDocumentsModal
+          frameworkName={framework.name}
+          visible={isViewModalVisible}
+          onClose={() => setIsViewModalVisible(false)}
         />
       )}
-</Col>
+    </Col>
   );
 };
 
 // --- Add New Framework Card ---
 const AddFrameworkCard: React.FC<{ onClick: () => void }> = ({ onClick }) => (
-  <Col xs= { 24} sm = { 12} md = { 8} >
+  <Col xs={24} sm={12} md={8}>
     <Card
       hoverable
-style = {{
-  height: "100%",
-    minHeight: 180,
-      borderStyle: 'dashed',
-        display: 'flex',
-          justifyContent: 'center',
-            alignItems: 'center',
-              background: '#fafafa'
-}}
-onClick = { onClick }
-  >
-  <div style={ { textAlign: 'center' } }>
-    <PlusOutlined style={ { fontSize: 32, color: '#1890ff', marginBottom: 16 } } />
-      < Paragraph strong style = {{ fontSize: 16, marginBottom: 0 }}> Add Custom Framework </Paragraph>
-        < Paragraph type = "secondary" > Upload CSV or define a new standard </Paragraph>
-          </div>
-          </Card>
-          </Col>
+      style={{
+        height: "100%",
+        minHeight: 180,
+        borderStyle: "dashed",
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+        background: "#fafafa",
+      }}
+      onClick={onClick}
+    >
+      <div style={{ textAlign: "center" }}>
+        <PlusOutlined
+          style={{ fontSize: 32, color: "#1890ff", marginBottom: 16 }}
+        />
+        <Paragraph strong style={{ fontSize: 16, marginBottom: 0 }}>
+          {" "}
+          Add Custom Framework{" "}
+        </Paragraph>
+        <Paragraph type="secondary">
+          {" "}
+          Upload CSV or define a new standard{" "}
+        </Paragraph>
+      </div>
+    </Card>
+  </Col>
 );
 
 const RAGManagementPage: React.FC = () => {
@@ -348,7 +375,9 @@ const RAGManagementPage: React.FC = () => {
   // State
   const [pollingJobId, setPollingJobId] = useState<string | null>(null);
   const [ingestionModalVisible, setIngestionModalVisible] = useState(false);
-  const [ingestionInitialValues, setIngestionInitialValues] = useState<{ frameworkName: string; isEdit?: boolean } | undefined>(undefined);
+  const [ingestionInitialValues, setIngestionInitialValues] = useState<
+    { frameworkName: string; isEdit?: boolean } | undefined
+  >(undefined);
 
   // Standard Framework Loading States
   const [ingestLoading, setIngestLoading] = useState<string | null>(null);
@@ -356,8 +385,12 @@ const RAGManagementPage: React.FC = () => {
   // Modals for Standard Fetch
   const [proactiveModalVisible, setProactiveModalVisible] = useState(false);
   const [cheatsheetModalVisible, setCheatsheetModalVisible] = useState(false);
-  const [proactiveUrl, setProactiveUrl] = useState("https://github.com/OWASP/www-project-proactive-controls/tree/master/docs/the-top-10");
-  const [cheatsheetUrl, setCheatsheetUrl] = useState("https://github.com/OWASP/CheatSheetSeries/tree/master/cheatsheets");
+  const [proactiveUrl, setProactiveUrl] = useState(
+    "https://github.com/OWASP/www-project-proactive-controls/tree/master/docs/the-top-10",
+  );
+  const [cheatsheetUrl, setCheatsheetUrl] = useState(
+    "https://github.com/OWASP/CheatSheetSeries/tree/master/cheatsheets",
+  );
 
   const [scanReady, setScanReady] = useState(true);
 
@@ -369,7 +402,9 @@ const RAGManagementPage: React.FC = () => {
   }, []);
 
   // Queries
-  const { data: frameworks = [], isLoading: isLoadingFrameworks } = useQuery<FrameworkRead[]>({
+  const { data: frameworks = [], isLoading: isLoadingFrameworks } = useQuery<
+    FrameworkRead[]
+  >({
     queryKey: ["frameworks"],
     queryFn: frameworkService.getFrameworks,
   });
@@ -379,9 +414,13 @@ const RAGManagementPage: React.FC = () => {
     queryFn: llmConfigService.getLlmConfigs,
   });
 
-  const { data: stats = { asvs: 0, proactive_controls: 0, cheatsheets: 0 }, isLoading: isLoadingStats, refetch: refetchStats } = useQuery<Record<string, number>>({
+  const {
+    data: stats = { asvs: 0, proactive_controls: 0, cheatsheets: 0 },
+    isLoading: isLoadingStats,
+    refetch: refetchStats,
+  } = useQuery<Record<string, number>>({
     queryKey: ["ragStats"],
-    queryFn: ragService.getStats
+    queryFn: ragService.getStats,
   });
 
   const {
@@ -396,9 +435,13 @@ const RAGManagementPage: React.FC = () => {
     },
     enabled: !!pollingJobId,
     refetchOnWindowFocus: true,
-    refetchInterval: (query: any /* eslint-disable-line @typescript-eslint/no-explicit-any */) => {
+    refetchInterval: (
+      query: any /* eslint-disable-line @typescript-eslint/no-explicit-any */,
+    ) => {
       const status = query.state.data?.status;
-      return status === "PROCESSING" || status === "PENDING_APPROVAL" ? 3000 : false;
+      return status === "PROCESSING" || status === "PENDING_APPROVAL"
+        ? 3000
+        : false;
     },
   });
 
@@ -411,21 +454,28 @@ const RAGManagementPage: React.FC = () => {
   });
 
   const ingestMutation = useMutation({
-    mutationFn: (payload: PreprocessingResponse) => ragService.ingestProcessed(payload),
+    mutationFn: (payload: PreprocessingResponse) =>
+      ragService.ingestProcessed(payload),
     onSuccess: (data: { message: string }) => {
       message.success(data.message);
       queryClient.invalidateQueries({ queryKey: ["frameworks"] });
       handleReset();
     },
     onError: (error: AxiosError) => {
-      const errorDetail = (error.response?.data as { detail: string })?.detail || error.message;
+      const errorDetail =
+        (error.response?.data as { detail: string })?.detail || error.message;
       message.error(`Ingestion failed: ${errorDetail}`);
     },
   });
 
   // Actions
-  const handleOpenIngestionModal = (frameworkName?: string, isEdit: boolean = false) => {
-    setIngestionInitialValues(frameworkName ? { frameworkName, isEdit } : undefined);
+  const handleOpenIngestionModal = (
+    frameworkName?: string,
+    isEdit: boolean = false,
+  ) => {
+    setIngestionInitialValues(
+      frameworkName ? { frameworkName, isEdit } : undefined,
+    );
     setIngestionModalVisible(true);
   };
 
@@ -442,23 +492,29 @@ const RAGManagementPage: React.FC = () => {
   };
 
   const handleDownload = () => {
-    if (!jobStatus?.processed_documents || jobStatus.processed_documents.length === 0) return;
+    if (
+      !jobStatus?.processed_documents ||
+      jobStatus.processed_documents.length === 0
+    )
+      return;
     const { processed_documents, framework_name } = jobStatus;
 
-    const metadataKeys = Object.keys(processed_documents[0].metadata || {}).sort();
+    const metadataKeys = Object.keys(
+      processed_documents[0].metadata || {},
+    ).sort();
     const header = ["id", "document", ...metadataKeys].join(",");
 
     const rows = processed_documents.map((doc: EnrichedDocument) => {
-      const metadataValues = metadataKeys.map(key => {
-        const value = doc.metadata[key as keyof typeof doc.metadata] ?? '';
+      const metadataValues = metadataKeys.map((key) => {
+        const value = doc.metadata[key as keyof typeof doc.metadata] ?? "";
         return `"${String(value).replace(/"/g, '""')}"`;
       });
 
       return [
         `"${doc.id}"`,
         `"${doc.enriched_content.replace(/"/g, '""')}"`,
-        ...metadataValues
-      ].join(',');
+        ...metadataValues,
+      ].join(",");
     });
 
     const csvContent = `${header}\n${rows.join("\n")}`;
@@ -468,14 +524,16 @@ const RAGManagementPage: React.FC = () => {
 
   // Standard Framework Handlers
   const handleUploadASVS = async (file: RcFile) => {
-    setIngestLoading('asvs');
+    setIngestLoading("asvs");
     try {
       const res = await ragService.ingestASVS(file);
       message.success(res.message);
       refetchStats();
       queryClient.invalidateQueries({ queryKey: ["ragDocuments", "asvs"] });
-    } catch (error: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
-      const errorDetail = (error.response?.data as { detail?: string })?.detail || error.message;
+    } catch (error: any) {
+      // eslint-disable-line @typescript-eslint/no-explicit-any
+      const errorDetail =
+        (error.response?.data as { detail?: string })?.detail || error.message;
       message.error(`ASVS ingestion failed: ${errorDetail}`);
     } finally {
       setIngestLoading(null);
@@ -483,15 +541,19 @@ const RAGManagementPage: React.FC = () => {
   };
 
   const handleFetchProactive = async () => {
-    setIngestLoading('proactive');
+    setIngestLoading("proactive");
     try {
       const res = await ragService.ingestProactiveControls(proactiveUrl);
       message.success(res.message);
       refetchStats();
       setProactiveModalVisible(false);
-      queryClient.invalidateQueries({ queryKey: ["ragDocuments", "proactive_controls"] });
-    } catch (error: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
-      const errorDetail = (error.response?.data as { detail?: string })?.detail || error.message;
+      queryClient.invalidateQueries({
+        queryKey: ["ragDocuments", "proactive_controls"],
+      });
+    } catch (error: any) {
+      // eslint-disable-line @typescript-eslint/no-explicit-any
+      const errorDetail =
+        (error.response?.data as { detail?: string })?.detail || error.message;
       message.error(`Proactive Controls fetch failed: ${errorDetail}`);
     } finally {
       setIngestLoading(null);
@@ -499,15 +561,19 @@ const RAGManagementPage: React.FC = () => {
   };
 
   const handleFetchCheatsheets = async () => {
-    setIngestLoading('cheatsheet');
+    setIngestLoading("cheatsheet");
     try {
       const res = await ragService.ingestCheatsheet(cheatsheetUrl);
       message.success(res.message);
       refetchStats();
       setCheatsheetModalVisible(false);
-      queryClient.invalidateQueries({ queryKey: ["ragDocuments", "cheatsheets"] });
-    } catch (error: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
-      const errorDetail = (error.response?.data as { detail?: string })?.detail || error.message;
+      queryClient.invalidateQueries({
+        queryKey: ["ragDocuments", "cheatsheets"],
+      });
+    } catch (error: any) {
+      // eslint-disable-line @typescript-eslint/no-explicit-any
+      const errorDetail =
+        (error.response?.data as { detail?: string })?.detail || error.message;
       message.error(`Cheatsheets fetch failed: ${errorDetail}`);
     } finally {
       setIngestLoading(null);
@@ -518,14 +584,17 @@ const RAGManagementPage: React.FC = () => {
     try {
       const docs = await ragService.getDocuments(frameworkName);
       if (docs && docs.length > 0) {
-        const ids = docs.map(d => d.id);
+        const ids = docs.map((d) => d.id);
         await ragService.deleteDocuments(ids);
-        message.success(`Deleted ${ids.length} documents for ${frameworkName}.`);
+        message.success(
+          `Deleted ${ids.length} documents for ${frameworkName}.`,
+        );
         refetchStats(); // Update counts
       } else {
         message.info("No documents to delete.");
       }
-    } catch (error: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
+    } catch (error: any) {
+      // eslint-disable-line @typescript-eslint/no-explicit-any
       message.error(`Failed to delete standard documents: ${error.message}`);
     }
   };
@@ -538,218 +607,254 @@ const RAGManagementPage: React.FC = () => {
       // This state is mostly handled by the modal now, but if the user closes it early:
       return (
         <Alert
-          type= "warning"
-      message = {`Job Pending Approval: ${jobStatus.framework_name}`
-    }
-    action = {
-            < Button size = "small" type = "primary" onClick = {() => approveMutation.mutate(pollingJobId!)} loading = { approveMutation.isPending } >
-  Approve
-  </Button>
+          type="warning"
+          message={`Job Pending Approval: ${jobStatus.framework_name}`}
+          action={
+            <Button
+              size="small"
+              type="primary"
+              onClick={() => approveMutation.mutate(pollingJobId!)}
+              loading={approveMutation.isPending}
+            >
+              Approve
+            </Button>
           }
-style = {{ marginBottom: 24 }}
+          style={{ marginBottom: 24 }}
         />
       );
     }
 
-if (jobStatus.status === "PROCESSING" || isPolling) {
-  return (
-    <Alert
-          type= "info"
-  message = {`Processing Framework: ${jobStatus.framework_name || '...'} `
-}
-description = "Enriching documents with LLM patterns. This may take a few minutes."
-icon = {< Spin />}
-showIcon
-style = {{ marginBottom: 24 }}
+    if (jobStatus.status === "PROCESSING" || isPolling) {
+      return (
+        <Alert
+          type="info"
+          message={`Processing Framework: ${jobStatus.framework_name || "..."} `}
+          description="Enriching documents with LLM patterns. This may take a few minutes."
+          icon={<Spin />}
+          showIcon
+          style={{ marginBottom: 24 }}
         />
       );
     }
 
-if (jobStatus.status === "COMPLETED") {
-  const finalPayload: PreprocessingResponse = {
-    framework_name: jobStatus.framework_name,
-    llm_config_name: "",
-    processed_documents: jobStatus.processed_documents || [],
-    scan_ready: scanReady
+    if (jobStatus.status === "COMPLETED") {
+      const finalPayload: PreprocessingResponse = {
+        framework_name: jobStatus.framework_name,
+        llm_config_name: "",
+        processed_documents: jobStatus.processed_documents || [],
+        scan_ready: scanReady,
+      };
+
+      return (
+        <Card style={{ marginBottom: 24, borderColor: "#52c41a" }}>
+          <Space direction="vertical" style={{ width: "100%" }}>
+            <Alert
+              type="success"
+              message={`Preprocessing Complete for ${jobStatus.framework_name}`}
+              showIcon
+            />
+
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                marginTop: 8,
+              }}
+            >
+              <span>Mark as Scan Ready ? </span>
+              <Switch
+                checkedChildren={<CheckOutlined />}
+                unCheckedChildren={<CloseOutlined />}
+                checked={scanReady}
+                onChange={setScanReady}
+              />
+              <Tooltip title="If enabled, this framework will be used by the security scanner agent. If disabled, it will be used for chat context only.">
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  {" "}
+                  (?){" "}
+                </Typography.Text>
+              </Tooltip>
+            </div>
+
+            <Space>
+              <Button icon={<DownloadOutlined />} onClick={handleDownload}>
+                Download Processed CSV
+              </Button>
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={() => ingestMutation.mutate(finalPayload)}
+                loading={ingestMutation.isPending}
+              >
+                Finalize Ingestion(Save to DB)
+              </Button>
+              <Button onClick={handleReset}> Cancel / New </Button>
+            </Space>
+          </Space>
+        </Card>
+      );
+    }
+
+    if (jobStatus.status === "FAILED") {
+      return (
+        <Alert
+          type="error"
+          message="Job Failed"
+          description={jobStatus.error_message}
+          action={
+            <Button size="small" type="primary" onClick={handleReset}>
+              {" "}
+              Close{" "}
+            </Button>
+          }
+          style={{ marginBottom: 24 }}
+        />
+      );
+    }
+
+    return null;
   };
 
   return (
-    <Card style= {{ marginBottom: 24, borderColor: '#52c41a' }
-}>
-  <Space direction="vertical" style = {{ width: '100%' }}>
-    <Alert type="success" message = {`Preprocessing Complete for ${jobStatus.framework_name}`} showIcon />
-
-      <div style={ { display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 } }>
-        <span>Mark as Scan Ready ? </span>
-          < Switch
-                checkedChildren = {< CheckOutlined />}
-unCheckedChildren = {< CloseOutlined />}
-checked = { scanReady }
-onChange = { setScanReady }
-  />
-  <Tooltip title="If enabled, this framework will be used by the security scanner agent. If disabled, it will be used for chat context only." >
-    <Typography.Text type="secondary" style = {{ fontSize: 12 }}> (?) </Typography.Text>
-      </Tooltip>
+    <Space direction="vertical" style={{ width: "100%" }} size="large">
+      <div>
+        <Title level={2} style={{ margin: 0 }}>
+          {" "}
+          Security Standards{" "}
+        </Title>
+        <Paragraph style={{ marginTop: 8 }}>
+          {" "}
+          Manage security frameworks and cheat sheets used for scanning
+          applications and context for security advisors.
+        </Paragraph>
       </div>
 
-      < Space >
-      <Button icon={
-  <DownloadOutlined />} onClick={handleDownload}>Download Processed CSV</Button >
-    <Button
-                type="primary"
-  icon = {< PlusOutlined />}
-onClick = {() => ingestMutation.mutate(finalPayload)}
-loading = { ingestMutation.isPending }
-  >
-  Finalize Ingestion(Save to DB)
-    </Button>
-    < Button onClick = { handleReset } > Cancel / New </Button>
-      </Space>
-      </Space>
-      </Card>
-      );
-    }
+      {/* Global Job Status */}
+      {renderJobStatus()}
 
-if (jobStatus.status === "FAILED") {
-  return (
-    <Alert
-          type= "error"
-  message = "Job Failed"
-  description = { jobStatus.error_message }
-  action = {< Button size = "small" type = "primary" onClick = { handleReset } > Close </Button>
-}
-style = {{ marginBottom: 24 }}
-        />
-      );
-    }
+      {/* Grid of Frameworks */}
+      <Spin spinning={isLoadingFrameworks || isLoadingStats}>
+        <Row gutter={[16, 16]}>
+          {/* 1. Add Custom Framework Card */}
+          <AddFrameworkCard onClick={() => handleOpenIngestionModal()} />
 
-return null;
-  };
-
-return (
-  <Space direction= "vertical" style = {{ width: "100%" }} size = "large" >
-    <div>
-    <Title level={ 2 } style = {{ margin: 0 }}> Security Standards </Title>
-      < Paragraph style = {{ marginTop: 8 }}> Manage security frameworks and cheat sheets used for scanning applications and context for security advisors.</Paragraph>
-        </div>
-
-{/* Global Job Status */ }
-{ renderJobStatus() }
-
-{/* Grid of Frameworks */ }
-<Spin spinning={ isLoadingFrameworks || isLoadingStats }>
-  <Row gutter={ [16, 16] }>
-
-    {/* 1. Add Custom Framework Card */ }
-    < AddFrameworkCard onClick = {() => handleOpenIngestionModal()} />
-
-{/* 2. Standard Frameworks */ }
-<StandardFrameworkCard
+          {/* 2. Standard Frameworks */}
+          <StandardFrameworkCard
             name="asvs"
-displayName = "OWASP ASVS"
-description = "Application Security Verification Standard. Best for comprehensive auditing."
-docCount = { stats.asvs || 0 }
-type = "scanning"
-onUpdate = {(name) => handleOpenIngestionModal(name, true)} // ASVS ignores this? No, we need explicit handler.
-onDelete = { handleDeleteStandard }
-onIngest = {() => {
-  document.getElementById('hidden-asvs-input')?.click();
-}}
-isLoading = { ingestLoading === 'asvs'}
+            displayName="OWASP ASVS"
+            description="Application Security Verification Standard. Best for comprehensive auditing."
+            docCount={stats.asvs || 0}
+            type="scanning"
+            onUpdate={(name) => handleOpenIngestionModal(name, true)} // ASVS ignores this? No, we need explicit handler.
+            onDelete={handleDeleteStandard}
+            onIngest={() => {
+              document.getElementById("hidden-asvs-input")?.click();
+            }}
+            isLoading={ingestLoading === "asvs"}
           />
-{/* Hidden Upload for ASVS */ }
-<input
+          {/* Hidden Upload for ASVS */}
+          <input
             type="file"
-id = "hidden-asvs-input"
-accept = ".csv"
-style = {{ display: 'none' }}
-onChange = {(e) => {
-  const file = e.target.files?.[0];
-  if (file) {
-    handleUploadASVS(file as unknown as RcFile);
-  }
-  e.target.value = ''; // Reset
-}}
+            id="hidden-asvs-input"
+            accept=".csv"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) {
+                handleUploadASVS(file as unknown as RcFile);
+              }
+              e.target.value = ""; // Reset
+            }}
           />
 
-  < StandardFrameworkCard
-name = "proactive_controls"
-displayName = "OWASP Proactive Controls"
-description = "Developer-focused controls (C1-C10). Great for chat context."
-docCount = { stats.proactive_controls || 0 }
-type = "knowledge"
-onUpdate = {() => setProactiveModalVisible(true)}
-onDelete = { handleDeleteStandard }
-onIngest = {() => setProactiveModalVisible(true)}
-isLoading = { ingestLoading === 'proactive'}
+          <StandardFrameworkCard
+            name="proactive_controls"
+            displayName="OWASP Proactive Controls"
+            description="Developer-focused controls (C1-C10). Great for chat context."
+            docCount={stats.proactive_controls || 0}
+            type="knowledge"
+            onUpdate={() => setProactiveModalVisible(true)}
+            onDelete={handleDeleteStandard}
+            onIngest={() => setProactiveModalVisible(true)}
+            isLoading={ingestLoading === "proactive"}
           />
 
-  < StandardFrameworkCard
-name = "cheatsheets"
-displayName = "OWASP Cheatsheets"
-description = "Topic-specific security cheatsheets."
-docCount = { stats.cheatsheets || 0 }
-type = "knowledge"
-onUpdate = {() => setCheatsheetModalVisible(true)}
-onDelete = { handleDeleteStandard }
-onIngest = {() => setCheatsheetModalVisible(true)}
-isLoading = { ingestLoading === 'cheatsheet'}
+          <StandardFrameworkCard
+            name="cheatsheets"
+            displayName="OWASP Cheatsheets"
+            description="Topic-specific security cheatsheets."
+            docCount={stats.cheatsheets || 0}
+            type="knowledge"
+            onUpdate={() => setCheatsheetModalVisible(true)}
+            onDelete={handleDeleteStandard}
+            onIngest={() => setCheatsheetModalVisible(true)}
+            isLoading={ingestLoading === "cheatsheet"}
           />
 
-{/* 3. Custom Frameworks */ }
-{
-  frameworks
-    .filter(fw => !['asvs', 'proactive_controls', 'cheatsheets'].includes(fw.name))
-    .map((fw) => (
-      <FrameworkCard
-                key= { fw.id }
-                framework = { fw }
-                onUpdate = {(name) => handleOpenIngestionModal(name, true)}
+          {/* 3. Custom Frameworks */}
+          {frameworks
+            .filter(
+              (fw) =>
+                !["asvs", "proactive_controls", "cheatsheets"].includes(
+                  fw.name,
+                ),
+            )
+            .map((fw) => (
+              <FrameworkCard
+                key={fw.id}
+                framework={fw}
+                onUpdate={(name) => handleOpenIngestionModal(name, true)}
               />
             ))}
-</Row>
-  </Spin>
+        </Row>
+      </Spin>
 
-{/* Modals */ }
-<FrameworkIngestionModal
-        visible={ ingestionModalVisible }
-onCancel = {() => setIngestionModalVisible(false)}
-onSuccess = { handleIngestionSuccess }
-initialValues = { ingestionInitialValues }
-llmConfigs = { llmConfigs }
-  />
+      {/* Modals */}
+      <FrameworkIngestionModal
+        visible={ingestionModalVisible}
+        onCancel={() => setIngestionModalVisible(false)}
+        onSuccess={handleIngestionSuccess}
+        initialValues={ingestionInitialValues}
+        llmConfigs={llmConfigs}
+      />
 
-  <Modal
+      <Modal
         title="Fetch Proactive Controls"
-open = { proactiveModalVisible }
-onCancel = {() => setProactiveModalVisible(false)}
-onOk = { handleFetchProactive }
-confirmLoading = { ingestLoading === 'proactive'}
-okText = "Start Fetch"
-  >
-  <Form layout="vertical" >
-    <Form.Item label="GitHub URL" >
-      <Input value={ proactiveUrl } onChange = {(e) => setProactiveUrl(e.target.value)} />
-        </Form.Item>
+        open={proactiveModalVisible}
+        onCancel={() => setProactiveModalVisible(false)}
+        onOk={handleFetchProactive}
+        confirmLoading={ingestLoading === "proactive"}
+        okText="Start Fetch"
+      >
+        <Form layout="vertical">
+          <Form.Item label="GitHub URL">
+            <Input
+              value={proactiveUrl}
+              onChange={(e) => setProactiveUrl(e.target.value)}
+            />
+          </Form.Item>
         </Form>
-        </Modal>
+      </Modal>
 
-        < Modal
-title = "Fetch Cheatsheets"
-open = { cheatsheetModalVisible }
-onCancel = {() => setCheatsheetModalVisible(false)}
-onOk = { handleFetchCheatsheets }
-confirmLoading = { ingestLoading === 'cheatsheet'}
-okText = "Start Fetch"
-  >
-  <Form layout="vertical" >
-    <Form.Item label="GitHub URL" >
-      <Input value={ cheatsheetUrl } onChange = {(e) => setCheatsheetUrl(e.target.value)} />
-        </Form.Item>
+      <Modal
+        title="Fetch Cheatsheets"
+        open={cheatsheetModalVisible}
+        onCancel={() => setCheatsheetModalVisible(false)}
+        onOk={handleFetchCheatsheets}
+        confirmLoading={ingestLoading === "cheatsheet"}
+        okText="Start Fetch"
+      >
+        <Form layout="vertical">
+          <Form.Item label="GitHub URL">
+            <Input
+              value={cheatsheetUrl}
+              onChange={(e) => setCheatsheetUrl(e.target.value)}
+            />
+          </Form.Item>
         </Form>
-        </Modal>
-
-        </Space>
+      </Modal>
+    </Space>
   );
 };
 

@@ -91,11 +91,9 @@ const FrameworkManagementPage: React.FC = () => {
   });
 
   const updateMutation = useMutation({
-    mutationFn: (data: {
-      values: FrameworkUpdate;
-      agent_ids: string[];
-    }) => {
-      if (!editingFramework) throw new Error("No framework selected for update");
+    mutationFn: (data: { values: FrameworkUpdate; agent_ids: string[] }) => {
+      if (!editingFramework)
+        throw new Error("No framework selected for update");
       return frameworkService
         .updateFramework(editingFramework.id, data.values)
         .then((updatedFramework) => {
@@ -170,7 +168,9 @@ const FrameworkManagementPage: React.FC = () => {
       render: (agents: FrameworkRead["agents"]) => (
         <Space wrap>
           {agents.length > 0 ? (
-            agents.map((agent: AgentRead) => <Tag key={agent.id}>{agent.name}</Tag>)
+            agents.map((agent: AgentRead) => (
+              <Tag key={agent.id}>{agent.name}</Tag>
+            ))
           ) : (
             <Typography.Text type="secondary">None</Typography.Text>
           )}
@@ -215,8 +215,8 @@ const FrameworkManagementPage: React.FC = () => {
         Management
       </Title>
       <Paragraph type="secondary">
-        Create, edit, and manage the security frameworks used for code
-        analysis. Associate specialized agents with each framework.
+        Create, edit, and manage the security frameworks used for code analysis.
+        Associate specialized agents with each framework.
       </Paragraph>
       <Button
         type="primary"
