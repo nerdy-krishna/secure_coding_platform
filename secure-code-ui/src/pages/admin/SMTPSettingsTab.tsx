@@ -73,10 +73,10 @@ const SMTPSettingsTab: React.FC = () => {
 }
 
 return (
-    <Card>
-    <Title level= { 4} > SMTP Email Configuration </Title>
+    <div>
+    <Title level= { 2} > SMTP Settings </Title>
         <Paragraph>
-                Configure the outgoing mail server details required to send password reset and user invitation emails.
+                 Configure the outgoing mail server details required to send password reset and user invitation emails.
             </Paragraph>
 
     < Form
@@ -122,8 +122,8 @@ name = "from"
 label = "Sender Address ('From')"
 rules = {
     [
-    { required: true, message: 'Please enter the sender email address' },
-    { type: 'email', message: 'Please enter a valid email address' }
+        { required: true, message: 'Please enter the sender email address' },
+        { type: 'email', message: 'Please enter a valid email address' }
     ]}
     >
     <Input placeholder="e.g. noreply@domain.com" />
@@ -153,7 +153,7 @@ valuePropName = "checked"
                 </Button>
                 </Form.Item>
                 </Form>
-                </Card>
+                </div>
     );
 };
 

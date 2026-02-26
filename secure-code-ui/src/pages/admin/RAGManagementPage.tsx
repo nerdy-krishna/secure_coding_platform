@@ -86,7 +86,7 @@ const ViewDocumentsModal: React.FC<{
       ellipsis: true,
       render: (text: unknown) => {
         if (typeof text === 'boolean') {
-          return text ? <Tag color="green" > Yes </Tag> : <Tag color="red">No</Tag >;
+          return text ? <Tag color="green" > Yes < /Tag> : <Tag color="red">No</Tag >;
         }
         return text?.toString();
       }
@@ -628,7 +628,10 @@ return null;
 
 return (
   <Space direction= "vertical" style = {{ width: "100%" }} size = "large" >
-    <Title level={ 2 }> Framework Management </Title>
+    <div>
+    <Title level={ 2 } style = {{ margin: 0 }}> Security Standards </Title>
+      < Paragraph style = {{ marginTop: 8 }}> Manage security frameworks and cheat sheets used for scanning applications and context for security advisors.</Paragraph>
+        </div>
 
 {/* Global Job Status */ }
 { renderJobStatus() }
