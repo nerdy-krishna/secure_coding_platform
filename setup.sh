@@ -61,8 +61,41 @@ if [ ! -f .env ]; then
     echo "[+] .env created and configured with new secrets."
     echo "[+] .env created and configured with new secrets."
 else
-    echo "[!] .env already exists. Skipping generation to preserve existing config."
+    echo "[!] .env already exists. Preserving existing secrets."
 fi
+
+# 2.5. SSL Configuration Prompt
+echo ""
+echo "[*] SSL Certificate Configuration (Let's Encrypt)"
+read -p "Would you like to auto-provision a free SSL Certificate for a custom domain? (y/n) " -n 1 -r
+echo ""
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    read -p "Please enter your domain name (e.g., secure.nerdykrishna.com): " SSL_DOMAIN
+    
+    # Check if variables already exist before appending
+    if grep -q "^SSL_ENABLED=" .env; then
+        sed -i.bak "s/^SSL_ENABLED=.*/SSL_ENABLED=true/" .env
+    else
+        echo "SSL_ENABLED=true" >> .env
+    fi
+
+    if grep -q "^SSL_DOMAIN=" .env; then
+        sed -i.bak "s/^SSL_DOMAIN=.*/SSL_DOMAIN=$SSL_DOMAIN/" .env
+    else
+        echo "SSL_DOMAIN=$SSL_DOMAIN" >> .env
+    fi
+    rm -f .env.bak
+    echo "[+] SSL configuration saved. The UI container will request a certificate for $SSL_DOMAIN on boot."
+else
+    if grep -q "^SSL_ENABLED=" .env; then
+        sed -i.bak "s/^SSL_ENABLED=.*/SSL_ENABLED=false/" .env
+    else
+        echo "SSL_ENABLED=false" >> .env
+    fi
+    rm -f .env.bak
+    echo "[-] SSL skipped. The application will run locally on HTTP (Port 80) only."
+fi
+
 
 # 2. Environment Setup (Cont.)
 # CORS Configuration is now handled in the Setup Wizard UI.
