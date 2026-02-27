@@ -64,37 +64,55 @@ else
     echo "[!] .env already exists. Preserving existing secrets."
 fi
 
-# 2.5. SSL Configuration Prompt
+# 2.5. Deployment Configuration Prompt
 echo ""
-echo "[*] SSL Certificate Configuration (Let's Encrypt)"
-read -p "Would you like to auto-provision a free SSL Certificate for a custom domain? (y/n) " -n 1 -r
+echo "[*] Deployment Configuration"
+read -p "Are you deploying this locally for testing or on a cloud server? (local/cloud) " DEPLOYMENT_TYPE
 echo ""
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    read -p "Please enter your domain name (e.g., secure.nerdykrishna.com): " SSL_DOMAIN
-    
-    # Check if variables already exist before appending
-    if grep -q "^SSL_ENABLED=" .env; then
-        sed -i.bak "s/^SSL_ENABLED=.*/SSL_ENABLED=true/" .env
-    else
-        echo "SSL_ENABLED=true" >> .env
-    fi
 
-    if grep -q "^SSL_DOMAIN=" .env; then
-        sed -i.bak "s/^SSL_DOMAIN=.*/SSL_DOMAIN=$SSL_DOMAIN/" .env
-    else
-        echo "SSL_DOMAIN=$SSL_DOMAIN" >> .env
-    fi
-    rm -f .env.bak
-    echo "[+] SSL configuration saved. The UI container will request a certificate for $SSL_DOMAIN on boot."
+# Always save the deployment type
+if grep -q "^DEPLOYMENT_TYPE=" .env; then
+    sed -i.bak "s/^DEPLOYMENT_TYPE=.*/DEPLOYMENT_TYPE=$DEPLOYMENT_TYPE/" .env
 else
+    echo "DEPLOYMENT_TYPE=$DEPLOYMENT_TYPE" >> .env
+fi
+
+if [[ "$DEPLOYMENT_TYPE" == "cloud" ]]; then
+    read -p "Would you like to auto-provision a free SSL Certificate for a custom domain? (y/n) " -n 1 -r
+    echo ""
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        read -p "Please enter your domain name (e.g., secure.nerdykrishna.com): " SSL_DOMAIN
+        
+        if grep -q "^SSL_ENABLED=" .env; then
+            sed -i.bak "s/^SSL_ENABLED=.*/SSL_ENABLED=true/" .env
+        else
+            echo "SSL_ENABLED=true" >> .env
+        fi
+
+        if grep -q "^SSL_DOMAIN=" .env; then
+            sed -i.bak "s/^SSL_DOMAIN=.*/SSL_DOMAIN=$SSL_DOMAIN/" .env
+        else
+            echo "SSL_DOMAIN=$SSL_DOMAIN" >> .env
+        fi
+        echo "[+] SSL configuration saved. The UI container will request a certificate for $SSL_DOMAIN on boot."
+    else
+        if grep -q "^SSL_ENABLED=" .env; then
+            sed -i.bak "s/^SSL_ENABLED=.*/SSL_ENABLED=false/" .env
+        else
+            echo "SSL_ENABLED=false" >> .env
+        fi
+        echo "[-] SSL skipped. The application will be accessible via IP address on HTTP (Port 80)."
+    fi
+else
+    # Local Deployment
     if grep -q "^SSL_ENABLED=" .env; then
         sed -i.bak "s/^SSL_ENABLED=.*/SSL_ENABLED=false/" .env
     else
         echo "SSL_ENABLED=false" >> .env
     fi
-    rm -f .env.bak
-    echo "[-] SSL skipped. The application will run locally on HTTP (Port 80) only."
+    echo "[-] Local deployment selected. SSL skipped. The application will run on HTTP (Port 80) only."
 fi
+rm -f .env.bak
 
 
 # 2. Environment Setup (Cont.)
@@ -128,9 +146,8 @@ echo ""
 echo "[*] Applying database migrations..."
 docker compose exec app alembic upgrade head
 
-echo "[*] Ensuring default superuser exists..."
-# We use a specific script or just ensure the admin logic runs
-docker compose exec app python /app/scripts/create_superuser.py
+echo "[+] Database initialized. Proceed to the Web UI to create your Admin Superuser."
+echo ""
 
 echo "[+] Database initialized."
 echo ""

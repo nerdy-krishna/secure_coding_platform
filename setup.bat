@@ -59,6 +59,43 @@ if not exist .env (
 )
 echo.
 
+:: 2.5 Deployment Configuration Prompt
+echo [*] Deployment Configuration
+set /p DEPLOYMENT_TYPE="Are you deploying this locally for testing or on a cloud server? (local/cloud) "
+echo.
+
+:: Always save deployment type
+powershell -Command "(Get-Content .env) -replace '^DEPLOYMENT_TYPE=.*', '' | Set-Content .env"
+echo DEPLOYMENT_TYPE=%DEPLOYMENT_TYPE%>> .env
+
+set ENABLE_SSL=N
+if /i "%DEPLOYMENT_TYPE%"=="cloud" (
+    set /p ENABLE_SSL="Would you like to auto-provision a free SSL Certificate for a custom domain? (y/n) "
+    echo.
+)
+
+if /i "%ENABLE_SSL%"=="y" (
+    set /p SSL_DOMAIN="Please enter your domain name (e.g., secure.nerdykrishna.com): "
+    
+    powershell -Command "(Get-Content .env) -replace '^SSL_ENABLED=.*', '' | Set-Content .env"
+    echo SSL_ENABLED=true>> .env
+    
+    powershell -Command "(Get-Content .env) -replace '^SSL_DOMAIN=.*', '' | Set-Content .env"
+    call echo SSL_DOMAIN=%%SSL_DOMAIN%%>> .env
+    
+    call echo [+] SSL configuration saved. The UI container will request a certificate for %%SSL_DOMAIN%% on boot.
+) else (
+    powershell -Command "(Get-Content .env) -replace '^SSL_ENABLED=.*', '' | Set-Content .env"
+    echo SSL_ENABLED=false>> .env
+    
+    if /i "%DEPLOYMENT_TYPE%"=="cloud" (
+        echo [-] SSL skipped. The application will be accessible via IP address on HTTP (Port 80).
+    ) else (
+        echo [-] Local deployment selected. SSL skipped. The application will run on HTTP (Port 80) only.
+    )
+)
+echo.
+
 :: 3. Docker Build and Launch
 echo [*] Launching Docker containers...
 docker compose up -d --build
@@ -79,10 +116,7 @@ echo.
 echo [*] Applying database migrations...
 docker compose exec app alembic upgrade head
 
-echo [*] Ensuring default superuser exists...
-docker compose exec app python scripts/create_superuser.py
-
-echo [+] Database initialized.
+echo [+] Database initialized. Proceed to the Web UI to create your Admin Superuser.
 echo.
 
 :: 5. UI Installation
