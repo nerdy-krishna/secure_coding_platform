@@ -19,9 +19,19 @@ RUN npm run build
 # Stage 2: Serve with Nginx
 FROM nginx:alpine
 
-COPY --from=builder /app/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Install certbot to allow self-healing SSL certificates
+RUN apk add --no-cache certbot
 
-EXPOSE 80
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+# We remove the base copy of nginx.conf, and instead copy our dual HTTP/HTTPS templates
+COPY nginx-http.conf /etc/nginx/nginx-http.conf
+COPY nginx-https.conf /etc/nginx/nginx-https.conf
+
+# Add our entrypoint script for auto-provisioning
+COPY nginx-entrypoint.sh /docker-entrypoint.d/99-ssl-setup.sh
+RUN chmod +x /docker-entrypoint.d/99-ssl-setup.sh
+
+EXPOSE 80 443
 
 CMD ["nginx", "-g", "daemon off;"]
