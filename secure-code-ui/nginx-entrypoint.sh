@@ -1,12 +1,29 @@
 #!/bin/sh
 
-DOMAIN="${VITE_ALLOWED_HOSTS:-secure.nerdykrishna.com}"
+DOMAIN="${SSL_DOMAIN}"
+ENABLED="${SSL_ENABLED:-false}"
 EMAIL="admin@secure.nerdykrishna.com"
+
+# 1. Skip SSL Process if Disabled
+if [ "$ENABLED" != "true" ]; then
+    echo "SSL_ENABLED is set to '$ENABLED'. Skipping Let's Encrypt certificate Generation."
+    echo "Running Nginx in HTTP-only mode (Port 80)."
+    cp /etc/nginx/nginx-http.conf /etc/nginx/conf.d/default.conf
+    exit 0
+fi
+
+# 2. Check if Domain is actually provided when Enabled
+if [ -z "$DOMAIN" ]; then
+    echo "ERROR: SSL_ENABLED is true, but no SSL_DOMAIN was provided."
+    echo "Falling back to HTTP-only mode."
+    cp /etc/nginx/nginx-http.conf /etc/nginx/conf.d/default.conf
+    exit 0
+fi
 
 echo "Checking SSL certificates for $DOMAIN..."
 
 if [ ! -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
-    echo "No SSL certificate found. Bootstrapping HTTP-only configuration..."
+    echo "No SSL certificate found. Bootstrapping HTTP-only configuration to answer ACME challenges..."
     cp /etc/nginx/nginx-http.conf /etc/nginx/conf.d/default.conf
     
     # Start Nginx in background to respond to ACME challenges
@@ -47,3 +64,4 @@ fi
 
 # The main Nginx process will start after this entrypoint script finishes.
 exit 0
+
