@@ -8,7 +8,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
-from fastapi.middleware.cors import CORSMiddleware
 from psycopg.errors import DuplicateColumn
 from starlette.responses import JSONResponse
 
@@ -185,7 +184,6 @@ async def correlation_id_middleware(request: Request, call_next):
 
 # --- Dynamic CORS Middleware Configuration ---
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.types import ASGIApp
 from app.core.config_cache import SystemConfigCache
 from fastapi.responses import PlainTextResponse
 

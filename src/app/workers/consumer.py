@@ -161,7 +161,7 @@ def pika_message_callback(
         message_data = json.loads(body.decode("utf-8"))
         scan_id_str = message_data.get("scan_id")
 
-        corr_id = message_data.get("correlation_id") or str(uuid.uuid4())
+        corr_id = getattr(properties, "correlation_id", None) or message_data.get("correlation_id") or str(uuid.uuid4())
         correlation_id_var.set(corr_id)
 
         logger.info(

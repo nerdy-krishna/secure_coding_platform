@@ -245,16 +245,7 @@ class LLMClient:
             latency_ms=latency_ms,
         )
 
-        return AgentLLMResult(
-            raw_output="[Structured output - raw text not directly available]",
-            parsed_output=parsed_output_value,
-            error=error_message,
-            cost=cost,
-            prompt_tokens=token_callback.prompt_tokens,
-            completion_tokens=token_callback.completion_tokens,
-            total_tokens=token_callback.total_tokens,
-            latency_ms=latency_ms,
-        )
+
 
 
 async def get_llm_client(llm_config_id: uuid.UUID) -> Optional[LLMClient]:
