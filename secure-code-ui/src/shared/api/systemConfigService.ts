@@ -1,6 +1,6 @@
 import apiClient from "./apiClient";
 
-export interface SystemConfiguration {
+interface SystemConfiguration {
     key: string;
     value: any;
     description?: string;
@@ -8,7 +8,7 @@ export interface SystemConfiguration {
     encrypted: boolean;
 }
 
-export interface SystemConfigurationUpdate {
+interface SystemConfigurationUpdate {
     value?: any;
     description?: string;
     is_secret?: boolean;
@@ -41,7 +41,7 @@ export const systemConfigService = {
         const response = await apiClient.put<SystemConfiguration>(`/admin/system-config/${key}`, data);
         return response.data;
     },
-    
+
     delete: async (key: string): Promise<void> => {
         await apiClient.delete(`/admin/system-config/${key}`);
     }

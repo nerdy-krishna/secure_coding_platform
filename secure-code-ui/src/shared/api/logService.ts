@@ -1,11 +1,11 @@
 import apiClient from "./apiClient";
 
-export interface LogLevelResponse {
+interface LogLevelResponse {
     level: string;
     message: string;
 }
 
-export interface LogService {
+interface LogService {
     getLogLevel: () => Promise<LogLevelResponse>;
     setLogLevel: (level: "DEBUG" | "INFO" | "WARNING" | "ERROR") => Promise<LogLevelResponse>;
 }

@@ -137,10 +137,6 @@ export interface RAGDocument {
   metadata: Record<string, JsonValue>;
 }
 
-export interface RAGDocumentDeleteRequest {
-  document_ids: string[];
-}
-
 export interface EnrichedDocument {
   id: string;
   original_document: string;
@@ -251,18 +247,16 @@ export interface SubmittedFile {
   skipped_reason?: string;
 }
 
-export interface SeverityCounts {
-  CRITICAL?: number;
-  HIGH?: number;
-  MEDIUM?: number;
-  LOW?: number;
-  INFORMATIONAL?: number;
-}
-
 export interface Summary {
   total_findings_count?: number;
   files_analyzed_count?: number;
-  severity_counts?: SeverityCounts;
+  severity_counts?: {
+    CRITICAL?: number;
+    HIGH?: number;
+    MEDIUM?: number;
+    LOW?: number;
+    INFORMATIONAL?: number;
+  };
 }
 
 export interface OverallRiskScore {
@@ -380,14 +374,4 @@ export interface LLMInteractionResponse {
 // --- Setup Schemas ---
 export interface SetupStatusResponse {
   is_setup_completed: boolean;
-}
-
-export interface SetupRequest {
-  admin_email: string;
-  admin_password: string;
-  llm_provider: string;
-  llm_api_key: string;
-  llm_model: string;
-  enable_cors?: boolean;
-  allowed_origins?: string[];
 }
