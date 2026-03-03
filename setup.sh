@@ -66,53 +66,126 @@ fi
 
 # 2.5. Deployment Configuration Prompt
 echo ""
-echo "[*] Deployment Configuration"
-read -p "Are you deploying this locally for testing or on a cloud server? (local/cloud) " DEPLOYMENT_TYPE
-echo ""
+echo "[*] Deployment Configuration Options:"
 
-# Always save the deployment type
+STATE=1
+DEPLOYMENT_TYPE=""
+SSL_ENABLED="false"
+SSL_DOMAIN=""
+
+while true; do
+    case $STATE in
+        1)
+            echo ""
+            echo "Select Deployment Environment:"
+            echo "  1) Local (Testing/Development)"
+            echo "  2) Cloud (Production Server)"
+            echo "  0) Exit Setup"
+            read -p "Your choice (1/2/0): " choice
+            if [ "$choice" = "1" ]; then
+                DEPLOYMENT_TYPE="local"
+                SSL_ENABLED="false"
+                STATE=4
+            elif [ "$choice" = "2" ]; then
+                DEPLOYMENT_TYPE="cloud"
+                STATE=2
+            elif [ "$choice" = "0" ]; then
+                echo "Setup cancelled."
+                exit 0
+            else
+                echo "Invalid choice. Please enter 1, 2, or 0."
+            fi
+            ;;
+        2)
+            echo ""
+            echo "Would you like to auto-provision a free Let's Encrypt SSL Certificate?"
+            echo "  1) Yes (I have a valid domain pointing to this server's IP)"
+            echo "  2) No (I will access via IP or configure SSL manually)"
+            echo "  0) Go Back"
+            read -p "Your choice (1/2/0): " choice
+            if [ "$choice" = "1" ]; then
+                SSL_ENABLED="true"
+                STATE=3
+            elif [ "$choice" = "2" ]; then
+                SSL_ENABLED="false"
+                STATE=4
+            elif [ "$choice" = "0" ]; then
+                STATE=1
+            else
+                echo "Invalid choice. Please enter 1, 2, or 0."
+            fi
+            ;;
+        3)
+            echo ""
+            read -p "Please enter your domain name/IP (e.g., example.com or 192.168.1.100) [or type '0' to go back]: " choice
+            if [ "$choice" = "0" ]; then
+                STATE=2
+            elif [ -z "$choice" ]; then
+                echo "Domain cannot be blank. Please provide a valid domain or IP."
+            else
+                SSL_DOMAIN="$choice"
+                STATE=4
+            fi
+            ;;
+        4)
+            echo ""
+            echo "Please confirm your configuration:"
+            echo "-----------------------------------"
+            if [ "$DEPLOYMENT_TYPE" = "local" ]; then
+                echo "Environment: Local Testing"
+                echo "SSL Mode:    Disabled (Port 80)"
+            else
+                echo "Environment: Cloud Deployment"
+                if [ "$SSL_ENABLED" = "true" ]; then
+                    echo "SSL Mode:    Enabled via Let's Encrypt"
+                    echo "Domain:      $SSL_DOMAIN"
+                else
+                    echo "SSL Mode:    Disabled (Port 80 via IP)"
+                fi
+            fi
+            echo "-----------------------------------"
+            echo "  1) Proceed with Setup"
+            echo "  0) Go Back to change settings"
+            read -p "Your choice (1/0): " choice
+            
+            if [ "$choice" = "1" ]; then
+                break
+            elif [ "$choice" = "0" ]; then
+                if [ "$DEPLOYMENT_TYPE" = "local" ] || [ "$SSL_ENABLED" = "false" ]; then
+                    STATE=1
+                else
+                    STATE=3
+                fi
+            else
+                echo "Invalid choice. Please enter 1 or 0."
+            fi
+            ;;
+    esac
+done
+
+echo ""
+echo "[*] Saving Configuration..."
 if grep -q "^DEPLOYMENT_TYPE=" .env; then
     sed -i.bak "s/^DEPLOYMENT_TYPE=.*/DEPLOYMENT_TYPE=$DEPLOYMENT_TYPE/" .env
 else
     echo "DEPLOYMENT_TYPE=$DEPLOYMENT_TYPE" >> .env
 fi
 
-if [[ "$DEPLOYMENT_TYPE" == "cloud" ]]; then
-    read -p "Would you like to auto-provision a free SSL Certificate for a custom domain? (y/n) " -n 1 -r
-    echo ""
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        read -p "Please enter your domain name (e.g., secure.nerdykrishna.com): " SSL_DOMAIN
-        
-        if grep -q "^SSL_ENABLED=" .env; then
-            sed -i.bak "s/^SSL_ENABLED=.*/SSL_ENABLED=true/" .env
-        else
-            echo "SSL_ENABLED=true" >> .env
-        fi
-
-        if grep -q "^SSL_DOMAIN=" .env; then
-            sed -i.bak "s/^SSL_DOMAIN=.*/SSL_DOMAIN=$SSL_DOMAIN/" .env
-        else
-            echo "SSL_DOMAIN=$SSL_DOMAIN" >> .env
-        fi
-        echo "[+] SSL configuration saved. The UI container will request a certificate for $SSL_DOMAIN on boot."
-    else
-        if grep -q "^SSL_ENABLED=" .env; then
-            sed -i.bak "s/^SSL_ENABLED=.*/SSL_ENABLED=false/" .env
-        else
-            echo "SSL_ENABLED=false" >> .env
-        fi
-        echo "[-] SSL skipped. The application will be accessible via IP address on HTTP (Port 80)."
-    fi
+if grep -q "^SSL_ENABLED=" .env; then
+    sed -i.bak "s/^SSL_ENABLED=.*/SSL_ENABLED=$SSL_ENABLED/" .env
 else
-    # Local Deployment
-    if grep -q "^SSL_ENABLED=" .env; then
-        sed -i.bak "s/^SSL_ENABLED=.*/SSL_ENABLED=false/" .env
-    else
-        echo "SSL_ENABLED=false" >> .env
+    echo "SSL_ENABLED=$SSL_ENABLED" >> .env
+fi
+
+if grep -q "^SSL_DOMAIN=" .env; then
+    sed -i.bak "s/^SSL_DOMAIN=.*/SSL_DOMAIN=$SSL_DOMAIN/" .env
+else
+    if [ ! -z "$SSL_DOMAIN" ]; then
+        echo "SSL_DOMAIN=$SSL_DOMAIN" >> .env
     fi
-    echo "[-] Local deployment selected. SSL skipped. The application will run on HTTP (Port 80) only."
 fi
 rm -f .env.bak
+echo "[+] Configuration saved."
 
 
 # 2. Environment Setup (Cont.)
