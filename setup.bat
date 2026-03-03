@@ -213,10 +213,27 @@ echo    Setup Complete!
 echo ==================================================
 echo.
 echo Access the application at:
-echo    http://localhost:5173
+if "%DEPLOYMENT_TYPE%"=="local" (
+    echo    http://localhost ^(Production build via Docker^)
+    echo    http://localhost:5173 ^(If running UI dev server^)
+) else (
+    if "%SSL_ENABLED%"=="true" (
+        echo    https://%SSL_DOMAIN%
+    ) else (
+        echo    http://^<YOUR_SERVER_PUBLIC_IP^>
+    )
+)
 echo.
 echo Access Grafana at:
-echo    http://localhost:3000
+if "%DEPLOYMENT_TYPE%"=="local" (
+    echo    http://localhost:3000
+) else (
+    if "%SSL_ENABLED%"=="true" (
+        echo    http://%SSL_DOMAIN%:3000
+    ) else (
+        echo    http://^<YOUR_SERVER_PUBLIC_IP^>:3000
+    )
+)
 echo.
 echo To start the UI development server, run:
 echo    cd secure-code-ui ^&^& npm run dev
