@@ -232,8 +232,25 @@ echo "   Setup Complete!"
 echo "=================================================="
 echo ""
 echo "Access the application at:"
-echo "   -> http://localhost:5173"
+if [ "$DEPLOYMENT_TYPE" = "local" ]; then
+    echo "   -> http://localhost (Production build via Docker)"
+    echo "   -> http://localhost:5173 (If running UI dev server)"
+else
+    if [ "$SSL_ENABLED" = "true" ]; then
+        echo "   -> https://$SSL_DOMAIN"
+    else
+        echo "   -> http://<YOUR_SERVER_PUBLIC_IP>"
+    fi
+fi
 echo ""
 echo "Access Grafana at:"
-echo "   -> http://localhost:3000"
+if [ "$DEPLOYMENT_TYPE" = "local" ]; then
+    echo "   -> http://localhost:3000"
+else
+    if [ "$SSL_ENABLED" = "true" ]; then
+        echo "   -> http://$SSL_DOMAIN:3000"
+    else
+        echo "   -> http://<YOUR_SERVER_PUBLIC_IP>:3000"
+    fi
+fi
 echo ""
