@@ -1,12 +1,23 @@
 // secure-code-ui/src/features/submission-history/components/CostApproval.tsx
 
-import { CheckCircleOutlined, DollarCircleOutlined } from '@ant-design/icons';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Button, Card, Col, message, Popconfirm, Row, Space, Statistic, Tooltip, Typography } from 'antd';
-import React from 'react';
+import { CheckCircleOutlined, DollarCircleOutlined } from "@ant-design/icons";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  Button,
+  Card,
+  Col,
+  message,
+  Popconfirm,
+  Row,
+  Space,
+  Statistic,
+  Tooltip,
+  Typography,
+} from "antd";
+import React from "react";
 
-import { scanService } from '../../../shared/api/scanService';
-import type { ScanHistoryItem } from '../../../shared/types/api';
+import { scanService } from "../../../shared/api/scanService";
+import type { ScanHistoryItem } from "../../../shared/types/api";
 
 const { Text } = Typography;
 
@@ -15,7 +26,10 @@ interface CostApprovalProps {
   onApprovalSuccess: () => void;
 }
 
-const CostApproval: React.FC<CostApprovalProps> = ({ scan, onApprovalSuccess }) => {
+const CostApproval: React.FC<CostApprovalProps> = ({
+  scan,
+  onApprovalSuccess,
+}) => {
   const queryClient = useQueryClient();
 
   const approveMutation = useMutation({
@@ -27,9 +41,10 @@ const CostApproval: React.FC<CostApprovalProps> = ({ scan, onApprovalSuccess }) 
     },
     onError: (error) => {
       console.error("Approval failed", error);
-      const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred.';
+      const errorMessage =
+        error instanceof Error ? error.message : "An unknown error occurred.";
       message.error(`Approval failed: ${errorMessage}`);
-    }
+    },
   });
 
   const cancelMutation = useMutation({
@@ -41,7 +56,8 @@ const CostApproval: React.FC<CostApprovalProps> = ({ scan, onApprovalSuccess }) 
     },
     onError: (error) => {
       console.error("Cancellation failed", error);
-      const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred.';
+      const errorMessage =
+        error instanceof Error ? error.message : "An unknown error occurred.";
       message.error(`Cancellation failed: ${errorMessage}`);
     },
   });
@@ -54,14 +70,18 @@ const CostApproval: React.FC<CostApprovalProps> = ({ scan, onApprovalSuccess }) 
     return <Text type="warning">Cost estimation data is missing.</Text>;
   }
 
-  const { input_cost, predicted_output_cost, total_estimated_cost } = scan.cost_details;
+  const { input_cost, predicted_output_cost, total_estimated_cost } =
+    scan.cost_details;
 
   return (
     <Card
       size="small"
       title="Analysis Cost Approval Required"
-      headStyle={{ backgroundColor: '#fffbe6', borderBottom: '1px solid #ffe58f' }}
-      style={{ marginTop: '8px', borderColor: '#ffe58f' }}
+      headStyle={{
+        backgroundColor: "#fffbe6",
+        borderBottom: "1px solid #ffe58f",
+      }}
+      style={{ marginTop: "8px", borderColor: "#ffe58f" }}
     >
       <Row gutter={16} align="middle">
         <Col span={16}>
@@ -73,7 +93,7 @@ const CostApproval: React.FC<CostApprovalProps> = ({ scan, onApprovalSuccess }) 
                   value={input_cost}
                   precision={6}
                   prefix="$"
-                  valueStyle={{ color: '#616161', fontSize: '16px' }}
+                  valueStyle={{ color: "#616161", fontSize: "16px" }}
                 />
               </Tooltip>
             </Col>
@@ -84,24 +104,32 @@ const CostApproval: React.FC<CostApprovalProps> = ({ scan, onApprovalSuccess }) 
                   value={predicted_output_cost}
                   precision={6}
                   prefix="$"
-                  valueStyle={{ color: '#616161', fontSize: '16px' }}
+                  valueStyle={{ color: "#616161", fontSize: "16px" }}
                 />
               </Tooltip>
             </Col>
           </Row>
-          <Row style={{ marginTop: '12px' }}>
+          <Row style={{ marginTop: "12px" }}>
             <Col span={24}>
               <Statistic
                 title="Total Estimated Cost"
                 value={total_estimated_cost}
                 precision={6}
-                prefix={<DollarCircleOutlined style={{ marginRight: '4px' }} />}
-                valueStyle={{ color: '#3f8600', fontSize: '20px' }}
+                prefix={<DollarCircleOutlined style={{ marginRight: "4px" }} />}
+                valueStyle={{ color: "#3f8600", fontSize: "20px" }}
               />
             </Col>
           </Row>
         </Col>
-        <Col span={8} style={{ textAlign: 'right', display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
+        <Col
+          span={8}
+          style={{
+            textAlign: "right",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "flex-end",
+          }}
+        >
           <Space>
             <Popconfirm
               title="Cancel Scan"

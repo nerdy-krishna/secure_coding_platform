@@ -48,9 +48,10 @@ const { Sider, Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
 const { Option } = Select;
 
-
 // --- MODIFIED ChatMessageItem Component ---
-const ChatMessageItem: React.FC<{ message: ChatMessage }> = ({ message: chatMessage }) => {
+const ChatMessageItem: React.FC<{ message: ChatMessage }> = ({
+  message: chatMessage,
+}) => {
   const isUser = chatMessage.role === "user";
 
   const handleCopy = () => {
@@ -67,36 +68,44 @@ const ChatMessageItem: React.FC<{ message: ChatMessage }> = ({ message: chatMess
         padding: "8px 0",
       }}
     >
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: isUser ? 'flex-end' : 'flex-start' }}>
-            <Card
-                style={{
-                maxWidth: "750px", // Increased max-width
-                backgroundColor: isUser ? "#e3f2fd" : "#e8f5e9", // New pastel colors
-                }}
-                size="small"
-                bodyStyle={{ padding: '8px 12px' }}
-            >
-                <Text style={{ whiteSpace: 'pre-wrap' }}>{chatMessage.content}</Text>
-            </Card>
-            <Space style={{ marginTop: '4px', opacity: 0.7 }}>
-                <Text type="secondary" style={{ fontSize: '11px' }}>
-                    {new Date(chatMessage.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </Text>
-                <Tooltip title="Copy text">
-                    <Button
-                        type="text"
-                        shape="circle"
-                        icon={<CopyOutlined />}
-                        size="small"
-                        onClick={handleCopy}
-                    />
-                </Tooltip>
-            </Space>
-        </div>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: isUser ? "flex-end" : "flex-start",
+        }}
+      >
+        <Card
+          style={{
+            maxWidth: "750px", // Increased max-width
+            backgroundColor: isUser ? "#e3f2fd" : "#e8f5e9", // New pastel colors
+          }}
+          size="small"
+          bodyStyle={{ padding: "8px 12px" }}
+        >
+          <Text style={{ whiteSpace: "pre-wrap" }}>{chatMessage.content}</Text>
+        </Card>
+        <Space style={{ marginTop: "4px", opacity: 0.7 }}>
+          <Text type="secondary" style={{ fontSize: "11px" }}>
+            {new Date(chatMessage.timestamp).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
+          </Text>
+          <Tooltip title="Copy text">
+            <Button
+              type="text"
+              shape="circle"
+              icon={<CopyOutlined />}
+              size="small"
+              onClick={handleCopy}
+            />
+          </Tooltip>
+        </Space>
+      </div>
     </List.Item>
   );
 };
-
 
 const SecurityAdvisorPage: React.FC = () => {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -142,18 +151,18 @@ const SecurityAdvisorPage: React.FC = () => {
 
   const currentSessionDetails = useMemo(() => {
     if (!activeSessionId || !sessions) {
-        return { title: "Chat", frameworks: [], cost: 0 };
+      return { title: "Chat", frameworks: [], cost: 0 };
     }
-    const session = sessions.find(s => s.id === activeSessionId);
-    const totalCost = messages?.reduce((acc, msg) => acc + (msg.cost || 0), 0) || 0;
+    const session = sessions.find((s) => s.id === activeSessionId);
+    const totalCost =
+      messages?.reduce((acc, msg) => acc + (msg.cost || 0), 0) || 0;
 
     return {
-        title: session?.title || "Chat",
-        frameworks: session?.frameworks || [],
-        cost: totalCost
-    }
+      title: session?.title || "Chat",
+      frameworks: session?.frameworks || [],
+      cost: totalCost,
+    };
   }, [activeSessionId, sessions, messages]);
-
 
   useEffect(() => {
     if (llmConfigs && llmConfigs.length > 0 && !selectedLlmId) {
@@ -162,7 +171,8 @@ const SecurityAdvisorPage: React.FC = () => {
   }, [llmConfigs, selectedLlmId]);
 
   const createSessionMutation = useMutation({
-    mutationFn: (payload: ChatSessionCreateRequest) => chatService.createSession(payload),
+    mutationFn: (payload: ChatSessionCreateRequest) =>
+      chatService.createSession(payload),
     onSuccess: (newSession) => {
       message.success("New chat session created!");
       queryClient.invalidateQueries({ queryKey: ["chatSessions"] });
@@ -200,19 +210,25 @@ const SecurityAdvisorPage: React.FC = () => {
     onMutate: async (newMessage) => {
       if (!activeSessionId) return;
 
-      await queryClient.cancelQueries({ queryKey: ["chatMessages", activeSessionId] });
-      const previousMessages = queryClient.getQueryData<ChatMessage[]>(["chatMessages", activeSessionId]) || [];
-      
+      await queryClient.cancelQueries({
+        queryKey: ["chatMessages", activeSessionId],
+      });
+      const previousMessages =
+        queryClient.getQueryData<ChatMessage[]>([
+          "chatMessages",
+          activeSessionId,
+        ]) || [];
+
       const optimisticMessage: ChatMessage = {
         id: Math.random(),
-        role: 'user',
+        role: "user",
         content: newMessage.question,
         timestamp: new Date().toISOString(),
       };
 
       queryClient.setQueryData<ChatMessage[]>(
         ["chatMessages", activeSessionId],
-        [...previousMessages, optimisticMessage]
+        [...previousMessages, optimisticMessage],
       );
 
       form.resetFields();
@@ -220,13 +236,18 @@ const SecurityAdvisorPage: React.FC = () => {
     },
     onError: (err, _newMessage, context) => {
       if (activeSessionId && context?.previousMessages) {
-        queryClient.setQueryData(["chatMessages", activeSessionId], context.previousMessages);
+        queryClient.setQueryData(
+          ["chatMessages", activeSessionId],
+          context.previousMessages,
+        );
       }
       message.error(`Failed to send message: ${err.message}`);
     },
     onSettled: () => {
       if (activeSessionId) {
-        queryClient.invalidateQueries({ queryKey: ["chatMessages", activeSessionId] });
+        queryClient.invalidateQueries({
+          queryKey: ["chatMessages", activeSessionId],
+        });
       }
     },
   });
@@ -235,7 +256,11 @@ const SecurityAdvisorPage: React.FC = () => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, askQuestionMutation.isPending]);
 
-  const handleCreateSession = (values: { title: string; llm_config_id: string; frameworks: string[] }) => {
+  const handleCreateSession = (values: {
+    title: string;
+    llm_config_id: string;
+    frameworks: string[];
+  }) => {
     const payload: ChatSessionCreateRequest = {
       title: values.title,
       llm_config_id: values.llm_config_id,
@@ -277,7 +302,10 @@ const SecurityAdvisorPage: React.FC = () => {
               key: session.id,
               label: (
                 <Row justify="space-between" align="middle" wrap={false}>
-                  <Col flex="auto" style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                  <Col
+                    flex="auto"
+                    style={{ overflow: "hidden", textOverflow: "ellipsis" }}
+                  >
                     <Tooltip title={session.title}>{session.title}</Tooltip>
                   </Col>
                   <Col flex="none">
@@ -314,112 +342,138 @@ const SecurityAdvisorPage: React.FC = () => {
         {activeSessionId ? (
           <>
             <Card
-              style={{ flexShrink: 0, borderBottom: '1px solid #f0f0f0' }}
-              bodyStyle={{padding: '12px 24px'}}
+              style={{ flexShrink: 0, borderBottom: "1px solid #f0f0f0" }}
+              bodyStyle={{ padding: "12px 24px" }}
               bordered={false}
             >
-                <Row justify="space-between" align="top">
-                    <Col>
-                        <Title level={4} style={{ margin: 0, display: 'inline-flex', alignItems: 'center' }}>
-                            {currentSessionDetails.title}
-                            {(isFetchingMessages && !askQuestionMutation.isPending) && (
-                                <SyncOutlined spin style={{ marginLeft: 10, color: "#1677ff" }} />
-                            )}
-                        </Title>
-                        <div style={{marginTop: '4px'}}>
-                            {currentSessionDetails.frameworks.map(fw => <Tag key={fw} color="blue">{fw}</Tag>)}
-                        </div>
-                    </Col>
-                    <Col style={{textAlign: 'right'}}>
-                        <Statistic title="Conversation Cost" value={currentSessionDetails.cost} precision={6} prefix="$" valueStyle={{fontSize: '18px'}}/>
-                         <Select
-                            value={sessions?.find(s => s.id === activeSessionId)?.llm_config_id}
-                            loading={isLoadingLLMs || isLoadingSessions}
-                            style={{ width: 200, marginTop: '8px' }}
-                            placeholder="Select an LLM"
-                            disabled
-                            size="small"
-                        >
-                        {llmConfigs?.map((config) => (
-                            <Option key={config.id} value={config.id}>
-                            <RobotOutlined style={{ marginRight: 8 }} />
-                            {config.name}
-                            </Option>
-                        ))}
-                        </Select>
-                    </Col>
-                </Row>
+              <Row justify="space-between" align="top">
+                <Col>
+                  <Title
+                    level={4}
+                    style={{
+                      margin: 0,
+                      display: "inline-flex",
+                      alignItems: "center",
+                    }}
+                  >
+                    {currentSessionDetails.title}
+                    {isFetchingMessages && !askQuestionMutation.isPending && (
+                      <SyncOutlined
+                        spin
+                        style={{ marginLeft: 10, color: "#1677ff" }}
+                      />
+                    )}
+                  </Title>
+                  <div style={{ marginTop: "4px" }}>
+                    {currentSessionDetails.frameworks.map((fw) => (
+                      <Tag key={fw} color="blue">
+                        {fw}
+                      </Tag>
+                    ))}
+                  </div>
+                </Col>
+                <Col style={{ textAlign: "right" }}>
+                  <Statistic
+                    title="Conversation Cost"
+                    value={currentSessionDetails.cost}
+                    precision={6}
+                    prefix="$"
+                    valueStyle={{ fontSize: "18px" }}
+                  />
+                  <Select
+                    value={
+                      sessions?.find((s) => s.id === activeSessionId)
+                        ?.llm_config_id
+                    }
+                    loading={isLoadingLLMs || isLoadingSessions}
+                    style={{ width: 200, marginTop: "8px" }}
+                    placeholder="Select an LLM"
+                    disabled
+                    size="small"
+                  >
+                    {llmConfigs?.map((config) => (
+                      <Option key={config.id} value={config.id}>
+                        <RobotOutlined style={{ marginRight: 8 }} />
+                        {config.name}
+                      </Option>
+                    ))}
+                  </Select>
+                </Col>
+              </Row>
             </Card>
             <div
-                style={{
-                  flexGrow: 1,
-                  overflowY: "auto",
-                  padding: "0 16px",
+              style={{
+                flexGrow: 1,
+                overflowY: "auto",
+                padding: "0 16px",
+              }}
+            >
+              <List
+                dataSource={messages || []}
+                renderItem={(item) => <ChatMessageItem message={item} />}
+                locale={{
+                  emptyText: (
+                    <Empty
+                      description="Send a message to start the conversation."
+                      image={Empty.PRESENTED_IMAGE_SIMPLE}
+                      style={{ marginTop: "20vh" }}
+                    />
+                  ),
                 }}
-              >
-                <List
-                  dataSource={messages || []}
-                  renderItem={(item) => <ChatMessageItem message={item} />}
-                  locale={{
-                    emptyText: (
-                      <Empty
-                        description="Send a message to start the conversation."
-                        image={Empty.PRESENTED_IMAGE_SIMPLE}
-                        style={{marginTop: '20vh'}}
-                      />
-                    ),
-                  }}
-                />
-                {askQuestionMutation.isPending && (
-                  <List.Item style={{ borderBottom: 'none' }}>
-                    <div style={{ display: 'flex', alignItems: 'center' }}>
-                        <Skeleton.Avatar active size="default" />
-                        <Skeleton.Input active style={{ width: '200px', marginLeft: '12px' }} size="small" />
-                    </div>
-                  </List.Item>
-                )}
-                <div ref={chatEndRef} />
-              </div>
-            <div style={{ padding: '16px', borderTop: '1px solid #f0f0f0' }}>
-                <Form
-                form={form}
-                onFinish={handleSendMessage}
-                >
+              />
+              {askQuestionMutation.isPending && (
+                <List.Item style={{ borderBottom: "none" }}>
+                  <div style={{ display: "flex", alignItems: "center" }}>
+                    <Skeleton.Avatar active size="default" />
+                    <Skeleton.Input
+                      active
+                      style={{ width: "200px", marginLeft: "12px" }}
+                      size="small"
+                    />
+                  </div>
+                </List.Item>
+              )}
+              <div ref={chatEndRef} />
+            </div>
+            <div style={{ padding: "16px", borderTop: "1px solid #f0f0f0" }}>
+              <Form form={form} onFinish={handleSendMessage}>
                 <Row align="middle">
-                    <Col flex="auto">
+                  <Col flex="auto">
                     <Form.Item name="question" style={{ marginBottom: 0 }}>
-                        <Input.TextArea
+                      <Input.TextArea
                         rows={1}
-                        autoSize={{minRows: 1, maxRows: 5}}
+                        autoSize={{ minRows: 1, maxRows: 5 }}
                         placeholder="Ask a security question..."
                         onPressEnter={(e) => {
-                            if (!e.shiftKey) {
+                          if (!e.shiftKey) {
                             e.preventDefault();
                             form.submit();
-                            }
+                          }
                         }}
                         disabled={askQuestionMutation.isPending}
-                        />
+                      />
                     </Form.Item>
-                    </Col>
-                    <Col flex="none" style={{ marginLeft: 8 }}>
+                  </Col>
+                  <Col flex="none" style={{ marginLeft: 8 }}>
                     <Button
-                        type="primary"
-                        htmlType="submit"
-                        icon={<SendOutlined />}
-                        loading={askQuestionMutation.isPending}
+                      type="primary"
+                      htmlType="submit"
+                      icon={<SendOutlined />}
+                      loading={askQuestionMutation.isPending}
                     >
-                        Send
+                      Send
                     </Button>
-                    </Col>
+                  </Col>
                 </Row>
-                </Form>
+              </Form>
             </div>
           </>
         ) : (
           <div style={{ textAlign: "center", margin: "auto" }}>
             <Empty
-              image={<CommentOutlined style={{ fontSize: '64px', color: '#ccc' }}/>}
+              image={
+                <CommentOutlined style={{ fontSize: "64px", color: "#ccc" }} />
+              }
               description={
                 <>
                   <Title level={3}>Security Advisor</Title>
@@ -456,7 +510,9 @@ const SecurityAdvisorPage: React.FC = () => {
           <Form.Item
             name="llm_config_id"
             label="Select Language Model"
-            rules={[{ required: true, message: "Please select a language model." }]}
+            rules={[
+              { required: true, message: "Please select a language model." },
+            ]}
           >
             <Select
               loading={isLoadingLLMs}
@@ -470,24 +526,24 @@ const SecurityAdvisorPage: React.FC = () => {
               ))}
             </Select>
           </Form.Item>
-        
+
           <Form.Item
             name="frameworks"
             label="Security Frameworks (Optional)"
             tooltip="Select frameworks to provide additional context from the knowledge base."
           >
             {isLoadingFrameworks ? (
-                <Skeleton active paragraph={{ rows: 2 }} />
+              <Skeleton active paragraph={{ rows: 2 }} />
             ) : (
-                <Checkbox.Group style={{ width: '100%' }}>
-                    <Row>
-                        {(frameworks || []).map((fw) => (
-                            <Col span={12} key={fw.id}>
-                                <Checkbox value={fw.name}>{fw.name}</Checkbox>
-                            </Col>
-                        ))}
-                    </Row>
-                </Checkbox.Group>
+              <Checkbox.Group style={{ width: "100%" }}>
+                <Row>
+                  {(frameworks || []).map((fw) => (
+                    <Col span={12} key={fw.id}>
+                      <Checkbox value={fw.name}>{fw.name}</Checkbox>
+                    </Col>
+                  ))}
+                </Row>
+              </Checkbox.Group>
             )}
           </Form.Item>
         </Form>

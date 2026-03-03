@@ -1,7 +1,7 @@
-import { BulbOutlined } from '@ant-design/icons';
-import { Alert, Card, Space, Typography } from 'antd';
-import React from 'react';
-import type { Finding } from '../../../shared/types/api';
+import { BulbOutlined } from "@ant-design/icons";
+import { Alert, Card, Space, Typography } from "antd";
+import React from "react";
+import type { Finding } from "../../../shared/types/api";
 
 const { Title } = Typography;
 
@@ -9,11 +9,16 @@ interface FileMergeExplanationsProps {
   findings: Finding[];
 }
 
-const FileMergeExplanations: React.FC<FileMergeExplanationsProps> = ({ findings }) => {
+const FileMergeExplanations: React.FC<FileMergeExplanationsProps> = ({
+  findings,
+}) => {
   // A merged fix is identified by its description matching the fix's description,
   // and it must have been the one applied in the final remediation.
   const mergedFindings = findings.filter(
-    (f) => f.fixes?.description && f.description === f.fixes.description && f.is_applied_in_remediation
+    (f) =>
+      f.fixes?.description &&
+      f.description === f.fixes.description &&
+      f.is_applied_in_remediation,
   );
 
   if (mergedFindings.length === 0) {
@@ -36,7 +41,17 @@ const FileMergeExplanations: React.FC<FileMergeExplanationsProps> = ({ findings 
         <Alert
           key={finding.id}
           message={`Explanation for Fix near Line ${finding.line_number}`}
-          description={<pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', margin: 0 }}>{finding.description}</pre>}
+          description={
+            <pre
+              style={{
+                whiteSpace: "pre-wrap",
+                fontFamily: "inherit",
+                margin: 0,
+              }}
+            >
+              {finding.description}
+            </pre>
+          }
           type="info"
           showIcon
           style={{ marginBottom: 16 }}

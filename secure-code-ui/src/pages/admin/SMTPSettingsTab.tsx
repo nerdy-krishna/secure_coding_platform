@@ -79,111 +79,106 @@ const SMTPSettingsTab: React.FC = () => {
   if (loading) {
     return (
       <Spin
-        tip= "Loading SMTP Settings..."
-    style = {{ display: "block", margin: "40px auto" }
-  }
+        tip="Loading SMTP Settings..."
+        style={{ display: "block", margin: "40px auto" }}
       />
     );
   }
 
-return (
-  <div>
-  <Title level= { 2} > SMTP Settings </Title>
-    <Paragraph>
+  return (
+    <div>
+      <Title level={2}> SMTP Settings </Title>
+      <Paragraph>
         Configure the outgoing mail server details required to send password
         reset and user invitation emails.
       </Paragraph>
 
-  < Form
-form = { form }
-layout = "vertical"
-onFinish = { onFinish }
-style = {{ maxWidth: "600px", marginTop: "24px" }}
+      <Form
+        form={form}
+        layout="vertical"
+        onFinish={onFinish}
+        style={{ maxWidth: "600px", marginTop: "24px" }}
       >
-  <Form.Item
+        <Form.Item
           name="host"
-label = "SMTP Host (Server)"
-rules = {
-  [
-  { required: true, message: "Please enter the SMTP host address" },
+          label="SMTP Host (Server)"
+          rules={[
+            { required: true, message: "Please enter the SMTP host address" },
           ]}
-  >
-  <Input placeholder="e.g. smtp.sendgrid.net" />
-    </Form.Item>
+        >
+          <Input placeholder="e.g. smtp.sendgrid.net" />
+        </Form.Item>
 
-    < Form.Item
-name = "port"
-label = "SMTP Port"
-rules = { [{ required: true, message: "Please enter the SMTP port" }]}
-  >
-  <InputNumber
-            style={ { width: "100%" } }
-placeholder = "e.g. 587 or 465"
-  />
-  </Form.Item>
+        <Form.Item
+          name="port"
+          label="SMTP Port"
+          rules={[{ required: true, message: "Please enter the SMTP port" }]}
+        >
+          <InputNumber
+            style={{ width: "100%" }}
+            placeholder="e.g. 587 or 465"
+          />
+        </Form.Item>
 
-  < Form.Item
-name = "user"
-label = "SMTP Username"
-rules = {
-  [
-  { required: true, message: "Please enter the SMTP username" },
+        <Form.Item
+          name="user"
+          label="SMTP Username"
+          rules={[
+            { required: true, message: "Please enter the SMTP username" },
           ]}
-  >
-  <Input placeholder="e.g. apikey or user@domain.com" />
-    </Form.Item>
+        >
+          <Input placeholder="e.g. apikey or user@domain.com" />
+        </Form.Item>
 
-    < Form.Item
-name = "password"
-label = "SMTP Password"
-rules = {
-  [
-  { required: true, message: "Please enter the SMTP password" },
+        <Form.Item
+          name="password"
+          label="SMTP Password"
+          rules={[
+            { required: true, message: "Please enter the SMTP password" },
           ]}
-  >
-  <Input.Password placeholder="Enter password / API key" />
-    </Form.Item>
+        >
+          <Input.Password placeholder="Enter password / API key" />
+        </Form.Item>
 
-    < Form.Item
-name = "from"
-label = "Sender Address ('From')"
-rules = {
-  [
-  {
-    required: true,
-    message: "Please enter the sender email address",
-  },
-  { type: "email", message: "Please enter a valid email address" },
+        <Form.Item
+          name="from"
+          label="Sender Address ('From')"
+          rules={[
+            {
+              required: true,
+              message: "Please enter the sender email address",
+            },
+            { type: "email", message: "Please enter a valid email address" },
           ]}
-  >
-  <Input placeholder="e.g. noreply@domain.com" />
-    </Form.Item>
+        >
+          <Input placeholder="e.g. noreply@domain.com" />
+        </Form.Item>
 
-    < div style = {{ display: "flex", gap: "32px" }}>
-      <Form.Item
+        <div style={{ display: "flex", gap: "32px" }}>
+          <Form.Item
             name="tls"
-label = "Use TLS (STARTTLS)"
-valuePropName = "checked"
-  >
-  <Switch />
-  </Form.Item>
+            label="Use TLS (STARTTLS)"
+            valuePropName="checked"
+          >
+            <Switch />
+          </Form.Item>
 
-  < Form.Item name = "ssl" label = "Use SSL" valuePropName = "checked" >
-    <Switch />
-    </Form.Item>
-    </div>
+          <Form.Item name="ssl" label="Use SSL" valuePropName="checked">
+            <Switch />
+          </Form.Item>
+        </div>
 
-    < Form.Item style = {{ marginTop: "16px" }}>
-      <Button
+        <Form.Item style={{ marginTop: "16px" }}>
+          <Button
             type="primary"
-htmlType = "submit"
-icon = {< SaveOutlined />}
-loading = { saving }
-  >
-  Save SMTP Settings
-    </Button>
-    </Form.Item>
-    </Form>
+            htmlType="submit"
+            icon={<SaveOutlined />}
+            loading={saving}
+          >
+            Save SMTP Settings
+          </Button>
+        </Form.Item>
+      </Form>
     </div>
   );
 };
