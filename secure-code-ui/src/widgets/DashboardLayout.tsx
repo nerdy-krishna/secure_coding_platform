@@ -9,7 +9,7 @@ import {
   QuestionCircleOutlined,
   SettingOutlined,
   ToolOutlined,
-  UserOutlined
+  UserOutlined,
 } from "@ant-design/icons";
 import type { MenuProps } from "antd";
 import {
@@ -51,7 +51,10 @@ const DashboardLayout: React.FC<{ children?: React.ReactNode }> = ({
   const [openKeys, setOpenKeys] = useState<string[]>([]);
 
   useEffect(() => {
-    if (pathname.startsWith("/admin/") || pathname === "/account/settings/llm") {
+    if (
+      pathname.startsWith("/admin/") ||
+      pathname === "/account/settings/llm"
+    ) {
       setOpenKeys(["admin_section"]);
     } else {
       setOpenKeys([]);
@@ -65,7 +68,11 @@ const DashboardLayout: React.FC<{ children?: React.ReactNode }> = ({
   const getSelectedKey = () => {
     if (pathname.startsWith("/account/dashboard")) return "dashboard_overview";
     if (pathname.startsWith("/submission/submit")) return "submit_code";
-    if (pathname.startsWith("/analysis/results") || pathname.startsWith("/scans/")) return "analysis_results";
+    if (
+      pathname.startsWith("/analysis/results") ||
+      pathname.startsWith("/scans/")
+    )
+      return "analysis_results";
     if (pathname.startsWith("/advisor")) return "security_advisor";
     if (pathname.startsWith("/account/history")) return "submission_history";
     if (pathname.startsWith("/admin/system")) return "system_config_nav";
@@ -73,7 +80,8 @@ const DashboardLayout: React.FC<{ children?: React.ReactNode }> = ({
     if (pathname.startsWith("/admin/smtp")) return "smtp_settings_nav";
     if (pathname.startsWith("/account/settings/llm")) return "llm_settings_nav";
     if (pathname.startsWith("/admin/agents")) return "agent_management_nav";
-    if (pathname.startsWith("/admin/frameworks")) return "framework_management_nav";
+    if (pathname.startsWith("/admin/frameworks"))
+      return "framework_management_nav";
     if (pathname.startsWith("/admin/prompts")) return "prompt_management_nav";
     if (pathname.startsWith("/admin/rag")) return "rag_management_nav";
     if (pathname.startsWith("/account/profile")) return "user_profile_nav";
@@ -156,20 +164,6 @@ const DashboardLayout: React.FC<{ children?: React.ReactNode }> = ({
       );
     }
 
-// Add a divider and user-specific items at the end
-items.push({ type: "divider" });
-items.push(
-  getItem(
-    <Link to="/account/profile" > User Profile </Link>,
-        "user_profile_nav",
-    <UserOutlined />,
-  ),
-  getItem(
-    <Link to="/account/settings" > Settings </Link>,
-        "user_settings_nav",
-    <SettingOutlined />,
-  ),
-);
 return items;
   }, [user?.is_superuser]);
 
@@ -179,31 +173,10 @@ const handleLogout = async () => {
 
 const userAccountMenuItems: MenuProps["items"] = [
   {
-    key: "profile",
-    label: (
-      <Link to= "/account/profile" >
-      <UserOutlined style={{ marginRight: 8 }} />
-Profile
-  </Link>
-      ),
-    },
-{
-  key: "settings",
-    label: (
-      <Link to= "/account/settings" >
-      <SettingOutlined style={ { marginRight: 8 } } />
-  Settings
-    </Link>
-      ),
-},
-{
-  type: "divider",
-    },
-{
-  key: "logout",
-    icon: <LogoutOutlined style={ { marginRight: 8 } } />,
-  label: "Logout",
-    onClick: handleLogout,
+    key: "logout",
+    icon: <LogoutOutlined style={{ marginRight: 8 }} />,
+label: "Logout",
+  onClick: handleLogout,
     },
   ];
 
@@ -265,8 +238,11 @@ items = { siderMenuItems } // Use the dynamic menu items here
     <Tooltip title="Notifications" >
       <Button shape="circle" icon = {< BellOutlined />} />
         </Tooltip>
-        < Dropdown menu = {{ items: userAccountMenuItems }} trigger = { ["click"]} >
-          <a
+        < Dropdown
+menu = {{ items: userAccountMenuItems }}
+trigger = { ["click"]}
+  >
+  <a
                 onClick={ (e) => e.preventDefault() }
 style = {{
   display: "flex",
@@ -279,9 +255,7 @@ style = {{
 icon = {< UserOutlined />}
 style = {{ marginRight: 8 }}
                 />
-  <Typography.Text>
-{ user ? user.email : "User" }
-</Typography.Text>
+  < Typography.Text > { user? user.email : "User"} </Typography.Text>
   </a>
   </Dropdown>
   </Space>
