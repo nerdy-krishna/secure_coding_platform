@@ -161,25 +161,23 @@ function AppContent() {
               < Route path = "/scans/:scanId/llm-logs" element = {< LlmLogViewerPage />} />
                 < Route path = "/advisor" element = {< SecurityAdvisorPage />} />
                   < Route path = "/account/history" element = {< SubmissionHistoryPage />} />
-                    < Route path = "/account/profile" element = {< UserProfilePage />} />
-                      < Route path = "/account/settings" element = {< SettingsPage />} />
-                        </Route>
+                    </Route>
 
-                        < Route element = {< SuperuserRoutesWithLayout />}>
-                          <Route path="/admin/system" element = {< SystemConfigTab />} />
-                            < Route path = "/admin/users" element = {< UserManagementTab />} />
-                              < Route path = "/admin/smtp" element = {< SMTPSettingsTab />} />
-                                < Route path = "/account/settings/llm" element = {< LLMSettingsPage />} />
-                                  < Route path = "/admin/agents" element = {< AgentManagementPage />} />
-                                    < Route path = "/admin/frameworks" element = {< FrameworkManagementPage />} />
-                                      < Route path = "/admin/prompts" element = {< PromptManagementPage />} />
-                                        < Route path = "/admin/rag" element = {< RAGManagementPage />} />
-                                          </Route>
+                    < Route element = {< SuperuserRoutesWithLayout />}>
+                      <Route path="/admin/system" element = {< SystemConfigTab />} />
+                        < Route path = "/admin/users" element = {< UserManagementTab />} />
+                          < Route path = "/admin/smtp" element = {< SMTPSettingsTab />} />
+                            < Route path = "/account/settings/llm" element = {< LLMSettingsPage />} />
+                              < Route path = "/admin/agents" element = {< AgentManagementPage />} />
+                                < Route path = "/admin/frameworks" element = {< FrameworkManagementPage />} />
+                                  < Route path = "/admin/prompts" element = {< PromptManagementPage />} />
+                                    < Route path = "/admin/rag" element = {< RAGManagementPage />} />
+                                      </Route>
 
-                                          < Route path = "/" element = {< RootRedirector />} />
-                                            < Route path = "*" element = {< NotFoundPage />} />
-                                              </Routes>
-                                              </Router>
+                                      < Route path = "/" element = {< RootRedirector />} />
+                                        < Route path = "*" element = {< NotFoundPage />} />
+                                          </Routes>
+                                          </Router>
   );
 }
 
