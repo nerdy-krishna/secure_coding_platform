@@ -7,8 +7,7 @@ import {
   PieChartOutlined,
   ProjectOutlined,
   QuestionCircleOutlined,
-  SettingOutlined,
-  ToolOutlined,
+    ToolOutlined,
   UserOutlined,
 } from "@ant-design/icons";
 import type { MenuProps } from "antd";

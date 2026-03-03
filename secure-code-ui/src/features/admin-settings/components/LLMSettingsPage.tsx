@@ -28,12 +28,21 @@ import {
 } from "antd";
 import type { RuleObject } from "antd/es/form";
 import { AxiosError } from "axios";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   llmConfigService,
   type LLMConfigurationUpdate,
 } from "../../../shared/api/llmConfigService";
-import type { LLMConfiguration, LLMConfigurationCreate } from "../../../shared/types/api";
+import type {
+  LLMConfiguration,
+  LLMConfigurationCreate,
+} from "../../../shared/types/api";
 
 const { Title, Paragraph, Text } = Typography;
 const { Option } = Select;
@@ -69,7 +78,10 @@ const LLMSettingsPage: React.FC = () => {
         ...editingConfig,
         api_key: "", // Always clear the API key field for security
       });
-      formCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      formCardRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
     } else {
       // This resets the form when we are not in edit mode.
       form.resetFields();
@@ -81,8 +93,8 @@ const LLMSettingsPage: React.FC = () => {
     action: "create" | "update" | "delete",
   ) => {
     const errorDetail =
-      (err.response?.data as { detail?: string | { msg: string }[] })
-        ?.detail || "An unknown error occurred.";
+      (err.response?.data as { detail?: string | { msg: string }[] })?.detail ||
+      "An unknown error occurred.";
     if (Array.isArray(errorDetail)) {
       const messages = errorDetail.map((d) => d.msg).join(", ");
       message.error(`Failed to ${action} configuration: ${messages}`);
@@ -147,8 +159,10 @@ const LLMSettingsPage: React.FC = () => {
   const handleCancelEdit = () => {
     setEditingConfig(null);
   };
-  
-  const parseAsUTCDate = (dateString: string | null | undefined): Date | null => {
+
+  const parseAsUTCDate = (
+    dateString: string | null | undefined,
+  ): Date | null => {
     if (!dateString) return null;
     let utcDateString = dateString;
     if (!/Z|[+-]\d{2}:\d{2}$/.test(dateString)) {
@@ -175,18 +189,82 @@ const LLMSettingsPage: React.FC = () => {
 
   const columns: TableProps<LLMConfiguration>["columns"] = useMemo(
     () => [
-      { title: "Name", dataIndex: "name", key: "name", sorter: (a, b) => a.name.localeCompare(b.name) },
-      { title: "Provider", dataIndex: "provider", key: "provider", render: (provider) => <Tag>{provider.toUpperCase()}</Tag>, filters: LLM_PROVIDERS.map((p) => ({ text: p.toUpperCase(), value: p })), onFilter: (value, record) => record.provider === value },
+      {
+        title: "Name",
+        dataIndex: "name",
+        key: "name",
+        sorter: (a, b) => a.name.localeCompare(b.name),
+      },
+      {
+        title: "Provider",
+        dataIndex: "provider",
+        key: "provider",
+        render: (provider) => <Tag>{provider.toUpperCase()}</Tag>,
+        filters: LLM_PROVIDERS.map((p) => ({
+          text: p.toUpperCase(),
+          value: p,
+        })),
+        onFilter: (value, record) => record.provider === value,
+      },
       { title: "Model Name", dataIndex: "model_name", key: "model_name" },
-      { title: "Tokenizer", dataIndex: "tokenizer", key: "tokenizer", render: (text) => text || <Text type="secondary">auto</Text> },
-      { title: "Input Cost ($/1M)", dataIndex: "input_cost_per_million", key: "input_cost_per_million", render: (cost) => <Text>${cost ? cost.toFixed(6) : "0.00"}</Text>, sorter: (a, b) => a.input_cost_per_million - b.input_cost_per_million },
-      { title: "Output Cost ($/1M)", dataIndex: "output_cost_per_million", key: "output_cost_per_million", render: (cost) => <Text>${cost ? cost.toFixed(6) : "0.00"}</Text>, sorter: (a, b) => a.output_cost_per_million - b.output_cost_per_million },
-      { title: "Created At", dataIndex: "created_at", key: "created_at", render: (text) => formatDisplayDate(text), sorter: (a, b) => (parseAsUTCDate(a.created_at)?.getTime() || 0) - (parseAsUTCDate(b.created_at)?.getTime() || 0) },
-      { title: "Action", key: "action", render: (_, record) => (
+      {
+        title: "Tokenizer",
+        dataIndex: "tokenizer",
+        key: "tokenizer",
+        render: (text) => text || <Text type="secondary">auto</Text>,
+      },
+      {
+        title: "Input Cost ($/1M)",
+        dataIndex: "input_cost_per_million",
+        key: "input_cost_per_million",
+        render: (cost) => <Text>${cost ? cost.toFixed(6) : "0.00"}</Text>,
+        sorter: (a, b) => a.input_cost_per_million - b.input_cost_per_million,
+      },
+      {
+        title: "Output Cost ($/1M)",
+        dataIndex: "output_cost_per_million",
+        key: "output_cost_per_million",
+        render: (cost) => <Text>${cost ? cost.toFixed(6) : "0.00"}</Text>,
+        sorter: (a, b) => a.output_cost_per_million - b.output_cost_per_million,
+      },
+      {
+        title: "Created At",
+        dataIndex: "created_at",
+        key: "created_at",
+        render: (text) => formatDisplayDate(text),
+        sorter: (a, b) =>
+          (parseAsUTCDate(a.created_at)?.getTime() || 0) -
+          (parseAsUTCDate(b.created_at)?.getTime() || 0),
+      },
+      {
+        title: "Action",
+        key: "action",
+        render: (_, record) => (
           <Space>
-            <Button icon={<EditOutlined />} onClick={() => setEditingConfig(record)} disabled={editingConfig?.id === record.id}>Edit</Button>
-            <Popconfirm title="Delete this configuration?" description="This action cannot be undone." onConfirm={() => handleDelete(record.id)} okText="Yes" cancelText="No">
-              <Button danger icon={<DeleteOutlined />} loading={deleteMutation.isPending && deleteMutation.variables === record.id}>Delete</Button>
+            <Button
+              icon={<EditOutlined />}
+              onClick={() => setEditingConfig(record)}
+              disabled={editingConfig?.id === record.id}
+            >
+              Edit
+            </Button>
+            <Popconfirm
+              title="Delete this configuration?"
+              description="This action cannot be undone."
+              onConfirm={() => handleDelete(record.id)}
+              okText="Yes"
+              cancelText="No"
+            >
+              <Button
+                danger
+                icon={<DeleteOutlined />}
+                loading={
+                  deleteMutation.isPending &&
+                  deleteMutation.variables === record.id
+                }
+              >
+                Delete
+              </Button>
             </Popconfirm>
           </Space>
         ),
@@ -202,7 +280,7 @@ const LLMSettingsPage: React.FC = () => {
   const isMutating = createMutation.isPending || updateMutation.isPending;
   const costValidator = (_: RuleObject, value: string) => {
     if (value && (isNaN(parseFloat(value)) || parseFloat(value) < 0)) {
-        return Promise.reject(new Error("Please enter a valid positive number."));
+      return Promise.reject(new Error("Please enter a valid positive number."));
     }
     return Promise.resolve();
   };
@@ -210,43 +288,138 @@ const LLMSettingsPage: React.FC = () => {
   return (
     <Space direction="vertical" size="large" style={{ display: "flex" }}>
       <Card ref={formCardRef}>
-        <Title level={3}>{editingConfig ? `Edit: ${editingConfig.name}` : "Create New LLM Configuration"}</Title>
-        <Paragraph type="secondary">{editingConfig ? "Update the details for this configuration." : "Add a new Large Language Model provider configuration."}</Paragraph>
+        <Title level={3}>
+          {editingConfig
+            ? `Edit: ${editingConfig.name}`
+            : "Create New LLM Configuration"}
+        </Title>
+        <Paragraph type="secondary">
+          {editingConfig
+            ? "Update the details for this configuration."
+            : "Add a new Large Language Model provider configuration."}
+        </Paragraph>
         <Form form={form} layout="vertical" onFinish={handleSubmit}>
-          <Row gutter={24}><Col xs={24} sm={12}><Form.Item name="name" label="Configuration Name" rules={[{ required: true, message: "Please enter a unique name." }]}><Input placeholder="e.g., OpenAI GPT-4o Mini" /></Form.Item></Col><Col xs={24} sm={12}><Form.Item name="provider" label="Provider" rules={[{ required: true, message: "Please select a provider." }]}><Select placeholder="Select a provider">{LLM_PROVIDERS.map((p) => (<Option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</Option>))}</Select></Form.Item></Col></Row>
           <Row gutter={24}>
             <Col xs={24} sm={12}>
-                <Form.Item name="model_name" label="Model Name" rules={[{ required: true, message: "Please enter the model name." }]}>
-                    <Input placeholder="e.g., gpt-4o-2024-05-13" />
+              <Form.Item
+                name="name"
+                label="Configuration Name"
+                rules={[
+                  { required: true, message: "Please enter a unique name." },
+                ]}
+              >
+                <Input placeholder="e.g., OpenAI GPT-4o Mini" />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12}>
+              <Form.Item
+                name="provider"
+                label="Provider"
+                rules={[
+                  { required: true, message: "Please select a provider." },
+                ]}
+              >
+                <Select placeholder="Select a provider">
+                  {LLM_PROVIDERS.map((p) => (
+                    <Option key={p} value={p}>
+                      {p.charAt(0).toUpperCase() + p.slice(1)}
+                    </Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={24}>
+            <Col xs={24} sm={12}>
+              <Form.Item
+                name="model_name"
+                label="Model Name"
+                rules={[
+                  { required: true, message: "Please enter the model name." },
+                ]}
+              >
+                <Input placeholder="e.g., gpt-4o-2024-05-13" />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12}>
+              <Tooltip title="Optional. Specify a tiktoken tokenizer (e.g., 'cl100k_base'). If blank, the system will try to infer it from the model name.">
+                <Form.Item name="tokenizer" label="Tokenizer Name">
+                  <Input placeholder="Default: cl100k_base" />
                 </Form.Item>
-            </Col>
-            <Col xs={24} sm={12}>
-                <Tooltip title="Optional. Specify a tiktoken tokenizer (e.g., 'cl100k_base'). If blank, the system will try to infer it from the model name.">
-                    <Form.Item name="tokenizer" label="Tokenizer Name">
-                        <Input placeholder="Default: cl100k_base" />
-                    </Form.Item>
-                </Tooltip>
+              </Tooltip>
             </Col>
           </Row>
           <Row gutter={24}>
             <Col xs={24} sm={12}>
-              <Form.Item name="input_cost_per_million" label="Input Cost per 1,000,000 Tokens ($)" rules={[{ required: true, message: "Input cost is required." }, { validator: costValidator }]}>
-                <InputNumber style={{ width: "100%" }} placeholder="e.g., 0.15" step="0.01" stringMode />
+              <Form.Item
+                name="input_cost_per_million"
+                label="Input Cost per 1,000,000 Tokens ($)"
+                rules={[
+                  { required: true, message: "Input cost is required." },
+                  { validator: costValidator },
+                ]}
+              >
+                <InputNumber
+                  style={{ width: "100%" }}
+                  placeholder="e.g., 0.15"
+                  step="0.01"
+                  stringMode
+                />
               </Form.Item>
             </Col>
             <Col xs={24} sm={12}>
-              <Form.Item name="output_cost_per_million" label="Output Cost per 1,000,000 Tokens ($)" rules={[{ required: true, message: "Output cost is required." }, { validator: costValidator }]}>
-                <InputNumber style={{ width: "100%" }} placeholder="e.g., 0.60" step="0.01" stringMode />
+              <Form.Item
+                name="output_cost_per_million"
+                label="Output Cost per 1,000,000 Tokens ($)"
+                rules={[
+                  { required: true, message: "Output cost is required." },
+                  { validator: costValidator },
+                ]}
+              >
+                <InputNumber
+                  style={{ width: "100%" }}
+                  placeholder="e.g., 0.60"
+                  step="0.01"
+                  stringMode
+                />
               </Form.Item>
             </Col>
           </Row>
-          <Form.Item name="api_key" label="API Key" rules={[{ required: !editingConfig, message: "API key is required for new configurations." }]}>
-            <Input.Password placeholder={editingConfig ? "Leave blank to keep existing key" : "Enter secret API key"} />
+          <Form.Item
+            name="api_key"
+            label="API Key"
+            rules={[
+              {
+                required: !editingConfig,
+                message: "API key is required for new configurations.",
+              },
+            ]}
+          >
+            <Input.Password
+              placeholder={
+                editingConfig
+                  ? "Leave blank to keep existing key"
+                  : "Enter secret API key"
+              }
+            />
           </Form.Item>
           <Form.Item>
             <Space>
-              <Button type="primary" htmlType="submit" icon={editingConfig ? <EditOutlined /> : <PlusOutlined />} loading={isMutating}>{editingConfig ? "Update Configuration" : "Create Configuration"}</Button>
-              {editingConfig && (<Button icon={<ClearOutlined />} onClick={handleCancelEdit}>Cancel</Button>)}
+              <Button
+                type="primary"
+                htmlType="submit"
+                icon={editingConfig ? <EditOutlined /> : <PlusOutlined />}
+                loading={isMutating}
+              >
+                {editingConfig
+                  ? "Update Configuration"
+                  : "Create Configuration"}
+              </Button>
+              {editingConfig && (
+                <Button icon={<ClearOutlined />} onClick={handleCancelEdit}>
+                  Cancel
+                </Button>
+              )}
             </Space>
           </Form.Item>
         </Form>
@@ -261,7 +434,7 @@ const LLMSettingsPage: React.FC = () => {
           pagination={{
             ...pagination,
             showSizeChanger: true,
-            pageSizeOptions: ['10', '20', '50'],
+            pageSizeOptions: ["10", "20", "50"],
           }}
           onChange={(newPagination: TablePaginationConfig) => {
             setPagination({
@@ -269,7 +442,8 @@ const LLMSettingsPage: React.FC = () => {
               pageSize: newPagination.pageSize ?? 10,
             });
           }}
-          scroll={{ x: true }} />
+          scroll={{ x: true }}
+        />
       </Card>
     </Space>
   );

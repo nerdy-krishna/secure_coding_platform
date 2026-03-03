@@ -289,8 +289,8 @@ return (
     <Paragraph>
         Control the verbosity of the backend application logs.< br />
   <Text type="secondary" >
-    Select < strong > DEBUG < /strong> to see full LLM prompts and responses (useful for debugging). Select <strong>INFO</strong > for standard operation.
-        </Text>
+    Select <strong>DEBUG</strong> to see full LLM prompts and responses (useful for debugging). Select <strong>INFO</strong> for standard operation.
+          </Text>
       </Paragraph>
       < Row >
       <Col xs= { 24} sm = { 12} md = { 8} >
@@ -368,7 +368,7 @@ renderItem = {(item) => (
 style = {{
   marginBottom: 16,
     display: "flex",
-      justify: "space-between",
+      justifyContent: "space-between",
         alignItems: "center"
 }}
       >

@@ -1,5 +1,11 @@
 // secure-code-ui/src/features/results-display/components/ResultsFileTree.tsx
-import { FileOutlined, FolderTwoTone, MinusSquareOutlined, PlusSquareOutlined, StopOutlined } from "@ant-design/icons";
+import {
+  FileOutlined,
+  FolderTwoTone,
+  MinusSquareOutlined,
+  PlusSquareOutlined,
+  StopOutlined,
+} from "@ant-design/icons";
 import { Button, Space, Tag, Tooltip, Tree, Typography } from "antd";
 import type { DataNode } from "antd/es/tree";
 import React, { useEffect, useMemo, useState } from "react";
@@ -64,15 +70,14 @@ const buildTree = (
   paths: string[],
   severityMap: { [path: string]: FileSeverity },
   analyzedFiles: SubmittedFile[],
-): { treeData: DataNode[];
-  folderKeys: React.Key[] } => {
+): { treeData: DataNode[]; folderKeys: React.Key[] } => {
   const root: Record<string, IntermediateNode> = {};
   const folderKeys: React.Key[] = [];
   const skippedMap = new Map<string, string>();
-  analyzedFiles.forEach(file => {
-      if (file.skipped_reason) {
-          skippedMap.set(file.file_path, file.skipped_reason);
-      }
+  analyzedFiles.forEach((file) => {
+    if (file.skipped_reason) {
+      skippedMap.set(file.file_path, file.skipped_reason);
+    }
   });
 
   paths.forEach((path) => {
@@ -88,8 +93,8 @@ const buildTree = (
         if (!isLeaf) {
           folderKeys.push(currentPath);
         }
-     
-       currentLevel[part] = {
+
+        currentLevel[part] = {
           title: part,
           key: currentPath,
           isLeaf,
@@ -131,7 +136,9 @@ const buildTree = (
   };
 
   Object.values(root).forEach((node) => aggregateSeverity(node, node.key));
-  const convertToAntdFormat = (nodes: Record<string, IntermediateNode>): DataNode[] => {
+  const convertToAntdFormat = (
+    nodes: Record<string, IntermediateNode>,
+  ): DataNode[] => {
     return Object.values(nodes)
       .sort((a, b) => {
         if (a.isLeaf !== b.isLeaf) return a.isLeaf ? 1 : -1;
@@ -140,27 +147,35 @@ const buildTree = (
       .map((n) => {
         const isSkipped = !!n.skipped_reason;
         const color =
-          SeverityColors[n.highestSeverity.toUpperCase() as keyof typeof SeverityColors] || SeverityColors.NONE;
+          SeverityColors[
+            n.highestSeverity.toUpperCase() as keyof typeof SeverityColors
+          ] || SeverityColors.NONE;
         const finalColor = isSkipped ? SeverityColors.NONE : color;
 
         return {
           key: n.key,
           disabled: isSkipped,
           icon: n.isLeaf ? (
-            isSkipped ? <StopOutlined style={{ color: finalColor }} /> : <FileOutlined style={{ color: finalColor }} />
+            isSkipped ? (
+              <StopOutlined style={{ color: finalColor }} />
+            ) : (
+              <FileOutlined style={{ color: finalColor }} />
+            )
           ) : (
             <FolderTwoTone twoToneColor={finalColor} />
           ),
           title: (
-            <Tooltip title={isSkipped ? n.skipped_reason : ''}>
-                <span className="tree-node-title">
-                <Text style={{ color: finalColor }} disabled={isSkipped}>{n.title}</Text>
+            <Tooltip title={isSkipped ? n.skipped_reason : ""}>
+              <span className="tree-node-title">
+                <Text style={{ color: finalColor }} disabled={isSkipped}>
+                  {n.title}
+                </Text>
                 {!isSkipped && n.findingCount > 0 && (
-                    <Tag color={finalColor} className="finding-count-tag">
+                  <Tag color={finalColor} className="finding-count-tag">
                     {n.findingCount}
-                    </Tag>
+                  </Tag>
                 )}
-                </span>
+              </span>
             </Tooltip>
           ),
           children: convertToAntdFormat(n.children),
@@ -195,7 +210,6 @@ const ResultsFileTree: React.FC<ResultsFileTreeProps> = ({
     setExpandedKeys(folderKeys);
   }, [folderKeys]);
 
-
   if (analyzedFiles.length === 0) {
     return <Text type="secondary">No files were analyzed.</Text>;
   }
@@ -203,11 +217,19 @@ const ResultsFileTree: React.FC<ResultsFileTreeProps> = ({
   return (
     <>
       <Space style={{ marginBottom: 8 }}>
-        <Button size="small" onClick={() => setExpandedKeys(folderKeys)} icon={<PlusSquareOutlined />}>
-            Expand All
+        <Button
+          size="small"
+          onClick={() => setExpandedKeys(folderKeys)}
+          icon={<PlusSquareOutlined />}
+        >
+          Expand All
         </Button>
-        <Button size="small" onClick={() => setExpandedKeys([])} icon={<MinusSquareOutlined />}>
-            Collapse All
+        <Button
+          size="small"
+          onClick={() => setExpandedKeys([])}
+          icon={<MinusSquareOutlined />}
+        >
+          Collapse All
         </Button>
       </Space>
       <Tree

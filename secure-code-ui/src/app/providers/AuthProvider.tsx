@@ -23,7 +23,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [initialAuthChecked, setInitialAuthChecked] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [isSetupCompleted, setIsSetupCompleted] = useState<boolean | null>(null);
+  const [isSetupCompleted, setIsSetupCompleted] = useState<boolean | null>(
+    null,
+  );
 
   const clearError = useCallback(() => {
     setError(null);
@@ -31,7 +33,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
 
   const checkSetupStatus = useCallback(async () => {
     try {
-      const response = await apiClient.get<SetupStatusResponse>("/setup/status");
+      const response =
+        await apiClient.get<SetupStatusResponse>("/setup/status");
       setIsSetupCompleted(response.data.is_setup_completed);
     } catch (e) {
       console.error("AuthProvider: Failed to check setup status:", e);
@@ -83,13 +86,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
       const response = await apiClient.get<UserRead>("/users/me");
       setUser(response.data);
     } catch (e) {
-      console.error("AuthProvider: Failed to fetch user (token likely invalid/expired):", e);
+      console.error(
+        "AuthProvider: Failed to fetch user (token likely invalid/expired):",
+        e,
+      );
       setUser(null);
       setAccessToken(null);
     }
   }, []);
-
-
 
   // Effect to run on initial load to check for an existing session AND setup status
   useEffect(() => {
@@ -117,9 +121,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
       setAccessToken(response.access_token);
     } catch (err: unknown) {
       console.error("AuthProvider: Login failed:", err);
-      let errorMessage = "Login failed. Please check your username and password.";
+      let errorMessage =
+        "Login failed. Please check your username and password.";
       if (err instanceof AxiosError && err.response?.data?.detail) {
-        errorMessage = typeof err.response.data.detail === "string" ? err.response.data.detail : JSON.stringify(err.response.data.detail);
+        errorMessage =
+          typeof err.response.data.detail === "string"
+            ? err.response.data.detail
+            : JSON.stringify(err.response.data.detail);
       }
       setError(errorMessage);
       setAccessToken(null);
@@ -140,7 +148,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
         console.error("AuthProvider: Registration failed:", err);
         let errorMessage = "Registration failed. Please try again.";
         if (err instanceof AxiosError && err.response?.data?.detail) {
-          errorMessage = typeof err.response.data.detail === "string" ? err.response.data.detail : "An unexpected error occurred.";
+          errorMessage =
+            typeof err.response.data.detail === "string"
+              ? err.response.data.detail
+              : "An unexpected error occurred.";
         }
         setError(errorMessage);
         throw err;
@@ -159,7 +170,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
         await authService.logoutUser();
       }
     } catch (err: unknown) {
-      console.error("AuthProvider: API Logout failed but proceeding with client-side logout:", err);
+      console.error(
+        "AuthProvider: API Logout failed but proceeding with client-side logout:",
+        err,
+      );
     } finally {
       setAccessToken(null);
       setUser(null);
@@ -178,10 +192,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
     register,
     logout,
     clearError,
-    checkSetupStatus
+    checkSetupStatus,
   };
 
   return (
-    <AuthContext.Provider value= { contextValue } > { children } </AuthContext.Provider>
+    <AuthContext.Provider value={contextValue}>
+      {" "}
+      {children}{" "}
+    </AuthContext.Provider>
   );
 };
