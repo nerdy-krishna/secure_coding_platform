@@ -151,8 +151,10 @@ while true; do
             if [ "$choice" = "1" ]; then
                 break
             elif [ "$choice" = "0" ]; then
-                if [ "$DEPLOYMENT_TYPE" = "local" ] || [ "$SSL_ENABLED" = "false" ]; then
+                if [ "$DEPLOYMENT_TYPE" = "local" ]; then
                     STATE=1
+                elif [ "$SSL_ENABLED" = "false" ]; then
+                    STATE=2
                 else
                     STATE=3
                 fi

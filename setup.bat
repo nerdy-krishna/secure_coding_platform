@@ -59,41 +59,122 @@ if not exist .env (
 )
 echo.
 
-:: 2.5 Deployment Configuration Prompt
-echo [*] Deployment Configuration
-set /p DEPLOYMENT_TYPE="Are you deploying this locally for testing or on a cloud server? (local/cloud) "
+:: 2.5 Deployment Configuration Options
+echo [*] Deployment Configuration Options:
+
+set DEPLOYMENT_TYPE=
+set SSL_ENABLED=false
+set SSL_DOMAIN=
+
+:STATE_1
 echo.
+echo Select Deployment Environment:
+echo   1) Local (Testing/Development)
+echo   2) Cloud (Production Server)
+echo   0) Exit Setup
+set /p CHOICE="Your choice (1/2/0): "
+if "%CHOICE%"=="1" (
+    set DEPLOYMENT_TYPE=local
+    set SSL_ENABLED=false
+    goto STATE_4
+)
+if "%CHOICE%"=="2" (
+    set DEPLOYMENT_TYPE=cloud
+    goto STATE_2
+)
+if "%CHOICE%"=="0" (
+    echo Setup cancelled.
+    exit /b 0
+)
+echo Invalid choice. Please enter 1, 2, or 0.
+goto STATE_1
+
+:STATE_2
+echo.
+echo Would you like to auto-provision a free Let's Encrypt SSL Certificate?
+echo   1) Yes (I have a valid domain pointing to this server's IP)
+echo   2) No (I will access via IP or configure SSL manually)
+echo   0) Go Back
+set /p CHOICE="Your choice (1/2/0): "
+if "%CHOICE%"=="1" (
+    set SSL_ENABLED=true
+    goto STATE_3
+)
+if "%CHOICE%"=="2" (
+    set SSL_ENABLED=false
+    goto STATE_4
+)
+if "%CHOICE%"=="0" (
+    goto STATE_1
+)
+echo Invalid choice. Please enter 1, 2, or 0.
+goto STATE_2
+
+:STATE_3
+echo.
+set /p CHOICE="Please enter your domain name/IP (e.g., app.yourdomain.com) [or type '0' to go back]: "
+if "%CHOICE%"=="0" (
+    goto STATE_2
+)
+if "%CHOICE%"=="" (
+    echo Domain cannot be blank. Please provide a valid domain or IP.
+    goto STATE_3
+)
+set SSL_DOMAIN=%CHOICE%
+goto STATE_4
+
+:STATE_4
+echo.
+echo Please confirm your configuration:
+echo -----------------------------------
+if "%DEPLOYMENT_TYPE%"=="local" (
+    echo Environment: Local Testing
+    echo SSL Mode:    Disabled ^(Port 80^)
+) else (
+    echo Environment: Cloud Deployment
+    if "%SSL_ENABLED%"=="true" (
+        echo SSL Mode:    Enabled via Let's Encrypt
+        echo Domain:      %SSL_DOMAIN%
+    ) else (
+        echo SSL Mode:    Disabled ^(Port 80 via IP^)
+    )
+)
+echo -----------------------------------
+echo   1) Proceed with Setup
+echo   0) Go Back to change settings
+set /p CHOICE="Your choice (1/0): "
+
+if "%CHOICE%"=="1" (
+    goto SAVE_CONFIG
+)
+if "%CHOICE%"=="0" (
+    if "%DEPLOYMENT_TYPE%"=="local" (
+        goto STATE_1
+    )
+    if "%SSL_ENABLED%"=="false" (
+        goto STATE_2
+    )
+    goto STATE_3
+)
+echo Invalid choice. Please enter 1 or 0.
+goto STATE_4
+
+:SAVE_CONFIG
+echo.
+echo [*] Saving Configuration...
 
 :: Always save deployment type
 powershell -Command "(Get-Content .env) -replace '^DEPLOYMENT_TYPE=.*', '' | Set-Content .env"
 echo DEPLOYMENT_TYPE=%DEPLOYMENT_TYPE%>> .env
 
-set ENABLE_SSL=N
-if /i "%DEPLOYMENT_TYPE%"=="cloud" (
-    set /p ENABLE_SSL="Would you like to auto-provision a free SSL Certificate for a custom domain? (y/n) "
-    echo.
-)
+powershell -Command "(Get-Content .env) -replace '^SSL_ENABLED=.*', '' | Set-Content .env"
+echo SSL_ENABLED=%SSL_ENABLED%>> .env
 
-if /i "%ENABLE_SSL%"=="y" (
-    set /p SSL_DOMAIN="Please enter your domain name (e.g., secure.nerdykrishna.com): "
-    
-    powershell -Command "(Get-Content .env) -replace '^SSL_ENABLED=.*', '' | Set-Content .env"
-    echo SSL_ENABLED=true>> .env
-    
-    powershell -Command "(Get-Content .env) -replace '^SSL_DOMAIN=.*', '' | Set-Content .env"
-    call echo SSL_DOMAIN=%%SSL_DOMAIN%%>> .env
-    
-    call echo [+] SSL configuration saved. The UI container will request a certificate for %%SSL_DOMAIN%% on boot.
-) else (
-    powershell -Command "(Get-Content .env) -replace '^SSL_ENABLED=.*', '' | Set-Content .env"
-    echo SSL_ENABLED=false>> .env
-    
-    if /i "%DEPLOYMENT_TYPE%"=="cloud" (
-        echo [-] SSL skipped. The application will be accessible via IP address on HTTP (Port 80).
-    ) else (
-        echo [-] Local deployment selected. SSL skipped. The application will run on HTTP (Port 80) only.
-    )
+powershell -Command "(Get-Content .env) -replace '^SSL_DOMAIN=.*', '' | Set-Content .env"
+if not "%SSL_DOMAIN%"=="" (
+    echo SSL_DOMAIN=%SSL_DOMAIN%>> .env
 )
+echo [+] Configuration saved.
 echo.
 
 :: 3. Docker Build and Launch
