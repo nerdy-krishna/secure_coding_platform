@@ -81,17 +81,17 @@ ENCRYPTION_KEY=your-super-secret-generated-key-goes-here
 
 ---
 
-## 🤖 LLM Provider Configuration (Major Change)
+## 🤖 Dynamic UI Configuration (Major Change)
 
-> **LLM API keys are no longer configured via the `.env` file.**
+> **LLM API keys and SMTP Settings are no longer configured via the `.env` file.**
 
-The platform now includes a secure **dynamic LLM configuration UI**.
+The platform now includes a secure **Admin Dashboard** for dynamic configuration.
 
-After launching the app and logging in as a **superuser**, you can:
+After launching the app and logging in as a **superuser** (the first configured user), navigate to the Admin interface to:
 
-- Add/remove LLM providers (e.g., OpenAI, Google, Anthropic)
-- Enter API keys securely (encrypted with your `ENCRYPTION_KEY`)
-- Manage model-specific settings
+- Add/remove LLM providers (e.g., OpenAI, Google, Anthropic) and securely enter API keys (encrypted with your `ENCRYPTION_KEY`).
+- Configure **SMTP Settings** for sending email notifications and password resets.
+- Manage **System Settings** such as log verbosity and database cleanup policies.
 
 This approach ensures greater **security** and **flexibility** — and keeps secrets out of source-controlled config files.
 

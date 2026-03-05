@@ -34,11 +34,16 @@ The easiest way to get started is by using the automated setup script. This scri
     cd secure_coding_platform
     ```
 
-2.  **Run the Setup Script**:
+2.  **Run the Interactive Setup Script**:
     ```bash
     chmod +x setup.sh
     ./setup.sh
     ```
+    *   The setup script is fully interactive with backward travel options. It will guide you through:
+        *   Checking prerequisites.
+        *   Prompting for your Domain or IP.
+        *   Allowing you to automatically provision Let's Encrypt SSL via a specialized container.
+        *   Handling initial Docker and database setup.
 
 ### Windows
 
@@ -48,13 +53,14 @@ The easiest way to get started is by using the automated setup script. This scri
     cd secure_coding_platform
     ```
 
-2.  **Run the Setup Script**:
+2.  **Run the Interactive Setup Script**:
     Double-click `setup.bat` or run it from the command line:
     ```cmd
     setup.bat
     ```
+    *   Like the bash script, the Windows setup handles configuration interactively with validations and backward navigation, before initializing Docker and the database.
 
-Once the script completes, you will see a "Setup Complete!" message with the URLs for the application and Grafana.
+Once the script completes, you will see a dynamic "Setup Complete!" message with the correct HTTP/HTTPS URLs for the application and Grafana depending on your choices.
 
 ---
 

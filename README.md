@@ -48,8 +48,11 @@ For detailed manual installation instructions, please refer to the [Installation
 
 ## Getting Started
 
-1.  **Register**: Create an account on the platform.
-2.  **Configure LLMs**: Navigate to **Admin > LLM Settings** to add your LLM provider configurations. This step requires superuser privileges and must be completed before running a scan. You will need to provide your API key, select the model, and set the token costs.
-3.  **Submit Code**: Once the LLMs are configured, go to the "Submit Code" page.
+1.  **Register**: Create an account on the platform (the first user registered becomes the Superuser).
+2.  **Configure Platform via UI**: Navigate to the **Admin Dashboard** (available to the superuser). Here you must configure:
+    *   **LLM Settings**: Add your API keys, select models, and set token costs for providers like OpenAI, Google, or Anthropic.
+    *   **SMTP Settings**: Configure your email server for notifications and password resets.
+    *   **System Settings**: Manage general application configurations.
+3.  **Submit Code**: Once configured, go to the "Submit Code" page.
 4.  **Analyze**: Choose your submission method, select from the configured AI models, and start the analysis.
 5.  **Approve & Review**: Follow the on-screen prompts to approve the cost and review your report.
