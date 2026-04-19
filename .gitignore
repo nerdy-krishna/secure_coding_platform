@@ -170,8 +170,8 @@ fluentd/buffer/
 *.pos
 .agent/
 *.txt
+*.patch
+cookies.txt
 debug_*.py
 check_chroma_count.py
 trigger_chat.py
-stuck_scan_logs.txt
-backend_logs.txt

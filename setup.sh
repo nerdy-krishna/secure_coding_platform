@@ -41,21 +41,18 @@ if [ ! -f .env ]; then
     ENCRYPTION_KEY=$(python3 scripts/generate_secrets.py fernet)
     POSTGRES_PASSWORD=$(python3 scripts/generate_secrets.py random)
     RABBITMQ_DEFAULT_PASS=$(python3 scripts/generate_secrets.py random)
-    OPENSEARCH_INITIAL_ADMIN_PASSWORD=$(python3 scripts/generate_secrets.py random)
-    
+
     # Use sed based on OS (macOS sed requires empty extension for -i)
     if [[ "$OSTYPE" == "darwin"* ]]; then
         sed -i '' "s/SECRET_KEY=supersecretkey1234567890/SECRET_KEY=$SECRET_KEY/" .env
         sed -i '' "s/ENCRYPTION_KEY=.*$/ENCRYPTION_KEY=$ENCRYPTION_KEY/" .env
         sed -i '' "s/POSTGRES_PASSWORD=postgres/POSTGRES_PASSWORD=$POSTGRES_PASSWORD/" .env
         sed -i '' "s/RABBITMQ_DEFAULT_PASS=password/RABBITMQ_DEFAULT_PASS=$RABBITMQ_DEFAULT_PASS/" .env
-        sed -i '' "s/OPENSEARCH_INITIAL_ADMIN_PASSWORD=StrongPassword123!/OPENSEARCH_INITIAL_ADMIN_PASSWORD=$OPENSEARCH_INITIAL_ADMIN_PASSWORD/" .env
     else
         sed -i "s/SECRET_KEY=supersecretkey1234567890/SECRET_KEY=$SECRET_KEY/" .env
         sed -i "s/ENCRYPTION_KEY=.*$/ENCRYPTION_KEY=$ENCRYPTION_KEY/" .env
         sed -i "s/POSTGRES_PASSWORD=postgres/POSTGRES_PASSWORD=$POSTGRES_PASSWORD/" .env
         sed -i "s/RABBITMQ_DEFAULT_PASS=password/RABBITMQ_DEFAULT_PASS=$RABBITMQ_DEFAULT_PASS/" .env
-        sed -i "s/OPENSEARCH_INITIAL_ADMIN_PASSWORD=StrongPassword123!/OPENSEARCH_INITIAL_ADMIN_PASSWORD=$OPENSEARCH_INITIAL_ADMIN_PASSWORD/" .env
     fi
     
     echo "[+] .env created and configured with new secrets."

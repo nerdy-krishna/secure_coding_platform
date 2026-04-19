@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 
 from app.infrastructure.database import models as db_models
 from app.core import schemas as agent_schemas
+from app.shared.lib.scan_status import STATUS_QUEUED
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +61,7 @@ class ScanRepository:
             project_id=project_id,
             user_id=user_id,
             scan_type=scan_type,
-            status="QUEUED",
+            status=STATUS_QUEUED,
             utility_llm_config_id=utility_llm_config_id,
             fast_llm_config_id=fast_llm_config_id,
             reasoning_llm_config_id=reasoning_llm_config_id,

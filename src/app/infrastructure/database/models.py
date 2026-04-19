@@ -18,6 +18,8 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from fastapi_users.db import SQLAlchemyBaseUserTable
+
+from app.shared.lib.scan_status import STATUS_QUEUED
 from app.infrastructure.database.database import Base
 
 
@@ -67,7 +69,9 @@ class Scan(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), nullable=False)
     parent_scan_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("scans.id"))
     scan_type: Mapped[str] = mapped_column(String(50), nullable=False)
-    status: Mapped[str] = mapped_column(String(50), nullable=False, default="QUEUED")
+    status: Mapped[str] = mapped_column(
+        String(50), nullable=False, default=STATUS_QUEUED
+    )
     utility_llm_config_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey("llm_configurations.id")
     )

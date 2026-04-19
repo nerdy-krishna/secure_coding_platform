@@ -44,14 +44,12 @@ if not exist .env (
     for /f "delims=" %%i in ('python scripts/generate_secrets.py fernet') do set ENCRYPTION_KEY=%%i
     for /f "delims=" %%i in ('python scripts/generate_secrets.py random') do set POSTGRES_PASSWORD=%%i
     for /f "delims=" %%i in ('python scripts/generate_secrets.py random') do set RABBITMQ_DEFAULT_PASS=%%i
-    for /f "delims=" %%i in ('python scripts/generate_secrets.py random') do set OPENSEARCH_INITIAL_ADMIN_PASSWORD=%%i
 
     :: PowerShell is easiest for replacement on Windows without external tools like sed
     powershell -Command "(Get-Content .env) -replace 'SECRET_KEY=supersecretkey1234567890', 'SECRET_KEY=%SECRET_KEY%' | Set-Content .env"
     powershell -Command "(Get-Content .env) -replace 'ENCRYPTION_KEY=.*', 'ENCRYPTION_KEY=%ENCRYPTION_KEY%' | Set-Content .env"
     powershell -Command "(Get-Content .env) -replace 'POSTGRES_PASSWORD=postgres', 'POSTGRES_PASSWORD=%POSTGRES_PASSWORD%' | Set-Content .env"
     powershell -Command "(Get-Content .env) -replace 'RABBITMQ_DEFAULT_PASS=password', 'RABBITMQ_DEFAULT_PASS=%RABBITMQ_DEFAULT_PASS%' | Set-Content .env"
-    powershell -Command "(Get-Content .env) -replace 'OPENSEARCH_INITIAL_ADMIN_PASSWORD=StrongPassword123!', 'OPENSEARCH_INITIAL_ADMIN_PASSWORD=%OPENSEARCH_INITIAL_ADMIN_PASSWORD%' | Set-Content .env"
     
     echo [+] .env created and configured with new secrets.
 ) else (
