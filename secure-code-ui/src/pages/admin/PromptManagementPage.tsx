@@ -17,6 +17,7 @@ import {
   Select,
   Space,
   Table,
+  Tag,
   Typography,
   message,
 } from "antd";
@@ -34,6 +35,11 @@ const { Paragraph, Title } = Typography;
 const { Option } = Select;
 
 const PROMPT_TEMPLATE_TYPES = ["QUICK_AUDIT", "DETAILED_REMEDIATION", "CHAT"];
+
+const PROMPT_VARIANTS: { value: "generic" | "anthropic"; label: string }[] = [
+  { value: "generic", label: "Generic (multi-provider)" },
+  { value: "anthropic", label: "Anthropic optimized" },
+];
 
 const PromptManagementPage: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -138,6 +144,21 @@ const PromptManagementPage: React.FC = () => {
     },
     { title: "Associated Agent", dataIndex: "agent_name", key: "agent_name" },
     {
+      title: "Variant",
+      dataIndex: "variant",
+      key: "variant",
+      render: (variant: string) => (
+        <Tag color={variant === "anthropic" ? "purple" : "default"}>
+          {variant === "anthropic" ? "Anthropic" : "Generic"}
+        </Tag>
+      ),
+      filters: [
+        { text: "Generic", value: "generic" },
+        { text: "Anthropic", value: "anthropic" },
+      ],
+      onFilter: (value, record) => record.variant === value,
+    },
+    {
       title: "Version",
       dataIndex: "version",
       key: "version",
@@ -211,7 +232,7 @@ const PromptManagementPage: React.FC = () => {
           form={form}
           layout="vertical"
           name="prompt_template_form"
-          initialValues={{ version: 1 }}
+          initialValues={{ version: 1, variant: "generic" }}
         >
           <Form.Item
             name="name"
@@ -247,6 +268,20 @@ const PromptManagementPage: React.FC = () => {
                 <Option key={agent.id} value={agent.name}>
                   {" "}
                   {agent.name}{" "}
+                </Option>
+              ))}
+            </Select>
+          </Form.Item>
+          <Form.Item
+            name="variant"
+            label="Variant"
+            tooltip="Generic works across all providers. Anthropic-tuned variants can use cache-friendly prefixes and Claude-specific phrasing; the runtime picks by the active LLM optimization mode and falls back to 'generic' if the tuned variant is missing."
+            rules={[{ required: true, message: "Please select a variant." }]}
+          >
+            <Select>
+              {PROMPT_VARIANTS.map((v) => (
+                <Option key={v.value} value={v.value}>
+                  {v.label}
                 </Option>
               ))}
             </Select>

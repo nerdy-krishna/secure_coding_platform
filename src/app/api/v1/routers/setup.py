@@ -53,7 +53,19 @@ async def perform_setup(
     )
     await user_manager.create(user_create, safe=False)
 
-    # 2. Configure LLM
+    # 2. Validate mode/provider compatibility and configure LLM.
+    if (
+        request.llm_optimization_mode == "anthropic_optimized"
+        and request.llm_provider.lower() != "anthropic"
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "LLM optimization mode 'anthropic_optimized' requires "
+                "llm_provider='anthropic'. Pick a different mode or provider."
+            ),
+        )
+
     try:
         llm_create = api_models.LLMConfigurationCreate(
             name="Default Configuration",
@@ -102,10 +114,21 @@ async def perform_setup(
     )
     await sys_conf_repo.set_value(log_level_create)
     
+    # Save LLM optimization mode
+    llm_mode_create = api_models.SystemConfigurationCreate(
+        key="llm.optimization_mode",
+        value={"mode": request.llm_optimization_mode},
+        description="Active LLM optimization mode (anthropic_optimized | multi_provider).",
+        is_secret=False,
+        encrypted=False,
+    )
+    await sys_conf_repo.set_value(llm_mode_create)
+
     # Update Runtime Config
     from app.core.config_cache import SystemConfigCache
-    
+
     SystemConfigCache.set_cors_enabled(cors_enabled)
+    SystemConfigCache.set_llm_mode(request.llm_optimization_mode)
     update_logging_level("INFO")
 
     if allowed_origins:

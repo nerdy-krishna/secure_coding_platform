@@ -142,6 +142,21 @@ async def lifespan(app: FastAPI):
                      SystemConfigCache.set_smtp_config(None)
                      logger.info("No SMTP configuration found in DB.")
 
+                # Load LLM optimization mode from DB
+                llm_mode_config = await repo.get_by_key("llm.optimization_mode")
+                if llm_mode_config and llm_mode_config.value:
+                    raw = llm_mode_config.value
+                    mode_str = (
+                        raw.get("mode") if isinstance(raw, dict) else str(raw)
+                    )
+                    SystemConfigCache.set_llm_mode(mode_str or "")
+                    logger.info(f"LLM optimization mode: {SystemConfigCache.get_llm_mode()}")
+                else:
+                    logger.info(
+                        f"No LLM optimization mode configured; defaulting to "
+                        f"{SystemConfigCache.get_llm_mode()}."
+                    )
+
             else:
                 logger.info("Setup not completed. Allowing all origins for setup mode.")
                 SystemConfigCache.set_cors_enabled(True) # Enable CORS for setup

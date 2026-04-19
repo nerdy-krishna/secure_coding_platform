@@ -51,7 +51,12 @@ from app.shared.lib import cost_estimation
 logger = logging.getLogger(__name__)
 
 CONCURRENT_LLM_LIMIT = 5
-CHUNK_TOKEN_THRESHOLD = 4000
+# Files under this token size are passed whole to the analysis agents; only
+# truly huge files (lockfiles, generated bundles, etc.) fall through to the
+# semantic chunker. With 200k-context models + Anthropic prompt caching this
+# is almost always cheaper than chunking, since chunking re-sends the same
+# guidelines / dependency context per chunk.
+CHUNK_ONLY_IF_LARGER_THAN = 150_000
 
 # --- Status Constants ---
 # Re-exported from the shared module so downstream callers can continue to
@@ -510,7 +515,7 @@ async def estimate_cost_node(state: WorkerState) -> Dict[str, Any]:
                 continue
 
             chunks: List[CodeChunk] = []
-            if (len(file_content) / 4) > CHUNK_TOKEN_THRESHOLD:
+            if (len(file_content) / 4) > CHUNK_ONLY_IF_LARGER_THAN:
                 chunks = semantic_chunker(file_content, file_summary)
             else:
                 chunks = [
@@ -759,7 +764,7 @@ async def dependency_aware_analysis_orchestrator(state: WorkerState) -> Dict[str
                 continue
 
             token_count = len(file_content) / 4
-            is_large_file = token_count > CHUNK_TOKEN_THRESHOLD
+            is_large_file = token_count > CHUNK_ONLY_IF_LARGER_THAN
 
             chunks: List[CodeChunk] = []
             if is_large_file:

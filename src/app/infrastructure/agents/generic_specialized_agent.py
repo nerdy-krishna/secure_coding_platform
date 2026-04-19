@@ -13,6 +13,7 @@ from app.infrastructure.database.repositories.prompt_template_repo import (
 from app.infrastructure.database import AsyncSessionLocal
 from app.infrastructure.llm_client import get_llm_client, LLMClient
 from app.infrastructure.rag.rag_client import get_rag_service
+from app.core.config_cache import SystemConfigCache
 from app.core.schemas import (
     SpecializedAgentState,
     LLMInteraction,
@@ -22,6 +23,59 @@ from app.core.schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Placeholder inserted in place of `{code_bundle}` when rendering the template,
+# used to split the rendered text into a stable prefix (cacheable) and a
+# variable suffix (the file-specific code bundle, not cacheable).
+_CODE_BUNDLE_MARKER = "\x00<<<CODE_BUNDLE_PLACEHOLDER>>>\x00"
+
+
+def _split_template_around_code_bundle(
+    template_text: str,
+    domain_scoping_instruction: str,
+    vulnerability_patterns_str: str,
+    secure_patterns_str: str,
+    code_bundle: str,
+) -> tuple[Optional[str], str]:
+    """Renders the prompt template and splits it around the code_bundle.
+
+    Returns (system_prompt, user_prompt):
+    - system_prompt: domain instruction + leading template text (stable across
+      files within a scan for this agent). None if the template doesn't
+      contain a `{code_bundle}` placeholder (fallback to single-string mode).
+    - user_prompt: the code bundle plus any trailing template text.
+    """
+    try:
+        rendered = template_text.format(
+            vulnerability_patterns=vulnerability_patterns_str,
+            secure_patterns=secure_patterns_str,
+            code_bundle=_CODE_BUNDLE_MARKER,
+        )
+    except (KeyError, IndexError) as e:
+        logger.warning(
+            f"Template formatting failed ({e}); falling back to single-string prompt."
+        )
+        combined = (
+            f"{domain_scoping_instruction}\n\n"
+            + template_text.format(
+                vulnerability_patterns=vulnerability_patterns_str,
+                secure_patterns=secure_patterns_str,
+                code_bundle=code_bundle,
+            )
+        )
+        return None, combined
+
+    parts = rendered.split(_CODE_BUNDLE_MARKER, 1)
+    if len(parts) != 2:
+        # Template didn't include {code_bundle} — nothing to split on.
+        combined = f"{domain_scoping_instruction}\n\n{rendered.replace(_CODE_BUNDLE_MARKER, code_bundle)}"
+        return None, combined
+
+    prefix, suffix = parts
+    system_prompt = f"{domain_scoping_instruction}\n\n{prefix}".rstrip()
+    user_prompt = f"{code_bundle}{suffix}".lstrip()
+    return system_prompt, user_prompt
+
 
 # --- Pydantic models for structured LLM responses ---
 
@@ -288,10 +342,13 @@ async def analysis_node(
         else "No specific secure patterns found."
     )
 
+    # Pick the prompt variant matching the active LLM optimization mode.
+    # Falls back to 'generic' inside the repo if no matching variant exists.
+    variant = "anthropic" if SystemConfigCache.is_anthropic_optimized() else "generic"
     async with AsyncSessionLocal() as db:
         prompt_repo = PromptTemplateRepository(db)
         prompt_template = await prompt_repo.get_template_by_name_and_type(
-            agent_name, template_type
+            agent_name, template_type, variant=variant
         )
 
     if not prompt_template:
@@ -301,16 +358,23 @@ async def analysis_node(
 
     domain_scoping_instruction = f"You are an expert security auditor specializing in the following domain: '{agent_description}'. Your sole focus is on vulnerabilities related to this domain. Do not report findings outside of this specific scope. IMPORTANT: If you suggest a fix, the 'fix' code MUST be different from the original code. Do not return a 'fix' that is identical to the source. If the provided code snippet lacks sufficient context to confidently identify a vulnerability or generate a correct fix, skip it rather than guessing. PRESERVE COMMENTS: When generating a fix, you MUST preserve all existing comments unless they pose a security risk. SCAN COMMENTS: Pay special attention to comments for hardcoded secrets, TODOs indicating security flaws, or sensitive data - these SHOULD be reported."
 
-    prompt_text = (
-        f"{domain_scoping_instruction}\n\n"
-        + prompt_template.template_text.format(
-            vulnerability_patterns=vulnerability_patterns_str,
-            secure_patterns=secure_patterns_str,
-            code_bundle=code_bundle,
-        )
+    # Split the prompt into a stable prefix (domain instruction + RAG patterns
+    # + template header) and a variable suffix (the per-file code bundle +
+    # template footer). The prefix is cacheable; on Anthropic, LLMClient
+    # wraps it in a cache_control="ephemeral" SystemMessage so repeated
+    # agent-per-file calls within a scan hit the prompt cache.
+    system_prompt, user_prompt = _split_template_around_code_bundle(
+        template_text=prompt_template.template_text,
+        domain_scoping_instruction=domain_scoping_instruction,
+        vulnerability_patterns_str=vulnerability_patterns_str,
+        secure_patterns_str=secure_patterns_str,
+        code_bundle=code_bundle,
     )
 
-    logger.debug(f"[{agent_name}] Final prompt_text:\n{prompt_text}")
+    logger.debug(
+        f"[{agent_name}] Cacheable prefix length: {len(system_prompt) if system_prompt else 0}; "
+        f"variable suffix length: {len(user_prompt)}"
+    )
 
     llm_config_id = state.get("llm_config_id")
     if not llm_config_id:
@@ -321,7 +385,9 @@ async def analysis_node(
         return {"error": f"[{agent_name}] Failed to initialize LLM client."}
 
     llm_response = await llm_client.generate_structured_output(
-        prompt_text, response_model
+        prompt=user_prompt,
+        response_model=response_model,
+        system_prompt=system_prompt,
     )
 
     # ... logging logic ...
