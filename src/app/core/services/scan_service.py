@@ -223,17 +223,42 @@ class SubmissionService:
                 detail=f"Scan is not pending approval. Current status: {scan.status}",
             )
 
+        # Persist an outbox row so the approval message is retried even if
+        # RabbitMQ is momentarily unavailable. Same guarantee as the initial
+        # submission flow in _process_and_launch_scan.
+        #
+        # NOTE (Phase D.2 follow-up): a future refactor should express this
+        # pause/resume via LangGraph's interrupt() + Command(resume=...)
+        # primitives so the contract lives in the graph definition rather
+        # than the DB status check in should_estimate_cost_or_run. Deferred
+        # because it needs end-to-end verification this session can't provide.
         await self.repo.update_status(scan_id, STATUS_QUEUED_FOR_SCAN)
         await self.repo.create_scan_event(
             scan_id=scan_id, stage_name="QUEUED_FOR_SCAN", status="COMPLETED"
         )
-        await publish_message(
+        approval_payload = {"scan_id": str(scan_id), "action": "resume_analysis"}
+        outbox_row = await self.outbox.enqueue(
+            scan_id=scan_id,
+            queue_name=settings.RABBITMQ_APPROVAL_QUEUE,
+            payload=approval_payload,
+        )
+        published = await publish_message(
             settings.RABBITMQ_APPROVAL_QUEUE,
-            {"scan_id": str(scan_id), "action": "resume_analysis"},
+            approval_payload,
         )
-        logger.info(
-            "Scan approved and queued for processing.", extra={"scan_id": str(scan_id)}
-        )
+        if published:
+            await self.outbox.mark_published(outbox_row.id)
+            logger.info(
+                "Scan approved and queued for processing.",
+                extra={"scan_id": str(scan_id)},
+            )
+        else:
+            await self.outbox.record_failed_attempt(outbox_row.id)
+            logger.warning(
+                "Approval enqueued to outbox but RabbitMQ publish failed; "
+                "sweeper will retry.",
+                extra={"scan_id": str(scan_id)},
+            )
 
     async def cancel_scan(self, scan_id: uuid.UUID, user: db_models.User) -> None:
         """Cancels a scan, typically one that is pending approval."""
