@@ -34,8 +34,8 @@ We provide automated scripts to set up the environment, build containers, and in
 
 **macOS / Linux:**
 ```bash
-git clone https://github.com/nerdy-krishna/secure_coding_platform.git
-cd secure_coding_platform
+git clone https://github.com/nerdy-krishna/ai-secure-coding-compliance-platform.git
+cd ai-secure-coding-compliance-platform
 chmod +x setup.sh
 ./setup.sh
 ```
