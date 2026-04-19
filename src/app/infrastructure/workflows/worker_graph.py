@@ -54,14 +54,20 @@ CONCURRENT_LLM_LIMIT = 5
 CHUNK_TOKEN_THRESHOLD = 4000
 
 # --- Status Constants ---
-STATUS_PENDING_APPROVAL = "PENDING_COST_APPROVAL"
-STATUS_QUEUED = "QUEUED"
-STATUS_QUEUED_FOR_SCAN = "QUEUED_FOR_SCAN"
-STATUS_ANALYZING_CONTEXT = "ANALYZING_CONTEXT"
-STATUS_RUNNING_AGENTS = "RUNNING_AGENTS"
-STATUS_GENERATING_REPORTS = "GENERATING_REPORTS"
-STATUS_REMEDIATION_COMPLETED = "REMEDIATION_COMPLETED"
-STATUS_COMPLETED = "COMPLETED"
+# Re-exported from the shared module so downstream callers can continue to
+# import them from worker_graph if they already do, while the canonical
+# definitions live in app.shared.lib.scan_status.
+from app.shared.lib.scan_status import (  # noqa: E402
+    STATUS_ANALYZING_CONTEXT,
+    STATUS_COMPLETED,
+    STATUS_FAILED,
+    STATUS_GENERATING_REPORTS,
+    STATUS_PENDING_APPROVAL,
+    STATUS_QUEUED,
+    STATUS_QUEUED_FOR_SCAN,
+    STATUS_REMEDIATION_COMPLETED,
+    STATUS_RUNNING_AGENTS,
+)
 
 
 class RelevantAgent(TypedDict):
@@ -1141,9 +1147,9 @@ def should_estimate_cost_or_run(state: WorkerState) -> str:
     # This value is fetched from the DB in the first step
     status = state.get("current_scan_status")
     logger.info(f"DEBUG: should_estimate_cost_or_run routing with status='{status}'")
-    if status == "QUEUED":
+    if status == STATUS_QUEUED:
         return "estimate_cost"
-    elif status in ("QUEUED_FOR_SCAN", "PENDING_COST_APPROVAL"):
+    elif status in (STATUS_QUEUED_FOR_SCAN, STATUS_PENDING_APPROVAL):
         # PENDING_COST_APPROVAL is accepted as a fallback in case the worker
         # picks up the message before the DB status update commits.
         return "run_analysis"

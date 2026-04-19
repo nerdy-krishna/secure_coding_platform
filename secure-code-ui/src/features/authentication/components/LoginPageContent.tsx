@@ -43,14 +43,8 @@ const LoginPageContent: React.FC = () => {
     }
   };
 
-  interface AntDValidationError {
-    values: UserLoginData;
-    errorFields: { name: (string | number)[]; errors: string[] }[];
-    outOfDate: boolean;
-  }
-
-  const onFinishFailed = (errorInfo: AntDValidationError) => {
-    console.log("LoginPage: Form validation failed:", errorInfo);
+  const onFinishFailed = () => {
+    // Ant Design surfaces field-level validation errors inline on the Form.
   };
 
   return (

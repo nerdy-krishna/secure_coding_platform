@@ -104,8 +104,8 @@ const AgentManagementPage: React.FC = () => {
       } else {
         createMutation.mutate(values as AgentCreate);
       }
-    } catch (info) {
-      console.log("Validate Failed:", info);
+    } catch {
+      // Ant Design Form surfaces validation errors inline; no further handling needed.
     }
   };
 

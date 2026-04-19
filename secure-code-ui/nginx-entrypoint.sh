@@ -2,7 +2,12 @@
 
 DOMAIN="${SSL_DOMAIN}"
 ENABLED="${SSL_ENABLED:-false}"
-EMAIL="admin@secure.nerdykrishna.com"
+EMAIL="${SSL_EMAIL:-admin@${SSL_DOMAIN:-localhost}}"
+
+# Helper: render nginx-https.conf by substituting __SSL_DOMAIN__ with the real domain.
+render_https_conf() {
+    sed "s|__SSL_DOMAIN__|${DOMAIN}|g" /etc/nginx/nginx-https.conf > /etc/nginx/conf.d/default.conf
+}
 
 # 1. Skip SSL Process if Disabled
 if [ "$ENABLED" != "true" ]; then
@@ -43,7 +48,7 @@ if [ ! -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
     
     if [ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
         echo "Certificate successfully generated! Switching to HTTPS configuration."
-        cp /etc/nginx/nginx-https.conf /etc/nginx/conf.d/default.conf
+        render_https_conf
     else
         echo "WARNING: Failed to retrieve certificate for $DOMAIN. Falling back to HTTP-only mode."
         echo "Note: If running locally or without DNS configured, this is expected."
@@ -51,7 +56,7 @@ if [ ! -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
     fi
 else
     echo "SSL certificate found! Booting directly in HTTPS mode."
-    cp /etc/nginx/nginx-https.conf /etc/nginx/conf.d/default.conf
+    render_https_conf
 fi
 
 # Start a background process for certbot renewal (checks twice daily as recommended)

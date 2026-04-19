@@ -83,8 +83,6 @@ const DashboardLayout: React.FC<{ children?: React.ReactNode }> = ({
       return "framework_management_nav";
     if (pathname.startsWith("/admin/prompts")) return "prompt_management_nav";
     if (pathname.startsWith("/admin/rag")) return "rag_management_nav";
-    if (pathname.startsWith("/account/profile")) return "user_profile_nav";
-    if (pathname.startsWith("/account/settings")) return "user_settings_nav";
     return "";
   };
 

@@ -17,6 +17,15 @@ from app.shared.lib.reporting import (
     create_executive_summary_html,
     generate_pdf_from_html,
 )
+from app.shared.lib.scan_status import (
+    ACTIVE_SCAN_STATUSES,
+    COMPLETED_SCAN_STATUSES,
+    STATUS_CANCELLED,
+    STATUS_COMPLETED,
+    STATUS_PENDING_APPROVAL,
+    STATUS_QUEUED_FOR_SCAN,
+    STATUS_REMEDIATION_COMPLETED,
+)
 from itertools import groupby
 from operator import attrgetter
 
@@ -185,13 +194,13 @@ class SubmissionService:
             raise HTTPException(
                 status_code=403, detail="Not authorized to approve this scan"
             )
-        if scan.status != "PENDING_COST_APPROVAL":
+        if scan.status != STATUS_PENDING_APPROVAL:
             raise HTTPException(
                 status_code=400,
                 detail=f"Scan is not pending approval. Current status: {scan.status}",
             )
 
-        await self.repo.update_status(scan_id, "QUEUED_FOR_SCAN")
+        await self.repo.update_status(scan_id, STATUS_QUEUED_FOR_SCAN)
         await self.repo.create_scan_event(
             scan_id=scan_id, stage_name="QUEUED_FOR_SCAN", status="COMPLETED"
         )
@@ -213,21 +222,13 @@ class SubmissionService:
                 detail="Scan not found or not authorized.",
             )
 
-        cancellable_statuses = [
-            "QUEUED",
-            "PENDING_COST_APPROVAL",
-            "QUEUED_FOR_SCAN",
-            "ANALYZING_CONTEXT",
-            "RUNNING_AGENTS",
-            "GENERATING_REPORTS",
-        ]
-        if scan.status not in cancellable_statuses:
+        if scan.status not in ACTIVE_SCAN_STATUSES:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Scan cannot be cancelled from its current state: {scan.status}",
             )
 
-        await self.repo.update_status(scan_id, "CANCELLED")
+        await self.repo.update_status(scan_id, STATUS_CANCELLED)
         await self.repo.create_scan_event(
             scan_id=scan.id, stage_name="CANCELLED", status="COMPLETED"
         )
@@ -246,7 +247,7 @@ class SubmissionService:
                 detail="Scan not found or not authorized.",
             )
 
-        if scan.scan_type != "AUDIT_AND_REMEDIATE" or scan.status != "COMPLETED":
+        if scan.scan_type != "AUDIT_AND_REMEDIATE" or scan.status != STATUS_COMPLETED:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Fixes can only be applied to completed 'Audit & Remediate' scans.",
@@ -309,7 +310,7 @@ class SubmissionService:
         await self.repo.create_code_snapshot(
             scan_id=scan.id, file_map=new_file_map, snapshot_type="POST_REMEDIATION"
         )
-        await self.repo.update_status(scan_id, "REMEDIATION_COMPLETED")
+        await self.repo.update_status(scan_id, STATUS_REMEDIATION_COMPLETED)
         logger.info(
             f"All fixes applied for scan {scan_id}. Status set to REMEDIATION_COMPLETED."
         )
@@ -472,15 +473,13 @@ class SubmissionService:
         status_filters = []
         if status:
             if status == "In Progress":
+                # ACTIVE_SCAN_STATUSES includes PENDING_COST_APPROVAL, which the
+                # UI filters out of "In Progress" (it has its own pill), so drop it.
                 status_filters = [
-                    "QUEUED",
-                    "QUEUED_FOR_SCAN",
-                    "ANALYZING_CONTEXT",
-                    "RUNNING_AGENTS",
-                    "GENERATING_REPORTS",
+                    s for s in ACTIVE_SCAN_STATUSES if s != STATUS_PENDING_APPROVAL
                 ]
             elif status == "Completed":
-                status_filters = ["COMPLETED", "REMEDIATION_COMPLETED"]
+                status_filters = list(COMPLETED_SCAN_STATUSES)
             elif status != "All":
                 status_filters = [status.upper().replace(" ", "_")]
 
@@ -704,7 +703,7 @@ class SubmissionService:
         await self.repo.create_code_snapshot(
             scan_id=scan.id, file_map=new_file_map, snapshot_type="POST_REMEDIATION"
         )
-        await self.repo.update_status(scan_id, "REMEDIATION_COMPLETED")
+        await self.repo.update_status(scan_id, STATUS_REMEDIATION_COMPLETED)
         logger.info(
             f"Selective fixes applied for scan {scan_id}. Status set to REMEDIATION_COMPLETED."
         )

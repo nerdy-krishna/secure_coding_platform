@@ -138,8 +138,8 @@ const FrameworkManagementPage: React.FC = () => {
           },
         });
       }
-    } catch (info) {
-      console.log("Validate Failed:", info);
+    } catch {
+      // Ant Design Form surfaces validation errors inline; no further handling needed.
     }
   };
 

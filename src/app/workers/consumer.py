@@ -19,6 +19,7 @@ from app.infrastructure.workflows.worker_graph import (
 )
 from app.config.config import settings
 from app.config.logging_config import LOGGING_CONFIG, correlation_id_var
+from app.shared.lib.scan_status import STATUS_FAILED
 
 from pika.adapters.blocking_connection import BlockingChannel
 from pika.spec import (
@@ -96,7 +97,7 @@ async def run_graph_task_wrapper(initial_state: WorkerState, delivery_tag: int):
 
             async with AsyncSessionLocal() as db:
                 repo = ScanRepository(db)
-                await repo.update_status(scan_id_uuid, "FAILED")
+                await repo.update_status(scan_id_uuid, STATUS_FAILED)
             logger.info(
                 f"ASYNC WRAPPER: Set scan status to FAILED in DB for SID: {scan_id_str_log}"
             )
