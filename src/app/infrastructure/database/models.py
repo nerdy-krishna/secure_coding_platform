@@ -344,8 +344,24 @@ class PromptTemplate(Base):
         String(50), nullable=False, index=True, server_default="QUICK_AUDIT"
     )
     agent_name: Mapped[Optional[str]] = mapped_column(String(100))
+    # "generic" = portable prompt that works across all providers (default).
+    # "anthropic" = prompt tuned for Claude (cache-friendly prefix, tool use,
+    # stronger reasoning instructions). The renderer picks by current
+    # llm.optimization_mode with a fallback to "generic".
+    variant: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default="generic"
+    )
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     template_text: Mapped[str] = mapped_column(Text, nullable=False)
+
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "agent_name",
+            "template_type",
+            "variant",
+            name="uq_prompt_templates_agent_type_variant",
+        ),
+    )
 
 
 class RAGPreprocessingJob(Base):

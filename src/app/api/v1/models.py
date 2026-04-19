@@ -170,6 +170,15 @@ class PromptTemplateBase(BaseModel):
     agent_name: Optional[str] = Field(
         None, description="The name of the agent this prompt is for."
     )
+    variant: str = Field(
+        "generic",
+        description=(
+            "Which LLM optimization mode this template targets. "
+            "'generic' works across all providers; 'anthropic' is tuned for "
+            "Claude with cache-friendly prefixes. The runtime picks by the "
+            "active llm.optimization_mode with fallback to 'generic'."
+        ),
+    )
     version: int = Field(1, description="The version of the prompt template.")
     template_text: str = Field(..., description="The content of the prompt template.")
 
@@ -182,6 +191,7 @@ class PromptTemplateUpdate(BaseModel):
     name: Optional[str] = None
     template_type: Optional[str] = None
     agent_name: Optional[str] = None
+    variant: Optional[str] = None
     version: Optional[int] = None
     template_text: Optional[str] = None
 

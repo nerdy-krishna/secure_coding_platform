@@ -14,15 +14,42 @@ const SetupPage: React.FC = () => {
     "local",
   );
 
-  const [formData, setFormData] = useState<any>({
+  interface SetupFormData {
+    admin_email: string;
+    admin_password: string;
+    llm_provider: string;
+    llm_api_key: string;
+    llm_model: string;
+    llm_optimization_mode: "multi_provider" | "anthropic_optimized";
+    deployment_type: "local" | "cloud";
+    frontend_url: string;
+  }
+
+  const [formData, setFormData] = useState<SetupFormData>({
     admin_email: "",
     admin_password: "",
     llm_provider: "openai",
     llm_api_key: "",
     llm_model: "gpt-4o",
+    llm_optimization_mode: "multi_provider",
     deployment_type: "local",
     frontend_url: "",
   });
+
+  const setMode = (mode: "multi_provider" | "anthropic_optimized") => {
+    if (mode === "anthropic_optimized") {
+      // Anthropic optimized locks the provider; suggest a sensible default model.
+      setFormData((prev) => ({
+        ...prev,
+        llm_optimization_mode: mode,
+        llm_provider: "anthropic",
+        llm_model:
+          prev.llm_provider === "anthropic" ? prev.llm_model : "claude-sonnet-4-6",
+      }));
+    } else {
+      setFormData((prev) => ({ ...prev, llm_optimization_mode: mode }));
+    }
+  };
 
   // Redirect to login if setup is already completed
   React.useEffect(() => {
@@ -172,7 +199,17 @@ const SetupPage: React.FC = () => {
               }}
             >
               {" "}
-              3. LLM Config{" "}
+              3. LLM Mode{" "}
+            </span>
+            <span style={{ color: "#9ca3af" }}>& rarr; </span>
+            <span
+              style={{
+                fontWeight: step === 4 ? "bold" : "normal",
+                color: step === 4 ? "#2563eb" : "#9ca3af",
+              }}
+            >
+              {" "}
+              4. LLM Config{" "}
             </span>
           </div>
         </div>
@@ -427,6 +464,137 @@ const SetupPage: React.FC = () => {
                     display: "block",
                     marginBottom: "0.5rem",
                     color: "#374151",
+                    fontWeight: "bold",
+                  }}
+                >
+                  LLM Optimization Mode
+                </label>
+                <p
+                  style={{
+                    margin: "0 0 1rem 0",
+                    fontSize: "0.85rem",
+                    color: "#6b7280",
+                  }}
+                >
+                  Pick how the platform tunes prompts and features for your
+                  model. You can change this later in System Settings.
+                </p>
+
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "0.75rem",
+                  }}
+                >
+                  <div
+                    onClick={() => setMode("anthropic_optimized")}
+                    style={{
+                      padding: "1rem",
+                      border:
+                        formData.llm_optimization_mode === "anthropic_optimized"
+                          ? "2px solid #2563eb"
+                          : "1px solid #d1d5db",
+                      borderRadius: "8px",
+                      cursor: "pointer",
+                      backgroundColor:
+                        formData.llm_optimization_mode === "anthropic_optimized"
+                          ? "#eff6ff"
+                          : "white",
+                    }}
+                  >
+                    <h3 style={{ margin: "0 0 0.5rem 0", color: "#111827" }}>
+                      Anthropic Optimized (recommended)
+                    </h3>
+                    <p
+                      style={{
+                        margin: 0,
+                        fontSize: "0.875rem",
+                        color: "#6b7280",
+                      }}
+                    >
+                      Enables prompt caching, tuned prompt variants, and tool
+                      use. Locks the provider to Anthropic. Typical cost drop
+                      of 70%+ on repeated-agent-per-file scans.
+                    </p>
+                  </div>
+
+                  <div
+                    onClick={() => setMode("multi_provider")}
+                    style={{
+                      padding: "1rem",
+                      border:
+                        formData.llm_optimization_mode === "multi_provider"
+                          ? "2px solid #2563eb"
+                          : "1px solid #d1d5db",
+                      borderRadius: "8px",
+                      cursor: "pointer",
+                      backgroundColor:
+                        formData.llm_optimization_mode === "multi_provider"
+                          ? "#eff6ff"
+                          : "white",
+                    }}
+                  >
+                    <h3 style={{ margin: "0 0 0.5rem 0", color: "#111827" }}>
+                      Multi-Provider (Generic)
+                    </h3>
+                    <p
+                      style={{
+                        margin: 0,
+                        fontSize: "0.875rem",
+                        color: "#6b7280",
+                      }}
+                    >
+                      Works with OpenAI, Anthropic, or Google. Portable
+                      prompts, no caching, broader model choice.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: "flex", gap: "1rem" }}>
+                <button
+                  type="button"
+                  onClick={() => setStep(2)}
+                  style={{
+                    flex: 1,
+                    backgroundColor: "#9ca3af",
+                    color: "white",
+                    padding: "0.75rem",
+                    borderRadius: "4px",
+                    border: "none",
+                    cursor: "pointer",
+                  }}
+                >
+                  Back
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStep(4)}
+                  style={{
+                    flex: 1,
+                    backgroundColor: "#2563eb",
+                    color: "white",
+                    padding: "0.75rem",
+                    borderRadius: "4px",
+                    border: "none",
+                    cursor: "pointer",
+                  }}
+                >
+                  Next
+                </button>
+              </div>
+            </>
+          )}
+
+          {step === 4 && (
+            <>
+              <div style={{ marginBottom: "1rem" }}>
+                <label
+                  style={{
+                    display: "block",
+                    marginBottom: "0.5rem",
+                    color: "#374151",
                   }}
                 >
                   {" "}
@@ -436,17 +604,36 @@ const SetupPage: React.FC = () => {
                   name="llm_provider"
                   value={formData.llm_provider}
                   onChange={handleChange}
+                  disabled={
+                    formData.llm_optimization_mode === "anthropic_optimized"
+                  }
                   style={{
                     width: "100%",
                     padding: "0.75rem",
                     borderRadius: "4px",
                     border: "1px solid #d1d5db",
+                    backgroundColor:
+                      formData.llm_optimization_mode === "anthropic_optimized"
+                        ? "#f3f4f6"
+                        : "white",
                   }}
                 >
                   <option value="openai"> OpenAI </option>
                   <option value="anthropic"> Anthropic </option>
                   <option value="gemini"> Google Gemini </option>
                 </select>
+                {formData.llm_optimization_mode === "anthropic_optimized" && (
+                  <p
+                    style={{
+                      marginTop: "0.25rem",
+                      fontSize: "0.8rem",
+                      color: "#6b7280",
+                    }}
+                  >
+                    Provider is locked to Anthropic because you chose the
+                    Anthropic-optimized mode.
+                  </p>
+                )}
               </div>
               <div style={{ marginBottom: "1rem" }}>
                 <label
@@ -501,7 +688,7 @@ const SetupPage: React.FC = () => {
               <div style={{ display: "flex", gap: "1rem" }}>
                 <button
                   type="button"
-                  onClick={() => setStep(2)}
+                  onClick={() => setStep(3)}
                   style={{
                     flex: 1,
                     backgroundColor: "#9ca3af",

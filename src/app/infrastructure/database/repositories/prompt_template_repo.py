@@ -42,9 +42,46 @@ class PromptTemplateRepository:
         return result.scalars().first()
 
     async def get_template_by_name_and_type(
-        self, agent_name: str, template_type: str
+        self,
+        agent_name: str,
+        template_type: str,
+        variant: Optional[str] = None,
     ) -> Optional[db_models.PromptTemplate]:
-        """Retrieves a single prompt template by its unique agent_name and type."""
+        """Retrieves a single prompt template.
+
+        If `variant` is provided, tries that variant first; if no row exists
+        for that variant, falls back to variant="generic". This lets an admin
+        ship a partial set of Anthropic-optimized prompts without blocking
+        agents whose tuned variant hasn't been authored yet.
+        """
+        if variant:
+            stmt = select(db_models.PromptTemplate).filter_by(
+                agent_name=agent_name,
+                template_type=template_type,
+                variant=variant,
+            )
+            result = await self.db.execute(stmt)
+            row = result.scalars().first()
+            if row:
+                return row
+            if variant != "generic":
+                logger.debug(
+                    f"No '{variant}' variant for {agent_name}/{template_type}; "
+                    f"falling back to 'generic'."
+                )
+
+        stmt = select(db_models.PromptTemplate).filter_by(
+            agent_name=agent_name,
+            template_type=template_type,
+            variant="generic",
+        )
+        result = await self.db.execute(stmt)
+        row = result.scalars().first()
+        if row:
+            return row
+
+        # Legacy fallback: rows from before the variant column existed may
+        # (in theory) have been backfilled to 'generic', so this is defensive.
         stmt = select(db_models.PromptTemplate).filter_by(
             agent_name=agent_name, template_type=template_type
         )

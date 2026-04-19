@@ -48,6 +48,10 @@ const SystemConfigTab: React.FC = () => {
   const [corsEnabled, setCorsEnabled] = useState<boolean>(false);
   const [allowedOrigins, setAllowedOrigins] = useState<string[]>([]);
   const [originInput, setOriginInput] = useState<string>("");
+  const [llmMode, setLlmMode] = useState<"multi_provider" | "anthropic_optimized">(
+    "multi_provider",
+  );
+  const [loadingLlmMode, setLoadingLlmMode] = useState<boolean>(false);
 
   useEffect(() => {
     fetchConfigs();
@@ -76,6 +80,18 @@ const SystemConfigTab: React.FC = () => {
         if (originsConfig && originsConfig.value && originsConfig.value.origins) {
           setAllowedOrigins(originsConfig.value.origins);
         }
+
+        const llmModeConfig = allConfigs.find(
+          (c) => c.key === "llm.optimization_mode",
+        );
+        if (llmModeConfig && llmModeConfig.value) {
+          const raw = llmModeConfig.value;
+          const mode =
+            typeof raw === "string" ? raw : (raw as { mode?: string }).mode;
+          if (mode === "anthropic_optimized" || mode === "multi_provider") {
+            setLlmMode(mode);
+          }
+        }
       } catch (e) {
         console.error("Failed to fetch system configs", e);
       }
@@ -99,6 +115,32 @@ const SystemConfigTab: React.FC = () => {
       message.error("Failed to update log level.");
     } finally {
       setLoadingLogs(false);
+    }
+  };
+
+  const handleLlmModeChange = async (
+    mode: "multi_provider" | "anthropic_optimized",
+  ) => {
+    if (mode === llmMode) return;
+    const previous = llmMode;
+    setLoadingLlmMode(true);
+    setLlmMode(mode);
+    try {
+      await systemConfigService.update("llm.optimization_mode", {
+        value: { mode },
+      });
+      message.success(
+        mode === "anthropic_optimized"
+          ? "Switched to Anthropic-optimized mode. Existing prompt caches will be invalidated on the next scan."
+          : "Switched to Multi-Provider (Generic) mode.",
+      );
+      queryClient.invalidateQueries({ queryKey: ["system-configs"] });
+    } catch (error) {
+      console.error("Failed to update LLM optimization mode:", error);
+      setLlmMode(previous);
+      message.error("Failed to update LLM optimization mode.");
+    } finally {
+      setLoadingLlmMode(false);
     }
   };
 
@@ -309,6 +351,43 @@ options = {
   </Spin>
   </Col>
   </Row>
+
+{/* LLM Optimization Mode Section */}
+<Divider />
+  < Title level={ 4 }> LLM Optimization Mode </Title>
+    <Paragraph>
+        Choose how the platform tunes prompts and features for your LLM.<br />
+          <Text type="secondary" >
+            <strong>Anthropic Optimized</strong> enables prompt caching, tuned
+            prompt variants, and tool use (requires an Anthropic model).
+            <strong> Multi-Provider (Generic)</strong> works across OpenAI,
+            Anthropic, and Google with portable prompts and no caching.
+          </Text>
+      </Paragraph>
+      < Spin spinning={ loadingLlmMode }>
+        <Select
+            value={ llmMode }
+style = {{ width: "100%", maxWidth: 420 }}
+onChange = { handleLlmModeChange }
+options = {
+  [
+    {
+      value: "anthropic_optimized",
+      label: "Anthropic Optimized (prompt caching + tuned variants)",
+    },
+    {
+      value: "multi_provider",
+      label: "Multi-Provider (Generic)",
+    },
+              ]
+}
+          />
+  <div style={ { marginTop: 8, color: "#888", fontSize: "12px" } }>
+    Switching modes invalidates Anthropic prompt caches on the next scan.
+            Make sure at least one Anthropic LLM config exists before switching
+            to Anthropic Optimized.
+          </div>
+</Spin>
 
 {/* CORS Configuration Section */ }
 <Divider />

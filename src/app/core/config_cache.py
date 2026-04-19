@@ -1,8 +1,18 @@
-from typing import List
+from typing import List, Literal
+
+# Canonical values for the LLM optimization mode. "anthropic_optimized"
+# enables prompt caching, tuned prompt variants, and Anthropic-only dispatch.
+# "multi_provider" keeps the generic multi-provider behavior.
+LLMMode = Literal["anthropic_optimized", "multi_provider"]
+LLM_MODE_ANTHROPIC_OPTIMIZED: LLMMode = "anthropic_optimized"
+LLM_MODE_MULTI_PROVIDER: LLMMode = "multi_provider"
+DEFAULT_LLM_MODE: LLMMode = LLM_MODE_MULTI_PROVIDER
+
 
 class SystemConfigCache:
     _allowed_origins: List[str] = []
     _is_setup_completed: bool = False
+    _llm_mode: LLMMode = DEFAULT_LLM_MODE
 
     @classmethod
     def set_allowed_origins(cls, origins: List[str]):
@@ -39,3 +49,23 @@ class SystemConfigCache:
     @classmethod
     def get_smtp_config(cls) -> dict | None:
         return cls._smtp_config
+
+    @classmethod
+    def set_llm_mode(cls, mode: str) -> None:
+        """Set the active LLM optimization mode.
+
+        Unknown values silently fall back to the multi-provider default so a
+        corrupt DB row can't lock the app into an unusable state.
+        """
+        if mode in (LLM_MODE_ANTHROPIC_OPTIMIZED, LLM_MODE_MULTI_PROVIDER):
+            cls._llm_mode = mode  # type: ignore[assignment]
+        else:
+            cls._llm_mode = DEFAULT_LLM_MODE
+
+    @classmethod
+    def get_llm_mode(cls) -> LLMMode:
+        return cls._llm_mode
+
+    @classmethod
+    def is_anthropic_optimized(cls) -> bool:
+        return cls._llm_mode == LLM_MODE_ANTHROPIC_OPTIMIZED

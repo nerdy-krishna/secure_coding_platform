@@ -170,10 +170,14 @@ export interface RAGJobStatusResponse {
 }
 
 // --- Prompt Template Schemas ---
+export type PromptVariant = "generic" | "anthropic";
+
 export interface PromptTemplateBase {
   name: string;
   template_type: string;
   agent_name?: string | null;
+  /** Which LLM optimization mode this template targets; defaults to "generic". */
+  variant: PromptVariant;
   version: number;
   template_text: string;
 }
@@ -188,6 +192,7 @@ export interface PromptTemplateUpdate {
   name?: string;
   template_type?: string;
   agent_name?: string | null;
+  variant?: PromptVariant;
   version?: number;
   template_text?: string;
 }

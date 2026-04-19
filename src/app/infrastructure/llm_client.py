@@ -15,6 +15,7 @@ from app.infrastructure.llm_client_rate_limiter import get_rate_limiter_for_prov
 # LangChain imports
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.callbacks.base import AsyncCallbackHandler
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.outputs import LLMResult as LangChainLLMResult
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
@@ -26,7 +27,14 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class TokenUsageCallbackHandler(AsyncCallbackHandler):
-    """Callback handler to extract token usage."""
+    """Callback handler to extract token usage.
+
+    For Anthropic, also captures prompt-cache metrics when available:
+    - cache_creation_input_tokens: tokens billed to *write* a new cache entry
+    - cache_read_input_tokens: tokens served from cache (~90% cheaper)
+    These show up when a call uses cache_control and Anthropic returns the
+    usage block with the extended fields.
+    """
 
     def __init__(self, provider_name: str):
         super().__init__()
@@ -34,6 +42,8 @@ class TokenUsageCallbackHandler(AsyncCallbackHandler):
         self.prompt_tokens: int = 0
         self.completion_tokens: int = 0
         self.total_tokens: int = 0
+        self.cache_creation_tokens: int = 0
+        self.cache_read_tokens: int = 0
 
     async def on_llm_end(self, response: LangChainLLMResult, **kwargs: Any) -> None:
         """Collect token usage from the LLM response."""
@@ -48,6 +58,10 @@ class TokenUsageCallbackHandler(AsyncCallbackHandler):
             usage_info = llm_output.get("usage", {})
             self.prompt_tokens = usage_info.get("input_tokens", 0)
             self.completion_tokens = usage_info.get("output_tokens", 0)
+            self.cache_creation_tokens = usage_info.get(
+                "cache_creation_input_tokens", 0
+            )
+            self.cache_read_tokens = usage_info.get("cache_read_input_tokens", 0)
             if self.prompt_tokens and self.completion_tokens:
                 self.total_tokens = self.prompt_tokens + self.completion_tokens
             elif self.prompt_tokens:
@@ -72,9 +86,16 @@ class TokenUsageCallbackHandler(AsyncCallbackHandler):
                 or (self.prompt_tokens + self.completion_tokens)
             )
 
+        cache_note = ""
+        if self.cache_creation_tokens or self.cache_read_tokens:
+            cache_note = (
+                f", CacheCreate: {self.cache_creation_tokens}, "
+                f"CacheRead: {self.cache_read_tokens}"
+            )
         logger.debug(
             f"TokenUsageCallback: Provider: {self.provider_name}, "
-            f"Prompt: {self.prompt_tokens}, Completion: {self.completion_tokens}, Total: {self.total_tokens}"
+            f"Prompt: {self.prompt_tokens}, Completion: {self.completion_tokens}, "
+            f"Total: {self.total_tokens}{cache_note}"
         )
 
 
@@ -87,6 +108,8 @@ class AgentLLMResult(NamedTuple):
     completion_tokens: Optional[int]
     total_tokens: Optional[int]
     latency_ms: Optional[int]
+    cache_creation_tokens: int = 0
+    cache_read_tokens: int = 0
 
 
 class LLMClient:
@@ -140,12 +163,24 @@ class LLMClient:
         )
 
     async def generate_structured_output(
-        self, prompt: str, response_model: Type[T]
+        self,
+        prompt: str,
+        response_model: Type[T],
+        system_prompt: Optional[str] = None,
     ) -> "AgentLLMResult":
         """
-        Generates structured output from the LLM, parsing it into the given Pydantic model.
-        Uses LangChain's .with_structured_output() for robust parsing.
-        Includes token usage and latency measurement via callbacks.
+        Generates structured output from the LLM.
+
+        Parameters:
+          prompt: The variable (per-call) portion of the input.
+          response_model: The Pydantic model to parse the response into.
+          system_prompt: Optional stable prefix (agent role + RAG context etc.).
+            When provided and the provider is Anthropic, the prefix is sent as a
+            SystemMessage with cache_control={"type": "ephemeral"}, enabling
+            prompt-cache reads on subsequent calls with the same prefix
+            (typically 70%+ cost reduction on repeated-agent-per-file scans).
+            For non-Anthropic providers the prefix is simply concatenated
+            ahead of `prompt` to preserve existing behavior.
         """
         logger.info(
             "Entering LLM structured output generation.",
@@ -153,15 +188,23 @@ class LLMClient:
                 "model_name": self.db_llm_config.model_name,
                 "provider": self.provider_name,
                 "response_model": response_model.__name__,
+                "cacheable_prefix": bool(system_prompt),
             },
+        )
+
+        full_prompt_for_counting = (
+            f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
         )
 
         # Acquire a permit from the provider-specific rate limiter
         rate_limiter = get_rate_limiter_for_provider(self.provider_name)
+        prompt_tokens: Optional[int] = None
         if rate_limiter:
             # First, count tokens for the prompt to pass to the limiter
             prompt_tokens = await cost_estimation.count_tokens(
-                prompt, self.db_llm_config, api_key=self.decrypted_api_key
+                full_prompt_for_counting,
+                self.db_llm_config,
+                api_key=self.decrypted_api_key,
             )
             await rate_limiter.acquire(tokens=prompt_tokens)
 
@@ -175,14 +218,17 @@ class LLMClient:
         # [DEBUG LOGGING]
         # This will only show up if the log level is set to DEBUG via the Admin API.
         logger.debug(
-            f"LLM PROMPT [{self.provider_name}/{self.db_llm_config.model_name}]:\n{prompt}\n---END PROMPT---"
+            f"LLM PROMPT [{self.provider_name}/{self.db_llm_config.model_name}]:\n"
+            f"{full_prompt_for_counting}\n---END PROMPT---"
         )
+
+        invoke_input = self._build_invoke_input(system_prompt, prompt)
 
         try:
             invoked_result = cast(
                 T,
                 await structured_llm.ainvoke(
-                    prompt, config={"callbacks": [token_callback]}
+                    invoke_input, config={"callbacks": [token_callback]}
                 ),
             )
             parsed_output_value = invoked_result
@@ -207,12 +253,12 @@ class LLMClient:
         start_prompt_tokens = token_callback.prompt_tokens
         completion_tokens = token_callback.completion_tokens
 
-        # Fallback for prompt tokens: use the ones calculated for rate limiting
-        if not start_prompt_tokens and "prompt_tokens" in locals():
+        # Fallback for prompt tokens: use the ones calculated for rate limiting,
+        # or a rough len/4 estimate as a last resort.
+        if not start_prompt_tokens and prompt_tokens is not None:
             start_prompt_tokens = prompt_tokens
         elif not start_prompt_tokens:
-            # Estimate if we really have nothing
-            start_prompt_tokens = len(prompt) // 4
+            start_prompt_tokens = len(full_prompt_for_counting) // 4
 
         # Fallback for completion tokens: count from parsed output if available, or rough estimate
         if not completion_tokens:
@@ -243,9 +289,38 @@ class LLMClient:
             completion_tokens=completion_tokens,
             total_tokens=start_prompt_tokens + completion_tokens,
             latency_ms=latency_ms,
+            cache_creation_tokens=token_callback.cache_creation_tokens,
+            cache_read_tokens=token_callback.cache_read_tokens,
         )
 
+    def _build_invoke_input(
+        self, system_prompt: Optional[str], prompt: str
+    ) -> Any:
+        """Returns the input to pass to structured_llm.ainvoke().
 
+        - Anthropic + non-empty system_prompt → [SystemMessage(cache_control),
+          HumanMessage]. The SystemMessage content is a list of content blocks
+          with cache_control={"type": "ephemeral"} on the text block so
+          Anthropic's prompt cache can serve the prefix on subsequent calls.
+        - All other cases → a single concatenated string (preserves pre-cache
+          behavior and works uniformly across providers that don't support
+          prompt caching the same way).
+        """
+        if system_prompt and self.provider_name == "anthropic":
+            system_message = SystemMessage(
+                content=[
+                    {
+                        "type": "text",
+                        "text": system_prompt,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ]
+            )
+            return [system_message, HumanMessage(content=prompt)]
+
+        if system_prompt:
+            return f"{system_prompt}\n\n{prompt}"
+        return prompt
 
 
 async def get_llm_client(llm_config_id: uuid.UUID) -> Optional[LLMClient]:
