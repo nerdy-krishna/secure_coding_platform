@@ -5,6 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: api
     container_name: secure_coding_platform_app
     env_file:
       - .env
@@ -39,7 +40,7 @@ services:
         fluentd-max-retries: "30"
     networks:
       - scpnetwork
-    command: [ "/bin/sh", "-c", "poetry run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload > /app/server.log 2>&1" ]
+    command: [ "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload" ]
 
   db:
     image: postgres:16
@@ -108,7 +109,8 @@ services:
   worker:
     build:
       context: .
-      dockerfile: worker.Dockerfile
+      dockerfile: Dockerfile
+      target: worker
     container_name: secure_coding_platform_worker
     env_file:
       - .env
@@ -134,7 +136,7 @@ services:
         fluentd-max-retries: "30"
     networks:
       - scpnetwork
-    command: [ "poetry", "run", "python", "-m", "app.workers.consumer" ]
+    command: [ "python", "-m", "app.workers.consumer" ]
 
   fluentd:
     build: ./fluentd

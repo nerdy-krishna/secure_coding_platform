@@ -1,14 +1,22 @@
-# Stage 1: Build the React application
+# syntax=docker/dockerfile:1.7
+#
+# UI image: Vite build in node:20-alpine, served by nginx:alpine.
+# Certbot stays in-image for now — a future refactor can split it into a
+# dedicated sidecar sharing the ./certbot/conf and ./certbot/www volumes,
+# which would keep the UI image free of Python/certbot runtime weight.
+# Tracked as a Phase G polish item.
+
+# ---------- build --------------------------------------------------------
 FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# Install deps first for layer-cache stability.
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm npm ci
 
 COPY . .
 
-# Pass environment variables needed during build
 ARG VITE_API_BASE_URL
 ARG VITE_ALLOWED_HOSTS
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
@@ -16,19 +24,22 @@ ENV VITE_ALLOWED_HOSTS=${VITE_ALLOWED_HOSTS}
 
 RUN npm run build
 
-# Stage 2: Serve with Nginx
+# ---------- serve --------------------------------------------------------
 FROM nginx:alpine
 
-# Install certbot to allow self-healing SSL certificates
+# certbot handles initial Let's Encrypt issuance + periodic renewal. When
+# SSL_ENABLED=false (the local-dev default) certbot is installed but never
+# invoked by the entrypoint.
 RUN apk add --no-cache certbot
 
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# We remove the base copy of nginx.conf, and instead copy our dual HTTP/HTTPS templates
+# Phase A consolidated nginx-https.conf with an __SSL_DOMAIN__ placeholder
+# that the entrypoint substitutes at runtime; the unused nginx.conf from
+# the old setup was deleted.
 COPY nginx-http.conf /etc/nginx/nginx-http.conf
 COPY nginx-https.conf /etc/nginx/nginx-https.conf
 
-# Add our entrypoint script for auto-provisioning
 COPY nginx-entrypoint.sh /docker-entrypoint.d/99-ssl-setup.sh
 RUN chmod +x /docker-entrypoint.d/99-ssl-setup.sh
 

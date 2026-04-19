@@ -1,68 +1,109 @@
-# Dockerfile
+# syntax=docker/dockerfile:1.7
+#
+# Unified multi-stage Dockerfile for the Python services (API + worker).
+# Build a specific service with `docker build --target api` or `--target worker`.
+# docker-compose.yml drives both targets from this one file.
+#
+# Stage layout:
+#   base       → runtime OS, non-root user, minimal apt (libpq5, ca-certs)
+#   builder    → base + build-essential + poetry; produces /app/.venv
+#   ml-assets  → builder + pre-downloaded sentence-transformers cache (worker-only)
+#   api        → base + venv + source + git binary (needed for GitPython repo clones)
+#   worker     → base + venv + ml cache + source (no git, no build tools)
+#
+# Non-root (uid 1001) everywhere, including the worker image. BuildKit cache
+# mounts speed up rebuilds. Runtime stages don't ship build-essential, git
+# (worker), or poetry — they're only present where genuinely needed.
+
+# ---------- base ---------------------------------------------------------
 FROM python:3.12-slim-bookworm AS base
 
-# Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONPATH=/app/src \
+    PATH="/app/.venv/bin:$PATH" \
+    HF_HOME=/app/.cache/huggingface \
+    SENTENCE_TRANSFORMERS_HOME=/app/.cache/sentence-transformers
 
-# Set Poetry version
-ENV POETRY_VERSION=1.8.3
-
-# Install system dependencies
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-    build-essential \
-    git \
+        ca-certificates \
+        libpq5 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Poetry
-RUN pip install "poetry==${POETRY_VERSION}"
-
-# --- Create a non-root user ---
 ARG APP_USER=appuser
 ARG APP_UID=1001
 ARG APP_GID=1001
 RUN groupadd --gid ${APP_GID} ${APP_USER} \
     && useradd --uid ${APP_UID} --gid ${APP_GID} --create-home --shell /bin/bash ${APP_USER}
 
-# Set the working directory
 WORKDIR /app
+RUN mkdir -p /app/.venv /app/.cache \
+    && chown -R ${APP_USER}:${APP_USER} /app
 
-# Change ownership of /app to the new user
-RUN chown -R ${APP_USER}:${APP_USER} /app
+# ---------- builder ------------------------------------------------------
+# Has the C toolchain and poetry. Its only output is /app/.venv, which
+# later stages COPY --from=builder into slimmer runtime images.
+FROM base AS builder
 
-# Switch to the non-root user for all subsequent commands
-USER ${APP_USER}
+ENV POETRY_VERSION=1.8.3 \
+    POETRY_NO_INTERACTION=1 \
+    POETRY_VIRTUALENVS_IN_PROJECT=true \
+    POETRY_VIRTUALENVS_CREATE=true
 
-# Copy dependency files first to leverage Docker cache
-COPY --chown=${APP_USER}:${APP_USER} pyproject.toml poetry.lock ./
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
-# --- START: FIX ---
-# Create a project-local configuration. 
-# We enable virtualenvs to avoid conflicts with system packages (PEP 668).
-RUN poetry config virtualenvs.create true --local \
-    && poetry config virtualenvs.in-project true --local
-# --- END: FIX ---
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install "poetry==${POETRY_VERSION}"
 
-# --- END: FIX ---
+USER appuser
+COPY --chown=appuser:appuser pyproject.toml poetry.lock ./
 
-# Refresh lock file to ensure it matches pyproject.toml (since we added pytorch-cpu)
-RUN poetry lock --no-update
+# Install runtime deps only (drop the dev group). The committed lock file
+# is authoritative — no `poetry lock --no-update` at build time.
+RUN --mount=type=cache,target=/home/appuser/.cache/pypoetry,uid=1001,gid=1001 \
+    --mount=type=cache,target=/home/appuser/.cache/pip,uid=1001,gid=1001 \
+    poetry install --no-interaction --no-ansi --no-root --without dev
 
-# Install dependencies as user (excluding the root package itself).
-RUN poetry install --no-interaction --no-ansi --no-root
+# ---------- ml-assets ----------------------------------------------------
+# Pre-downloads the embedding model used by the RAG preprocessor. Only the
+# worker image copies from this stage; the API doesn't need the model at
+# startup.
+FROM builder AS ml-assets
 
-# Copy the rest of the application source code
-COPY --chown=${APP_USER}:${APP_USER} ./src /app/src
-COPY --chown=${APP_USER}:${APP_USER} .env.example /app/.env.example
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
 
-# DEBUG: List files to verify structure
-RUN ls -R /app/src/app/shared
+# ---------- api ----------------------------------------------------------
+FROM base AS api
 
-# Set PYTHONPATH for the non-root user
-# Set PYTHONPATH for the non-root user
-ENV PYTHONPATH=/app/src
-# Add the virtual environment to the PATH so we don't need 'poetry run' for everything
-ENV PATH="/app/.venv/bin:$PATH"
+# git is needed by GitPython for the repo-clone submission path in
+# scan_service.create_scan_from_git.
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+USER appuser
+
+COPY --chown=appuser:appuser --from=builder /app/.venv /app/.venv
+COPY --chown=appuser:appuser ./src /app/src
+COPY --chown=appuser:appuser ./alembic /app/alembic
+COPY --chown=appuser:appuser alembic.ini /app/alembic.ini
 
 EXPOSE 8000
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+# ---------- worker -------------------------------------------------------
+FROM base AS worker
+
+USER appuser
+
+COPY --chown=appuser:appuser --from=builder /app/.venv /app/.venv
+COPY --chown=appuser:appuser --from=ml-assets /app/.cache /app/.cache
+COPY --chown=appuser:appuser ./src /app/src
+
+CMD ["python", "-m", "app.workers.consumer"]
