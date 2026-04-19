@@ -3,11 +3,9 @@
 import logging
 import uuid
 from typing import List, Optional
-from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.infrastructure.database.database import AsyncSessionLocal
 from app.infrastructure.database import models as db_models
 from app.api.v1 import models as api_models
 from app.shared.lib.encryption import FernetEncrypt
@@ -16,16 +14,8 @@ logger = logging.getLogger(__name__)
 
 
 class LLMConfigRepository:
-    _instance = None
-
     def __init__(self, db_session: AsyncSession):
         self.db = db_session
-
-    @classmethod
-    def get_instance(cls, db_session: AsyncSession = Depends(AsyncSessionLocal)):
-        if cls._instance is None:
-            cls._instance = LLMConfigRepository(db_session)
-        return cls._instance
 
     async def get_by_id(
         self, config_id: uuid.UUID

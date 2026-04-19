@@ -19,7 +19,20 @@ from app.infrastructure.workflows.worker_graph import (
 )
 from app.config.config import settings
 from app.config.logging_config import LOGGING_CONFIG, correlation_id_var
-from app.shared.lib.scan_status import STATUS_FAILED
+from app.shared.lib.scan_status import (
+    STATUS_FAILED,
+    STATUS_PENDING_APPROVAL,
+    STATUS_QUEUED,
+    STATUS_QUEUED_FOR_SCAN,
+)
+
+# Scan statuses the workflow knows how to handle. Any other status received by
+# the worker means the scan is either already in-flight on another worker, has
+# already completed, or was cancelled — all duplicate-delivery cases that we
+# should ACK without re-invoking the graph.
+_WORKFLOW_ENTRY_STATUSES = frozenset(
+    {STATUS_QUEUED, STATUS_QUEUED_FOR_SCAN, STATUS_PENDING_APPROVAL}
+)
 
 from pika.adapters.blocking_connection import BlockingChannel
 from pika.spec import (
@@ -61,11 +74,48 @@ async def run_graph_task_wrapper(initial_state: WorkerState, delivery_tag: int):
     )
 
     success = False
+    timed_out = False
+
+    # Idempotency check: if the scan is not in one of the workflow's entry
+    # statuses, this is a duplicate delivery (RabbitMQ redelivered after a
+    # network blip, or the outbox sweeper re-published after a race with the
+    # primary publish). ACK silently without running the workflow again.
+    try:
+        from app.infrastructure.database import AsyncSessionLocal
+        from app.infrastructure.database.repositories.scan_repo import ScanRepository
+
+        async with AsyncSessionLocal() as db:
+            repo = ScanRepository(db)
+            existing = await repo.get_scan(scan_id_uuid)
+        if existing is None:
+            logger.warning(
+                f"ASYNC WRAPPER: Scan {scan_id_str_log} not found in DB; ACKing."
+            )
+            success = True
+            _finalize_delivery(delivery_tag, success, scan_id_str_log)
+            return
+        if existing.status not in _WORKFLOW_ENTRY_STATUSES:
+            logger.info(
+                f"ASYNC WRAPPER: Scan {scan_id_str_log} already in status "
+                f"'{existing.status}' — treating as duplicate delivery, ACKing."
+            )
+            success = True
+            _finalize_delivery(delivery_tag, success, scan_id_str_log)
+            return
+    except Exception as e:
+        logger.warning(
+            f"ASYNC WRAPPER: Idempotency precheck failed for {scan_id_str_log}: {e}. "
+            f"Proceeding with workflow invocation.",
+            exc_info=True,
+        )
 
     try:
         worker_workflow = await get_workflow()
         config: RunnableConfig = {"configurable": {"thread_id": scan_id_str_log}}
-        final_graph_state = await worker_workflow.ainvoke(initial_state, config)
+        final_graph_state = await asyncio.wait_for(
+            worker_workflow.ainvoke(initial_state, config),
+            timeout=settings.SCAN_WORKFLOW_TIMEOUT_SECONDS,
+        )
 
         logger.info(
             f"ASYNC WRAPPER: worker_workflow completed for SID: {scan_id_str_log}."
@@ -82,13 +132,23 @@ async def run_graph_task_wrapper(initial_state: WorkerState, delivery_tag: int):
             logger.error(f"ASYNC WRAPPER: Graph processing failed. Error: {error_msg}")
             success = False
 
+    except asyncio.TimeoutError:
+        timed_out = True
+        logger.error(
+            f"ASYNC WRAPPER: Scan {scan_id_str_log} exceeded "
+            f"{settings.SCAN_WORKFLOW_TIMEOUT_SECONDS}s timeout; cancelling workflow."
+        )
+        success = False
     except Exception as e:
         logger.error(
             f"ASYNC WRAPPER: Exception during worker_workflow invocation: {e}",
             exc_info=True,
         )
         success = False
-        # FIX: On any crash, update the scan status to FAILED in the main DB.
+
+    # On any failure (timeout, exception, or workflow-reported error), mark the
+    # scan FAILED in the main DB so the UI doesn't show it stuck mid-flight.
+    if not success:
         try:
             from app.infrastructure.database import AsyncSessionLocal
             from app.infrastructure.database.repositories.scan_repo import (
@@ -100,31 +160,37 @@ async def run_graph_task_wrapper(initial_state: WorkerState, delivery_tag: int):
                 await repo.update_status(scan_id_uuid, STATUS_FAILED)
             logger.info(
                 f"ASYNC WRAPPER: Set scan status to FAILED in DB for SID: {scan_id_str_log}"
+                + (" (timeout)" if timed_out else "")
             )
         except Exception as db_err:
             logger.error(
                 f"ASYNC WRAPPER: FAILED TO UPDATE STATUS IN DB for SID: {scan_id_str_log}. Error: {db_err}"
             )
 
-    if _pika_connection and _pika_connection.is_open:
+    _finalize_delivery(delivery_tag, success, scan_id_str_log)
 
-        def pika_finalize_message():
-            try:
+
+def _finalize_delivery(delivery_tag: int, success: bool, scan_id_str_log: str) -> None:
+    """Thread-safely ACK or NACK a pika delivery from the asyncio thread."""
+    if not (_pika_connection and _pika_connection.is_open):
+        return
+
+    def pika_finalize_message():
+        try:
+            if _pika_channel and _pika_channel.is_open:
                 if success:
-                    if _pika_channel and _pika_channel.is_open:
-                        _pika_channel.basic_ack(delivery_tag=delivery_tag)
+                    _pika_channel.basic_ack(delivery_tag=delivery_tag)
                 else:
-                    if _pika_channel and _pika_channel.is_open:
-                        _pika_channel.basic_nack(
-                            delivery_tag=delivery_tag, requeue=False
-                        )
-            except Exception as e_pika_finalize:
-                logger.error(
-                    f"PIKA FINALIZE: Exception for SID {scan_id_str_log}: {e_pika_finalize}",
-                    exc_info=True,
-                )
+                    _pika_channel.basic_nack(
+                        delivery_tag=delivery_tag, requeue=False
+                    )
+        except Exception as e_pika_finalize:
+            logger.error(
+                f"PIKA FINALIZE: Exception for SID {scan_id_str_log}: {e_pika_finalize}",
+                exc_info=True,
+            )
 
-        _pika_connection.add_callback_threadsafe(pika_finalize_message)
+    _pika_connection.add_callback_threadsafe(pika_finalize_message)
 
 
 def schedule_task_on_async_loop(target_coroutine_func: Callable, *args, **kwargs):
@@ -291,7 +357,12 @@ def start_worker_consumer():
     else:
         logger.info("WORKER: Asyncio event loop manager thread already running.")
 
-    retry_delay = 5
+    # Exponential backoff on reconnect: 1s, 2s, 4s, 8s, 16s, capped at 30s.
+    # Reset to 1s on a successful connection so a single transient blip doesn't
+    # make the next failure wait the full 30s.
+    backoff_seconds = 1.0
+    BACKOFF_CAP = 30.0
+
     while not _stop_event.is_set():
         try:
             logger.info("WORKER: Attempting RabbitMQ connection...")
@@ -302,6 +373,7 @@ def start_worker_consumer():
             _pika_connection = pika.BlockingConnection(parameters)
             _pika_channel = _pika_connection.channel()
             logger.info("WORKER: RabbitMQ connection successful.")
+            backoff_seconds = 1.0  # Reset after a successful connect.
 
             submission_queue = settings.RABBITMQ_SUBMISSION_QUEUE
             approval_queue = settings.RABBITMQ_APPROVAL_QUEUE
@@ -326,13 +398,17 @@ def start_worker_consumer():
             _pika_channel.start_consuming()
 
         except AMQPConnectionError as conn_err:
-            logger.error(f"WORKER: RabbitMQ connection error: {conn_err}.")
+            logger.error(
+                f"WORKER: RabbitMQ connection error: {conn_err}. "
+                f"Retrying in {backoff_seconds:.0f}s."
+            )
         except KeyboardInterrupt:
             logger.info("WORKER: KeyboardInterrupt received. Shutting down consumer.")
             _stop_event.set()
         except Exception as e:
             logger.error(
-                f"WORKER: Unexpected error in main Pika consumer loop: {e}",
+                f"WORKER: Unexpected error in main Pika consumer loop: {e}. "
+                f"Retrying in {backoff_seconds:.0f}s.",
                 exc_info=True,
             )
         finally:
@@ -342,7 +418,8 @@ def start_worker_consumer():
 
         if _stop_event.is_set():
             break
-        time.sleep(retry_delay)
+        time.sleep(backoff_seconds)
+        backoff_seconds = min(backoff_seconds * 2, BACKOFF_CAP)
 
     logger.info("WORKER: Finalizing shutdown...")
     if _async_loop and _async_loop.is_running():

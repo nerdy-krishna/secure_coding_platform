@@ -5,6 +5,9 @@ from typing import List, Dict, Any, Optional
 from fastapi import UploadFile, HTTPException, status
 
 from app.infrastructure.database.repositories.scan_repo import ScanRepository
+from app.infrastructure.database.repositories.scan_outbox_repo import (
+    ScanOutboxRepository,
+)
 from app.infrastructure.messaging.publisher import publish_message
 from app.config.config import settings
 from app.shared.lib.git import clone_repo_and_get_files
@@ -40,6 +43,7 @@ class SubmissionService:
 
     def __init__(self, repo: ScanRepository):
         self.repo = repo
+        self.outbox = ScanOutboxRepository(repo.db)
 
     async def _process_and_launch_scan(
         self,
@@ -110,16 +114,35 @@ class SubmissionService:
             scan_id=scan.id, stage_name="QUEUED", status="COMPLETED"
         )
 
-        # 7. Publish message to worker queue
-        publish_message(
+        # 7. Persist an outbox row FIRST, so the sweep task can retry the
+        # publish later if RabbitMQ is down right now.
+        payload = {"scan_id": str(scan.id)}
+        outbox_row = await self.outbox.enqueue(
+            scan_id=scan.id,
             queue_name=settings.RABBITMQ_SUBMISSION_QUEUE,
-            message_body={"scan_id": str(scan.id)},
+            payload=payload,
+        )
+
+        # 8. Attempt the publish inline. Best-effort: on failure, the outbox
+        # sweeper will re-publish.
+        published = await publish_message(
+            queue_name=settings.RABBITMQ_SUBMISSION_QUEUE,
+            message_body=payload,
             correlation_id=correlation_id,
         )
-        logger.info(
-            f"Published scan {scan.id} to RabbitMQ.",
-            extra={"correlation_id": correlation_id, "scan_id": str(scan.id)},
-        )
+        if published:
+            await self.outbox.mark_published(outbox_row.id)
+            logger.info(
+                f"Published scan {scan.id} to RabbitMQ.",
+                extra={"correlation_id": correlation_id, "scan_id": str(scan.id)},
+            )
+        else:
+            await self.outbox.record_failed_attempt(outbox_row.id)
+            logger.warning(
+                f"Scan {scan.id} published to outbox but RabbitMQ publish failed; "
+                f"sweeper will retry.",
+                extra={"correlation_id": correlation_id, "scan_id": str(scan.id)},
+            )
 
         return scan
 
@@ -204,7 +227,7 @@ class SubmissionService:
         await self.repo.create_scan_event(
             scan_id=scan_id, stage_name="QUEUED_FOR_SCAN", status="COMPLETED"
         )
-        publish_message(
+        await publish_message(
             settings.RABBITMQ_APPROVAL_QUEUE,
             {"scan_id": str(scan_id), "action": "resume_analysis"},
         )
