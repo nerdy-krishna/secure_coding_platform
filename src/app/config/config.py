@@ -76,6 +76,25 @@ class Settings(BaseSettings):
     def ALLOWED_ORIGINS(self) -> List[str]:
         return [origin.strip() for origin in self.ALLOWED_ORIGINS_STR.split(",")]
 
+    # Canonical public URL for the frontend — used when building absolute links
+    # in emails (password reset, verification). Falls back to the first entry
+    # in ALLOWED_ORIGINS if unset; fail-fast in production if neither is usable.
+    FRONTEND_BASE_URL: Optional[str] = None
+
+    @property
+    def frontend_base_url(self) -> str:
+        if self.FRONTEND_BASE_URL:
+            return self.FRONTEND_BASE_URL.rstrip("/")
+        origins = self.ALLOWED_ORIGINS
+        if origins and origins[0]:
+            return origins[0].rstrip("/")
+        if self.ENVIRONMENT == "production":
+            raise RuntimeError(
+                "FRONTEND_BASE_URL is not set and ALLOWED_ORIGINS is empty. "
+                "Configure one of them so email links can be built."
+            )
+        return "http://localhost:5173"
+
     # --- Rate Limiting (NEW) ---
     # Requests Per Minute (RPM) for each LLM provider.
     # A value of 0 or less will effectively disable the rate limiter for that provider.
@@ -96,6 +115,14 @@ class Settings(BaseSettings):
     )
     ANTHROPIC_TOKENS_PER_MINUTE: int = Field(
         default=20000, description="Max TPM for Anthropic models."
+    )
+
+    # --- Worker ---
+    # Hard upper bound for a single scan workflow invocation. If exceeded, the
+    # workflow is cancelled, the scan marked FAILED, and the RabbitMQ message
+    # NACK'd (without requeue) so it doesn't loop forever. Default: 2 hours.
+    SCAN_WORKFLOW_TIMEOUT_SECONDS: int = Field(
+        default=2 * 60 * 60, description="Max seconds a single scan workflow may run."
     )
 
 

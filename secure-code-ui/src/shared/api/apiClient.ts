@@ -23,34 +23,44 @@ apiClient.interceptors.request.use(
     return Promise.reject(error);
   },
 );
+// Module-scoped dedup: if several requests hit 401 in parallel, only one
+// /auth/refresh fires; the others await the same promise. Rotating refresh
+// tokens invalidate the previous token, so concurrent refresh attempts would
+// otherwise race and log the user out.
+let refreshInFlight: Promise<string> | null = null;
+
+function refreshAccessToken(): Promise<string> {
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = authService
+    .refreshToken()
+    .then(({ access_token }) => {
+      localStorage.setItem("accessToken", access_token);
+      apiClient.defaults.headers.common["Authorization"] = `Bearer ${access_token}`;
+      return access_token;
+    })
+    .finally(() => {
+      refreshInFlight = null;
+    });
+  return refreshInFlight;
+}
+
 // Response Interceptor
 apiClient.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config;
 
-    // Check if the error is 401 and it's not a retry request
-    // Also skip interception for the refresh endpoint itself to prevent infinite loops
+    // 401s trigger a single shared refresh attempt; skip the refresh endpoint
+    // itself to prevent infinite loops.
     const isRefreshRequest = originalRequest.url?.includes("/auth/refresh");
     if (error.response?.status === 401 && !originalRequest._retry && !isRefreshRequest) {
-      originalRequest._retry = true; // Mark it as a retry to prevent infinite loops
+      originalRequest._retry = true;
 
       try {
-        // Attempt to refresh the token
-        const tokenResponse = await authService.refreshToken();
-        const { access_token } = tokenResponse;
-
-        // Store the new token
-        localStorage.setItem("accessToken", access_token);
-
-        // Update the Authorization header for the original request and for all future requests
-        apiClient.defaults.headers.common["Authorization"] = `Bearer ${access_token}`;
+        const access_token = await refreshAccessToken();
         originalRequest.headers["Authorization"] = `Bearer ${access_token}`;
-
-        // Retry the original request with the new token
         return apiClient(originalRequest);
       } catch (refreshError) {
-        // If the refresh token is also invalid, log the user out
         console.error("Session refresh failed, logging out.", refreshError);
         localStorage.removeItem("accessToken");
         window.location.href = "/login";
@@ -58,7 +68,6 @@ apiClient.interceptors.response.use(
       }
     }
 
-    // For all other errors, just pass them along
     return Promise.reject(error);
   },
 );

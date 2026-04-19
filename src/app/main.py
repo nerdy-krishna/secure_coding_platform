@@ -1,5 +1,6 @@
 # src/app/main.py
 
+import asyncio
 import logging
 import logging.config
 import os
@@ -22,7 +23,6 @@ from app.api.v1.routers.chat import router as chat_router
 from app.api.v1.routers.refresh import router as refresh_router
 from app.api.v1.routers.setup import router as setup_router
 from app.api.v1.routers.admin_config import router as admin_config_router
-from app.api.v1.routers.llm_config import router as admin_llm_config_router
 from app.infrastructure.auth.backend import auth_backend
 from app.infrastructure.auth.core import fastapi_users
 from app.infrastructure.auth.schemas import UserCreate, UserRead, UserUpdate
@@ -149,9 +149,33 @@ async def lifespan(app: FastAPI):
         logger.error(f"Failed to initialize system config cache: {e}")
 
 
+    # --- Start the outbox sweeper ---
+    from app.infrastructure.messaging.outbox_sweeper import run_outbox_sweeper
+
+    sweeper_stop = asyncio.Event()
+    sweeper_task = asyncio.create_task(
+        run_outbox_sweeper(sweeper_stop), name="outbox-sweeper"
+    )
+
     yield
+
     # This code runs on shutdown
     logger.info("Application shutdown.")
+    sweeper_stop.set()
+    try:
+        await asyncio.wait_for(sweeper_task, timeout=5)
+    except asyncio.TimeoutError:
+        logger.warning("Outbox sweeper did not stop within 5s; cancelling.")
+        sweeper_task.cancel()
+    except Exception as e:
+        logger.warning(f"Outbox sweeper shutdown error: {e}")
+
+    from app.infrastructure.messaging.publisher import close_publisher
+
+    try:
+        await close_publisher()
+    except Exception as e:
+        logger.warning(f"Error during publisher shutdown: {e}")
 
 
 app = FastAPI(
@@ -187,62 +211,59 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.core.config_cache import SystemConfigCache
 from fastapi.responses import PlainTextResponse
 
-class DynamicCORSMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        # Determine allowed origins based on state
-        if not SystemConfigCache.is_setup_completed():
-            allow_all = True
-            allowed_origins = ["*"]
-        else:
-            allow_all = False
-            
-            # Base local/cloud deployed origins are always permitted
-            allowed_origins_str = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
-            allowed_origins = [o.strip() for o in allowed_origins_str.split(",") if o.strip()]
-            
-            # If external CORS is explicitly permitted, add those origins
-            if SystemConfigCache.is_cors_enabled():
-                 allowed_origins.extend(SystemConfigCache.get_allowed_origins())
-            
-        origin = request.headers.get("origin")
-        
-        # Pass request to application
-        response = await call_next(request)
-        
-        # Add CORS headers to response
-        if origin:
-            if allow_all or origin in allowed_origins:
-                response.headers["Access-Control-Allow-Origin"] = origin
-                response.headers["Access-Control-Allow-Credentials"] = "true"
-                response.headers["Access-Control-Allow-Methods"] = "*"
-                response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Correlation-ID, Accept, Origin, X-Requested-With"
-        
-        return response
+_CORS_ALLOWED_HEADERS = (
+    "Content-Type, Authorization, X-Correlation-ID, Accept, Origin, X-Requested-With"
+)
 
-@app.options("/{rest_of_path:path}")
-async def preflight_handler(request: Request, rest_of_path: str):
-    origin = request.headers.get("origin")
+
+def _resolve_allowed_origins() -> tuple[bool, list[str]]:
+    """Returns (allow_all, allowed_origins) based on current setup state and cache."""
     if not SystemConfigCache.is_setup_completed():
-         allowed = True
-    else:
-         allowed_origins_str = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
-         allowed_origins = [o.strip() for o in allowed_origins_str.split(",") if o.strip()]
-         
-         if SystemConfigCache.is_cors_enabled():
-              allowed_origins.extend(SystemConfigCache.get_allowed_origins())
-              
-         allowed = origin and origin in allowed_origins
+        return True, ["*"]
 
-    if allowed and origin:
-        response = PlainTextResponse("OK")
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Methods"] = "*"
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Correlation-ID, Accept, Origin, X-Requested-With"
-        response.headers["Access-Control-Allow-Credentials"] = "true"
+    # Base local/cloud origins from the env var are always permitted post-setup.
+    allowed_origins_str = os.getenv(
+        "ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
+    )
+    origins = [o.strip() for o in allowed_origins_str.split(",") if o.strip()]
+
+    # Admin-configured origins are additive, gated by the cors_enabled toggle.
+    if SystemConfigCache.is_cors_enabled():
+        origins.extend(SystemConfigCache.get_allowed_origins())
+
+    return False, origins
+
+
+class DynamicCORSMiddleware(BaseHTTPMiddleware):
+    """Single source of truth for CORS.
+
+    Handles both OPTIONS preflight (short-circuit, no call_next) and regular
+    responses (header injection after the inner handler runs) using one
+    allow-list resolution.
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        allow_all, allowed_origins = _resolve_allowed_origins()
+        origin = request.headers.get("origin")
+        origin_permitted = bool(origin) and (allow_all or origin in allowed_origins)
+
+        if request.method == "OPTIONS":
+            if origin_permitted:
+                response = PlainTextResponse("OK")
+            else:
+                # No CORS headers on a rejected preflight; the browser will block.
+                return PlainTextResponse("Forbidden", status_code=403)
+        else:
+            response = await call_next(request)
+
+        if origin_permitted:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+            response.headers["Access-Control-Allow-Methods"] = "*"
+            response.headers["Access-Control-Allow-Headers"] = _CORS_ALLOWED_HEADERS
+
         return response
-    
-    # If not allowed, we don't return CORS headers, browser will block.
-    return PlainTextResponse("Forbidden", status_code=403)
+
 
 app.add_middleware(DynamicCORSMiddleware)
 logger.info("Dynamic CORS Middleware configured.")
@@ -334,12 +355,6 @@ app.include_router(
 app.include_router(
     admin_config_router,
     prefix="/api/v1",  # Prefix is defined in the router itself as /admin/system-config
-)
-
-# Router for LLM Configuration (Full CRUD)
-app.include_router(
-    admin_llm_config_router,
-    prefix="/api/v1",  # Prefix is defined in the router itself as /admin/llm-config
 )
 
 
