@@ -5,15 +5,21 @@
 # docker-compose.yml drives both targets from this one file.
 #
 # Stage layout:
-#   base       → runtime OS, non-root user, minimal apt (libpq5, ca-certs)
-#   builder    → base + build-essential + poetry; produces /app/.venv
-#   ml-assets  → builder + pre-downloaded sentence-transformers cache (worker-only)
-#   api        → base + venv + source + git binary (needed for GitPython repo clones)
-#   worker     → base + venv + ml cache + source (no git, no build tools)
+#   base           → runtime OS, non-root user, minimal apt (libpq5, ca-certs)
+#   poetry-base    → base + build-essential + poetry (shared by both builders)
+#   api-builder    → poetry-base + `poetry install --without dev` (no worker
+#                    group) → produces a lean venv without torch / transformers /
+#                    sentence-transformers / tree-sitter
+#   worker-builder → poetry-base + `poetry install --without dev --with worker`
+#                    → produces the full venv with the ML + AST stack
+#   ml-assets      → worker-builder + pre-downloaded sentence-transformers cache
+#   api            → base + api venv + source + git binary (GitPython)
+#   worker         → base + worker venv + ml cache + source (no git)
 #
-# Non-root (uid 1001) everywhere, including the worker image. BuildKit cache
-# mounts speed up rebuilds. Runtime stages don't ship build-essential, git
-# (worker), or poetry — they're only present where genuinely needed.
+# The dep split is the main image-size lever. torch alone is 566MB; the
+# API doesn't import it at runtime, so it has no business being in the
+# API image. Non-root (uid 1001) everywhere. BuildKit cache mounts on
+# pip/poetry keep rebuilds fast.
 
 # ---------- base ---------------------------------------------------------
 FROM python:3.12-slim-bookworm AS base
@@ -43,10 +49,11 @@ WORKDIR /app
 RUN mkdir -p /app/.venv /app/.cache \
     && chown -R ${APP_USER}:${APP_USER} /app
 
-# ---------- builder ------------------------------------------------------
-# Has the C toolchain and poetry. Its only output is /app/.venv, which
-# later stages COPY --from=builder into slimmer runtime images.
-FROM base AS builder
+# ---------- poetry-base --------------------------------------------------
+# Shared base for both builders. Has build-essential (for any wheels that
+# need to compile) and poetry itself. The only thing both builders do is
+# copy lock + pyproject and run a tailored `poetry install`.
+FROM base AS poetry-base
 
 ENV POETRY_VERSION=1.8.3 \
     POETRY_NO_INTERACTION=1 \
@@ -64,17 +71,30 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 USER appuser
 COPY --chown=appuser:appuser pyproject.toml poetry.lock ./
 
-# Install runtime deps only (drop the dev group). The committed lock file
-# is authoritative — no `poetry lock --no-update` at build time.
+# ---------- api-builder --------------------------------------------------
+# Installs only core runtime deps (no dev group, no optional worker group).
+# The worker group is `optional = true` in pyproject.toml so plain
+# `poetry install` skips it by default; `--without dev` just drops the
+# dev tools.
+FROM poetry-base AS api-builder
+
 RUN --mount=type=cache,target=/home/appuser/.cache/pypoetry,uid=1001,gid=1001 \
     --mount=type=cache,target=/home/appuser/.cache/pip,uid=1001,gid=1001 \
     poetry install --no-interaction --no-ansi --no-root --without dev
 
+# ---------- worker-builder -----------------------------------------------
+# Installs core + the worker group (torch, sentence-transformers, tree-sitter).
+FROM poetry-base AS worker-builder
+
+RUN --mount=type=cache,target=/home/appuser/.cache/pypoetry,uid=1001,gid=1001 \
+    --mount=type=cache,target=/home/appuser/.cache/pip,uid=1001,gid=1001 \
+    poetry install --no-interaction --no-ansi --no-root --without dev --with worker
+
 # ---------- ml-assets ----------------------------------------------------
-# Pre-downloads the embedding model used by the RAG preprocessor. Only the
-# worker image copies from this stage; the API doesn't need the model at
-# startup.
-FROM builder AS ml-assets
+# Pre-downloads the embedding model used by the RAG preprocessor so the
+# worker container starts with a warm cache. Only the worker image copies
+# from this stage.
+FROM worker-builder AS ml-assets
 
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
 
@@ -89,7 +109,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 USER appuser
 
-COPY --chown=appuser:appuser --from=builder /app/.venv /app/.venv
+COPY --chown=appuser:appuser --from=api-builder /app/.venv /app/.venv
 COPY --chown=appuser:appuser ./src /app/src
 COPY --chown=appuser:appuser ./alembic /app/alembic
 COPY --chown=appuser:appuser alembic.ini /app/alembic.ini
@@ -102,7 +122,7 @@ FROM base AS worker
 
 USER appuser
 
-COPY --chown=appuser:appuser --from=builder /app/.venv /app/.venv
+COPY --chown=appuser:appuser --from=worker-builder /app/.venv /app/.venv
 COPY --chown=appuser:appuser --from=ml-assets /app/.cache /app/.cache
 COPY --chown=appuser:appuser ./src /app/src
 
