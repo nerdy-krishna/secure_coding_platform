@@ -59,73 +59,30 @@ const LoadingScreen: React.FC = () => (
   </div>
 );
 
-const ProtectedRoutesWithLayout: React.FC = () => {
-  const { accessToken, initialAuthChecked, isLoading, isSetupCompleted } =
-    useAuth();
-  if (!initialAuthChecked || isLoading || isSetupCompleted === null) {
-    return <LoadingScreen />;
-  }
-
-  if (isSetupCompleted === false) {
-    return <Navigate to="/setup" replace />;
-  }
-
-  if (!accessToken) {
-    return <Navigate to="/login" replace />;
-  }
-  return (
-    <DashboardLayout>
-      <Outlet />
-    </DashboardLayout>
-  );
-};
-
 import ForgotPasswordPage from "../features/authentication/components/ForgotPasswordPage";
 import ResetPasswordPage from "../features/authentication/components/ResetPasswordPage";
 
-const AuthRoutesWithLayout: React.FC = () => {
-  const { accessToken, initialAuthChecked, isLoading, isSetupCompleted } =
+type RouteRequirement =
+  | "auth" // Authenticated user → renders inside DashboardLayout.
+  | "unauth" // Unauthenticated only (login / forgot-password) → AuthLayout.
+  | "superuser" // Authenticated + is_superuser → DashboardLayout.
+  | "root-redirect"; // No render; redirect based on auth state.
+
+interface RouteGuardProps {
+  requires: RouteRequirement;
+}
+
+/**
+ * Single route guard consolidating the four copies this file had
+ * (protected / auth-only / root / superuser). All variants share:
+ *  - the same "is auth/setup state resolved yet?" loading gate, and
+ *  - the same "setup not completed → /setup" forced redirect.
+ * The `requires` prop selects the post-setup-gate behavior.
+ */
+const RouteGuard: React.FC<RouteGuardProps> = ({ requires }) => {
+  const { accessToken, user, initialAuthChecked, isLoading, isSetupCompleted } =
     useAuth();
-  if (!initialAuthChecked || isLoading || isSetupCompleted === null) {
-    return <LoadingScreen />;
-  }
 
-  // Force redirect to setup if not completed
-  if (isSetupCompleted === false) {
-    return <Navigate to="/setup" replace />;
-  }
-
-  if (accessToken) {
-    return <Navigate to="/" replace />;
-  }
-  return (
-    <AuthLayout>
-      <Outlet />
-    </AuthLayout>
-  );
-};
-
-const RootRedirector: React.FC = () => {
-  const { accessToken, initialAuthChecked, isLoading, isSetupCompleted } =
-    useAuth();
-  if (!initialAuthChecked || isLoading || isSetupCompleted === null) {
-    return <LoadingScreen />;
-  }
-
-  if (isSetupCompleted === false) {
-    return <Navigate to="/setup" replace />;
-  }
-
-  return accessToken ? (
-    <Navigate to="/account/dashboard" replace />
-  ) : (
-    <Navigate to="/login" replace />
-  );
-};
-
-const SuperuserRoutesWithLayout: React.FC = () => {
-  const { user, accessToken, initialAuthChecked, isLoading, isSetupCompleted } =
-    useAuth();
   if (!initialAuthChecked || isLoading || isSetupCompleted === null) {
     return <LoadingScreen />;
   }
@@ -134,12 +91,31 @@ const SuperuserRoutesWithLayout: React.FC = () => {
     return <Navigate to="/setup" replace />;
   }
 
+  if (requires === "root-redirect") {
+    return accessToken ? (
+      <Navigate to="/account/dashboard" replace />
+    ) : (
+      <Navigate to="/login" replace />
+    );
+  }
+
+  if (requires === "unauth") {
+    return accessToken ? (
+      <Navigate to="/" replace />
+    ) : (
+      <AuthLayout>
+        <Outlet />
+      </AuthLayout>
+    );
+  }
+
+  // Both "auth" and "superuser" need a token.
   if (!accessToken) {
     return <Navigate to="/login" replace />;
   }
 
-  if (!user?.is_superuser) {
-    return <Navigate to="/dashboard" replace />;
+  if (requires === "superuser" && !user?.is_superuser) {
+    return <Navigate to="/account/dashboard" replace />;
   }
 
   return (
@@ -153,7 +129,7 @@ function AppContent() {
   return (
     <Router>
       <Routes>
-        <Route element={<AuthRoutesWithLayout />}>
+        <Route element={<RouteGuard requires="unauth" />}>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
@@ -162,7 +138,7 @@ function AppContent() {
         {/* Setup Route */}
         <Route path="/setup" element={<SetupPage />} />
 
-        <Route element={<ProtectedRoutesWithLayout />}>
+        <Route element={<RouteGuard requires="auth" />}>
           <Route path="/account/dashboard" element={<DashboardPage />} />
           <Route path="/submission/submit" element={<SubmitCodePage />} />
           <Route path="/analysis/results" element={<ProjectsPage />} />
@@ -179,7 +155,7 @@ function AppContent() {
           <Route path="/account/history" element={<SubmissionHistoryPage />} />
         </Route>
 
-        <Route element={<SuperuserRoutesWithLayout />}>
+        <Route element={<RouteGuard requires="superuser" />}>
           <Route path="/admin/system" element={<SystemConfigTab />} />
           <Route path="/admin/users" element={<UserManagementTab />} />
           <Route path="/admin/smtp" element={<SMTPSettingsTab />} />
@@ -193,7 +169,7 @@ function AppContent() {
           <Route path="/admin/rag" element={<RAGManagementPage />} />
         </Route>
 
-        <Route path="/" element={<RootRedirector />} />
+        <Route path="/" element={<RouteGuard requires="root-redirect" />} />
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </Router>

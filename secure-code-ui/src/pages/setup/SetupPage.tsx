@@ -1,728 +1,332 @@
-import React, { useState } from "react";
+import {
+  Alert,
+  Button,
+  Card,
+  Form,
+  Input,
+  Layout,
+  Radio,
+  Select,
+  Space,
+  Steps,
+  Typography,
+} from "antd";
+import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import apiClient from "../../shared/api/apiClient";
 import { useAuth } from "../../shared/hooks/useAuth";
 
+const { Title, Paragraph, Text } = Typography;
+
+type DeploymentType = "local" | "cloud";
+type LLMMode = "multi_provider" | "anthropic_optimized";
+
+interface SetupFormValues {
+  deployment_type: DeploymentType;
+  frontend_url?: string;
+  admin_email: string;
+  admin_password: string;
+  llm_optimization_mode: LLMMode;
+  llm_provider: string;
+  llm_model: string;
+  llm_api_key: string;
+}
+
+const WIZARD_STEPS = [
+  { title: "Deployment" },
+  { title: "Admin" },
+  { title: "LLM Mode" },
+  { title: "LLM Config" },
+];
+
 const SetupPage: React.FC = () => {
   const navigate = useNavigate();
-  const { isSetupCompleted, isLoading, checkSetupStatus } = useAuth(); // Get setup status from auth context
-  const [step, setStep] = useState(1);
-  const [loading, setLoading] = useState(false);
+  const { isSetupCompleted, isLoading, checkSetupStatus } = useAuth();
+  const [form] = Form.useForm<SetupFormValues>();
+
+  const [step, setStep] = useState(0);
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [deploymentType, setDeploymentType] = useState<"local" | "cloud">(
-    "local",
-  );
+  // `Form.useWatch` re-renders the component when the watched fields change,
+  // so the provider dropdown on step 4 can react to the mode selected on step 3.
+  const deploymentType = Form.useWatch("deployment_type", form);
+  const llmMode = Form.useWatch("llm_optimization_mode", form);
 
-  interface SetupFormData {
-    admin_email: string;
-    admin_password: string;
-    llm_provider: string;
-    llm_api_key: string;
-    llm_model: string;
-    llm_optimization_mode: "multi_provider" | "anthropic_optimized";
-    deployment_type: "local" | "cloud";
-    frontend_url: string;
-  }
-
-  const [formData, setFormData] = useState<SetupFormData>({
-    admin_email: "",
-    admin_password: "",
-    llm_provider: "openai",
-    llm_api_key: "",
-    llm_model: "gpt-4o",
-    llm_optimization_mode: "multi_provider",
-    deployment_type: "local",
-    frontend_url: "",
-  });
-
-  const setMode = (mode: "multi_provider" | "anthropic_optimized") => {
-    if (mode === "anthropic_optimized") {
-      // Anthropic optimized locks the provider; suggest a sensible default model.
-      setFormData((prev) => ({
-        ...prev,
-        llm_optimization_mode: mode,
-        llm_provider: "anthropic",
-        llm_model:
-          prev.llm_provider === "anthropic" ? prev.llm_model : "claude-sonnet-4-6",
-      }));
-    } else {
-      setFormData((prev) => ({ ...prev, llm_optimization_mode: mode }));
-    }
-  };
-
-  // Redirect to login if setup is already completed
-  React.useEffect(() => {
+  useEffect(() => {
     if (!isLoading && isSetupCompleted) {
       navigate("/login");
     }
   }, [isSetupCompleted, isLoading, navigate]);
 
-  // Show loading state while checking status
+  // Anthropic-optimized mode locks provider to "anthropic" and nudges a sensible model.
+  useEffect(() => {
+    if (llmMode === "anthropic_optimized") {
+      const currentProvider = form.getFieldValue("llm_provider");
+      if (currentProvider !== "anthropic") {
+        form.setFieldsValue({
+          llm_provider: "anthropic",
+          llm_model: "claude-sonnet-4-6",
+        });
+      }
+    }
+  }, [llmMode, form]);
+
   if (isLoading) {
     return (
-      <div
+      <Layout
         style={{
-          display: "flex",
+          minHeight: "100vh",
           justifyContent: "center",
           alignItems: "center",
-          height: "100vh",
         }}
       >
-        {" "}
-        Loading...
-      </div>
+        <Text>Loading…</Text>
+      </Layout>
     );
   }
 
-  const handleChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>,
-  ) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
-  };
+  const stepFields: Array<Array<keyof SetupFormValues>> = [
+    ["deployment_type", "frontend_url"],
+    ["admin_email", "admin_password"],
+    ["llm_optimization_mode"],
+    ["llm_provider", "llm_model", "llm_api_key"],
+  ];
 
-  const handleDeploymentTypeChange = (type: "local" | "cloud") => {
-    setDeploymentType(type);
-    setFormData({ ...formData, deployment_type: type });
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-
+  const goNext = async () => {
     try {
-      const payload = {
-        ...formData,
-        deployment_type: deploymentType,
-      };
-      if (deploymentType === "cloud" && !formData.frontend_url) {
-        setError(
-          "Please provide your public frontend URL for the cloud deployment.",
-        );
-        setLoading(false);
-        return;
-      }
-      await apiClient.post("/setup", payload);
+      await form.validateFields(stepFields[step]);
+      setStep((s) => Math.min(s + 1, WIZARD_STEPS.length - 1));
+    } catch {
+      // Ant Design renders field-level validation errors inline.
+    }
+  };
+
+  const goBack = () => setStep((s) => Math.max(s - 1, 0));
+
+  const onSubmit = async (values: SetupFormValues) => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      await apiClient.post("/setup", values);
       await checkSetupStatus();
       navigate("/login");
-    } catch (err: any) {
-      console.error("Setup failed details:", err);
-      const msg = err.response?.data?.detail
-        ? typeof err.response.data.detail === "string"
-          ? err.response.data.detail
-          : JSON.stringify(err.response.data.detail)
-        : err.message || "Setup failed. Please try again.";
+    } catch (err) {
+      const e = err as { response?: { data?: { detail?: unknown } }; message?: string };
+      const detail = e.response?.data?.detail;
+      const msg =
+        typeof detail === "string"
+          ? detail
+          : detail
+          ? JSON.stringify(detail)
+          : e.message || "Setup failed. Please try again.";
       setError(msg);
     } finally {
-      setLoading(false);
+      setSubmitting(false);
     }
   };
 
   return (
-    <div
+    <Layout
       style={{
+        minHeight: "100vh",
+        background: "#f0f2f5",
         display: "flex",
         justifyContent: "center",
         alignItems: "center",
-        minHeight: "100vh",
-        backgroundColor: "#f3f4f6",
-        fontFamily: "Inter, sans-serif",
+        padding: "24px",
       }}
     >
-      <div
-        style={{
-          backgroundColor: "white",
-          padding: "2rem",
-          borderRadius: "8px",
-          boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
-          width: "100%",
-          maxWidth: "500px",
-        }}
-      >
-        <h1
-          style={{
-            textAlign: "center",
-            marginBottom: "1.5rem",
-            color: "#111827",
-          }}
-        >
+      <Card style={{ width: "100%", maxWidth: 640 }}>
+        <Title level={3} style={{ textAlign: "center", marginBottom: 8 }}>
           Secure Coding Platform Setup
-        </h1>
+        </Title>
+        <Paragraph type="secondary" style={{ textAlign: "center" }}>
+          Configure deployment, the admin account, and your LLM provider.
+        </Paragraph>
+
+        <Steps
+          current={step}
+          items={WIZARD_STEPS}
+          size="small"
+          style={{ margin: "24px 0" }}
+        />
 
         {error && (
-          <div
-            style={{
-              backgroundColor: "#fee2e2",
-              color: "#b91c1c",
-              padding: "1rem",
-              borderRadius: "4px",
-              marginBottom: "1rem",
-            }}
-          >
-            {error}
-          </div>
+          <Alert
+            type="error"
+            message={error}
+            closable
+            onClose={() => setError(null)}
+            style={{ marginBottom: 16 }}
+          />
         )}
 
-        <div
-          style={{
-            marginBottom: "1.5rem",
-            display: "flex",
-            justifyContent: "center",
+        <Form<SetupFormValues>
+          form={form}
+          layout="vertical"
+          initialValues={{
+            deployment_type: "local",
+            frontend_url: "",
+            llm_optimization_mode: "multi_provider",
+            llm_provider: "openai",
+            llm_model: "gpt-4o",
           }}
+          onFinish={onSubmit}
+          requiredMark="optional"
         >
-          <div style={{ display: "flex", gap: "1rem" }}>
-            <span
-              style={{
-                fontWeight: step === 1 ? "bold" : "normal",
-                color: step === 1 ? "#2563eb" : "#9ca3af",
-              }}
+          {/* Step 1: Deployment */}
+          <div style={{ display: step === 0 ? "block" : "none" }}>
+            <Form.Item
+              name="deployment_type"
+              label="Deployment Environment"
+              rules={[{ required: true }]}
             >
-              {" "}
-              1. Deployment{" "}
-            </span>
-            <span style={{ color: "#9ca3af" }}>& rarr; </span>
-            <span
-              style={{
-                fontWeight: step === 2 ? "bold" : "normal",
-                color: step === 2 ? "#2563eb" : "#9ca3af",
-              }}
-            >
-              {" "}
-              2. Admin{" "}
-            </span>
-            <span style={{ color: "#9ca3af" }}>& rarr; </span>
-            <span
-              style={{
-                fontWeight: step === 3 ? "bold" : "normal",
-                color: step === 3 ? "#2563eb" : "#9ca3af",
-              }}
-            >
-              {" "}
-              3. LLM Mode{" "}
-            </span>
-            <span style={{ color: "#9ca3af" }}>& rarr; </span>
-            <span
-              style={{
-                fontWeight: step === 4 ? "bold" : "normal",
-                color: step === 4 ? "#2563eb" : "#9ca3af",
-              }}
-            >
-              {" "}
-              4. LLM Config{" "}
-            </span>
+              <Radio.Group>
+                <Space direction="vertical" style={{ width: "100%" }}>
+                  <Radio value="local">
+                    <strong>Local Development</strong> — app runs on your
+                    machine with default CORS.
+                  </Radio>
+                  <Radio value="cloud">
+                    <strong>Cloud / VPS</strong> — expose via a public URL.
+                  </Radio>
+                </Space>
+              </Radio.Group>
+            </Form.Item>
+
+            {deploymentType === "cloud" && (
+              <Form.Item
+                name="frontend_url"
+                label="Public Frontend URL"
+                tooltip="Where users will access the UI (e.g., https://yourdomain.com)."
+                rules={[
+                  {
+                    required: true,
+                    message: "Frontend URL is required for cloud deployments.",
+                  },
+                  { type: "url", message: "Enter a valid URL." },
+                ]}
+              >
+                <Input placeholder="https://yourdomain.com" />
+              </Form.Item>
+            )}
           </div>
-        </div>
 
-        <form onSubmit={handleSubmit}>
-          {step === 1 && (
-            <>
-              <div style={{ marginBottom: "1rem" }}>
-                <label
-                  style={{
-                    display: "block",
-                    marginBottom: "0.5rem",
-                    color: "#374151",
-                    fontWeight: "bold",
-                  }}
-                >
-                  Deployment Environment
-                </label>
+          {/* Step 2: Admin */}
+          <div style={{ display: step === 1 ? "block" : "none" }}>
+            <Form.Item
+              name="admin_email"
+              label="Admin Email"
+              rules={[
+                { required: true, message: "Admin email is required." },
+                { type: "email", message: "Enter a valid email address." },
+              ]}
+            >
+              <Input autoComplete="email" />
+            </Form.Item>
+            <Form.Item
+              name="admin_password"
+              label="Admin Password"
+              rules={[
+                { required: true, message: "Admin password is required." },
+                { min: 8, message: "Password must be at least 8 characters." },
+              ]}
+            >
+              <Input.Password autoComplete="new-password" />
+            </Form.Item>
+          </div>
 
-                <div
-                  style={{ display: "flex", gap: "1rem", marginBottom: "1rem" }}
-                >
-                  <div
-                    onClick={() => handleDeploymentTypeChange("local")}
-                    style={{
-                      flex: 1,
-                      padding: "1rem",
-                      border:
-                        deploymentType === "local"
-                          ? "2px solid #2563eb"
-                          : "1px solid #d1d5db",
-                      borderRadius: "8px",
-                      cursor: "pointer",
-                      backgroundColor:
-                        deploymentType === "local" ? "#eff6ff" : "white",
-                    }}
-                  >
-                    <h3 style={{ margin: "0 0 0.5rem 0", color: "#111827" }}>
-                      {" "}
-                      Local Development{" "}
-                    </h3>
-                    <p
-                      style={{
-                        margin: 0,
-                        fontSize: "0.875rem",
-                        color: "#6b7280",
-                      }}
-                    >
-                      App is running locally on your machine.Default local
-                      configurations will be applied.
-                    </p>
-                  </div>
+          {/* Step 3: LLM Optimization Mode */}
+          <div style={{ display: step === 2 ? "block" : "none" }}>
+            <Form.Item
+              name="llm_optimization_mode"
+              label="LLM Optimization Mode"
+              tooltip="Switchable later in System Settings."
+              rules={[{ required: true }]}
+            >
+              <Radio.Group>
+                <Space direction="vertical" style={{ width: "100%" }}>
+                  <Radio value="anthropic_optimized">
+                    <strong>Anthropic Optimized (recommended)</strong>
+                    <div style={{ color: "#6b7280", fontSize: 13 }}>
+                      Prompt caching, tuned prompt variants, tool use. Locks
+                      the provider to Anthropic. Typical 70%+ cost drop on
+                      repeated-agent-per-file scans.
+                    </div>
+                  </Radio>
+                  <Radio value="multi_provider">
+                    <strong>Multi-Provider (Generic)</strong>
+                    <div style={{ color: "#6b7280", fontSize: 13 }}>
+                      Portable prompts across OpenAI, Anthropic, and Google.
+                      No caching; broader model choice.
+                    </div>
+                  </Radio>
+                </Space>
+              </Radio.Group>
+            </Form.Item>
+          </div>
 
-                  <div
-                    onClick={() => handleDeploymentTypeChange("cloud")}
-                    style={{
-                      flex: 1,
-                      padding: "1rem",
-                      border:
-                        deploymentType === "cloud"
-                          ? "2px solid #2563eb"
-                          : "1px solid #d1d5db",
-                      borderRadius: "8px",
-                      cursor: "pointer",
-                      backgroundColor:
-                        deploymentType === "cloud" ? "#eff6ff" : "white",
-                    }}
-                  >
-                    <h3 style={{ margin: "0 0 0.5rem 0", color: "#111827" }}>
-                      {" "}
-                      Cloud / VPS{" "}
-                    </h3>
-                    <p
-                      style={{
-                        margin: 0,
-                        fontSize: "0.875rem",
-                        color: "#6b7280",
-                      }}
-                    >
-                      App is deployed online.You will need to provide your
-                      public domain / IP.
-                    </p>
-                  </div>
-                </div>
+          {/* Step 4: LLM Config */}
+          <div style={{ display: step === 3 ? "block" : "none" }}>
+            <Form.Item
+              name="llm_provider"
+              label="LLM Provider"
+              extra={
+                llmMode === "anthropic_optimized"
+                  ? "Locked to Anthropic by the optimization mode."
+                  : undefined
+              }
+              rules={[{ required: true }]}
+            >
+              <Select
+                disabled={llmMode === "anthropic_optimized"}
+                options={[
+                  { value: "openai", label: "OpenAI" },
+                  { value: "anthropic", label: "Anthropic" },
+                  { value: "gemini", label: "Google Gemini" },
+                ]}
+              />
+            </Form.Item>
+            <Form.Item
+              name="llm_model"
+              label="Model Name"
+              rules={[{ required: true, message: "Model name is required." }]}
+            >
+              <Input placeholder="e.g., gpt-4o, claude-sonnet-4-6" />
+            </Form.Item>
+            <Form.Item
+              name="llm_api_key"
+              label="API Key"
+              rules={[{ required: true, message: "API key is required." }]}
+            >
+              <Input.Password autoComplete="off" />
+            </Form.Item>
+          </div>
 
-                {deploymentType === "cloud" && (
-                  <div style={{ marginTop: "1.5rem" }}>
-                    <label
-                      style={{
-                        display: "block",
-                        marginBottom: "0.5rem",
-                        color: "#374151",
-                      }}
-                    >
-                      {" "}
-                      Public Frontend URL{" "}
-                    </label>
-                    <input
-                      type="text"
-                      name="frontend_url"
-                      placeholder="e.g., http://123.45.67.89 or https://yourdomain.com"
-                      value={formData.frontend_url}
-                      onChange={handleChange}
-                      required
-                      style={{
-                        width: "100%",
-                        padding: "0.75rem",
-                        borderRadius: "4px",
-                        border: "1px solid #d1d5db",
-                      }}
-                    />
-                    <p
-                      style={{
-                        marginTop: "0.5rem",
-                        fontSize: "0.8rem",
-                        color: "#6b7280",
-                      }}
-                    >
-                      This is the URL where users will access the
-                      platform.Omitting the port is recommended if deploying on
-                      standard HTTP / HTTPS(port 80 / 443).
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              <div style={{ display: "flex", gap: "1rem" }}>
-                <button
-                  type="button"
-                  onClick={() => setStep(2)}
-                  disabled={
-                    deploymentType === "cloud" && !formData.frontend_url
-                  }
-                  style={{
-                    flex: 1,
-                    backgroundColor: "#2563eb",
-                    color: "white",
-                    padding: "0.75rem",
-                    borderRadius: "4px",
-                    border: "none",
-                    cursor: "pointer",
-                    opacity:
-                      deploymentType === "cloud" && !formData.frontend_url
-                        ? 0.5
-                        : 1,
-                  }}
-                >
-                  Next
-                </button>
-              </div>
-            </>
-          )}
-
-          {step === 2 && (
-            <>
-              <div style={{ marginBottom: "1rem" }}>
-                <label
-                  style={{
-                    display: "block",
-                    marginBottom: "0.5rem",
-                    color: "#374151",
-                  }}
-                >
-                  {" "}
-                  Admin Email{" "}
-                </label>
-                <input
-                  type="email"
-                  name="admin_email"
-                  value={formData.admin_email}
-                  onChange={handleChange}
-                  required
-                  style={{
-                    width: "100%",
-                    padding: "0.75rem",
-                    borderRadius: "4px",
-                    border: "1px solid #d1d5db",
-                  }}
-                />
-              </div>
-              <div style={{ marginBottom: "1.5rem" }}>
-                <label
-                  style={{
-                    display: "block",
-                    marginBottom: "0.5rem",
-                    color: "#374151",
-                  }}
-                >
-                  {" "}
-                  Admin Password{" "}
-                </label>
-                <input
-                  type="password"
-                  name="admin_password"
-                  value={formData.admin_password}
-                  onChange={handleChange}
-                  required
-                  minLength={8}
-                  style={{
-                    width: "100%",
-                    padding: "0.75rem",
-                    borderRadius: "4px",
-                    border: "1px solid #d1d5db",
-                  }}
-                />
-              </div>
-              <div style={{ display: "flex", gap: "1rem" }}>
-                <button
-                  type="button"
-                  onClick={() => setStep(1)}
-                  style={{
-                    flex: 1,
-                    backgroundColor: "#9ca3af",
-                    color: "white",
-                    padding: "0.75rem",
-                    borderRadius: "4px",
-                    border: "none",
-                    cursor: "pointer",
-                  }}
-                >
-                  Back
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setStep(3)}
-                  disabled={!formData.admin_email || !formData.admin_password}
-                  style={{
-                    flex: 1,
-                    backgroundColor: "#2563eb",
-                    color: "white",
-                    padding: "0.75rem",
-                    borderRadius: "4px",
-                    border: "none",
-                    cursor: "pointer",
-                    opacity:
-                      !formData.admin_email || !formData.admin_password
-                        ? 0.5
-                        : 1,
-                  }}
-                >
-                  Next
-                </button>
-              </div>
-            </>
-          )}
-
-          {step === 3 && (
-            <>
-              <div style={{ marginBottom: "1rem" }}>
-                <label
-                  style={{
-                    display: "block",
-                    marginBottom: "0.5rem",
-                    color: "#374151",
-                    fontWeight: "bold",
-                  }}
-                >
-                  LLM Optimization Mode
-                </label>
-                <p
-                  style={{
-                    margin: "0 0 1rem 0",
-                    fontSize: "0.85rem",
-                    color: "#6b7280",
-                  }}
-                >
-                  Pick how the platform tunes prompts and features for your
-                  model. You can change this later in System Settings.
-                </p>
-
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "0.75rem",
-                  }}
-                >
-                  <div
-                    onClick={() => setMode("anthropic_optimized")}
-                    style={{
-                      padding: "1rem",
-                      border:
-                        formData.llm_optimization_mode === "anthropic_optimized"
-                          ? "2px solid #2563eb"
-                          : "1px solid #d1d5db",
-                      borderRadius: "8px",
-                      cursor: "pointer",
-                      backgroundColor:
-                        formData.llm_optimization_mode === "anthropic_optimized"
-                          ? "#eff6ff"
-                          : "white",
-                    }}
-                  >
-                    <h3 style={{ margin: "0 0 0.5rem 0", color: "#111827" }}>
-                      Anthropic Optimized (recommended)
-                    </h3>
-                    <p
-                      style={{
-                        margin: 0,
-                        fontSize: "0.875rem",
-                        color: "#6b7280",
-                      }}
-                    >
-                      Enables prompt caching, tuned prompt variants, and tool
-                      use. Locks the provider to Anthropic. Typical cost drop
-                      of 70%+ on repeated-agent-per-file scans.
-                    </p>
-                  </div>
-
-                  <div
-                    onClick={() => setMode("multi_provider")}
-                    style={{
-                      padding: "1rem",
-                      border:
-                        formData.llm_optimization_mode === "multi_provider"
-                          ? "2px solid #2563eb"
-                          : "1px solid #d1d5db",
-                      borderRadius: "8px",
-                      cursor: "pointer",
-                      backgroundColor:
-                        formData.llm_optimization_mode === "multi_provider"
-                          ? "#eff6ff"
-                          : "white",
-                    }}
-                  >
-                    <h3 style={{ margin: "0 0 0.5rem 0", color: "#111827" }}>
-                      Multi-Provider (Generic)
-                    </h3>
-                    <p
-                      style={{
-                        margin: 0,
-                        fontSize: "0.875rem",
-                        color: "#6b7280",
-                      }}
-                    >
-                      Works with OpenAI, Anthropic, or Google. Portable
-                      prompts, no caching, broader model choice.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ display: "flex", gap: "1rem" }}>
-                <button
-                  type="button"
-                  onClick={() => setStep(2)}
-                  style={{
-                    flex: 1,
-                    backgroundColor: "#9ca3af",
-                    color: "white",
-                    padding: "0.75rem",
-                    borderRadius: "4px",
-                    border: "none",
-                    cursor: "pointer",
-                  }}
-                >
-                  Back
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setStep(4)}
-                  style={{
-                    flex: 1,
-                    backgroundColor: "#2563eb",
-                    color: "white",
-                    padding: "0.75rem",
-                    borderRadius: "4px",
-                    border: "none",
-                    cursor: "pointer",
-                  }}
-                >
-                  Next
-                </button>
-              </div>
-            </>
-          )}
-
-          {step === 4 && (
-            <>
-              <div style={{ marginBottom: "1rem" }}>
-                <label
-                  style={{
-                    display: "block",
-                    marginBottom: "0.5rem",
-                    color: "#374151",
-                  }}
-                >
-                  {" "}
-                  LLM Provider{" "}
-                </label>
-                <select
-                  name="llm_provider"
-                  value={formData.llm_provider}
-                  onChange={handleChange}
-                  disabled={
-                    formData.llm_optimization_mode === "anthropic_optimized"
-                  }
-                  style={{
-                    width: "100%",
-                    padding: "0.75rem",
-                    borderRadius: "4px",
-                    border: "1px solid #d1d5db",
-                    backgroundColor:
-                      formData.llm_optimization_mode === "anthropic_optimized"
-                        ? "#f3f4f6"
-                        : "white",
-                  }}
-                >
-                  <option value="openai"> OpenAI </option>
-                  <option value="anthropic"> Anthropic </option>
-                  <option value="gemini"> Google Gemini </option>
-                </select>
-                {formData.llm_optimization_mode === "anthropic_optimized" && (
-                  <p
-                    style={{
-                      marginTop: "0.25rem",
-                      fontSize: "0.8rem",
-                      color: "#6b7280",
-                    }}
-                  >
-                    Provider is locked to Anthropic because you chose the
-                    Anthropic-optimized mode.
-                  </p>
-                )}
-              </div>
-              <div style={{ marginBottom: "1rem" }}>
-                <label
-                  style={{
-                    display: "block",
-                    marginBottom: "0.5rem",
-                    color: "#374151",
-                  }}
-                >
-                  {" "}
-                  Model Name{" "}
-                </label>
-                <input
-                  type="text"
-                  name="llm_model"
-                  value={formData.llm_model}
-                  onChange={handleChange}
-                  required
-                  style={{
-                    width: "100%",
-                    padding: "0.75rem",
-                    borderRadius: "4px",
-                    border: "1px solid #d1d5db",
-                  }}
-                />
-              </div>
-              <div style={{ marginBottom: "1.5rem" }}>
-                <label
-                  style={{
-                    display: "block",
-                    marginBottom: "0.5rem",
-                    color: "#374151",
-                  }}
-                >
-                  {" "}
-                  API Key{" "}
-                </label>
-                <input
-                  type="password"
-                  name="llm_api_key"
-                  value={formData.llm_api_key}
-                  onChange={handleChange}
-                  required
-                  style={{
-                    width: "100%",
-                    padding: "0.75rem",
-                    borderRadius: "4px",
-                    border: "1px solid #d1d5db",
-                  }}
-                />
-              </div>
-              <div style={{ display: "flex", gap: "1rem" }}>
-                <button
-                  type="button"
-                  onClick={() => setStep(3)}
-                  style={{
-                    flex: 1,
-                    backgroundColor: "#9ca3af",
-                    color: "white",
-                    padding: "0.75rem",
-                    borderRadius: "4px",
-                    border: "none",
-                    cursor: "pointer",
-                  }}
-                >
-                  Back
-                </button>
-                <button
-                  type="submit"
-                  disabled={!formData.llm_api_key || loading}
-                  style={{
-                    flex: 1,
-                    backgroundColor: "#2563eb",
-                    color: "white",
-                    padding: "0.75rem",
-                    borderRadius: "4px",
-                    border: "none",
-                    cursor: "pointer",
-                    opacity: !formData.llm_api_key || loading ? 0.5 : 1,
-                  }}
-                >
-                  {loading ? "Completing Setup..." : "Finish Setup"}
-                </button>
-              </div>
-            </>
-          )}
-        </form>
-      </div>
-    </div>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              marginTop: 24,
+            }}
+          >
+            <Button onClick={goBack} disabled={step === 0}>
+              Back
+            </Button>
+            {step < WIZARD_STEPS.length - 1 ? (
+              <Button type="primary" onClick={goNext}>
+                Next
+              </Button>
+            ) : (
+              <Button type="primary" htmlType="submit" loading={submitting}>
+                Finish Setup
+              </Button>
+            )}
+          </div>
+        </Form>
+      </Card>
+    </Layout>
   );
 };
 
