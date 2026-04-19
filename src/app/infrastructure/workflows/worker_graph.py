@@ -45,6 +45,7 @@ try:
 except ImportError:
     HAS_TREE_SITTER = False
 from app.shared.analysis_tools.chunker import semantic_chunker
+from app.shared.lib.agent_routing import resolve_agents_for_file
 from app.shared.lib.files import get_language_from_filename
 from app.shared.lib import cost_estimation
 
@@ -81,12 +82,6 @@ class RelevantAgent(TypedDict):
     domain_query: Dict[str, Any]
 
 
-class TriageResult(BaseModel):
-    relevant_agent_names: List[str] = Field(
-        description="A list of the names of the agents that are relevant for analyzing the given file."
-    )
-
-
 class WorkerState(TypedDict):
     """The updated, three-tier state for the workflow."""
 
@@ -102,7 +97,6 @@ class WorkerState(TypedDict):
     repository_map: Optional[Any]
     dependency_graph: Optional[Any]
     all_relevant_agents: Dict[str, RelevantAgent]
-    triaged_agents_per_file: Dict[str, List[RelevantAgent]]
     live_codebase: Optional[Dict[str, str]]
     findings: List[VulnerabilityFinding]
     agent_results: Optional[List[Dict[str, Any]]]
@@ -203,9 +197,8 @@ async def retrieve_and_prepare_data_node(state: WorkerState) -> Dict[str, Any]:
                 "live_codebase": files.copy(),
                 "repository_map": repository_map,
                 "dependency_graph": nx.node_link_data(dependency_graph),
-                "triaged_agents_per_file": {},  # To be populated by triage node
                 "findings": [],
-                "all_relevant_agents": all_relevant_agents,  # Temp field for triage
+                "all_relevant_agents": all_relevant_agents,
             }
     except Exception as e:
         logger.error(f"Error preparing data for scan {scan_id}: {e}", exc_info=True)
@@ -302,165 +295,69 @@ The `merged_code` you provide must be a surgical, drop-in replacement for the OR
 Crucially, the `original_snippet_for_replacement` field in your JSON response MUST be an EXACT, character-for-character copy of the 'ORIGINAL VULNERABLE CODE BLOCK' provided above.
 The `merged_code` field should contain ONLY the final, corrected code that will replace the original block. DO NOT include the original code in the `merged_code` field.
 """
-    for attempt in range(3):  # 1 initial try + 2 retries
-        response = await llm_client.generate_structured_output(
-            prompt, MergedFixResponse
-        )
+    # Single-shot merge. The old 3-attempt retry loop was weak-model scaffolding;
+    # a modern reasoning model that fails once is very unlikely to succeed on
+    # attempt 3, and the retries wasted tokens + latency. On failure we fall
+    # back to the highest-priority fix and surface the unmerged group as
+    # NEEDS_MANUAL_REVIEW via the caller's fallback path.
+    response = await llm_client.generate_structured_output(
+        prompt, MergedFixResponse
+    )
 
-        if (
-            response.parsed_output
-            and isinstance(response.parsed_output, MergedFixResponse)
-            and response.parsed_output.original_snippet_for_replacement
-            in code_to_search_in
-        ):
-            logger.info(
-                f"Merge agent produced a verified snippet on attempt {attempt + 1}."
-            )
-
-            # --- STRICT DIFF CHECK ---
-            if (
-                response.parsed_output.merged_code.strip()
-                == response.parsed_output.original_snippet_for_replacement.strip()
-            ):
-                logger.warning(
-                    f"Merge agent returned a fix identical to the original code on attempt {attempt + 1}. Retrying."
-                )
-                continue
-            # --- END STRICT DIFF CHECK ---
-
-            # --- SYNTAX VERIFICATION ---
-            candidate_code = code_to_search_in.replace(
-                response.parsed_output.original_snippet_for_replacement,
-                response.parsed_output.merged_code,
-                1,  # Replace only the first occurrence
-            )
-            if not _verify_syntax_with_treesitter(candidate_code, filename):
-                logger.warning(
-                    f"Merge agent produced syntactically invalid code on attempt {attempt + 1}. Retrying."
-                )
-                continue
-            # --- END SYNTAX VERIFICATION ---
-
-            # Create a new FixResult representing the merged fix
-            merged_finding = winner.finding.model_copy(deep=True)
-
-            # --- START: Build detailed explanation ---
-            conflicts_summary = (
-                "The following conflicting suggestions were considered:\n"
-            )
-            for i, fix in enumerate(conflicting_fixes):
-                conflicts_summary += f"- Suggestion {i + 1} (CWE: {fix.finding.cwe}, Severity: {fix.finding.severity}): {fix.finding.remediation}\n"
-
-            final_explanation = f"{conflicts_summary}\nMerge Reasoning:\n{response.parsed_output.explanation}"
-            # --- END: Build detailed explanation ---
-
-            merged_finding.description = final_explanation
-
-            merged_suggestion = FixSuggestion(
-                description=final_explanation,
-                original_snippet=response.parsed_output.original_snippet_for_replacement,
-                code=response.parsed_output.merged_code,
-            )
-
-            logger.info(
-                f"Merge agent succeeded on attempt {attempt + 1} with syntax-verified code."
-            )
-            return FixResult(finding=merged_finding, suggestion=merged_suggestion)
-
+    if not (
+        response.parsed_output
+        and isinstance(response.parsed_output, MergedFixResponse)
+        and response.parsed_output.original_snippet_for_replacement
+        in code_to_search_in
+    ):
         logger.warning(
-            f"Merge agent failed to produce a valid, verifiable snippet on attempt {attempt + 1}. "
-            f"Parsed: {response.parsed_output is not None}, Error: {response.error}"
+            f"Merge agent did not produce a verifiable snippet for {filename}. "
+            f"Conflicts: {len(conflicting_fixes)} fixes, CWEs: "
+            f"{[f.finding.cwe for f in conflicting_fixes]}. "
+            f"Falling back to highest priority fix."
         )
+        return None
 
-    logger.error(
-        f"Merge agent failed after 3 attempts for {filename}. "
-        f"Conflicts: {len(conflicting_fixes)} fixes, CWEs: {[f.finding.cwe for f in conflicting_fixes]}. "
-        f"Falling back to highest priority fix."
-    )
-    return None
+    merged_code = response.parsed_output.merged_code
+    original_snippet = response.parsed_output.original_snippet_for_replacement
 
-
-async def triage_agents_node(state: WorkerState) -> Dict[str, Any]:
-    """
-    Uses a lightweight LLM to determine which specialized agents are relevant for each file.
-    """
-    scan_id = state["scan_id"]
-    logger.info(f"Entering triage node for scan {scan_id}.")
-
-    repository_map = state.get("repository_map")
-    all_relevant_agents = state.get("all_relevant_agents", {})
-    utility_llm_config_id = state.get("utility_llm_config_id")
-
-    if not all_relevant_agents or not utility_llm_config_id or not repository_map:
-        return {
-            "error_message": "Triage node is missing required inputs (agents, llm_config, or repository_map)."
-        }
-
-    llm_client = await get_llm_client(utility_llm_config_id)
-    if not llm_client:
-        return {"error_message": "Failed to initialize utility LLM client for triage."}
-
-    agent_descriptions = "\n".join(
-        [
-            f"- **{agent['name']}**: {agent['description']}"
-            for agent in all_relevant_agents.values()
-        ]
-    )
-    logger.info(f"DEBUG: agent_descriptions content:\n{agent_descriptions}")
-    triaged_agents_per_file = {}
-
-    for file_path, file_summary in repository_map.files.items():
-        if not file_summary.symbols:
-            # If file has no parsable symbols, assume all agents are potentially relevant
-            triaged_agents_per_file[file_path] = list(all_relevant_agents.values())
-            continue
-
-        file_summary_text = f"File: `{file_path}`\nSymbols:\n" + "\n".join(
-            [f"- {s.type} {s.name}" for s in file_summary.symbols]
+    # No-op guard: the merged code must actually change something.
+    if merged_code.strip() == original_snippet.strip():
+        logger.warning(
+            f"Merge agent returned a fix identical to the original for {filename}. "
+            f"Falling back to highest priority fix."
         )
-        logger.info(f"DEBUG: file_summary_text for {file_path}:\n{file_summary_text}")
+        return None
 
-        prompt = f"""
-Based on the following summary of a code file, select the most relevant security agents to run from the provided list.
+    # Syntax check before committing to a replacement.
+    candidate_code = code_to_search_in.replace(original_snippet, merged_code, 1)
+    if not _verify_syntax_with_treesitter(candidate_code, filename):
+        logger.warning(
+            f"Merge agent produced syntactically invalid code for {filename}. "
+            f"Falling back to highest priority fix."
+        )
+        return None
 
-FILE SUMMARY:
-{file_summary_text}
-
-AVAILABLE AGENTS:
-{agent_descriptions}
-
-Your task is to return a JSON object containing a list of the names of the agents that are most relevant for analyzing this specific file.
-Respond ONLY with a valid JSON object conforming to the TriageResult schema.
-"""
-        try:
-            response = await llm_client.generate_structured_output(prompt, TriageResult)
-            logger.info(
-                f"DEBUG: Triage LLM response for {file_path}: {response.parsed_output.model_dump() if response.parsed_output else 'None'}"
-            )
-            if response.parsed_output and isinstance(
-                response.parsed_output, TriageResult
-            ):
-                relevant_names = response.parsed_output.relevant_agent_names
-                triaged_agents_per_file[file_path] = [
-                    all_relevant_agents[name]
-                    for name in relevant_names
-                    if name in all_relevant_agents
-                ]
-            else:
-                logger.warning(
-                    f"Triage LLM failed for {file_path}. Defaulting to all agents. Error: {response.error}"
-                )
-                triaged_agents_per_file[file_path] = list(all_relevant_agents.values())
-        except Exception as e:
-            logger.error(
-                f"Exception during triage for {file_path}: {e}. Defaulting to all agents."
-            )
-            triaged_agents_per_file[file_path] = list(all_relevant_agents.values())
-
-    logger.info(
-        f"DEBUG: final triaged_agents_per_file content: {triaged_agents_per_file}"
+    # Build the merged FixResult carrying the explanation from each input fix.
+    merged_finding = winner.finding.model_copy(deep=True)
+    conflicts_summary = "The following conflicting suggestions were considered:\n"
+    for i, fix in enumerate(conflicting_fixes):
+        conflicts_summary += (
+            f"- Suggestion {i + 1} (CWE: {fix.finding.cwe}, "
+            f"Severity: {fix.finding.severity}): {fix.finding.remediation}\n"
+        )
+    final_explanation = (
+        f"{conflicts_summary}\nMerge Reasoning:\n{response.parsed_output.explanation}"
     )
-    return {"triaged_agents_per_file": triaged_agents_per_file}
+    merged_finding.description = final_explanation
+
+    merged_suggestion = FixSuggestion(
+        description=final_explanation,
+        original_snippet=original_snippet,
+        code=merged_code,
+    )
+    logger.info(f"Merge agent succeeded for {filename} with syntax-verified code.")
+    return FixResult(finding=merged_finding, suggestion=merged_suggestion)
 
 
 async def estimate_cost_node(state: WorkerState) -> Dict[str, Any]:
@@ -710,9 +607,9 @@ async def dependency_aware_analysis_orchestrator(state: WorkerState) -> Dict[str
         return {"error_message": "Orchestrator is missing 'dependency_graph'."}
     dependency_graph = nx.node_link_graph(graph_data)  # Deserialize the graph
 
-    triaged_agents_per_file = state.get("triaged_agents_per_file")
-    if not triaged_agents_per_file:
-        return {"error_message": "Orchestrator is missing 'triaged_agents_per_file'."}
+    all_relevant_agents = state.get("all_relevant_agents", {})
+    if not all_relevant_agents:
+        return {"error_message": "Orchestrator is missing 'all_relevant_agents'."}
 
     utility_llm_config_id = state.get("utility_llm_config_id")
     if not utility_llm_config_id:
@@ -723,9 +620,15 @@ async def dependency_aware_analysis_orchestrator(state: WorkerState) -> Dict[str
         return {"error_message": "Orchestrator is missing 'reasoning_llm_config_id'."}
     # --- END REVISED GUARD CLAUSE BLOCK ---
 
-    await ScanRepository(AsyncSessionLocal()).update_status(
-        scan_id, STATUS_RUNNING_AGENTS
-    )
+    # NOTE (Phase D.1): status transitions flow through returned state; the
+    # terminal save_final_report node commits the final status. A future
+    # "persist_status" side-effect node can publish intermediate statuses to
+    # the DB between major nodes without fighting the checkpointer. For now
+    # we skip the mid-graph write — the UI shows ANALYZING_CONTEXT until the
+    # run completes, which is acceptable for the first pass.
+    # REMEDIATE-specific iterative DB save/re-fetch below is retained pending
+    # Phase D.5's investigation into whether iterative cross-file patching
+    # is load-bearing (if not, D.5 collapses it to a single-pass apply).
 
     try:
         processing_order = list(nx.topological_sort(dependency_graph))
@@ -805,7 +708,9 @@ async def dependency_aware_analysis_orchestrator(state: WorkerState) -> Dict[str
                     )
             # --- End Dependency Summary ---
 
-            relevant_agents_for_file = triaged_agents_per_file.get(file_path, [])
+            relevant_agents_for_file = resolve_agents_for_file(
+                file_path, all_relevant_agents
+            )
             if not relevant_agents_for_file:
                 logger.info(
                     f"No agents triaged for file {file_path}, skipping.",
@@ -1116,7 +1021,7 @@ async def handle_error_node(state: WorkerState) -> Dict[str, Any]:
     logger.error(
         f"Workflow for scan {scan_id} failed: {error}", extra={"error_message": error}
     )
-    await ScanRepository(AsyncSessionLocal()).update_status(scan_id, "Failed")
+    await ScanRepository(AsyncSessionLocal()).update_status(scan_id, STATUS_FAILED)
     return {}
 
 
@@ -1126,7 +1031,6 @@ workflow = StateGraph(WorkerState)
 # Define all nodes
 workflow.add_node("retrieve_and_prepare_data", retrieve_and_prepare_data_node)
 workflow.add_node("estimate_cost", estimate_cost_node)
-workflow.add_node("triage_agents", triage_agents_node)
 workflow.add_node(
     "dependency_aware_analysis_orchestrator", dependency_aware_analysis_orchestrator
 )
@@ -1168,22 +1072,13 @@ workflow.add_conditional_edges(
     should_estimate_cost_or_run,
     {
         "estimate_cost": "estimate_cost",
-        "run_analysis": "triage_agents",
+        "run_analysis": "dependency_aware_analysis_orchestrator",
         "handle_error": "handle_error",
     },
 )
 
 # After estimation, the workflow ends, awaiting user approval
 workflow.add_edge("estimate_cost", END)
-
-workflow.add_conditional_edges(
-    "triage_agents",
-    should_continue,
-    {
-        "continue": "dependency_aware_analysis_orchestrator",
-        "handle_error": "handle_error",
-    },
-)
 
 workflow.add_conditional_edges(
     "dependency_aware_analysis_orchestrator",
