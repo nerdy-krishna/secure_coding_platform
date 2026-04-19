@@ -1,4 +1,13 @@
 // secure-code-ui/src/shared/types/api.ts
+//
+// Hand-maintained TypeScript types mirroring the FastAPI Pydantic schemas.
+//
+// ⚠️ An auto-generated counterpart exists at ./api-generated.ts, produced by
+//   `npm run generate:api` against the live FastAPI /openapi.json. Prefer
+//   consulting the generated file as source-of-truth when adding new types;
+//   drift between the two should be resolved toward the generated version.
+//   A full migration to the generated file is planned for Phase G (UI
+//   redesign) so every page's imports can be updated in one sweep.
 
 // UUID is a branded string type used for IDs throughout the API
 type UUID = `${string}-${string}-${string}-${string}-${string}`;
