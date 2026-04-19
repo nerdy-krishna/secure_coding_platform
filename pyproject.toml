@@ -9,6 +9,9 @@ packages = [{ include = "app", from = "src" }]
 
 [tool.poetry.dependencies]
 # This project requires Python 3.12.x
+# Core deps: everything the API container needs at runtime. The heavy
+# ML / AST-parsing stack lives in the optional "worker" group below and
+# is only installed in the worker image.
 aio-pika = ">=9.5.5,<10.0.0"
 alembic = ">=1.16.1,<2.0.0"
 anthropic = "^0.55.0"
@@ -41,15 +44,27 @@ pydantic-settings = "^2.9.1"
 python = "~3.12"
 python-dotenv = ">=1.1.0,<2.0.0"
 python-jose = {extras = ["cryptography"], version = ">=3.4.0,<4.0.0"}
-sentence-transformers = "^4.1.0"
 sqlalchemy = {extras = ["asyncio"], version = ">=2.0.41,<3.0.0"}
 tiktoken = "^0.9.0"
-tree-sitter = ">=0.21.0,<0.22.0"
-tree-sitter-languages = "^1.10.2"
 uvicorn = {extras = ["standard"], version = ">=0.34.2,<0.35.0"}
 python-multipart = "^0.0.20"
 xhtml2pdf = "^0.2.17"
 cvss = "^3.4"
+
+
+# Worker-only deps: ML inference (torch, sentence-transformers) and AST
+# parsing (tree-sitter). None of these are imported by app.main; they
+# only load inside workflows/worker_graph.py and the RAG preprocessor,
+# which run in the worker container. Marked optional=true so
+# `poetry install` (as used by the api image) doesn't pull them; the
+# worker image installs with `poetry install --with worker`.
+[tool.poetry.group.worker]
+optional = true
+
+[tool.poetry.group.worker.dependencies]
+sentence-transformers = "^4.1.0"
+tree-sitter = ">=0.21.0,<0.22.0"
+tree-sitter-languages = "^1.10.2"
 torch = { version = ">=2.2.0,<3.0.0", source = "pytorch-cpu", markers = "sys_platform == 'linux'" }
 
 
