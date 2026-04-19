@@ -23,9 +23,18 @@ yarn-error.log
 .vscode/
 .idea/
 .DS_Store
+# Test + debug artifacts
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+tests/
+*.patch
+cookies.txt
 # Logs
 *.log
 fluentd/log/
 # Documentation builds
 site/
 docs/_build/
+# Agent + planning docs (not shipped to runtime images)
+.agent/
