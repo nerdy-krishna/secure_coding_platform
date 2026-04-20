@@ -20,6 +20,7 @@ from app.api.v1.routers.admin_prompts import prompt_router
 from app.api.v1.routers.admin_rag import rag_router
 from app.api.v1.routers.admin_logs import router as logs_router
 from app.api.v1.routers.chat import router as chat_router
+from app.api.v1.routers.compliance import router as compliance_router
 from app.api.v1.routers.refresh import router as refresh_router
 from app.api.v1.routers.setup import router as setup_router
 from app.api.v1.routers.admin_config import router as admin_config_router
@@ -338,6 +339,9 @@ app.include_router(logs_router, prefix="/api/v1/admin", tags=["Admin: System Log
 
 # Router for Chat
 app.include_router(chat_router, prefix="/api/v1/chat", tags=["Chat"])
+
+# Router for Compliance (per-framework rollups for the Compliance page)
+app.include_router(compliance_router, prefix="/api/v1", tags=["Compliance"])
 
 from app.api.v1.routers.admin_users import router as admin_users_router  # noqa: E402
 
