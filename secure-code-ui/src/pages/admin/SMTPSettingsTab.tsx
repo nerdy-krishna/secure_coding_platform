@@ -17,6 +17,21 @@ const { Title, Paragraph } = Typography;
 
 const SMTP_CONFIG_KEY = "system.smtp";
 
+interface SmtpSettings {
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  from: string;
+  tls: boolean;
+  ssl: boolean;
+}
+
+interface SystemConfigRow {
+  key: string;
+  value: SmtpSettings | Record<string, unknown> | null;
+}
+
 const SMTPSettingsTab: React.FC = () => {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState<boolean>(true);
@@ -25,9 +40,11 @@ const SMTPSettingsTab: React.FC = () => {
   useEffect(() => {
     const fetchSmtpConfig = async () => {
       try {
-        const response = await apiClient.get("/admin/system-config/");
+        const response = await apiClient.get<SystemConfigRow[]>(
+          "/admin/system-config/",
+        );
         const configs = response.data;
-        const smtpConfig = configs.find((c: any) => c.key === SMTP_CONFIG_KEY);
+        const smtpConfig = configs.find((c) => c.key === SMTP_CONFIG_KEY);
 
         if (smtpConfig && smtpConfig.value) {
           form.setFieldsValue(smtpConfig.value);
@@ -54,7 +71,7 @@ const SMTPSettingsTab: React.FC = () => {
     fetchSmtpConfig();
   }, [form]);
 
-  const onFinish = async (values: any) => {
+  const onFinish = async (values: SmtpSettings) => {
     setSaving(true);
     // We structure the payload to match what SystemConfigTab expects
     const payload = {

@@ -25,9 +25,11 @@ import { systemConfigService } from "../../shared/api/systemConfigService";
 
 const { Text, Title, Paragraph } = Typography;
 
+import type { JsonValue } from "../../shared/types/api";
+
 interface SystemConfig {
   key: string;
-  value: any;
+  value: JsonValue;
   description: string;
   is_secret: boolean;
   encrypted: boolean;
@@ -77,8 +79,16 @@ const SystemConfigTab: React.FC = () => {
           setCorsEnabled(Boolean(corsEnabledConfig.value));
         }
 
-        if (originsConfig && originsConfig.value && originsConfig.value.origins) {
-          setAllowedOrigins(originsConfig.value.origins);
+        if (
+          originsConfig &&
+          originsConfig.value &&
+          typeof originsConfig.value === "object" &&
+          !Array.isArray(originsConfig.value) &&
+          Array.isArray((originsConfig.value as { origins?: unknown }).origins)
+        ) {
+          setAllowedOrigins(
+            (originsConfig.value as { origins: string[] }).origins,
+          );
         }
 
         const llmModeConfig = allConfigs.find(
@@ -144,7 +154,9 @@ const SystemConfigTab: React.FC = () => {
     }
   };
 
-  const handleCorsToggle = async (e: any) => {
+  const handleCorsToggle = async (
+    e: { target: { checked: boolean } },
+  ) => {
     const newValue = e.target.checked;
     setLoadingCors(true);
     try {
@@ -202,8 +214,15 @@ const SystemConfigTab: React.FC = () => {
   });
 
   const createMutation = useMutation({
-    mutationFn: (values: any) =>
-      apiClient.put(`/admin/system-config/${values.key}`, values),
+    mutationFn: (
+      values: {
+        key: string;
+        value: JsonValue;
+        description?: string;
+        is_secret?: boolean;
+        encrypted?: boolean;
+      },
+    ) => apiClient.put(`/admin/system-config/${values.key}`, values),
     onSuccess: () => {
       message.success("Configuration saved successfully");
       setIsModalOpen(false);
@@ -248,13 +267,13 @@ const SystemConfigTab: React.FC = () => {
   const handleOk = () => {
     form.validateFields().then((values) => {
       try {
-        // Try to parse JSON if it's a string, else use as is (if input as text)
-        // For simplicity, we assume generic JSON input is text area
-        const parsedValue = JSON.parse(values.value);
+        // The value field on the modal is a JSON string; parse into a
+        // JsonValue before submitting.
+        const parsedValue = JSON.parse(values.value as string) as JsonValue;
         values.value = parsedValue;
 
         createMutation.mutate(values);
-      } catch (e) {
+      } catch {
         message.error("Invalid JSON format for Value");
       }
     });
@@ -271,7 +290,7 @@ const SystemConfigTab: React.FC = () => {
       title: "Value",
       dataIndex: "value",
       key: "value",
-      render: (val: any, record: SystemConfig) => {
+      render: (val: JsonValue, record: SystemConfig) => {
         if (record.is_secret) return <Text type="secondary" >******** </Text>;
         if (typeof val === "object")
           return <Text code > { JSON.stringify(val) } </Text>;
@@ -292,7 +311,7 @@ const SystemConfigTab: React.FC = () => {
     {
       title: "Actions",
       key: "actions",
-      render: (_: any, record: SystemConfig) => (
+      render: (_: unknown, record: SystemConfig) => (
         <div style= {{ display: "flex", gap: 8 }}>
           <Button
             icon={ <EditOutlined /> }

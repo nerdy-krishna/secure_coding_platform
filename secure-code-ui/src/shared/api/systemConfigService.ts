@@ -1,15 +1,21 @@
 import apiClient from "./apiClient";
+import type { JsonValue } from "../types/api";
+
+// System config values are free-form JSON documents — the backend stores
+// them as JSONB and each key can hold anything from a boolean (cors_enabled)
+// to a dict (smtp credentials, mode toggle, etc.).
+export type SystemConfigValue = JsonValue;
 
 interface SystemConfiguration {
     key: string;
-    value: any;
+    value: SystemConfigValue;
     description?: string;
     is_secret: boolean;
     encrypted: boolean;
 }
 
 interface SystemConfigurationUpdate {
-    value?: any;
+    value?: SystemConfigValue;
     description?: string;
     is_secret?: boolean;
     encrypted?: boolean;
