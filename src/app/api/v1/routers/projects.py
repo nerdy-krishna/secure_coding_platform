@@ -20,7 +20,8 @@ from app.api.v1 import models as api_models
 from app.infrastructure.auth.core import current_active_user, current_superuser
 from app.config.logging_config import correlation_id_var
 from app.core.services.scan_service import SubmissionService
-from app.api.v1.dependencies import get_scan_service
+from app.api.v1.dependencies import get_scan_service, get_llm_config_repository
+from app.infrastructure.database.repositories.llm_config_repo import LLMConfigRepository
 from app.shared.lib.git import clone_repo_and_get_files
 from app.shared.lib.archive import extract_archive_to_files, is_archive_filename
 
@@ -122,12 +123,13 @@ async def preview_git_files(request: api_models.GitRepoPreviewRequest):
 @router.post("/scans", response_model=api_models.ScanResponse)
 async def create_scan(
     service: SubmissionService = Depends(get_scan_service),
+    llm_repo: LLMConfigRepository = Depends(get_llm_config_repository),
     user: db_models.User = Depends(current_active_user),
     project_name: str = Form(...),
     scan_type: str = Form(...),
-    utility_llm_config_id: uuid.UUID = Form(...),
-    fast_llm_config_id: uuid.UUID = Form(...),
-    reasoning_llm_config_id: uuid.UUID = Form(...),
+    utility_llm_config_id: Optional[uuid.UUID] = Form(None),
+    fast_llm_config_id: Optional[uuid.UUID] = Form(None),
+    reasoning_llm_config_id: Optional[uuid.UUID] = Form(None),
     frameworks: str = Form(...),  # Received as a string, will be processed in service
     repo_url: Optional[str] = Form(None),
     files: Optional[List[UploadFile]] = File(None),
@@ -135,6 +137,29 @@ async def create_scan(
     selected_files: Optional[str] = Form(None),
 ):
     selected_files_list = selected_files.split(",") if selected_files else None
+
+    # Resolve any missing llm_config_id slots to a fallback config. Supports
+    # the fresh-setup case where the admin has only configured one LLM — we
+    # reuse it across utility/fast/reasoning slots instead of forcing the
+    # user to configure three. Once multiple configs exist the submit UI
+    # can let the user pick per slot.
+    missing_slots = [
+        s for s in (utility_llm_config_id, fast_llm_config_id, reasoning_llm_config_id) if s is None
+    ]
+    if missing_slots:
+        available = await llm_repo.get_all(skip=0, limit=1)
+        if not available:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "No LLM configurations available. Ask an admin to add one "
+                    "under Admin → LLM Configurations before submitting a scan."
+                ),
+            )
+        fallback_id = available[0].id
+        utility_llm_config_id = utility_llm_config_id or fallback_id
+        fast_llm_config_id = fast_llm_config_id or fallback_id
+        reasoning_llm_config_id = reasoning_llm_config_id or fallback_id
 
     common_args = {
         "project_name": project_name,
