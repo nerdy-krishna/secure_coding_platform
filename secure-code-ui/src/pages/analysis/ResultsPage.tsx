@@ -16,11 +16,11 @@
 import React, { useCallback, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
-import { message as antdMessage } from "antd";
 import { saveAs } from "file-saver";
 import { scanService } from "../../shared/api/scanService";
 import { Icon } from "../../shared/ui/Icon";
 import { SevBar } from "../../shared/ui/DashboardPrimitives";
+import { useToast } from "../../shared/ui/Toast";
 import type {
   Finding,
   ScanResultResponse,
@@ -60,6 +60,7 @@ const ResultsPage: React.FC = () => {
   const { scanId } = useParams<{ scanId: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const toast = useToast();
 
   const [sevFilter, setSevFilter] = useState<SeverityFilter>("all");
   const [search, setSearch] = useState("");
@@ -76,10 +77,10 @@ const ResultsPage: React.FC = () => {
     mutationFn: (findingId: number) =>
       scanService.applySelectiveFixes(scanId!, [findingId]),
     onSuccess: () => {
-      antdMessage.success("Fix applied. Refreshing results…");
+      toast.success("Fix applied. Refreshing results…");
       queryClient.invalidateQueries({ queryKey: ["scan-result", scanId] });
     },
-    onError: (err: Error) => antdMessage.error(err.message || "Apply failed"),
+    onError: (err: Error) => toast.error(err.message || "Apply failed"),
   });
 
   const allFindings = useMemo(
@@ -136,9 +137,9 @@ const ResultsPage: React.FC = () => {
       saveAs(blob, `sccap-${scanId.slice(0, 8)}.sarif.json`);
     } catch (err) {
       const e = err as { message?: string };
-      antdMessage.error(e.message || "SARIF download failed");
+      toast.error(e.message || "SARIF download failed");
     }
-  }, [scanId]);
+  }, [scanId, toast]);
 
   if (isLoading) {
     return (

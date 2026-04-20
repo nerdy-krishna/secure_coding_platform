@@ -21,7 +21,8 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { Modal, Select, Checkbox, message as antdMessage } from "antd";
+import { Modal } from "../../shared/ui/Modal";
+import { useToast } from "../../shared/ui/Toast";
 import { chatService } from "../../shared/api/chatService";
 import { frameworkService } from "../../shared/api/frameworkService";
 import { llmConfigService } from "../../shared/api/llmConfigService";
@@ -58,6 +59,7 @@ const QUICK_REPLIES = [
 
 const SecurityAdvisorPage: React.FC = () => {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [newChatOpen, setNewChatOpen] = useState(false);
@@ -115,7 +117,7 @@ const SecurityAdvisorPage: React.FC = () => {
       });
       setDraft("");
     },
-    onError: (err: Error) => antdMessage.error(err.message || "Ask failed"),
+    onError: (err: Error) => toast.error(err.message || "Ask failed"),
   });
 
   const createMutation = useMutation({
@@ -133,7 +135,7 @@ const SecurityAdvisorPage: React.FC = () => {
       setNewFrameworks([]);
     },
     onError: (err: Error) =>
-      antdMessage.error(err.message || "Could not create session"),
+      toast.error(err.message || "Could not create session"),
   });
 
   const deleteMutation = useMutation({
@@ -142,7 +144,7 @@ const SecurityAdvisorPage: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ["chatSessions"] });
       setActiveSessionId(null);
     },
-    onError: (err: Error) => antdMessage.error(err.message || "Delete failed"),
+    onError: (err: Error) => toast.error(err.message || "Delete failed"),
   });
 
   const buckets = useMemo(() => bucketSessions(sessions), [sessions]);
@@ -615,34 +617,36 @@ const SecurityAdvisorPage: React.FC = () => {
         )}
       </div>
 
-      {/* New chat modal (Ant Modal styled as a minimal dialog — kept here
-          because rolling our own modal is out of scope for G.5) */}
       <Modal
-        title="New conversation"
         open={newChatOpen}
-        onCancel={() => setNewChatOpen(false)}
-        onOk={() => createMutation.mutate()}
-        okText="Create"
-        okButtonProps={{
-          disabled:
-            !newLlmId ||
-            !newTitle.trim() ||
-            createMutation.isPending,
-          loading: createMutation.isPending,
-        }}
-      >
-        <div style={{ display: "grid", gap: 14, marginTop: 8 }}>
-          <div>
-            <label
-              style={{
-                display: "block",
-                fontSize: 12,
-                color: "var(--fg-muted)",
-                marginBottom: 6,
-              }}
+        onClose={() => setNewChatOpen(false)}
+        title="New conversation"
+        footer={
+          <>
+            <button
+              className="sccap-btn sccap-btn-sm"
+              onClick={() => setNewChatOpen(false)}
+              disabled={createMutation.isPending}
             >
+              Cancel
+            </button>
+            <button
+              className="sccap-btn sccap-btn-primary sccap-btn-sm"
+              onClick={() => createMutation.mutate()}
+              disabled={
+                !newLlmId || !newTitle.trim() || createMutation.isPending
+              }
+            >
+              {createMutation.isPending ? "Creating…" : "Create"}
+            </button>
+          </>
+        }
+      >
+        <div style={{ display: "grid", gap: 14 }}>
+          <label style={{ display: "grid", gap: 6 }}>
+            <span style={{ fontSize: 12, color: "var(--fg-muted)" }}>
               Title
-            </label>
+            </span>
             <input
               className="sccap-input"
               value={newTitle}
@@ -650,49 +654,63 @@ const SecurityAdvisorPage: React.FC = () => {
               placeholder="e.g., SQL injection walk-through"
               autoFocus
             />
-          </div>
-          <div>
-            <label
-              style={{
-                display: "block",
-                fontSize: 12,
-                color: "var(--fg-muted)",
-                marginBottom: 6,
-              }}
-            >
-              LLM
-            </label>
-            <Select
-              style={{ width: "100%" }}
+          </label>
+          <label style={{ display: "grid", gap: 6 }}>
+            <span style={{ fontSize: 12, color: "var(--fg-muted)" }}>LLM</span>
+            <select
+              className="sccap-input"
               value={newLlmId}
-              onChange={setNewLlmId}
-              placeholder="Select LLM"
-              options={llmConfigs?.map((c) => ({
-                value: c.id,
-                label: `${c.name} · ${c.provider}/${c.model_name}`,
-              }))}
-            />
-          </div>
-          <div>
-            <label
-              style={{
-                display: "block",
-                fontSize: 12,
-                color: "var(--fg-muted)",
-                marginBottom: 6,
-              }}
+              onChange={(e) => setNewLlmId(e.target.value)}
             >
+              <option value="">Select LLM</option>
+              {llmConfigs?.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} · {c.provider}/{c.model_name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div style={{ display: "grid", gap: 6 }}>
+            <span style={{ fontSize: 12, color: "var(--fg-muted)" }}>
               Frameworks in scope
-            </label>
-            <Checkbox.Group
-              value={newFrameworks}
-              onChange={(v) => setNewFrameworks(v as string[])}
-              style={{ display: "flex", flexWrap: "wrap", gap: 8 }}
-              options={frameworks?.map((f) => ({
-                label: f.name,
-                value: f.name,
-              }))}
-            />
+            </span>
+            {frameworks?.length ? (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {frameworks.map((f) => {
+                  const selected = newFrameworks.includes(f.name);
+                  return (
+                    <button
+                      type="button"
+                      key={f.id}
+                      className="chip"
+                      onClick={() =>
+                        setNewFrameworks((prev) =>
+                          selected
+                            ? prev.filter((x) => x !== f.name)
+                            : [...prev, f.name],
+                        )
+                      }
+                      style={{
+                        cursor: "pointer",
+                        background: selected
+                          ? "var(--primary-weak)"
+                          : "transparent",
+                        color: selected ? "var(--primary)" : "var(--fg-muted)",
+                        border: selected
+                          ? "1px solid var(--primary)"
+                          : "1px solid var(--border)",
+                      }}
+                    >
+                      {selected && <Icon.Check size={10} />} {f.name}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div style={{ fontSize: 12, color: "var(--fg-subtle)" }}>
+                No frameworks configured.
+              </div>
+            )}
           </div>
         </div>
       </Modal>

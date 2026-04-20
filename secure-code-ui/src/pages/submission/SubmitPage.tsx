@@ -1,26 +1,21 @@
 // secure-code-ui/src/pages/submission/SubmitPage.tsx
 //
-// SCCAP-styled submission flow. Port of the design bundle's Submit.jsx
-// adapted to the real backend: project name + scan type + LLM config +
-// frameworks + one of (files | git repo | archive). Uses Ant's Upload
-// under the hood for drag-drop + the file-browser dialog since hand-
-// rolling those from scratch is outside this phase's scope, but every
-// surrounding surface uses SCCAP design primitives.
+// SCCAP-styled submission flow. Port of the design bundle's Submit.jsx,
+// fully on SCCAP primitives — no antd. Native HTML5 drag-and-drop is
+// used for the file / archive dropzones; file state is plain File[].
 //
-// The file-exclusion tree (previously built with antd Tree) is deferred
-// to a later pass — by default all staged files are submitted. If we
-// need selective exclusion before Phase G.4's Results redesign, we'll
-// add a lightweight tree component then.
+// The file-exclusion tree is still deferred to a later pass; by default
+// all staged files are submitted. If selective exclusion is needed before
+// that lands, a lightweight tree can be added here.
 
-import React, { useState, useMemo } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { Upload, message as antdMessage, type UploadFile } from "antd";
-import { InboxOutlined } from "@ant-design/icons";
 import { frameworkService } from "../../shared/api/frameworkService";
 import { llmConfigService } from "../../shared/api/llmConfigService";
 import { scanService } from "../../shared/api/scanService";
 import { Icon } from "../../shared/ui/Icon";
+import { useToast } from "../../shared/ui/Toast";
 import type { FrameworkRead, LLMConfiguration } from "../../shared/types/api";
 
 type SubmissionMode = "upload" | "git" | "archive";
@@ -58,16 +53,85 @@ const TAB_DEFS: { id: SubmissionMode; icon: React.ReactNode; label: string }[] =
   { id: "archive", icon: <Icon.Folder size={14} />, label: "Upload archive" },
 ];
 
+const ARCHIVE_ACCEPT = ".zip,.tar,.tar.gz,.tgz";
+
+const Dropzone: React.FC<{
+  onFiles: (files: File[]) => void;
+  multiple?: boolean;
+  accept?: string;
+  hint: string;
+  helper: string;
+}> = ({ onFiles, multiple = false, accept, hint, helper }) => {
+  const [dragging, setDragging] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  return (
+    <div
+      onDragOver={(e) => {
+        e.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        setDragging(false);
+        const files = Array.from(e.dataTransfer.files ?? []);
+        if (files.length) onFiles(files);
+      }}
+      onClick={() => inputRef.current?.click()}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          inputRef.current?.click();
+        }
+      }}
+      style={{
+        background: dragging ? "var(--primary-weak)" : "var(--bg-soft)",
+        border:
+          "2px dashed " +
+          (dragging ? "var(--primary)" : "var(--border-strong)"),
+        borderRadius: "var(--r-md)",
+        padding: "36px 24px",
+        textAlign: "center",
+        cursor: "pointer",
+        transition: "all .15s var(--ease)",
+      }}
+    >
+      <input
+        ref={inputRef}
+        type="file"
+        multiple={multiple}
+        accept={accept}
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const files = Array.from(e.target.files ?? []);
+          if (files.length) onFiles(files);
+          e.target.value = "";
+        }}
+      />
+      <div style={{ color: "var(--primary)", marginBottom: 8 }}>
+        <Icon.Upload size={22} />
+      </div>
+      <div style={{ fontWeight: 500, color: "var(--fg)" }}>{hint}</div>
+      <div style={{ color: "var(--fg-muted)", fontSize: 12.5, marginTop: 4 }}>
+        {helper}
+      </div>
+    </div>
+  );
+};
+
 const SubmitPage: React.FC = () => {
   const navigate = useNavigate();
+  const toast = useToast();
 
   const [mode, setMode] = useState<SubmissionMode>("upload");
   const [projectName, setProjectName] = useState("");
   const [scanType, setScanType] = useState<ScanType>("AUDIT");
   const [llmConfigId, setLlmConfigId] = useState<string>("");
   const [selectedFrameworks, setSelectedFrameworks] = useState<string[]>([]);
-  const [fileList, setFileList] = useState<UploadFile[]>([]);
-  const [archiveFile, setArchiveFile] = useState<UploadFile | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
+  const [archiveFile, setArchiveFile] = useState<File | null>(null);
   const [repoUrl, setRepoUrl] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -81,8 +145,6 @@ const SubmitPage: React.FC = () => {
     queryFn: frameworkService.getFrameworks,
   });
 
-  // Auto-select the first LLM config when the list loads so users with a
-  // single config aren't blocked on picking one.
   React.useEffect(() => {
     if (!llmConfigId && llmConfigs && llmConfigs.length > 0) {
       setLlmConfigId(llmConfigs[0].id);
@@ -93,11 +155,11 @@ const SubmitPage: React.FC = () => {
     if (!projectName.trim()) return false;
     if (!llmConfigId) return false;
     if (selectedFrameworks.length === 0) return false;
-    if (mode === "upload") return fileList.length > 0;
+    if (mode === "upload") return files.length > 0;
     if (mode === "git") return repoUrl.trim().length > 0;
     if (mode === "archive") return archiveFile !== null;
     return false;
-  }, [projectName, llmConfigId, selectedFrameworks, mode, fileList, repoUrl, archiveFile]);
+  }, [projectName, llmConfigId, selectedFrameworks, mode, files, repoUrl, archiveFile]);
 
   const toggleFramework = (name: string) => {
     setSelectedFrameworks((prev) =>
@@ -113,25 +175,17 @@ const SubmitPage: React.FC = () => {
       payload.append("project_name", projectName.trim());
       payload.append("scan_type", scanType);
       payload.append("utility_llm_config_id", llmConfigId);
-      // The Phase F.5.1c router fallback fills fast + reasoning from the
-      // utility slot when they're absent, so passing just one config id is
-      // enough for most users.
       payload.append("frameworks", selectedFrameworks.join(","));
-
       if (mode === "upload") {
-        for (const f of fileList) {
-          if (f.originFileObj) {
-            payload.append("files", f.originFileObj);
-          }
-        }
+        for (const f of files) payload.append("files", f);
       } else if (mode === "git") {
         payload.append("repo_url", repoUrl.trim());
-      } else if (mode === "archive" && archiveFile?.originFileObj) {
-        payload.append("archive_file", archiveFile.originFileObj);
+      } else if (mode === "archive" && archiveFile) {
+        payload.append("archive_file", archiveFile);
       }
 
       const response = await scanService.createScan(payload);
-      antdMessage.success("Scan submitted. Tracking progress…");
+      toast.success("Scan submitted. Tracking progress…");
       navigate(`/analysis/scanning/${response.scan_id}`);
     } catch (err) {
       const e = err as {
@@ -142,7 +196,7 @@ const SubmitPage: React.FC = () => {
         typeof e.response?.data?.detail === "string"
           ? e.response.data.detail
           : e.message || "Submission failed";
-      antdMessage.error(detail);
+      toast.error(detail);
     } finally {
       setSubmitting(false);
     }
@@ -162,7 +216,6 @@ const SubmitPage: React.FC = () => {
           </div>
         </div>
 
-        {/* project name */}
         <div className="surface" style={{ padding: 20 }}>
           <label
             style={{
@@ -184,7 +237,6 @@ const SubmitPage: React.FC = () => {
           />
         </div>
 
-        {/* source tabs */}
         <div className="surface" style={{ padding: 0, overflow: "hidden" }}>
           <div
             className="sccap-tabs"
@@ -204,42 +256,60 @@ const SubmitPage: React.FC = () => {
           <div style={{ padding: 20 }}>
             {mode === "upload" && (
               <div>
-                <Upload.Dragger
+                <Dropzone
                   multiple
-                  beforeUpload={() => false /* let us handle at submit time */}
-                  fileList={fileList}
-                  onChange={({ fileList: fl }) => setFileList(fl)}
-                  style={{
-                    background: "var(--bg-soft)",
-                    border: "2px dashed var(--border-strong)",
-                    borderRadius: "var(--r-md)",
-                  }}
-                >
-                  <p className="ant-upload-drag-icon">
-                    <InboxOutlined style={{ color: "var(--primary)" }} />
-                  </p>
-                  <p
-                    className="ant-upload-text"
-                    style={{ color: "var(--fg)", fontWeight: 500 }}
-                  >
-                    Drop files here or click to browse
-                  </p>
-                  <p
-                    className="ant-upload-hint"
-                    style={{ color: "var(--fg-muted)" }}
-                  >
-                    Any number of source files. Binary files are ignored.
-                  </p>
-                </Upload.Dragger>
-                {fileList.length > 0 && (
+                  onFiles={(next) =>
+                    setFiles((prev) => [...prev, ...next])
+                  }
+                  hint="Drop files here or click to browse"
+                  helper="Any number of source files. Binary files are ignored."
+                />
+                {files.length > 0 && (
                   <div
                     style={{
                       marginTop: 12,
-                      fontSize: 12.5,
-                      color: "var(--fg-muted)",
+                      display: "grid",
+                      gap: 4,
+                      maxHeight: 200,
+                      overflowY: "auto",
                     }}
                   >
-                    {fileList.length} file{fileList.length === 1 ? "" : "s"} staged.
+                    {files.map((f, i) => (
+                      <div
+                        key={`${f.name}-${i}`}
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          fontSize: 12.5,
+                          color: "var(--fg-muted)",
+                          padding: "4px 0",
+                        }}
+                      >
+                        <span
+                          className="mono"
+                          style={{
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                            maxWidth: 360,
+                          }}
+                        >
+                          {f.name}
+                        </span>
+                        <span
+                          onClick={() =>
+                            setFiles((prev) => prev.filter((_, j) => j !== i))
+                          }
+                          style={{
+                            cursor: "pointer",
+                            color: "var(--fg-subtle)",
+                            fontSize: 11,
+                          }}
+                        >
+                          Remove
+                        </span>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
@@ -282,44 +352,44 @@ const SubmitPage: React.FC = () => {
 
             {mode === "archive" && (
               <div>
-                <Upload.Dragger
-                  beforeUpload={() => false}
-                  maxCount={1}
-                  fileList={archiveFile ? [archiveFile] : []}
-                  onChange={({ fileList: fl }) =>
-                    setArchiveFile(fl.length ? fl[fl.length - 1] : null)
-                  }
-                  accept=".zip,.tar,.tar.gz,.tgz"
-                  style={{
-                    background: "var(--bg-soft)",
-                    border: "2px dashed var(--border-strong)",
-                    borderRadius: "var(--r-md)",
-                  }}
-                >
-                  <p className="ant-upload-drag-icon">
-                    <InboxOutlined style={{ color: "var(--primary)" }} />
-                  </p>
-                  <p
-                    className="ant-upload-text"
-                    style={{ color: "var(--fg)", fontWeight: 500 }}
+                <Dropzone
+                  accept={ARCHIVE_ACCEPT}
+                  onFiles={(next) => setArchiveFile(next[0] ?? null)}
+                  hint="Drop a .zip or .tar.gz"
+                  helper="Single archive, up to 500 MB."
+                />
+                {archiveFile && (
+                  <div
+                    style={{
+                      marginTop: 12,
+                      display: "flex",
+                      justifyContent: "space-between",
+                      fontSize: 12.5,
+                      color: "var(--fg-muted)",
+                    }}
                   >
-                    Drop a .zip or .tar.gz
-                  </p>
-                  <p
-                    className="ant-upload-hint"
-                    style={{ color: "var(--fg-muted)" }}
-                  >
-                    Single archive, up to 500 MB.
-                  </p>
-                </Upload.Dragger>
+                    <span className="mono">{archiveFile.name}</span>
+                    <span
+                      onClick={() => setArchiveFile(null)}
+                      style={{
+                        cursor: "pointer",
+                        color: "var(--fg-subtle)",
+                        fontSize: 11,
+                      }}
+                    >
+                      Remove
+                    </span>
+                  </div>
+                )}
               </div>
             )}
           </div>
         </div>
 
-        {/* scan config */}
         <div className="surface" style={{ padding: 20 }}>
-          <h3 style={{ marginBottom: 12, color: "var(--fg)" }}>Scan configuration</h3>
+          <h3 style={{ marginBottom: 12, color: "var(--fg)" }}>
+            Scan configuration
+          </h3>
           <div
             style={{
               display: "grid",
@@ -354,7 +424,9 @@ const SubmitPage: React.FC = () => {
                         border:
                           "1px solid " +
                           (active ? "var(--primary)" : "var(--border)"),
-                        background: active ? "var(--primary-weak)" : "var(--bg-elev)",
+                        background: active
+                          ? "var(--primary-weak)"
+                          : "var(--bg-elev)",
                         borderRadius: "var(--r-sm)",
                         cursor: "pointer",
                       }}
@@ -384,7 +456,9 @@ const SubmitPage: React.FC = () => {
                             </span>
                           )}
                         </div>
-                        <div style={{ fontSize: 11.5, color: "var(--fg-muted)" }}>
+                        <div
+                          style={{ fontSize: 11.5, color: "var(--fg-muted)" }}
+                        >
                           {o.desc}
                         </div>
                       </div>
@@ -466,7 +540,9 @@ const SubmitPage: React.FC = () => {
                       className="chip"
                       style={{
                         cursor: "pointer",
-                        background: on ? "var(--primary-weak)" : "var(--bg-soft)",
+                        background: on
+                          ? "var(--primary-weak)"
+                          : "var(--bg-soft)",
                         color: on ? "var(--primary)" : "var(--fg-muted)",
                         border: "none",
                         padding: "5px 12px",
@@ -504,7 +580,8 @@ const SubmitPage: React.FC = () => {
                 onClick={handleSubmit}
                 disabled={!canSubmit || submitting}
               >
-                <Icon.Play size={12} /> {submitting ? "Submitting…" : "Start scan"}
+                <Icon.Play size={12} />{" "}
+                {submitting ? "Submitting…" : "Start scan"}
               </button>
             </div>
           </div>
@@ -513,13 +590,21 @@ const SubmitPage: React.FC = () => {
 
       <aside style={{ display: "grid", gap: 16, alignContent: "start" }}>
         <div className="sccap-card">
-          <h4 style={{ marginBottom: 10, color: "var(--fg)" }}>What we scan for</h4>
+          <h4 style={{ marginBottom: 10, color: "var(--fg)" }}>
+            What we scan for
+          </h4>
           <div style={{ display: "grid", gap: 8, fontSize: 12.5 }}>
             {[
               { icon: <Icon.Lock size={12} />, label: "Vulnerabilities (SAST)" },
-              { icon: <Icon.Box size={12} />, label: "Dependencies (where configured)" },
+              {
+                icon: <Icon.Box size={12} />,
+                label: "Dependencies (where configured)",
+              },
               { icon: <Icon.Key size={12} />, label: "Secrets & credentials" },
-              { icon: <Icon.Shield size={12} />, label: "Compliance framework mappings" },
+              {
+                icon: <Icon.Shield size={12} />,
+                label: "Compliance framework mappings",
+              },
               { icon: <Icon.Sparkle size={12} />, label: "AI-suggested fixes" },
             ].map((r, i) => (
               <div
@@ -539,7 +624,10 @@ const SubmitPage: React.FC = () => {
         </div>
         <div
           className="sccap-card"
-          style={{ background: "var(--primary-weak)", borderColor: "transparent" }}
+          style={{
+            background: "var(--primary-weak)",
+            borderColor: "transparent",
+          }}
         >
           <div
             style={{

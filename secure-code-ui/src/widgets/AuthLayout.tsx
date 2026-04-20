@@ -1,34 +1,28 @@
 // secure-code-ui/src/widgets/AuthLayout.tsx
-import { Flex, Layout } from "antd";
-import React from "react";
+//
+// Centered auth container used by the login / forgot-password /
+// reset-password routes. Port of the antd Layout/Flex version onto a
+// single flex container that inherits SCCAP tokens.
 
-const { Content } = Layout;
+import React from "react";
 
 interface AuthLayoutProps {
   children: React.ReactNode;
 }
 
-const AuthLayout: React.FC<AuthLayoutProps> = ({ children }) => {
-  return (
-    <Layout
-      style={{
-        minHeight: "100vh",
-        backgroundColor: "#f0f2f5" /* Example background */,
-      }}
-    >
-      <Content>
-        <Flex
-          align="center"
-          justify="center"
-          style={{ minHeight: "100vh", padding: "20px" }}
-        >
-          <div style={{ minWidth: "300px", maxWidth: "400px", width: "100%" }}>
-            {children}
-          </div>
-        </Flex>
-      </Content>
-    </Layout>
-  );
-};
+const AuthLayout: React.FC<AuthLayoutProps> = ({ children }) => (
+  <div
+    style={{
+      minHeight: "100vh",
+      background: "var(--bg)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: 20,
+    }}
+  >
+    <div style={{ width: "100%", maxWidth: 420 }}>{children}</div>
+  </div>
+);
 
 export default AuthLayout;
