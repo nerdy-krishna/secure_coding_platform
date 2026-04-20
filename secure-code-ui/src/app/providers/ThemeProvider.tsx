@@ -20,14 +20,20 @@ import React, {
 
 export type SccapTheme = "light" | "dark";
 export type SccapVariant = "A" | "B";
+export type SccapRole = "dev" | "enterprise" | "admin";
 
 interface ThemeContextValue {
   theme: SccapTheme;
   variant: SccapVariant;
   accent: string;
+  /** Previewed role — drives which dashboard variant + nav items render.
+   * Not a security gate; admin routes still require user.is_superuser at the
+   * route guard. Set by the Tweaks panel for design preview. */
+  role: SccapRole;
   setTheme: (theme: SccapTheme) => void;
   setVariant: (variant: SccapVariant) => void;
   setAccent: (accent: string) => void;
+  setRole: (role: SccapRole) => void;
   toggleTheme: () => void;
 }
 
@@ -35,6 +41,7 @@ const STORAGE_KEYS = {
   theme: "sccap-theme",
   variant: "sccap-variant",
   accent: "sccap-accent",
+  role: "sccap-role",
 } as const;
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
@@ -58,6 +65,17 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({
     if (typeof window === "undefined") return "";
     return window.localStorage.getItem(STORAGE_KEYS.accent) || "";
   });
+  const [role, setRoleState] = useState<SccapRole>(() =>
+    readStored<SccapRole>(STORAGE_KEYS.role, "dev", [
+      "dev",
+      "enterprise",
+      "admin",
+    ]),
+  );
+
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEYS.role, role);
+  }, [role]);
 
   // Write attributes + persist on every change.
   useEffect(() => {
@@ -90,12 +108,14 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({
       theme,
       variant,
       accent,
+      role,
       setTheme: setThemeState,
       setVariant: setVariantState,
       setAccent: setAccentState,
+      setRole: setRoleState,
       toggleTheme,
     }),
-    [theme, variant, accent, toggleTheme],
+    [theme, variant, accent, role, toggleTheme],
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

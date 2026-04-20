@@ -1,281 +1,45 @@
 // secure-code-ui/src/widgets/DashboardLayout.tsx
-import {
-  BellOutlined,
-  CommentOutlined,
-  FileTextOutlined,
-  LogoutOutlined,
-  PieChartOutlined,
-  ProjectOutlined,
-  QuestionCircleOutlined,
-    ToolOutlined,
-  UserOutlined,
-} from "@ant-design/icons";
-import type { MenuProps } from "antd";
-import {
-  Avatar,
-  Button,
-  Dropdown,
-  Layout,
-  Menu,
-  Space,
-  Tooltip,
-  Typography,
-  theme as antdTheme,
-} from "antd";
-import React, { useMemo, useState, useEffect } from "react"; // <-- useMemo is added
-import { Link, useLocation } from "react-router-dom";
-import { useAuth } from "../shared/hooks/useAuth";
+//
+// Phase G.1 shell: top-nav + centered content + floating Tweaks panel.
+// Replaces the previous Ant Sider/Header layout. The `children` prop
+// keeps the route guards in App.tsx working unchanged — they wrap each
+// authenticated route in this layout.
+//
+// The body background + color are driven by the SCCAP design tokens
+// (--bg / --fg) so light/dark/variant toggles apply globally even
+// though the inner pages still render Ant components for now. Ant's
+// own surfaces (`.ant-card`, `.ant-table`, etc.) keep their white
+// backgrounds — a jarring-ish transition while G.2–G.6 port each page,
+// but acceptable since each page swap is independent.
 
-const { Header, Content, Footer, Sider } = Layout;
-
-type MenuItem = Required<MenuProps>["items"][number];
-
-// This helper function creates menu items. It can be kept outside the component.
-function getItem(
-  label: React.ReactNode,
-  key: React.Key,
-  icon?: React.ReactNode,
-  children?: MenuItem[],
-): MenuItem {
-  return { key, icon, children, label } as MenuItem;
-}
+import React from "react";
+import { TopNav } from "./TopNav/TopNav";
+import { Tweaks } from "./Tweaks/Tweaks";
 
 const DashboardLayout: React.FC<{ children?: React.ReactNode }> = ({
   children,
 }) => {
-  const [collapsed, setCollapsed] = useState(false);
-  const { logout, user } = useAuth(); // Get the user object from our auth hook
-  const location = useLocation();
-  const pathname = location.pathname;
-  const [openKeys, setOpenKeys] = useState<string[]>([]);
-
-  useEffect(() => {
-    if (
-      pathname.startsWith("/admin/") ||
-      pathname === "/account/settings/llm"
-    ) {
-      setOpenKeys(["admin_section"]);
-    } else {
-      setOpenKeys([]);
-    }
-  }, [pathname]);
-
-  const onOpenChange: MenuProps["onOpenChange"] = (keys) => {
-    setOpenKeys(keys);
-  };
-
-  const getSelectedKey = () => {
-    if (pathname.startsWith("/account/dashboard")) return "dashboard_overview";
-    if (pathname.startsWith("/submission/submit")) return "submit_code";
-    if (
-      pathname.startsWith("/analysis/results") ||
-      pathname.startsWith("/scans/")
-    )
-      return "analysis_results";
-    if (pathname.startsWith("/advisor")) return "security_advisor";
-    if (pathname.startsWith("/account/history")) return "submission_history";
-    if (pathname.startsWith("/admin/system")) return "system_config_nav";
-    if (pathname.startsWith("/admin/users")) return "user_management_nav";
-    if (pathname.startsWith("/admin/smtp")) return "smtp_settings_nav";
-    if (pathname.startsWith("/account/settings/llm")) return "llm_settings_nav";
-    if (pathname.startsWith("/admin/agents")) return "agent_management_nav";
-    if (pathname.startsWith("/admin/frameworks"))
-      return "framework_management_nav";
-    if (pathname.startsWith("/admin/prompts")) return "prompt_management_nav";
-    if (pathname.startsWith("/admin/rag")) return "rag_management_nav";
-    return "";
-  };
-
-  const {
-    token: { colorBgContainer, borderRadiusLG },
-  } = antdTheme.useToken();
-
-  // --- DYNAMIC SIDEBAR MENU ---
-  // We use useMemo to create the menu items so they only recalculate when the user's status changes.
-  const siderMenuItems = useMemo(() => {
-    const items: MenuItem[] = [
-      getItem(
-        <Link to="/account/dashboard" > Dashboard </Link>,
-        "dashboard_overview",
-        <PieChartOutlined />,
-      ),
-      getItem(
-        <Link to="/submission/submit" > Submit Code </Link>,
-        "submit_code",
-        <FileTextOutlined />,
-      ),
-      getItem(
-        <Link to="/analysis/results" > Projects </Link>,
-        "analysis_results",
-        <ProjectOutlined />,
-      ),
-      getItem(
-        <Link to="/advisor" > Security Advisor </Link>,
-        "security_advisor",
-        <QuestionCircleOutlined />,
-      ),
-      getItem(
-        <Link to="/account/history" > History </Link>,
-        "submission_history",
-        <CommentOutlined />,
-      ),
-    ];
-
-    // Conditionally add the Admin menu if the user is a superuser
-    if (user?.is_superuser) {
-      items.push(
-        getItem("Admin", "admin_section", <ToolOutlined />, [
-          getItem(
-          <Link to="/admin/system" > System Settings </Link>,
-            "system_config_nav",
-        ),
-          getItem(
-            <Link to="/admin/users" > User Management </Link>,
-            "user_management_nav",
-          ),
-          getItem(
-            <Link to="/admin/smtp" > SMTP Settings </Link>,
-            "smtp_settings_nav",
-          ),
-          getItem(
-            <Link to="/account/settings/llm" > LLM Settings </Link>,
-            "llm_settings_nav",
-          ),
-          getItem(
-            <Link to="/admin/agents" > Agents </Link>,
-            "agent_management_nav",
-          ),
-          getItem(
-            <Link to="/admin/frameworks" > Frameworks </Link>,
-            "framework_management_nav",
-          ),
-          getItem(
-            <Link to="/admin/prompts" > Prompts </Link>,
-            "prompt_management_nav",
-          ),
-          getItem(
-            <Link to="/admin/rag" > Security Standards </Link>,
-            "rag_management_nav",
-          ),
-        ]),
-      );
-    }
-
-return items;
-  }, [user?.is_superuser]);
-
-const handleLogout = async () => {
-  await logout();
-};
-
-const userAccountMenuItems: MenuProps["items"] = [
-  {
-    key: "logout",
-    icon: <LogoutOutlined style={{ marginRight: 8 }} />,
-label: "Logout",
-  onClick: handleLogout,
-    },
-  ];
-
-return (
-  <Layout style= {{ minHeight: "100vh" }}>
-    <Sider
-        collapsible
-collapsed = { collapsed }
-onCollapse = {(value) => setCollapsed(value)}
-      >
-  <div
-          style={
-  {
-    height: 32,
-      margin: 16,
-        background: "rgba(255, 255, 255, 0.2)",
-          borderRadius: 6,
-            display: "flex",
-              alignItems: "center",
-                justifyContent: "center",
-                  overflow: "hidden",
-          }
-}
-        >
-  <Typography.Text
-            style={
-  {
-    color: "white",
-      fontSize: collapsed ? "12px" : "16px",
-        fontWeight: "bold",
-            }
-}
-          >
-  { collapsed? "SCP": "Secure Code" }
-  </Typography.Text>
-  </div>
-  < Menu
-theme = "dark"
-selectedKeys = { [getSelectedKey()]}
-openKeys = { openKeys }
-onOpenChange = { onOpenChange }
-mode = "inline"
-items = { siderMenuItems } // Use the dynamic menu items here
-  />
-  </Sider>
-  < Layout >
-  <Header
-          style={
-  {
-    padding: "0 24px",
-      background: colorBgContainer,
-        display: "flex",
-          alignItems: "center",
-            justifyContent: "flex-end",
-          }
-}
-        >
-  <Space align="center" size = "middle" >
-    <Tooltip title="Notifications" >
-      <Button shape="circle" icon = {< BellOutlined />} />
-        </Tooltip>
-        < Dropdown
-menu = {{ items: userAccountMenuItems }}
-trigger = { ["click"]}
-  >
-  <a
-                onClick={ (e) => e.preventDefault() }
-style = {{
-  display: "flex",
-    alignItems: "center",
-      cursor: "pointer",
-                }}
-              >
-  <Avatar
-                  size="small"
-icon = {< UserOutlined />}
-style = {{ marginRight: 8 }}
-                />
-  < Typography.Text > { user? user.email : "User"} </Typography.Text>
-  </a>
-  </Dropdown>
-  </Space>
-  </Header>
-  < Content style = {{ margin: "24px 16px 0", overflow: "initial" }}>
+  return (
     <div
-            style={
-  {
-    padding: 24,
-      background: colorBgContainer,
-        borderRadius: borderRadiusLG,
-          minHeight: "calc(100vh - 64px - 48px - 69px)",
-            }
-}
-          >
-  { children }
-  </div>
-  </Content>
-  < Footer style = {{ textAlign: "center" }}>
-    SCCAP ©{ new Date().getFullYear() }
-</Footer>
-  </Layout>
-  </Layout>
+      style={{
+        minHeight: "100vh",
+        background: "var(--bg)",
+        color: "var(--fg)",
+        fontFamily: "var(--font-sans)",
+      }}
+    >
+      <TopNav />
+      <main
+        style={{
+          padding: "24px 28px 80px",
+          maxWidth: 1440,
+          margin: "0 auto",
+        }}
+      >
+        {children}
+      </main>
+      <Tweaks />
+    </div>
   );
 };
 
