@@ -83,12 +83,13 @@ class RAGService:
             heartbeat_result = client.heartbeat()
             logging.info(f"✓ ChromaDB heartbeat successful: {heartbeat_result}")
 
-            # Define the embedding function, same as in the ingestion script
-            embedding_function = (
-                embedding_functions.SentenceTransformerEmbeddingFunction(
-                    model_name=MODEL_NAME
-                )
-            )
+            # Embedding function. ChromaDB's DefaultEmbeddingFunction bundles
+            # all-MiniLM-L6-v2 via ONNX runtime (pulled transitively by the
+            # chromadb package), so neither the api nor the worker needs
+            # torch + sentence-transformers installed to produce the same
+            # 384-dim vectors the collection already holds.
+            embedding_function = embedding_functions.DefaultEmbeddingFunction()
+            _ = MODEL_NAME  # kept for reference; ONNX default targets the same model
 
             logging.info(
                 f"Getting or creating collection: {SECURITY_GUIDELINES_COLLECTION}"
