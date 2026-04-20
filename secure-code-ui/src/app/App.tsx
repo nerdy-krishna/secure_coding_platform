@@ -26,7 +26,8 @@ import ProjectsPage from "../pages/analysis/ProjectsPage";
 import ResultsPage from "../pages/analysis/ResultsPage";
 import LoginPage from "../pages/auth/LoginPage";
 import SecurityAdvisorPage from "../pages/chat/SecurityAdvisorPage";
-import SubmitCodePage from "../pages/submission/SubmitCodePage";
+import SubmitPage from "../pages/submission/SubmitPage";
+import ScanRunningPage from "../pages/submission/ScanRunningPage";
 import SetupPage from "../pages/setup/SetupPage";
 import AuthLayout from "../widgets/AuthLayout";
 import DashboardLayout from "../widgets/DashboardLayout";
@@ -140,7 +141,11 @@ function AppContent() {
 
         <Route element={<RouteGuard requires="auth" />}>
           <Route path="/account/dashboard" element={<DashboardPage />} />
-          <Route path="/submission/submit" element={<SubmitCodePage />} />
+          <Route path="/submission/submit" element={<SubmitPage />} />
+          <Route
+            path="/analysis/scanning/:scanId"
+            element={<ScanRunningPage />}
+          />
           <Route path="/analysis/results" element={<ProjectsPage />} />
           <Route path="/analysis/results/:scanId" element={<ResultsPage />} />
           <Route
