@@ -1,46 +1,25 @@
-import {
-  ArrowLeftOutlined,
-  DollarCircleOutlined,
-  LoadingOutlined,
-} from "@ant-design/icons";
+// secure-code-ui/src/pages/analysis/LlmLogViewerPage.tsx
+//
+// SCCAP LLM cost + interaction viewer. Ported off antd Layout/Menu/Table
+// onto SCCAP primitives (card grid + rail nav + expandable rows).
+
 import { useQuery } from "@tanstack/react-query";
-import {
-  Alert,
-  Button,
-  Card,
-  Col,
-  Descriptions,
-  Empty,
-  Layout,
-  Menu,
-  Row,
-  Space,
-  Spin,
-  Statistic,
-  Table,
-  Tag,
-  Typography,
-  type TableProps,
-} from "antd";
 import React, { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { scanService } from "../../shared/api/scanService";
 import type { LLMInteractionResponse } from "../../shared/types/api";
-
-const { Content, Sider } = Layout;
-const { Title, Text, Paragraph } = Typography;
+import { Icon } from "../../shared/ui/Icon";
 
 const LlmLogViewerPage: React.FC = () => {
   const { scanId } = useParams<{ scanId: string }>();
   const navigate = useNavigate();
   const [selectedFilePath, setSelectedFilePath] = useState<string>("All Files");
+  const [expandedId, setExpandedId] = useState<number | null>(null);
 
-  const {
-    data: interactions,
-    isLoading,
-    isError,
-    error,
-  } = useQuery<LLMInteractionResponse[], Error>({
+  const { data: interactions = [], isLoading, isError, error } = useQuery<
+    LLMInteractionResponse[],
+    Error
+  >({
     queryKey: ["llmInteractionsForScan", scanId],
     queryFn: () => {
       if (!scanId) throw new Error("Scan ID is missing");
@@ -50,372 +29,417 @@ const LlmLogViewerPage: React.FC = () => {
   });
 
   const overallStats = useMemo(() => {
-    if (!interactions)
-      return {
-        totalCost: 0,
-        totalInputTokens: 0,
-        totalOutputTokens: 0,
-        totalOverallTokens: 0,
-      };
-    return interactions.reduce(
-      (acc, item) => {
-        acc.totalCost += item.cost || 0;
-        acc.totalInputTokens += item.input_tokens || 0;
-        acc.totalOutputTokens += item.output_tokens || 0;
-        acc.totalOverallTokens += item.total_tokens || 0;
-        return acc;
-      },
-      {
-        totalCost: 0,
-        totalInputTokens: 0,
-        totalOutputTokens: 0,
-        totalOverallTokens: 0,
-      },
-    );
+    const acc = {
+      totalCost: 0,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      totalOverallTokens: 0,
+    };
+    for (const i of interactions) {
+      acc.totalCost += i.cost || 0;
+      acc.totalInputTokens += i.input_tokens || 0;
+      acc.totalOutputTokens += i.output_tokens || 0;
+      acc.totalOverallTokens += i.total_tokens || 0;
+    }
+    return acc;
   }, [interactions]);
 
-  const { filePaths, agentNames } = useMemo(() => {
-    if (!interactions) return { filePaths: [], agentNames: [] };
+  const filePaths = useMemo(() => {
     const paths = new Set<string>();
-    const agents = new Set<string>();
-    interactions.forEach((i) => {
-      if (i.file_path) {
-        paths.add(i.file_path);
-      }
-      agents.add(i.agent_name);
-    });
-    return {
-      filePaths: ["All Files", ...Array.from(paths).sort()],
-      agentNames: Array.from(agents).sort(),
-    };
+    for (const i of interactions) {
+      if (i.file_path) paths.add(i.file_path);
+    }
+    return ["All Files", ...Array.from(paths).sort()];
   }, [interactions]);
 
   const filteredInteractions = useMemo(() => {
-    if (!interactions) return [];
-    if (selectedFilePath === "All Files") {
-      return interactions;
-    }
+    if (selectedFilePath === "All Files") return interactions;
     return interactions.filter((i) => i.file_path === selectedFilePath);
   }, [interactions, selectedFilePath]);
 
   const fileStats = useMemo(() => {
-    if (!filteredInteractions || selectedFilePath === "All Files") return null;
-    return filteredInteractions.reduce(
-      (acc, item) => {
-        acc.totalCost += item.cost || 0;
-        acc.totalInputTokens += item.input_tokens || 0;
-        acc.totalOutputTokens += item.output_tokens || 0;
-        acc.totalOverallTokens += item.total_tokens || 0;
-        return acc;
-      },
-      {
-        totalCost: 0,
-        totalInputTokens: 0,
-        totalOutputTokens: 0,
-        totalOverallTokens: 0,
-      },
-    );
+    if (selectedFilePath === "All Files") return null;
+    const acc = {
+      totalCost: 0,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      totalOverallTokens: 0,
+    };
+    for (const i of filteredInteractions) {
+      acc.totalCost += i.cost || 0;
+      acc.totalInputTokens += i.input_tokens || 0;
+      acc.totalOutputTokens += i.output_tokens || 0;
+      acc.totalOverallTokens += i.total_tokens || 0;
+    }
+    return acc;
   }, [filteredInteractions, selectedFilePath]);
-
-  const columns: TableProps<LLMInteractionResponse>["columns"] = [
-    {
-      title: "Timestamp",
-      dataIndex: "timestamp",
-      key: "timestamp",
-      render: (text) => new Date(text).toLocaleString(),
-      sorter: (a, b) =>
-        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
-      defaultSortOrder: "ascend",
-      width: 200,
-    },
-    {
-      title: "Agent",
-      dataIndex: "agent_name",
-      key: "agent_name",
-      render: (agent) => <Tag color="cyan">{agent}</Tag>,
-      filters: agentNames.map((agent) => ({ text: agent, value: agent })),
-      onFilter: (value, record) => record.agent_name === value,
-      width: 220,
-    },
-    {
-      title: "Tokens (I/O/T)",
-      key: "tokens",
-      align: "right",
-      width: 150,
-      render: (_, record) => (
-        <Space
-          direction="vertical"
-          size={0}
-          style={{ textAlign: "right", width: "100%" }}
-        >
-          <Text>
-            {(record.input_tokens || 0).toLocaleString()} /{" "}
-            {(record.output_tokens || 0).toLocaleString()}
-          </Text>
-          <Text strong>{(record.total_tokens || 0).toLocaleString()}</Text>
-        </Space>
-      ),
-      sorter: (a, b) => (a.total_tokens || 0) - (b.total_tokens || 0),
-    },
-    {
-      title: "Cost (USD)",
-      dataIndex: "cost",
-      key: "cost",
-      align: "right",
-      width: 150,
-      render: (cost) =>
-        cost ? `$${cost.toFixed(6)}` : <Text type="secondary">N/A</Text>,
-      sorter: (a, b) => (a.cost || 0) - (b.cost || 0),
-    },
-  ];
 
   if (isLoading) {
     return (
       <div
+        className="sccap-card"
         style={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          height: "100vh",
+          padding: 60,
+          textAlign: "center",
+          color: "var(--fg-muted)",
         }}
       >
-        <Spin
-          indicator={<LoadingOutlined style={{ fontSize: 48 }} spin />}
-          tip="Loading LLM Interaction Logs..."
-        />
+        Loading LLM interaction logs…
       </div>
     );
   }
 
   if (isError) {
     return (
-      <Content style={{ padding: "20px" }}>
-        <Alert
-          message="Error"
-          description={error.message}
-          type="error"
-          showIcon
-        />
-      </Content>
+      <div
+        className="sccap-card"
+        style={{
+          padding: 20,
+          background: "var(--critical-weak)",
+          borderColor: "var(--critical)",
+          color: "var(--critical)",
+        }}
+      >
+        {error?.message ?? "Failed to load logs."}
+      </div>
     );
   }
 
   return (
-    <>
-      <Row justify="space-between" align="middle" style={{ marginBottom: 16 }}>
-        <Col>
-          <Title level={3} style={{ margin: 0 }}>
-            <DollarCircleOutlined style={{ marginRight: 8 }} />
-            LLM Cost & Interaction Logs
-          </Title>
-          <Text copyable={{ text: scanId }} type="secondary" code>
-            Scan ID: {scanId}
-          </Text>
-        </Col>
-        <Col>
-          <Button onClick={() => navigate(-1)} icon={<ArrowLeftOutlined />}>
-            Back
-          </Button>
-        </Col>
-      </Row>
-      <Card style={{ marginBottom: 16 }}>
-        <Title level={5} style={{ marginTop: 0 }}>
-          Overall Scan Summary
-        </Title>
-        <Row gutter={16}>
-          <Col span={6}>
-            <Statistic
-              title="Total Scan Cost (Actual)"
-              value={overallStats.totalCost}
-              precision={6}
-              prefix="$"
-            />
-          </Col>
-          <Col span={6}>
-            <Statistic
-              title="Total Input Tokens"
-              value={overallStats.totalInputTokens}
-              loading={isLoading}
-            />
-          </Col>
-          <Col span={6}>
-            <Statistic
-              title="Total Output Tokens"
-              value={overallStats.totalOutputTokens}
-              loading={isLoading}
-            />
-          </Col>
-          <Col span={6}>
-            <Statistic
-              title="Total Overall Tokens"
-              value={overallStats.totalOverallTokens}
-              loading={isLoading}
-            />
-          </Col>
-        </Row>
-      </Card>
-      <Layout
+    <div className="fade-in" style={{ display: "grid", gap: 16 }}>
+      <div
         style={{
-          background: "#fff",
-          padding: 0,
-          border: "1px solid #f0f0f0",
-          borderRadius: "8px",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-end",
+          gap: 12,
         }}
       >
-        <Sider
-          width={300}
+        <div>
+          <h1 style={{ color: "var(--fg)" }}>
+            <Icon.Dollar size={18} /> LLM cost & interactions
+          </h1>
+          <div
+            style={{
+              color: "var(--fg-muted)",
+              marginTop: 4,
+              fontSize: 12.5,
+            }}
+          >
+            Scan{" "}
+            <span className="mono" style={{ fontSize: 11 }}>
+              {scanId}
+            </span>
+          </div>
+        </div>
+        <button className="sccap-btn" onClick={() => navigate(-1)}>
+          <Icon.ChevronL size={12} /> Back
+        </button>
+      </div>
+
+      <div
+        className="surface"
+        style={{
+          padding: 18,
+          display: "grid",
+          gridTemplateColumns: "repeat(4, 1fr)",
+          gap: 18,
+        }}
+      >
+        <Stat label="Total scan cost" value={`$${overallStats.totalCost.toFixed(6)}`} />
+        <Stat
+          label="Total input tokens"
+          value={overallStats.totalInputTokens.toLocaleString()}
+        />
+        <Stat
+          label="Total output tokens"
+          value={overallStats.totalOutputTokens.toLocaleString()}
+        />
+        <Stat
+          label="Total overall tokens"
+          value={overallStats.totalOverallTokens.toLocaleString()}
+        />
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "280px 1fr",
+          gap: 16,
+          alignItems: "start",
+        }}
+      >
+        <div
+          className="surface"
           style={{
-            background: "#fafafa",
-            padding: "16px",
-            borderRight: "1px solid #f0f0f0",
-            maxHeight: "60vh",
+            padding: 8,
+            maxHeight: "70vh",
             overflowY: "auto",
           }}
         >
-          <Title level={5} style={{ marginTop: 0, marginBottom: 16 }}>
-            Files Involved
-          </Title>
-          <Menu
-            mode="inline"
-            selectedKeys={[selectedFilePath]}
-            onClick={(e) => setSelectedFilePath(e.key)}
-            items={filePaths.map((path) => ({
-              key: path,
-              label:
-                path === "All Files" ? (
-                  <b>All Files</b>
-                ) : (
-                  <Text ellipsis={{ tooltip: path }}>{path}</Text>
-                ),
-            }))}
-            style={{ background: "transparent", border: "none" }}
-          />
-        </Sider>
-        <Content
-          style={{
-            padding: "16px 24px",
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
-          {fileStats && selectedFilePath !== "All Files" && (
-            <Card
-              size="small"
-              bordered={false}
-              style={{ background: "#fafafa", marginBottom: 16 }}
+          <div
+            style={{
+              fontSize: 10.5,
+              color: "var(--fg-subtle)",
+              textTransform: "uppercase",
+              letterSpacing: ".06em",
+              padding: "6px 10px 4px",
+            }}
+          >
+            Files involved
+          </div>
+          {filePaths.map((p) => {
+            const active = p === selectedFilePath;
+            return (
+              <button
+                key={p}
+                className="sccap-btn sccap-btn-ghost"
+                style={{
+                  width: "100%",
+                  justifyContent: "flex-start",
+                  padding: "8px 10px",
+                  background: active ? "var(--bg-soft)" : "transparent",
+                  color: active ? "var(--fg)" : "var(--fg-muted)",
+                  fontSize: 12.5,
+                }}
+                onClick={() => setSelectedFilePath(p)}
+                title={p}
+              >
+                <span
+                  style={{
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    flex: 1,
+                    textAlign: "left",
+                    fontWeight: p === "All Files" ? 600 : 400,
+                  }}
+                  className={p === "All Files" ? "" : "mono"}
+                >
+                  {p}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="surface" style={{ padding: 0 }}>
+          {fileStats && (
+            <div
+              style={{
+                padding: 14,
+                background: "var(--bg-soft)",
+                borderBottom: "1px solid var(--border)",
+                display: "grid",
+                gridTemplateColumns: "repeat(4, 1fr)",
+                gap: 14,
+              }}
             >
-              <Title level={5} style={{ marginTop: 0 }}>
-                Summary for: <Text code>{selectedFilePath}</Text>
-              </Title>
-              <Row gutter={16}>
-                <Col span={6}>
-                  <Statistic
-                    title="File Cost"
-                    value={fileStats.totalCost}
-                    precision={6}
-                    prefix="$"
-                    valueStyle={{ fontSize: 14 }}
-                  />
-                </Col>
-                <Col span={6}>
-                  <Statistic
-                    title="Input Tokens"
-                    value={fileStats.totalInputTokens}
-                    valueStyle={{ fontSize: 14 }}
-                  />
-                </Col>
-                <Col span={6}>
-                  <Statistic
-                    title="Output Tokens"
-                    value={fileStats.totalOutputTokens}
-                    valueStyle={{ fontSize: 14 }}
-                  />
-                </Col>
-                <Col span={6}>
-                  <Statistic
-                    title="Overall Tokens"
-                    value={fileStats.totalOverallTokens}
-                    valueStyle={{ fontSize: 14 }}
-                  />
-                </Col>
-              </Row>
-            </Card>
+              <Stat
+                small
+                label="File cost"
+                value={`$${fileStats.totalCost.toFixed(6)}`}
+              />
+              <Stat
+                small
+                label="Input tokens"
+                value={fileStats.totalInputTokens.toLocaleString()}
+              />
+              <Stat
+                small
+                label="Output tokens"
+                value={fileStats.totalOutputTokens.toLocaleString()}
+              />
+              <Stat
+                small
+                label="Overall tokens"
+                value={fileStats.totalOverallTokens.toLocaleString()}
+              />
+            </div>
           )}
-          <Table
-            columns={columns}
-            dataSource={filteredInteractions}
-            rowKey="id"
-            loading={isLoading}
-            expandable={{
-              expandedRowRender: (record) => (
-                <Card size="small" title="Interaction Details">
-                  <Descriptions bordered column={1} size="small">
-                    <Descriptions.Item label="Prompt Template">
-                      {record.prompt_template_name || "N/A"}
-                    </Descriptions.Item>
-                    <Descriptions.Item label="Prompt Context">
-                      <pre
-                        style={{
-                          whiteSpace: "pre-wrap",
-                          wordBreak: "break-all",
-                          background: "#f5f5f5",
-                          color: "#333",
-                          padding: "10px",
-                          borderRadius: "4px",
-                          maxHeight: "400px",
-                          overflowY: "auto",
-                        }}
+
+          {filteredInteractions.length === 0 ? (
+            <div
+              style={{
+                padding: 40,
+                textAlign: "center",
+                color: "var(--fg-muted)",
+                fontSize: 13,
+              }}
+            >
+              {selectedFilePath === "All Files"
+                ? "This scan may not have reached analysis, or no AI interactions were required."
+                : `No interactions found for file: ${selectedFilePath}`}
+            </div>
+          ) : (
+            <table className="sccap-t">
+              <thead>
+                <tr>
+                  <th style={{ width: 180 }}>Timestamp</th>
+                  <th>Agent</th>
+                  <th style={{ textAlign: "right" }}>Tokens (I/O/T)</th>
+                  <th style={{ textAlign: "right" }}>Cost</th>
+                  <th style={{ width: 30 }} />
+                </tr>
+              </thead>
+              <tbody>
+                {filteredInteractions.map((r) => {
+                  const open = expandedId === r.id;
+                  return (
+                    <React.Fragment key={r.id}>
+                      <tr
+                        onClick={() => setExpandedId(open ? null : r.id)}
+                        style={{ cursor: "pointer" }}
                       >
-                        {JSON.stringify(record.prompt_context, null, 2)}
-                      </pre>
-                    </Descriptions.Item>
-                    <Descriptions.Item label="Parsed Output">
-                      <pre
-                        style={{
-                          whiteSpace: "pre-wrap",
-                          wordBreak: "break-all",
-                          background: "#f5f5f5",
-                          color: "#333",
-                          padding: "10px",
-                          borderRadius: "4px",
-                          maxHeight: "400px",
-                          overflowY: "auto",
-                        }}
-                      >
-                        {JSON.stringify(record.parsed_output, null, 2)}
-                      </pre>
-                    </Descriptions.Item>
-                    {record.error && (
-                      <Descriptions.Item label="Error">
-                        <Alert message={record.error} type="error" showIcon />
-                      </Descriptions.Item>
-                    )}
-                  </Descriptions>
-                </Card>
-              ),
-            }}
-            locale={{
-              emptyText: (
-                <Empty
-                  description={
-                    <>
-                      <Title level={5}>No LLM Interactions Logged</Title>
-                      <Paragraph>
-                        {selectedFilePath === "All Files"
-                          ? "This scan may not have reached the analysis stage, or no AI interactions were required."
-                          : `No interactions found for file: ${selectedFilePath}`}
-                      </Paragraph>
-                    </>
-                  }
-                />
-              ),
-            }}
-            scroll={{ y: "calc(100vh - 550px)" }}
-          />
-        </Content>
-      </Layout>
-    </>
+                        <td style={{ fontSize: 12 }}>
+                          {new Date(r.timestamp).toLocaleString()}
+                        </td>
+                        <td>
+                          <span
+                            className="chip"
+                            style={{
+                              background: "var(--info-weak)",
+                              color: "var(--info)",
+                              border: "none",
+                            }}
+                          >
+                            {r.agent_name}
+                          </span>
+                        </td>
+                        <td
+                          style={{
+                            textAlign: "right",
+                            fontVariantNumeric: "tabular-nums",
+                          }}
+                        >
+                          <div style={{ fontSize: 12 }}>
+                            {(r.input_tokens ?? 0).toLocaleString()} /{" "}
+                            {(r.output_tokens ?? 0).toLocaleString()}
+                          </div>
+                          <div style={{ fontWeight: 600 }}>
+                            {(r.total_tokens ?? 0).toLocaleString()}
+                          </div>
+                        </td>
+                        <td
+                          style={{
+                            textAlign: "right",
+                            fontVariantNumeric: "tabular-nums",
+                          }}
+                        >
+                          {r.cost ? `$${r.cost.toFixed(6)}` : "—"}
+                        </td>
+                        <td style={{ textAlign: "center" }}>
+                          {open ? (
+                            <Icon.ChevronU size={12} />
+                          ) : (
+                            <Icon.ChevronD size={12} />
+                          )}
+                        </td>
+                      </tr>
+                      {open && (
+                        <tr>
+                          <td colSpan={5} style={{ padding: 0 }}>
+                            <div
+                              style={{
+                                padding: 18,
+                                background: "var(--bg-soft)",
+                                display: "grid",
+                                gap: 12,
+                              }}
+                            >
+                              <div>
+                                <Label>Prompt template</Label>
+                                <div className="mono" style={{ fontSize: 12 }}>
+                                  {r.prompt_template_name ?? "N/A"}
+                                </div>
+                              </div>
+                              <div>
+                                <Label>Prompt context</Label>
+                                <pre className="sccap-code">
+                                  {JSON.stringify(r.prompt_context, null, 2)}
+                                </pre>
+                              </div>
+                              <div>
+                                <Label>Parsed output</Label>
+                                <pre className="sccap-code">
+                                  {JSON.stringify(r.parsed_output, null, 2)}
+                                </pre>
+                              </div>
+                              {r.error && (
+                                <div>
+                                  <Label>Error</Label>
+                                  <div
+                                    className="sccap-card"
+                                    style={{
+                                      padding: 10,
+                                      background: "var(--critical-weak)",
+                                      borderColor: "var(--critical)",
+                                      color: "var(--critical)",
+                                      fontSize: 12.5,
+                                    }}
+                                  >
+                                    {r.error}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
   );
 };
+
+const Stat: React.FC<{
+  label: string;
+  value: React.ReactNode;
+  small?: boolean;
+}> = ({ label, value, small }) => (
+  <div>
+    <div
+      style={{
+        fontSize: small ? 10.5 : 11,
+        color: "var(--fg-subtle)",
+        textTransform: "uppercase",
+        letterSpacing: ".06em",
+      }}
+    >
+      {label}
+    </div>
+    <div
+      style={{
+        fontSize: small ? 16 : 22,
+        fontWeight: 600,
+        color: "var(--fg)",
+        marginTop: 4,
+        fontVariantNumeric: "tabular-nums",
+      }}
+    >
+      {value}
+    </div>
+  </div>
+);
+
+const Label: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <div
+    style={{
+      fontSize: 10.5,
+      color: "var(--fg-subtle)",
+      textTransform: "uppercase",
+      letterSpacing: ".06em",
+      marginBottom: 4,
+    }}
+  >
+    {children}
+  </div>
+);
 
 export default LlmLogViewerPage;

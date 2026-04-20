@@ -10,10 +10,10 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { message as antdMessage } from "antd";
 import { scanService } from "../../shared/api/scanService";
 import { Icon } from "../../shared/ui/Icon";
 import { SectionHead } from "../../shared/ui/DashboardPrimitives";
+import { useToast } from "../../shared/ui/Toast";
 
 interface ScanEventMsg {
   scan_id: string;
@@ -70,6 +70,7 @@ function fmtStatus(status: string): string {
 const ScanRunningPage: React.FC = () => {
   const { scanId } = useParams<{ scanId: string }>();
   const navigate = useNavigate();
+  const toast = useToast();
   const [status, setStatus] = useState<string>("QUEUED");
   const [seenStages, setSeenStages] = useState<Set<string>>(new Set());
   const [events, setEvents] = useState<ScanEventMsg[]>([]);
@@ -162,29 +163,29 @@ const ScanRunningPage: React.FC = () => {
     setApproving(true);
     try {
       await scanService.approveScan(scanId);
-      antdMessage.success("Scan approved. Analysis resuming.");
+      toast.success("Scan approved. Analysis resuming.");
     } catch (err) {
       const e = err as { message?: string };
-      antdMessage.error(e.message || "Failed to approve scan");
+      toast.error(e.message || "Failed to approve scan");
     } finally {
       setApproving(false);
     }
-  }, [scanId]);
+  }, [scanId, toast]);
 
   const handleCancel = useCallback(async () => {
     if (!scanId) return;
     setCancelling(true);
     try {
       await scanService.cancelScan(scanId);
-      antdMessage.info("Scan cancelled.");
+      toast.info("Scan cancelled.");
       navigate("/account/dashboard");
     } catch (err) {
       const e = err as { message?: string };
-      antdMessage.error(e.message || "Failed to cancel scan");
+      toast.error(e.message || "Failed to cancel scan");
     } finally {
       setCancelling(false);
     }
-  }, [scanId, navigate]);
+  }, [scanId, navigate, toast]);
 
   return (
     <div

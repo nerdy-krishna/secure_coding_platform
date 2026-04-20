@@ -1,22 +1,14 @@
 // secure-code-ui/src/features/authentication/components/LoginPageContent.tsx
+//
+// SCCAP login form. Native inputs; useAuth() login wiring unchanged.
 
-import { LockOutlined, UserOutlined } from "@ant-design/icons";
-import {
-  Button,
-  Checkbox,
-  Col,
-  Form,
-  Input,
-  message,
-  Row,
-  Typography,
-} from "antd";
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../../../shared/hooks/useAuth";
 import { type UserLoginData } from "../../../shared/types/api";
+import { Icon } from "../../../shared/ui/Icon";
+import { useToast } from "../../../shared/ui/Toast";
 
-const { Title } = Typography;
 const LoginPageContent: React.FC = () => {
   const {
     login,
@@ -24,108 +16,134 @@ const LoginPageContent: React.FC = () => {
     isLoading: authLoading,
     clearError,
   } = useAuth();
-  const [form] = Form.useForm();
+  const toast = useToast();
+
+  const [form, setForm] = useState<UserLoginData & { remember: boolean }>({
+    username: "",
+    password: "",
+    remember: true,
+  });
 
   useEffect(() => {
     if (authError) {
-      message.error(authError);
+      toast.error(authError);
       clearError();
     }
-  }, [authError, clearError]);
+  }, [authError, clearError, toast]);
 
-  const onFinish = async (values: UserLoginData) => {
+  const onSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.username || !form.password) return;
     try {
-      await login(values);
-    } catch (err: unknown) {
-      // Error is now handled by the useEffect hook watching authError.
-      // This catch block can be kept for additional logging if needed.
-      console.error("LoginPage: Login attempt failed:", err);
+      await login({ username: form.username, password: form.password });
+    } catch (err) {
+      console.error("LoginPage: login failed:", err);
     }
-  };
-
-  const onFinishFailed = () => {
-    // Ant Design surfaces field-level validation errors inline on the Form.
   };
 
   return (
-    <Row
-      justify="center"
-      align="middle"
-      style={{ minHeight: "100vh", background: "#f0f2f5" }}
+    <form
+      onSubmit={onSubmit}
+      className="surface"
+      style={{ padding: 32, display: "grid", gap: 16 }}
     >
-      <Col xs={22} sm={16} md={12} lg={24} xl={24}>
+      <div style={{ textAlign: "center", marginBottom: 4 }}>
         <div
           style={{
-            background: "#fff",
-            padding: "40px",
-            borderRadius: "8px",
-            boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 10,
+            color: "var(--fg)",
+            fontSize: 20,
+            fontWeight: 600,
           }}
         >
-          <Title
-            level={2}
-            style={{ textAlign: "center", marginBottom: "30px" }}
-          >
-            Login
-          </Title>
-          <Form
-            form={form}
-            name="login"
-            initialValues={{ remember: true }}
-            onFinish={onFinish}
-            onFinishFailed={onFinishFailed}
-            layout="vertical"
-          >
-            <Form.Item
-              name="username"
-              label="Username or Email"
-              rules={[
-                {
-                  required: true,
-                  message: "Please input your Username or Email!",
-                },
-              ]}
-            >
-              <Input
-                prefix={<UserOutlined />}
-                placeholder="Username or Email"
-              />
-            </Form.Item>
-
-            <Form.Item
-              name="password"
-              label="Password"
-              rules={[
-                { required: true, message: "Please input your Password!" },
-              ]}
-            >
-              <Input.Password
-                prefix={<LockOutlined />}
-                placeholder="Password"
-              />
-            </Form.Item>
-
-            <Form.Item name="remember" valuePropName="checked">
-              <Checkbox>Remember me </Checkbox>
-            </Form.Item>
-
-            <Form.Item>
-              <Button
-                type="primary"
-                htmlType="submit"
-                loading={authLoading}
-                style={{ width: "100%" }}
-              >
-                Log in
-              </Button>
-            </Form.Item>
-            <div style={{ textAlign: "center" }}>
-              <Link to="/forgot-password"> Forgot password ? </Link>
-            </div>
-          </Form>
+          <Icon.Shield size={22} color="var(--primary)" /> SCCAP
         </div>
-      </Col>
-    </Row>
+        <div
+          style={{
+            color: "var(--fg-muted)",
+            fontSize: 12.5,
+            marginTop: 4,
+          }}
+        >
+          Secure Coding & Compliance Automation Platform
+        </div>
+      </div>
+
+      <label style={{ display: "grid", gap: 6 }}>
+        <span style={{ fontSize: 12, color: "var(--fg-muted)" }}>
+          Username or email
+        </span>
+        <div className="input-with-icon">
+          <Icon.User size={14} />
+          <input
+            className="sccap-input"
+            placeholder="you@example.com"
+            value={form.username}
+            onChange={(e) => setForm({ ...form, username: e.target.value })}
+            required
+            autoFocus
+            autoComplete="username"
+            style={{ paddingLeft: 32 }}
+          />
+        </div>
+      </label>
+
+      <label style={{ display: "grid", gap: 6 }}>
+        <span style={{ fontSize: 12, color: "var(--fg-muted)" }}>Password</span>
+        <div className="input-with-icon">
+          <Icon.Lock size={14} />
+          <input
+            className="sccap-input"
+            type="password"
+            placeholder="••••••••"
+            value={form.password}
+            onChange={(e) => setForm({ ...form, password: e.target.value })}
+            required
+            autoComplete="current-password"
+            style={{ paddingLeft: 32 }}
+          />
+        </div>
+      </label>
+
+      <label
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 8,
+          fontSize: 13,
+          color: "var(--fg-muted)",
+          cursor: "pointer",
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={form.remember}
+          onChange={(e) => setForm({ ...form, remember: e.target.checked })}
+          style={{ accentColor: "var(--primary)" }}
+        />
+        Remember me
+      </label>
+
+      <button
+        type="submit"
+        className="sccap-btn sccap-btn-primary sccap-btn-lg"
+        disabled={authLoading}
+        style={{ width: "100%" }}
+      >
+        {authLoading ? "Signing in…" : "Log in"}
+      </button>
+
+      <div style={{ textAlign: "center", fontSize: 12.5 }}>
+        <Link
+          to="/forgot-password"
+          style={{ color: "var(--primary)", textDecoration: "none" }}
+        >
+          Forgot password?
+        </Link>
+      </div>
+    </form>
   );
 };
 

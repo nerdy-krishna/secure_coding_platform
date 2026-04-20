@@ -1,110 +1,113 @@
 // secure-code-ui/src/features/authentication/components/ResetPasswordPage.tsx
-import React, { useState, useEffect } from "react";
-import { Form, Input, Button, Typography, message } from "antd";
-import { LockOutlined } from "@ant-design/icons";
-import { authService } from "../../../shared/api/authService";
-import { useNavigate, useLocation } from "react-router-dom";
+//
+// SCCAP set-new-password form. Wiring to authService.resetPassword
+// unchanged.
 
-const { Title, Paragraph } = Typography;
+import React, { useEffect, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import { authService } from "../../../shared/api/authService";
+import { Icon } from "../../../shared/ui/Icon";
+import { useToast } from "../../../shared/ui/Toast";
 
 const ResetPasswordPage: React.FC = () => {
-  const [loading, setLoading] = useState(false);
+  const toast = useToast();
   const navigate = useNavigate();
   const location = useLocation();
-  const searchParams = new URLSearchParams(location.search);
-  const token = searchParams.get("token");
+  const token = new URLSearchParams(location.search).get("token");
+
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (!token) {
-      message.error("Invalid or missing reset token.");
+      toast.error("Invalid or missing reset token.");
     }
-  }, [token]);
+  }, [token, toast]);
 
-  const onFinish = async (values: { password: string }) => {
+  const onSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (!token) {
-      message.error("No token provided.");
+      toast.error("No token provided.");
+      return;
+    }
+    if (!password || password !== confirm) {
+      toast.error("The two passwords do not match.");
       return;
     }
     setLoading(true);
     try {
-      await authService.resetPassword(token, values.password);
-      message.success("Password secured! You can now log in.");
+      await authService.resetPassword(token, password);
+      toast.success("Password secured. You can now log in.");
       navigate("/login");
-    } catch (error) {
-      console.error("Reset password failed:", error);
-      message.error("Failed to reset password. The link might be expired.");
+    } catch {
+      toast.error("Failed to reset password. The link might be expired.");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div
-      style={{
-        background: "#fff",
-        padding: "40px",
-        borderRadius: "8px",
-        boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
-      }}
+    <form
+      onSubmit={onSubmit}
+      className="surface"
+      style={{ padding: 32, display: "grid", gap: 16 }}
     >
-      <Title level={2} style={{ textAlign: "center", marginBottom: "30px" }}>
-        {" "}
-        Set New Password{" "}
-      </Title>
-      <Form name="reset-password" onFinish={onFinish} layout="vertical">
-        <Paragraph style={{ textAlign: "center", marginBottom: "20px" }}>
-          {" "}
-          Please enter your new password below.
-        </Paragraph>
-        <Form.Item
-          name="password"
-          rules={[
-            { required: true, message: "Please enter your new password!" },
-          ]}
-        >
-          <Input.Password
-            prefix={<LockOutlined />}
-            placeholder="New Password"
-            size="large"
-          />
-        </Form.Item>
-        <Form.Item
-          name="confirm"
-          dependencies={["password"]}
-          rules={[
-            { required: true, message: "Please confirm your password!" },
-            ({ getFieldValue }) => ({
-              validator(_, value) {
-                if (!value || getFieldValue("password") === value) {
-                  return Promise.resolve();
-                }
-                return Promise.reject(
-                  new Error("The two passwords do not match!"),
-                );
-              },
-            }),
-          ]}
-        >
-          <Input.Password
-            prefix={<LockOutlined />}
-            placeholder="Confirm Password"
-            size="large"
-          />
-        </Form.Item>
-        <Form.Item>
-          <Button
-            type="primary"
-            htmlType="submit"
-            loading={loading}
-            size="large"
-            style={{ width: "100%" }}
-            disabled={!token}
-          >
-            Reset Password
-          </Button>
-        </Form.Item>
-      </Form>
-    </div>
+      <h2
+        style={{
+          textAlign: "center",
+          color: "var(--fg)",
+          marginBottom: 8,
+        }}
+      >
+        Set a new password
+      </h2>
+      <div
+        style={{
+          textAlign: "center",
+          fontSize: 13,
+          color: "var(--fg-muted)",
+          lineHeight: 1.5,
+        }}
+      >
+        Please enter your new password below.
+      </div>
+      <div className="input-with-icon">
+        <Icon.Lock size={14} />
+        <input
+          className="sccap-input"
+          type="password"
+          placeholder="New password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          required
+          autoFocus
+          autoComplete="new-password"
+          style={{ paddingLeft: 32 }}
+        />
+      </div>
+      <div className="input-with-icon">
+        <Icon.Lock size={14} />
+        <input
+          className="sccap-input"
+          type="password"
+          placeholder="Confirm password"
+          value={confirm}
+          onChange={(e) => setConfirm(e.target.value)}
+          required
+          autoComplete="new-password"
+          style={{ paddingLeft: 32 }}
+        />
+      </div>
+      <button
+        type="submit"
+        className="sccap-btn sccap-btn-primary sccap-btn-lg"
+        disabled={loading || !token}
+        style={{ width: "100%" }}
+      >
+        {loading ? "Saving…" : "Reset password"}
+      </button>
+    </form>
   );
 };
 

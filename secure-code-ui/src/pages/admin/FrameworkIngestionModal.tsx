@@ -1,36 +1,19 @@
-import React, { useState, useEffect } from "react";
-import {
-  Modal,
-  Form,
-  Input,
-  Upload,
-  Button,
-  Select,
-  Checkbox,
-  Typography,
-  Space,
-  Alert,
-  message,
-  Steps,
-  Divider,
-} from "antd";
-import {
-  UploadOutlined,
-  CloudUploadOutlined,
-  FileTextOutlined,
-  DollarOutlined,
-} from "@ant-design/icons";
+// secure-code-ui/src/pages/admin/FrameworkIngestionModal.tsx
+//
+// Framework ingestion wizard. Ported off antd to SCCAP primitives.
+// Two steps: configure (name, CSV, languages, LLM) → review cost.
+// Endpoint contract with ragService is unchanged.
+
+import React, { useEffect, useState } from "react";
+import { saveAs } from "file-saver";
 import { ragService } from "../../shared/api/ragService";
 import type {
   LLMConfiguration,
   RAGJobStartResponse,
 } from "../../shared/types/api";
-import type { RcFile } from "antd/es/upload";
-import { saveAs } from "file-saver";
-
-const { Title, Text, Paragraph } = Typography;
-const { Option } = Select;
-const { Step } = Steps;
+import { Icon } from "../../shared/ui/Icon";
+import { Modal } from "../../shared/ui/Modal";
+import { useToast } from "../../shared/ui/Toast";
 
 interface FrameworkIngestionModalProps {
   visible: boolean;
@@ -43,7 +26,7 @@ interface FrameworkIngestionModalProps {
   llmConfigs: LLMConfiguration[];
 }
 
-const SUPPORTED_LANGUAGES = [
+const SUPPORTED_LANGUAGES: { label: string; value: string }[] = [
   { label: "Python", value: "python" },
   { label: "JavaScript / TypeScript", value: "javascript" },
   { label: "Java", value: "java" },
@@ -56,79 +39,91 @@ const SUPPORTED_LANGUAGES = [
   { label: "Kotlin", value: "kotlin" },
 ];
 
-export const FrameworkIngestionModal: React.FC<
-  FrameworkIngestionModalProps
-> = ({ visible, onCancel, onSuccess, initialValues, llmConfigs }) => {
-  const [form] = Form.useForm();
-  const [currentStep, setCurrentStep] = useState(0);
+export const FrameworkIngestionModal: React.FC<FrameworkIngestionModalProps> = ({
+  visible,
+  onCancel,
+  onSuccess,
+  initialValues,
+  llmConfigs,
+}) => {
+  const toast = useToast();
+  const [step, setStep] = useState<0 | 1>(0);
   const [loading, setLoading] = useState(false);
   const [jobData, setJobData] = useState<RAGJobStartResponse | null>(null);
-  const [fileList, setFileList] = useState<RcFile[]>([]);
+
+  const [frameworkName, setFrameworkName] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [targetLanguages, setTargetLanguages] = useState<string[]>([]);
+  const [llmConfigId, setLlmConfigId] = useState<string>("");
 
   const isEdit = !!initialValues?.isEdit;
 
-  // Reset state when modal opens/closes
   useEffect(() => {
     if (visible) {
-      form.resetFields();
-      if (initialValues) {
-        form.setFieldsValue({
-          frameworkName: initialValues.frameworkName,
-        });
-      }
+      setFrameworkName(initialValues?.frameworkName ?? "");
+      setFile(null);
+      setTargetLanguages([]);
+      setLlmConfigId(llmConfigs[0]?.id ?? "");
       setJobData(null);
-      setCurrentStep(0);
-      setFileList([]);
+      setStep(0);
     }
-  }, [visible, initialValues, form]);
+  }, [visible, initialValues, llmConfigs]);
 
   const handleDownloadTemplate = () => {
-    const csvContent =
+    const csv =
       "id,document\n1,Authentication guidelines...\n2,Input validation rules...";
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    saveAs(blob, "framework_template.csv");
+    saveAs(
+      new Blob([csv], { type: "text/csv;charset=utf-8;" }),
+      "framework_template.csv",
+    );
   };
 
   const onGetEstimate = async () => {
+    if (!frameworkName) {
+      toast.error("Framework name is required.");
+      return;
+    }
+    if (!/^[a-zA-Z0-9_-]+$/.test(frameworkName)) {
+      toast.error(
+        "Framework name may only contain letters, numbers, _ and -.",
+      );
+      return;
+    }
+    if (!llmConfigId) {
+      toast.error("Select an LLM configuration.");
+      return;
+    }
+    setLoading(true);
     try {
-      const values = await form.validateFields();
-      setLoading(true);
-
-      const { frameworkName, targetLanguages, llmConfigId } = values;
-
       let response: RAGJobStartResponse;
-
-      if (fileList.length > 0) {
-        // Option A: File Upload (New or Edit with File)
-        const formData = new FormData();
-        formData.append("file", fileList[0]);
-        formData.append("framework_name", frameworkName);
-        formData.append("llm_config_id", llmConfigId);
-
-        response = await ragService.startPreprocessing(
-          formData,
-          targetLanguages || [],
-        );
+      if (file) {
+        const fd = new FormData();
+        fd.append("file", file);
+        fd.append("framework_name", frameworkName);
+        fd.append("llm_config_id", llmConfigId);
+        response = await ragService.startPreprocessing(fd, targetLanguages);
       } else if (isEdit) {
-        // Option B: Reprocess existing content (Edit without File)
         response = await ragService.reprocessFramework(
           frameworkName,
-          targetLanguages || [],
+          targetLanguages,
           llmConfigId,
         );
       } else {
-        message.error("Please upload a CSV file.");
+        toast.error("Please upload a CSV file.");
         setLoading(false);
         return;
       }
-
       setJobData(response);
-      setCurrentStep(1); // Move to review step
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (error: any) {
-      console.error("Estimation failed:", error);
-      message.error(
-        error.response?.data?.detail || "Failed to get cost estimate.",
+      setStep(1);
+    } catch (err) {
+      const e = err as {
+        response?: { data?: { detail?: string } };
+        message?: string;
+      };
+      toast.error(
+        e.response?.data?.detail ||
+          e.message ||
+          "Failed to get cost estimate.",
       );
     } finally {
       setLoading(false);
@@ -137,205 +132,310 @@ export const FrameworkIngestionModal: React.FC<
 
   const onSubmitJob = async () => {
     if (!jobData) return;
+    setLoading(true);
     try {
-      setLoading(true);
       await ragService.approveJob(jobData.job_id);
-      message.success("Ingestion job started successfully!");
+      toast.success("Ingestion job started.");
       onSuccess(jobData.job_id);
       onCancel();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (error: any) {
-      console.error("Job approval failed:", error);
-      message.error("Failed to start job.");
+    } catch {
+      toast.error("Failed to start job.");
     } finally {
       setLoading(false);
     }
   };
 
-  const uploadProps = {
-    onRemove: () => {
-      setFileList([]);
-    },
-    beforeUpload: (file: RcFile) => {
-      setFileList([file]);
-      return false; // Prevent automatic upload
-    },
-    fileList,
-    maxCount: 1,
-    accept: ".csv",
+  const toggleLanguage = (value: string) => {
+    setTargetLanguages((prev) =>
+      prev.includes(value)
+        ? prev.filter((l) => l !== value)
+        : [...prev, value],
+    );
   };
+
+  const renderHeader = () => (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(2, 1fr)",
+        gap: 4,
+        marginBottom: 18,
+      }}
+    >
+      {["Configure", "Review cost"].map((label, i) => {
+        const active = i === step;
+        const done = i < step;
+        return (
+          <div key={label} style={{ textAlign: "center" }}>
+            <div
+              style={{
+                margin: "0 auto 6px",
+                width: 24,
+                height: 24,
+                borderRadius: 12,
+                display: "grid",
+                placeItems: "center",
+                background:
+                  done || active ? "var(--primary)" : "var(--bg-soft)",
+                color: done || active ? "white" : "var(--fg-muted)",
+                fontSize: 11,
+                fontWeight: 600,
+              }}
+            >
+              {done ? <Icon.Check size={11} /> : i + 1}
+            </div>
+            <div
+              style={{
+                fontSize: 11,
+                color: active
+                  ? "var(--fg)"
+                  : done
+                    ? "var(--fg-muted)"
+                    : "var(--fg-subtle)",
+                fontWeight: active ? 600 : 400,
+              }}
+            >
+              {label}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
 
   return (
     <Modal
-      title={isEdit ? "Update Framework" : "Add Custom Framework"}
       open={visible}
-      onCancel={onCancel}
-      footer={null}
+      onClose={onCancel}
+      title={isEdit ? "Update framework" : "Add custom framework"}
       width={700}
-      maskClosable={false}
-      destroyOnClose
     >
-      <Steps current={currentStep} style={{ marginBottom: 24 }}>
-        <Step title="Configuration" icon={<FileTextOutlined />} />
-        <Step title="Review Cost" icon={<DollarOutlined />} />
-        <Step title="Processing" icon={<CloudUploadOutlined />} />
-      </Steps>
+      {renderHeader()}
 
-      {currentStep === 0 && (
-        <Form form={form} layout="vertical" initialValues={{}}>
-          <Alert
-            message="Secure Coding Guidelines"
-            description={
-              isEdit
-                ? "Update your framework by adding language-specific patterns. You can use the existing documents or upload a new CSV."
-                : "Upload a CSV file containing your security standards. We will generate code patterns for your selected languages."
-            }
-            type="info"
-            showIcon
-            style={{ marginBottom: 24 }}
-          />
-
-          <Form.Item
-            name="frameworkName"
-            label="Framework Name"
-            rules={[
-              { required: true, message: "Please enter a framework name" },
-              {
-                pattern: /^[a-zA-Z0-9_-]+$/,
-                message: "Use only letters, numbers, underscores, and hyphens.",
-              },
-            ]}
+      {step === 0 ? (
+        <div style={{ display: "grid", gap: 14 }}>
+          <div
+            className="sccap-card"
+            style={{
+              padding: 12,
+              background: "var(--info-weak)",
+              borderColor: "var(--info)",
+              color: "var(--info)",
+              fontSize: 12.5,
+              lineHeight: 1.55,
+            }}
           >
-            <Input
-              placeholder="e.g., custom_security_standard"
+            {isEdit
+              ? "Update your framework by adding language-specific patterns. Use existing documents or upload a new CSV."
+              : "Upload a CSV with your security standards. SCCAP will generate code patterns for the selected languages."}
+          </div>
+
+          <label style={{ display: "grid", gap: 6 }}>
+            <span style={{ fontSize: 12, color: "var(--fg-muted)" }}>
+              Framework name
+            </span>
+            <input
+              className="sccap-input mono"
+              placeholder="e.g. custom_security_standard"
+              value={frameworkName}
+              onChange={(e) => setFrameworkName(e.target.value)}
               disabled={isEdit}
             />
-          </Form.Item>
+          </label>
 
-          <Form.Item label="Source File (CSV)">
-            <Space direction="vertical" style={{ width: "100%" }}>
-              <Upload {...uploadProps}>
-                <Button icon={<UploadOutlined />}>Select CSV File</Button>
-              </Upload>
-              {!fileList.length && isEdit && (
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  * Leave empty to re - use existing documents from previous
-                  jobs.
-                </Text>
-              )}
-              <Button
-                type="link"
-                size="small"
+          <div style={{ display: "grid", gap: 6 }}>
+            <span style={{ fontSize: 12, color: "var(--fg-muted)" }}>
+              Source file (CSV)
+            </span>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <input
+                type="file"
+                accept=".csv"
+                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                style={{ fontSize: 12 }}
+              />
+              <button
+                type="button"
+                className="sccap-btn sccap-btn-ghost sccap-btn-sm"
                 onClick={handleDownloadTemplate}
-                style={{ paddingLeft: 0 }}
               >
-                Download Sample Template
-              </Button>
-            </Space>
-          </Form.Item>
+                <Icon.Download size={12} /> Sample template
+              </button>
+            </div>
+            {!file && isEdit && (
+              <span style={{ fontSize: 11, color: "var(--fg-subtle)" }}>
+                Leave empty to reuse existing documents from previous jobs.
+              </span>
+            )}
+          </div>
 
-          <Form.Item
-            name="targetLanguages"
-            label="Target Languages for Code Patterns"
-            extra="Select languages to generate secure/vulnerable code examples for."
-          >
-            <Checkbox.Group
-              options={SUPPORTED_LANGUAGES}
+          <div style={{ display: "grid", gap: 6 }}>
+            <span style={{ fontSize: 12, color: "var(--fg-muted)" }}>
+              Target languages for code patterns
+            </span>
+            <div
               style={{
                 display: "grid",
                 gridTemplateColumns: "repeat(2, 1fr)",
-                gap: "8px",
+                gap: 6,
               }}
-            />
-          </Form.Item>
-
-          <Form.Item
-            name="llmConfigId"
-            label="LLM Configuration"
-            rules={[
-              { required: true, message: "Please select an LLM configuration" },
-            ]}
-            extra="Select the model to use for analyzing documents and generating patterns."
-          >
-            <Select placeholder="Select LLM Configuration">
-              {llmConfigs.map((config) => (
-                <Option key={config.id} value={config.id}>
-                  {config.name}({config.provider} - {config.model_name})
-                </Option>
-              ))}
-            </Select>
-          </Form.Item>
-
-          <Divider />
-          <div style={{ textAlign: "right" }}>
-            <Button onClick={onCancel} style={{ marginRight: 8 }}>
-              Cancel
-            </Button>
-            <Button type="primary" onClick={onGetEstimate} loading={loading}>
-              Get Cost Estimate
-            </Button>
+            >
+              {SUPPORTED_LANGUAGES.map((l) => {
+                const on = targetLanguages.includes(l.value);
+                return (
+                  <button
+                    key={l.value}
+                    type="button"
+                    onClick={() => toggleLanguage(l.value)}
+                    className="chip"
+                    style={{
+                      cursor: "pointer",
+                      justifyContent: "flex-start",
+                      background: on
+                        ? "var(--primary-weak)"
+                        : "transparent",
+                      color: on ? "var(--primary)" : "var(--fg-muted)",
+                      border: on
+                        ? "1px solid var(--primary)"
+                        : "1px solid var(--border)",
+                    }}
+                  >
+                    {on && <Icon.Check size={10} />} {l.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </Form>
-      )}
 
-      {currentStep === 1 && jobData && (
-        <div>
-          <Alert
-            message="Ready to Process"
-            description="Please review the estimated cost before starting the job."
-            type="success"
-            showIcon
-            style={{ marginBottom: 24 }}
-          />
+          <label style={{ display: "grid", gap: 6 }}>
+            <span style={{ fontSize: 12, color: "var(--fg-muted)" }}>
+              LLM configuration
+            </span>
+            <select
+              className="sccap-input"
+              value={llmConfigId}
+              onChange={(e) => setLlmConfigId(e.target.value)}
+            >
+              <option value="">Select LLM Configuration</option>
+              {llmConfigs.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} ({c.provider} · {c.model_name})
+                </option>
+              ))}
+            </select>
+            <span style={{ fontSize: 11, color: "var(--fg-subtle)" }}>
+              Used to analyze documents and generate patterns.
+            </span>
+          </label>
 
+          <div className="sccap-divider" />
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <button
+              className="sccap-btn sccap-btn-sm"
+              onClick={onCancel}
+              disabled={loading}
+            >
+              Cancel
+            </button>
+            <button
+              className="sccap-btn sccap-btn-primary sccap-btn-sm"
+              onClick={onGetEstimate}
+              disabled={loading}
+            >
+              {loading ? "Estimating…" : "Get cost estimate"}
+            </button>
+          </div>
+        </div>
+      ) : jobData ? (
+        <div style={{ display: "grid", gap: 14 }}>
           <div
+            className="sccap-card"
             style={{
-              background: "#f5f5f5",
-              padding: 16,
-              borderRadius: 8,
-              marginBottom: 24,
+              padding: 12,
+              background: "var(--success-weak)",
+              borderColor: "var(--success)",
+              color: "var(--success)",
+              fontSize: 12.5,
             }}
           >
-            <Title level={4} style={{ marginTop: 0 }}>
-              {" "}
-              Job Summary{" "}
-            </Title>
-            <Paragraph>
-              {" "}
-              <strong>Framework: </strong> {jobData.framework_name}
-            </Paragraph>
-            <Paragraph>
-              <strong>Estimated Cost: </strong> $
+            Ready to process. Review the estimated cost before starting the job.
+          </div>
+          <div
+            className="inset"
+            style={{ padding: 16, display: "grid", gap: 8 }}
+          >
+            <div
+              style={{
+                fontSize: 10.5,
+                color: "var(--fg-subtle)",
+                textTransform: "uppercase",
+                letterSpacing: ".06em",
+              }}
+            >
+              Job summary
+            </div>
+            <Row label="Framework">{jobData.framework_name}</Row>
+            <Row label="Estimated cost">
+              $
               {jobData.estimated_cost?.total_estimated_cost
                 ? Number(jobData.estimated_cost.total_estimated_cost) > 0 &&
                   Number(jobData.estimated_cost.total_estimated_cost) < 0.0001
                   ? "< 0.0001"
-                  : Number(jobData.estimated_cost.total_estimated_cost).toFixed(
-                      4,
-                    )
+                  : Number(
+                      jobData.estimated_cost.total_estimated_cost,
+                    ).toFixed(4)
                 : "0.0000"}
-            </Paragraph>
-            <Paragraph>
-              <strong>Input Tokens: </strong>{" "}
-              {Number(jobData.estimated_cost?.total_input_tokens) || 0} |
-              <strong> Output Tokens: </strong>{" "}
+            </Row>
+            <Row label="Input tokens">
+              {Number(jobData.estimated_cost?.total_input_tokens) || 0}
+            </Row>
+            <Row label="Predicted output tokens">
               {Number(jobData.estimated_cost?.predicted_output_tokens) || 0}
-            </Paragraph>
+            </Row>
           </div>
 
-          <div style={{ textAlign: "right" }}>
-            <Button
-              onClick={() => setCurrentStep(0)}
-              style={{ marginRight: 8 }}
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <button
+              className="sccap-btn sccap-btn-sm"
+              onClick={() => setStep(0)}
+              disabled={loading}
             >
-              Back
-            </Button>
-            <Button type="primary" onClick={onSubmitJob} loading={loading}>
-              Submit Job
-            </Button>
+              <Icon.ChevronL size={12} /> Back
+            </button>
+            <button
+              className="sccap-btn sccap-btn-primary sccap-btn-sm"
+              onClick={onSubmitJob}
+              disabled={loading}
+            >
+              {loading ? "Submitting…" : "Submit job"}
+            </button>
           </div>
         </div>
-      )}
+      ) : null}
     </Modal>
   );
 };
+
+const Row: React.FC<{ label: string; children: React.ReactNode }> = ({
+  label,
+  children,
+}) => (
+  <div
+    style={{
+      display: "flex",
+      justifyContent: "space-between",
+      fontSize: 12.5,
+    }}
+  >
+    <span style={{ color: "var(--fg-muted)" }}>{label}</span>
+    <span
+      style={{
+        color: "var(--fg)",
+        fontVariantNumeric: "tabular-nums",
+      }}
+      className="mono"
+    >
+      {children}
+    </span>
+  </div>
+);

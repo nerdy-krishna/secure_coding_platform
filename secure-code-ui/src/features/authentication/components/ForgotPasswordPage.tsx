@@ -1,89 +1,100 @@
 // secure-code-ui/src/features/authentication/components/ForgotPasswordPage.tsx
-import React, { useState } from "react";
-import { Form, Input, Button, Typography, message } from "antd";
-import { UserOutlined } from "@ant-design/icons";
-import { authService } from "../../../shared/api/authService";
-import { Link } from "react-router-dom";
+//
+// SCCAP password-reset request. Native form; authService.forgotPassword
+// unchanged.
 
-const { Title, Paragraph } = Typography;
+import React, { useState } from "react";
+import { Link } from "react-router-dom";
+import { authService } from "../../../shared/api/authService";
+import { Icon } from "../../../shared/ui/Icon";
+import { useToast } from "../../../shared/ui/Toast";
 
 const ForgotPasswordPage: React.FC = () => {
+  const toast = useToast();
+  const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
 
-  const onFinish = async (values: { email: string }) => {
+  const onSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email) return;
     setLoading(true);
     try {
-      await authService.forgotPassword(values.email);
+      await authService.forgotPassword(email);
       setSuccess(true);
-      message.success("Password reset email sent (if an account exists).");
-    } catch (error) {
-      console.error("Forgot password failed:", error);
-      message.error("Failed to request password reset.");
+      toast.success("Password reset email sent (if an account exists).");
+    } catch {
+      toast.error("Failed to request password reset.");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div
-      style={{
-        background: "#fff",
-        padding: "40px",
-        borderRadius: "8px",
-        boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
-      }}
-    >
-      <Title level={2} style={{ textAlign: "center", marginBottom: "30px" }}>
-        {" "}
-        Forgot Password{" "}
-      </Title>
+    <div className="surface" style={{ padding: 32 }}>
+      <h2 style={{ textAlign: "center", color: "var(--fg)", marginBottom: 8 }}>
+        Forgot password
+      </h2>
       {success ? (
-        <div style={{ textAlign: "center" }}>
-          <Paragraph>
+        <div style={{ textAlign: "center", display: "grid", gap: 12 }}>
+          <div style={{ color: "var(--fg-muted)", fontSize: 13 }}>
             If an account exists for that email, a password reset link has been
             sent.
-          </Paragraph>
-          <Link to="/login"> Return to login </Link>
+          </div>
+          <Link
+            to="/login"
+            style={{
+              color: "var(--primary)",
+              fontSize: 13,
+              textDecoration: "none",
+            }}
+          >
+            Return to login
+          </Link>
         </div>
       ) : (
-        <Form name="forgot-password" onFinish={onFinish} layout="vertical">
-          <Paragraph style={{ textAlign: "center", marginBottom: "20px" }}>
-            {" "}
-            Enter your email address and we will send you a link to reset your
-            password.
-          </Paragraph>
-          <Form.Item
-            name="email"
-            rules={[
-              {
-                required: true,
-                type: "email",
-                message: "Please enter a valid email address!",
-              },
-            ]}
+        <form onSubmit={onSubmit} style={{ display: "grid", gap: 16 }}>
+          <div
+            style={{
+              textAlign: "center",
+              fontSize: 13,
+              color: "var(--fg-muted)",
+              lineHeight: 1.5,
+            }}
           >
-            <Input
-              prefix={<UserOutlined />}
-              placeholder="Email Address"
-              size="large"
-            />
-          </Form.Item>
-          <Form.Item>
-            <Button
-              type="primary"
-              htmlType="submit"
-              loading={loading}
-              size="large"
-              style={{ width: "100%" }}
-            >
-              Send Reset Link
-            </Button>
-          </Form.Item>
-          <div style={{ textAlign: "center" }}>
-            <Link to="/login"> Back to Login </Link>
+            Enter your email address and we'll send you a link to reset your
+            password.
           </div>
-        </Form>
+          <div className="input-with-icon">
+            <Icon.Mail size={14} />
+            <input
+              className="sccap-input"
+              type="email"
+              placeholder="Email address"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              autoFocus
+              style={{ paddingLeft: 32 }}
+            />
+          </div>
+          <button
+            type="submit"
+            className="sccap-btn sccap-btn-primary sccap-btn-lg"
+            disabled={loading}
+            style={{ width: "100%" }}
+          >
+            {loading ? "Sending…" : "Send reset link"}
+          </button>
+          <div style={{ textAlign: "center", fontSize: 12.5 }}>
+            <Link
+              to="/login"
+              style={{ color: "var(--primary)", textDecoration: "none" }}
+            >
+              Back to login
+            </Link>
+          </div>
+        </form>
       )}
     </div>
   );

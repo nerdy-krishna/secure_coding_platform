@@ -1,224 +1,288 @@
 // secure-code-ui/src/pages/analysis/ExecutiveSummaryPage.tsx
+//
+// SCCAP executive summary. Ported off antd; data wiring unchanged.
 
-import {
-  ArrowLeftOutlined,
-  BuildOutlined,
-  FilePdfOutlined,
-  InfoCircleOutlined,
-  SafetyCertificateOutlined,
-  ToolOutlined,
-  UnorderedListOutlined,
-} from "@ant-design/icons";
 import { useQuery } from "@tanstack/react-query";
-import {
-  Alert,
-  Button,
-  Card,
-  Descriptions,
-  Divider,
-  List,
-  Space,
-  Spin,
-  Tag,
-  Typography,
-  message,
-} from "antd";
 import { saveAs } from "file-saver";
 import React, { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import apiClient from "../../shared/api/apiClient";
 import { scanService } from "../../shared/api/scanService";
-
-const { Title, Paragraph, Text } = Typography;
+import { Icon } from "../../shared/ui/Icon";
+import { useToast } from "../../shared/ui/Toast";
 
 const ExecutiveSummaryPage: React.FC = () => {
   const { scanId } = useParams<{ scanId: string }>();
-  const [isDownloading, setIsDownloading] = useState(false);
+  const toast = useToast();
+  const [downloading, setDownloading] = useState(false);
 
-  const {
-    data: result,
-    isLoading,
-    isError,
-    error,
-  } = useQuery({
+  const { data: result, isLoading, isError, error } = useQuery({
     queryKey: ["scanResult", scanId],
     queryFn: () => {
-      if (!scanId) {
-        throw new Error("Submission ID is required");
-      }
+      if (!scanId) throw new Error("Submission ID is required");
       return scanService.getScanResult(scanId);
     },
-    enabled: !!scanId, // Only run query if submissionId is present
+    enabled: !!scanId,
   });
+
+  const handleDownload = async () => {
+    if (!scanId) return;
+    setDownloading(true);
+    try {
+      const response = await apiClient.get(
+        `/scans/${scanId}/executive-summary/download`,
+        { responseType: "blob" },
+      );
+      saveAs(response.data, `executive-summary-${scanId}.pdf`);
+    } catch (err) {
+      console.error("PDF Download failed", err);
+      toast.error("Could not download the report. Please try again.");
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   if (isLoading) {
     return (
       <div
+        className="sccap-card"
         style={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          height: "100vh",
+          padding: 60,
+          textAlign: "center",
+          color: "var(--fg-muted)",
+          margin: 20,
         }}
       >
-        <Spin size="large" tip="Loading Executive Summary..." />
+        Loading executive summary…
       </div>
     );
   }
 
   if (isError) {
     return (
-      <Alert
-        message="Error"
-        description={`Failed to load report: ${error.message}`}
-        type="error"
-        showIcon
-        style={{ margin: "20px" }}
-      />
+      <div
+        className="sccap-card"
+        style={{
+          padding: 20,
+          margin: 20,
+          background: "var(--critical-weak)",
+          borderColor: "var(--critical)",
+          color: "var(--critical)",
+        }}
+      >
+        Failed to load report: {error?.message}
+      </div>
     );
   }
 
   if (!result || !result.impact_report) {
     return (
-      <Alert
-        message="Report Not Found"
-        description="The executive summary for this submission could not be found."
-        type="warning"
-        showIcon
-        style={{ margin: "20px" }}
-      />
+      <div
+        className="sccap-card"
+        style={{
+          padding: 20,
+          margin: 20,
+          background: "var(--medium-weak)",
+          borderColor: "var(--medium)",
+          color: "var(--medium)",
+        }}
+      >
+        The executive summary for this submission could not be found.
+      </div>
     );
   }
 
-  const handleDownload = async () => {
-    if (!scanId) return;
-    setIsDownloading(true);
-    try {
-      const response = await apiClient.get(
-        `/scans/${scanId}/executive-summary/download`,
-        { responseType: "blob" }, // Important: expect binary data
-      );
-      saveAs(response.data, `executive-summary-${scanId}.pdf`);
-    } catch (err) {
-      console.error("PDF Download failed", err);
-      message.error("Could not download the report. Please try again.");
-    } finally {
-      setIsDownloading(false);
-    }
-  };
-
   const { impact_report, summary_report } = result;
+
   return (
-    <div style={{ maxWidth: "960px", margin: "0 auto", padding: "24px" }}>
-      <Space direction="vertical" style={{ width: "100%" }} size="large">
-        <Link to={`/analysis/results/${scanId}`}>
-          <Button icon={<ArrowLeftOutlined />}>Back to Full Report</Button>
-        </Link>
+    <div
+      className="fade-in"
+      style={{ maxWidth: 960, margin: "0 auto", padding: 24, display: "grid", gap: 16 }}
+    >
+      <Link
+        to={`/analysis/results/${scanId}`}
+        style={{ textDecoration: "none" }}
+      >
+        <button className="sccap-btn sccap-btn-sm">
+          <Icon.ChevronL size={12} /> Back to full report
+        </button>
+      </Link>
 
-        <Card>
-          <Title level={2} style={{ textAlign: "center", marginBottom: "8px" }}>
-            Executive Security Summary
-          </Title>
-          <Paragraph style={{ textAlign: "center" }} type="secondary">
-            Project: {summary_report?.project_name || "N/A"} | Submission ID:{" "}
-            {scanId}
-          </Paragraph>
-          <Divider />
-
-          <Descriptions
-            bordered
-            column={1}
-            size="small"
-            style={{ marginBottom: 24 }}
+      <div className="surface" style={{ padding: 28 }}>
+        <div style={{ textAlign: "center" }}>
+          <h1 style={{ color: "var(--fg)" }}>Executive security summary</h1>
+          <div
+            style={{
+              color: "var(--fg-muted)",
+              fontSize: 12.5,
+              marginTop: 4,
+            }}
           >
-            <Descriptions.Item
-              label={
-                <>
-                  <InfoCircleOutlined /> Executive Overview
-                </>
-              }
-            >
-              <Paragraph style={{ margin: 0 }}>
-                {impact_report.executive_summary}
-              </Paragraph>
-            </Descriptions.Item>
-          </Descriptions>
-
-          <Title level={4}>
-            <UnorderedListOutlined /> Vulnerability Analysis
-          </Title>
-          <Paragraph>{impact_report.vulnerability_overview}</Paragraph>
-
-          <Title level={4}>
-            <SafetyCertificateOutlined /> High-Risk Findings
-          </Title>
-          <List
-            size="small"
-            bordered
-            dataSource={impact_report.high_risk_findings_summary}
-            renderItem={(item) => <List.Item>{item}</List.Item>}
-            style={{ marginBottom: 24 }}
-          />
-
-          <Title level={4}>
-            <ToolOutlined /> Remediation Strategy
-          </Title>
-          <Paragraph>{impact_report.remediation_strategy}</Paragraph>
-
-          <Descriptions layout="vertical" bordered>
-            <Descriptions.Item
-              label={
-                <>
-                  <BuildOutlined /> Architectural Changes Required
-                </>
-              }
-            >
-              {impact_report.required_architectural_changes.length > 0 &&
-              impact_report.required_architectural_changes[0] !== "None" ? (
-                <List
-                  size="small"
-                  dataSource={impact_report.required_architectural_changes}
-                  renderItem={(item) => <List.Item>{item}</List.Item>}
-                />
-              ) : (
-                <Text type="secondary">None</Text>
-              )}
-            </Descriptions.Item>
-            <Descriptions.Item label="Estimated Effort">
-              <Tag
-                color="orange"
-                style={{ fontSize: "14px", padding: "4px 8px" }}
-              >
-                {impact_report.estimated_remediation_effort}
-              </Tag>
-            </Descriptions.Item>
-            <Descriptions.Item label="Vulnerability Categories">
-              <Space wrap>
-                {impact_report.vulnerability_categories.map((cat, index) => (
-                  <Tag key={index} color="blue">
-                    {cat}
-                  </Tag>
-                ))}
-              </Space>
-            </Descriptions.Item>
-          </Descriptions>
-
-          <Divider />
-          <div style={{ textAlign: "center" }}>
-            <Button
-              type="primary"
-              icon={<FilePdfOutlined />}
-              size="large"
-              onClick={handleDownload}
-              loading={isDownloading}
-            >
-              Download as PDF
-            </Button>
+            Project: {summary_report?.project_name || "N/A"} · Submission{" "}
+            <span className="mono">{scanId?.slice(0, 8)}</span>
           </div>
-        </Card>
-      </Space>
+        </div>
+
+        <div className="sccap-divider" />
+
+        <Section
+          title={
+            <>
+              <Icon.Info size={14} /> Executive overview
+            </>
+          }
+        >
+          {impact_report.executive_summary}
+        </Section>
+
+        <Section
+          title={
+            <>
+              <Icon.Layers size={14} /> Vulnerability analysis
+            </>
+          }
+        >
+          {impact_report.vulnerability_overview}
+        </Section>
+
+        <Section
+          title={
+            <>
+              <Icon.Shield size={14} /> High-risk findings
+            </>
+          }
+        >
+          <ul
+            style={{
+              margin: 0,
+              paddingLeft: 20,
+              display: "grid",
+              gap: 4,
+              color: "var(--fg-muted)",
+            }}
+          >
+            {impact_report.high_risk_findings_summary.map((item, i) => (
+              <li key={i}>{item}</li>
+            ))}
+          </ul>
+        </Section>
+
+        <Section
+          title={
+            <>
+              <Icon.Settings size={14} /> Remediation strategy
+            </>
+          }
+        >
+          {impact_report.remediation_strategy}
+        </Section>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+            gap: 14,
+            marginBottom: 18,
+          }}
+        >
+          <InfoCard label="Architectural changes required">
+            {impact_report.required_architectural_changes.length > 0 &&
+            impact_report.required_architectural_changes[0] !== "None" ? (
+              <ul
+                style={{
+                  margin: 0,
+                  paddingLeft: 20,
+                  color: "var(--fg-muted)",
+                  fontSize: 12.5,
+                }}
+              >
+                {impact_report.required_architectural_changes.map((item, i) => (
+                  <li key={i}>{item}</li>
+                ))}
+              </ul>
+            ) : (
+              <span style={{ color: "var(--fg-subtle)", fontSize: 12.5 }}>
+                None
+              </span>
+            )}
+          </InfoCard>
+          <InfoCard label="Estimated effort">
+            <span className="chip chip-medium" style={{ fontSize: 13 }}>
+              {impact_report.estimated_remediation_effort}
+            </span>
+          </InfoCard>
+          <InfoCard label="Vulnerability categories">
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {impact_report.vulnerability_categories.map((cat, i) => (
+                <span key={i} className="chip chip-info">
+                  {cat}
+                </span>
+              ))}
+            </div>
+          </InfoCard>
+        </div>
+
+        <div className="sccap-divider" />
+        <div style={{ textAlign: "center" }}>
+          <button
+            className="sccap-btn sccap-btn-primary sccap-btn-lg"
+            onClick={handleDownload}
+            disabled={downloading}
+          >
+            <Icon.Download size={14} />{" "}
+            {downloading ? "Preparing…" : "Download as PDF"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 };
+
+const Section: React.FC<{ title: React.ReactNode; children: React.ReactNode }> = ({
+  title,
+  children,
+}) => (
+  <div style={{ marginBottom: 20 }}>
+    <h3
+      style={{
+        color: "var(--fg)",
+        marginBottom: 8,
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+      }}
+    >
+      {title}
+    </h3>
+    <div style={{ color: "var(--fg-muted)", lineHeight: 1.6, fontSize: 13 }}>
+      {children}
+    </div>
+  </div>
+);
+
+const InfoCard: React.FC<{ label: string; children: React.ReactNode }> = ({
+  label,
+  children,
+}) => (
+  <div
+    className="inset"
+    style={{
+      padding: 14,
+    }}
+  >
+    <div
+      style={{
+        fontSize: 10.5,
+        color: "var(--fg-subtle)",
+        textTransform: "uppercase",
+        letterSpacing: ".06em",
+        marginBottom: 8,
+      }}
+    >
+      {label}
+    </div>
+    <div>{children}</div>
+  </div>
+);
 
 export default ExecutiveSummaryPage;
