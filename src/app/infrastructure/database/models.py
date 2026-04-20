@@ -339,7 +339,12 @@ class PromptTemplate(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    # Display name — not used for lookup or uniqueness. The compound
+    # (agent_name, template_type, variant) unique constraint below is the
+    # identity key; name is free-form so admins can duplicate display names
+    # across variants (e.g., "SQLi Audit" can exist as both generic and
+    # anthropic variants).
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
     template_type: Mapped[str] = mapped_column(
         String(50), nullable=False, index=True, server_default="QUICK_AUDIT"
     )
