@@ -15,6 +15,7 @@ import type {
   PromptTemplateUpdate,
 } from "../../shared/types/api";
 import { Icon } from "../../shared/ui/Icon";
+import { RestoreDefaultsButton } from "../../shared/ui/RestoreDefaultsButton";
 import { useToast } from "../../shared/ui/Toast";
 
 const TEMPLATE_TYPES = ["QUICK_AUDIT", "DETAILED_REMEDIATION", "CHAT"];
@@ -159,9 +160,15 @@ const PromptManagementPage: React.FC = () => {
             automatic fallback.
           </div>
         </div>
-        <button className="sccap-btn sccap-btn-primary" onClick={onNew}>
-          <Icon.Plus size={13} /> New template
-        </button>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <RestoreDefaultsButton
+            label="Prompts"
+            invalidateKeys={[["prompts"], ["agents"], ["frameworks"]]}
+          />
+          <button className="sccap-btn sccap-btn-primary" onClick={onNew}>
+            <Icon.Plus size={13} /> New template
+          </button>
+        </div>
       </div>
 
       <div

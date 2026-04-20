@@ -15,6 +15,7 @@ import type {
 } from "../../shared/types/api";
 import { Icon } from "../../shared/ui/Icon";
 import { Modal } from "../../shared/ui/Modal";
+import { RestoreDefaultsButton } from "../../shared/ui/RestoreDefaultsButton";
 import { useToast } from "../../shared/ui/Toast";
 
 interface FormState {
@@ -155,16 +156,22 @@ const AgentManagementPage: React.FC = () => {
             Specialized analysis agents and their RAG retrieval queries.
           </div>
         </div>
-        <button
-          className="sccap-btn sccap-btn-primary"
-          onClick={() => {
-            setEditing(null);
-            setForm(EMPTY_FORM);
-            setModalOpen(true);
-          }}
-        >
-          <Icon.Plus size={13} /> Create agent
-        </button>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <RestoreDefaultsButton
+            label="Agents"
+            invalidateKeys={[["agents"], ["prompts"], ["frameworks"]]}
+          />
+          <button
+            className="sccap-btn sccap-btn-primary"
+            onClick={() => {
+              setEditing(null);
+              setForm(EMPTY_FORM);
+              setModalOpen(true);
+            }}
+          >
+            <Icon.Plus size={13} /> Create agent
+          </button>
+        </div>
       </div>
 
       {isLoading ? (
