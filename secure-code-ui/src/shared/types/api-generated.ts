@@ -153,6 +153,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/scans/{scan_id}/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream Scan Progress
+         * @description Server-Sent Events stream of a scan's progress.
+         *
+         *     Emits a `scan_state` event for status transitions, a `scan_event` for
+         *     each new pipeline stage (ScanEvent row), and a terminal `done` event
+         *     when the scan reaches a final state. The client reconnects via
+         *     EventSource's native retry.
+         *
+         *     Implementation: polls the DB at 1-second intervals — simpler than
+         *     wiring LangGraph event streaming and sufficient for the per-stage
+         *     granularity the UI wants. Can be upgraded later if we need per-file
+         *     finding deltas mid-scan.
+         */
+        get: operations["stream_scan_progress_api_v1_scans__scan_id__stream_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/scans/{scan_id}/apply-fixes": {
         parameters: {
             query?: never;
@@ -846,6 +876,53 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/compliance/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Framework Stats
+         * @description Per-framework doc/findings/score rollup.
+         *
+         *     Always returns the 3 default frameworks (asvs, proactive_controls,
+         *     cheatsheets) even when no documents are ingested. Custom frameworks
+         *     from the `frameworks` table follow.
+         */
+        get: operations["list_framework_stats_api_v1_compliance_stats_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/compliance/frameworks/{framework_name}/controls": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Framework Controls
+         * @description RAG-backed control list for the drill-in section.
+         *
+         *     Groups documents by `control_id` / `section` / `title` metadata;
+         *     falls back to a single "overview" bucket when none of those exist.
+         */
+        get: operations["list_framework_controls_api_v1_compliance_frameworks__framework_name__controls_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/users": {
         parameters: {
             query?: never;
@@ -1235,21 +1312,12 @@ export interface components {
             project_name: string;
             /** Scan Type */
             scan_type: string;
-            /**
-             * Utility Llm Config Id
-             * Format: uuid
-             */
-            utility_llm_config_id: string;
-            /**
-             * Fast Llm Config Id
-             * Format: uuid
-             */
-            fast_llm_config_id: string;
-            /**
-             * Reasoning Llm Config Id
-             * Format: uuid
-             */
-            reasoning_llm_config_id: string;
+            /** Utility Llm Config Id */
+            utility_llm_config_id?: string | null;
+            /** Fast Llm Config Id */
+            fast_llm_config_id?: string | null;
+            /** Reasoning Llm Config Id */
+            reasoning_llm_config_id?: string | null;
             /** Frameworks */
             frameworks: string;
             /** Repo Url */
@@ -2553,6 +2621,37 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stream_scan_progress_api_v1_scans__scan_id__stream_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scan_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -3919,6 +4018,57 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_framework_stats_api_v1_compliance_stats_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    list_framework_controls_api_v1_compliance_frameworks__framework_name__controls_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                framework_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
             };
             /** @description Validation Error */
             422: {

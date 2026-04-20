@@ -10,6 +10,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AxiosError } from "axios";
 import { saveAs } from "file-saver";
 import React, { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { frameworkService } from "../../shared/api/frameworkService";
 import { llmConfigService } from "../../shared/api/llmConfigService";
 import { ragService } from "../../shared/api/ragService";
@@ -351,6 +352,26 @@ const RAGManagementPage: React.FC = () => {
     const stored = sessionStorage.getItem("rag_processing_job_id");
     if (stored) setPollingJobId(stored);
   }, []);
+
+  // Deep-link from the Compliance page: /admin/rag?framework=proactive_controls&action=git-ingest
+  // auto-opens the relevant ingestion dialog so admins can act immediately.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const framework = searchParams.get("framework");
+    const action = searchParams.get("action");
+    if (action !== "git-ingest" || !framework) return;
+    if (framework === "proactive_controls") setProactiveOpen(true);
+    if (framework === "cheatsheets") setCheatsheetOpen(true);
+    // ASVS opens the hidden file input (CSV-only).
+    if (framework === "asvs") {
+      document.getElementById("hidden-asvs-input")?.click();
+    }
+    // Strip the params so a reload doesn't re-trigger.
+    const next = new URLSearchParams(searchParams);
+    next.delete("framework");
+    next.delete("action");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   const { data: frameworks = [], isLoading: isLoadingFrameworks } = useQuery<
     FrameworkRead[]
