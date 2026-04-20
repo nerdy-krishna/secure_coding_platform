@@ -24,6 +24,7 @@ from app.api.v1.routers.compliance import router as compliance_router
 from app.api.v1.routers.refresh import router as refresh_router
 from app.api.v1.routers.setup import router as setup_router
 from app.api.v1.routers.admin_config import router as admin_config_router
+from app.api.v1.routers.admin_seed import router as admin_seed_router
 from app.infrastructure.auth.backend import auth_backend
 from app.infrastructure.auth.core import fastapi_users
 from app.infrastructure.auth.schemas import UserRead, UserUpdate
@@ -176,44 +177,28 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to initialize system config cache: {e}")
 
-    # --- Seed default framework rows ---
-    # The Compliance page tracks 3 defaults (asvs, proactive_controls,
-    # cheatsheets) in ChromaDB, but the Scan and Advisor pages read the
-    # list from the `frameworks` table via /admin/frameworks/. Without a
-    # row here, users can't select a default in a scan even after admin
-    # ingests it. Seed unconditionally so the defaults are always
-    # selectable — ingestion only enriches the RAG docs.
+    # --- Auto-seed defaults on empty DB ---
+    # Single source of truth lives in default_seed_service. If the DB has
+    # zero agents AND zero prompt templates we consider it a fresh install
+    # and seed the canonical defaults (3 OWASP frameworks, 17 specialized
+    # agents, their audit / remediation / chat prompts). If any of those
+    # tables already have rows we leave them alone — admins can re-seed
+    # from the Admin UI or via `POST /api/v1/admin/seed/defaults`.
     try:
-        from app.core.services.compliance_service import DEFAULT_FRAMEWORKS
-        from app.infrastructure.database import models as db_models
-        from sqlalchemy import select as _select
+        from app.core.services.default_seed_service import seed_if_empty
 
         async with AsyncSessionLocal() as session:
-            existing = await session.execute(
-                _select(db_models.Framework.name).where(
-                    db_models.Framework.name.in_(list(DEFAULT_FRAMEWORKS.keys()))
-                )
-            )
-            present = {row[0] for row in existing.all()}
-            inserted = 0
-            for name, meta in DEFAULT_FRAMEWORKS.items():
-                if name in present:
-                    continue
-                session.add(
-                    db_models.Framework(
-                        name=name,
-                        description=meta["description"],
-                    )
-                )
-                inserted += 1
-            if inserted:
-                await session.commit()
+            result = await seed_if_empty(session)
+            if result.frameworks_added or result.agents_added or result.templates_added:
                 logger.info(
-                    f"Seeded {inserted} default framework row(s): "
-                    f"{sorted(set(DEFAULT_FRAMEWORKS.keys()) - present)}"
+                    "Auto-seed inserted %d frameworks, %d agents, %d prompt "
+                    "templates.",
+                    result.frameworks_added,
+                    result.agents_added,
+                    result.templates_added,
                 )
     except Exception as e:
-        logger.error(f"Failed to seed default framework rows: {e}")
+        logger.error(f"Failed to auto-seed defaults: {e}")
 
     # --- Start the outbox sweeper ---
     from app.infrastructure.messaging.outbox_sweeper import run_outbox_sweeper
@@ -381,6 +366,9 @@ app.include_router(chat_router, prefix="/api/v1/chat", tags=["Chat"])
 
 # Router for Compliance (per-framework rollups for the Compliance page)
 app.include_router(compliance_router, prefix="/api/v1", tags=["Compliance"])
+
+# Router for admin seed/restore-defaults
+app.include_router(admin_seed_router, prefix="/api/v1", tags=["Admin: Seed"])
 
 from app.api.v1.routers.admin_users import router as admin_users_router  # noqa: E402
 
