@@ -51,6 +51,12 @@ import { FrameworkIngestionModal } from "./FrameworkIngestionModal";
 
 const { Title, Paragraph } = Typography;
 
+/** Extract a user-facing error string from an axios-style thrown error. */
+function axiosErrorDetail(err: unknown): string {
+  const e = err as { response?: { data?: { detail?: string } }; message?: string };
+  return e.response?.data?.detail || e.message || "Unknown error";
+}
+
 // --- Sub-component for Viewing Documents ---
 const ViewDocumentsModal: React.FC<{
   frameworkName: string;
@@ -530,11 +536,8 @@ const RAGManagementPage: React.FC = () => {
       message.success(res.message);
       refetchStats();
       queryClient.invalidateQueries({ queryKey: ["ragDocuments", "asvs"] });
-    } catch (error: any) {
-      // eslint-disable-line @typescript-eslint/no-explicit-any
-      const errorDetail =
-        (error.response?.data as { detail?: string })?.detail || error.message;
-      message.error(`ASVS ingestion failed: ${errorDetail}`);
+    } catch (error) {
+      message.error(`ASVS ingestion failed: ${axiosErrorDetail(error)}`);
     } finally {
       setIngestLoading(null);
     }
@@ -550,11 +553,10 @@ const RAGManagementPage: React.FC = () => {
       queryClient.invalidateQueries({
         queryKey: ["ragDocuments", "proactive_controls"],
       });
-    } catch (error: any) {
-      // eslint-disable-line @typescript-eslint/no-explicit-any
-      const errorDetail =
-        (error.response?.data as { detail?: string })?.detail || error.message;
-      message.error(`Proactive Controls fetch failed: ${errorDetail}`);
+    } catch (error) {
+      message.error(
+        `Proactive Controls fetch failed: ${axiosErrorDetail(error)}`,
+      );
     } finally {
       setIngestLoading(null);
     }
@@ -570,11 +572,8 @@ const RAGManagementPage: React.FC = () => {
       queryClient.invalidateQueries({
         queryKey: ["ragDocuments", "cheatsheets"],
       });
-    } catch (error: any) {
-      // eslint-disable-line @typescript-eslint/no-explicit-any
-      const errorDetail =
-        (error.response?.data as { detail?: string })?.detail || error.message;
-      message.error(`Cheatsheets fetch failed: ${errorDetail}`);
+    } catch (error) {
+      message.error(`Cheatsheets fetch failed: ${axiosErrorDetail(error)}`);
     } finally {
       setIngestLoading(null);
     }
@@ -593,9 +592,10 @@ const RAGManagementPage: React.FC = () => {
       } else {
         message.info("No documents to delete.");
       }
-    } catch (error: any) {
-      // eslint-disable-line @typescript-eslint/no-explicit-any
-      message.error(`Failed to delete standard documents: ${error.message}`);
+    } catch (error) {
+      message.error(
+        `Failed to delete standard documents: ${axiosErrorDetail(error)}`,
+      );
     }
   };
 

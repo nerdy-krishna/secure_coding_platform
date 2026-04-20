@@ -20,7 +20,7 @@ const ResetPasswordPage: React.FC = () => {
     }
   }, [token]);
 
-  const onFinish = async (values: any) => {
+  const onFinish = async (values: { password: string }) => {
     if (!token) {
       message.error("No token provided.");
       return;

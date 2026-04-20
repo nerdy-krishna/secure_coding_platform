@@ -86,7 +86,12 @@ const UserManagementTab: React.FC = () => {
     setIsModalVisible(false);
   };
 
-  const handleCreateUser = async (values: any) => {
+  const handleCreateUser = async (values: {
+    email: string;
+    is_active?: boolean;
+    is_superuser?: boolean;
+    is_verified?: boolean;
+  }) => {
     setCreating(true);
     try {
       await authService.adminCreateUser({

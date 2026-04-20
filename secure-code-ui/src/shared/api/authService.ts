@@ -1,11 +1,14 @@
 // secure-code-ui/src/shared/api/authService.ts
 import apiClient from "../../shared/api/apiClient";
+import type { components } from "../types/api-generated";
 import {
   type TokenResponse,
   type UserLoginData,
   type UserRead,
   type UserRegisterData,
 } from "../types/api";
+
+type AdminUserCreate = components["schemas"]["AdminUserCreate"];
 
 export const authService = {
   // Login
@@ -73,7 +76,7 @@ export const authService = {
     await apiClient.post("/auth/reset-password", { token, password });
   },
 
-  adminCreateUser: async (userData: any): Promise<UserRead> => {
+  adminCreateUser: async (userData: AdminUserCreate): Promise<UserRead> => {
     const response = await apiClient.post<UserRead>("/admin/users", userData);
     return response.data;
   },
