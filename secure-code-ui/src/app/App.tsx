@@ -26,6 +26,7 @@ import ProjectsPage from "../pages/analysis/ProjectsPage";
 import ResultsPage from "../pages/analysis/ResultsPage";
 import LoginPage from "../pages/auth/LoginPage";
 import SecurityAdvisorPage from "../pages/chat/SecurityAdvisorPage";
+import CompliancePage from "../pages/compliance/CompliancePage";
 import SubmitPage from "../pages/submission/SubmitPage";
 import ScanRunningPage from "../pages/submission/ScanRunningPage";
 import SetupPage from "../pages/setup/SetupPage";
@@ -157,6 +158,7 @@ function AppContent() {
             element={<LlmLogViewerPage />}
           />
           <Route path="/advisor" element={<SecurityAdvisorPage />} />
+          <Route path="/compliance" element={<CompliancePage />} />
           <Route path="/account/history" element={<SubmissionHistoryPage />} />
         </Route>
 
