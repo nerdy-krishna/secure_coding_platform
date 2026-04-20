@@ -93,6 +93,7 @@
 /* ============ inputs ============ */
 .sccap-input, .sccap-select, .sccap-textarea {
   width: 100%;
+  box-sizing: border-box;
   background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
