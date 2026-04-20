@@ -147,7 +147,9 @@ async def create_scan(
     # user to configure three. Once multiple configs exist the submit UI
     # can let the user pick per slot.
     missing_slots = [
-        s for s in (utility_llm_config_id, fast_llm_config_id, reasoning_llm_config_id) if s is None
+        s
+        for s in (utility_llm_config_id, fast_llm_config_id, reasoning_llm_config_id)
+        if s is None
     ]
     if missing_slots:
         available = await llm_repo.get_all(skip=0, limit=1)
@@ -301,10 +303,7 @@ async def stream_scan_progress(
                     "scan_id": str(scan_id),
                     "status": scan.status,
                 }
-                yield (
-                    f"event: scan_state\n"
-                    f"data: {_json.dumps(payload)}\n\n"
-                )
+                yield (f"event: scan_state\n" f"data: {_json.dumps(payload)}\n\n")
 
             # Emit any ScanEvents with id > last_event_id.
             events = sorted(

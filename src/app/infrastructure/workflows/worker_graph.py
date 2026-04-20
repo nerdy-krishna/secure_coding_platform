@@ -9,7 +9,6 @@ from typing import Any, Dict, List, Optional, TypedDict, cast
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph import END, StateGraph
 from langgraph.pregel import Pregel
-from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
@@ -72,7 +71,6 @@ from app.shared.lib.scan_status import (  # noqa: E402
     STATUS_QUEUED,
     STATUS_QUEUED_FOR_SCAN,
     STATUS_REMEDIATION_COMPLETED,
-    STATUS_RUNNING_AGENTS,
 )
 
 
@@ -304,15 +302,12 @@ The `merged_code` field should contain ONLY the final, corrected code that will 
     # attempt 3, and the retries wasted tokens + latency. On failure we fall
     # back to the highest-priority fix and surface the unmerged group as
     # NEEDS_MANUAL_REVIEW via the caller's fallback path.
-    response = await llm_client.generate_structured_output(
-        prompt, MergedFixResponse
-    )
+    response = await llm_client.generate_structured_output(prompt, MergedFixResponse)
 
     if not (
         response.parsed_output
         and isinstance(response.parsed_output, MergedFixResponse)
-        and response.parsed_output.original_snippet_for_replacement
-        in code_to_search_in
+        and response.parsed_output.original_snippet_for_replacement in code_to_search_in
     ):
         logger.warning(
             f"Merge agent did not produce a verifiable snippet for {filename}. "
@@ -682,9 +677,11 @@ async def analyze_files_parallel_node(state: WorkerState) -> Dict[str, Any]:
                     "filename": file_path,
                     "code_snippet": enriched_code,
                     "file_content_for_verification": file_content,
-                    "workflow_mode": "remediate"
-                    if scan_type in ("REMEDIATE", "SUGGEST")
-                    else "audit",
+                    "workflow_mode": (
+                        "remediate"
+                        if scan_type in ("REMEDIATE", "SUGGEST")
+                        else "audit"
+                    ),
                     "findings": [],
                     "fixes": [],
                     "error": None,

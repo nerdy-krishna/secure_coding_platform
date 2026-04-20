@@ -1,5 +1,5 @@
 import logging
-from typing import List, Optional, Any
+from typing import List, Optional
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -7,7 +7,6 @@ from sqlalchemy import select
 from app.infrastructure.database.database import AsyncSessionLocal
 from app.infrastructure.database import models as db_models
 from app.api.v1 import models as api_models
-from app.shared.lib.encryption import FernetEncrypt
 
 logger = logging.getLogger(__name__)
 
@@ -43,22 +42,22 @@ class SystemConfigRepository:
     ) -> db_models.SystemConfiguration:
         """Creates or updates a system configuration."""
         db_config = await self.get_by_key(config.key)
-        
+
         value_to_store = config.value
         # If encrypted flag is true, we should encrypt the value.
         # However, value is a Dict. We might need to serialize it or encrypt specific fields?
-        # For simplicity in this iteration, if encrypted is True, we assume 'value' contains a 'secret' key 
+        # For simplicity in this iteration, if encrypted is True, we assume 'value' contains a 'secret' key
         # or we serialize the whole JSON.
         # Let's assume we encrypt the entire JSON string if needed, but JSONB column expects JSON.
         # So we might need to store encrypted blob in a separate field or treat value as string?
-        # Actually, the model defines value as JSONB. 
+        # Actually, the model defines value as JSONB.
         # If encrypted, we might store: {"encrypted_data": "..."}
-        
+
         if config.encrypted:
-             # Basic logical handling: If validation passes, we store as is, 
-             # but in a real scenario, we'd encrypt here.
-             # For now, let's assume the caller handles encryption or we do it here if it's a specific structure.
-             pass
+            # Basic logical handling: If validation passes, we store as is,
+            # but in a real scenario, we'd encrypt here.
+            # For now, let's assume the caller handles encryption or we do it here if it's a specific structure.
+            pass
 
         if db_config:
             db_config.value = value_to_store
@@ -74,7 +73,7 @@ class SystemConfigRepository:
                 encrypted=config.encrypted,
             )
             self.db.add(db_config)
-            
+
         await self.db.commit()
         await self.db.refresh(db_config)
         return db_config

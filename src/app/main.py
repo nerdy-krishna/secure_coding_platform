@@ -25,7 +25,7 @@ from app.api.v1.routers.setup import router as setup_router
 from app.api.v1.routers.admin_config import router as admin_config_router
 from app.infrastructure.auth.backend import auth_backend
 from app.infrastructure.auth.core import fastapi_users
-from app.infrastructure.auth.schemas import UserCreate, UserRead, UserUpdate
+from app.infrastructure.auth.schemas import UserRead, UserUpdate
 from app.config.config import settings
 from app.infrastructure.llm_client_rate_limiter import initialize_rate_limiters
 from app.config.logging_config import LOGGING_CONFIG, correlation_id_var
@@ -72,7 +72,9 @@ async def lifespan(app: FastAPI):
     # --- Initialize System Configuration Cache ---
     from app.core.config_cache import SystemConfigCache
     from app.infrastructure.database.database import AsyncSessionLocal
-    from app.infrastructure.database.repositories.system_config_repo import SystemConfigRepository
+    from app.infrastructure.database.repositories.system_config_repo import (
+        SystemConfigRepository,
+    )
     from app.api.v1.routers.setup import is_setup_completed
     from app.config.logging_config import update_logging_level
 
@@ -81,21 +83,21 @@ async def lifespan(app: FastAPI):
             # Check if setup is completed
             setup_done = await is_setup_completed(session)
             SystemConfigCache.set_setup_completed(setup_done)
-            
+
             repo = SystemConfigRepository(session)
 
             # --- Initialize Log Level ---
             log_level_config = await repo.get_by_key("system.log_level")
             if log_level_config and log_level_config.value:
-                 # Extract level from dict or fallback to string (backward compatibility)
-                 val = log_level_config.value
-                 if isinstance(val, dict) and "level" in val:
-                     level_str = str(val["level"]).upper()
-                 else:
-                     level_str = str(val).upper()
-                 
-                 update_logging_level(level_str)
-                 logger.info(f"Initialized log level from DB: {level_str}")
+                # Extract level from dict or fallback to string (backward compatibility)
+                val = log_level_config.value
+                if isinstance(val, dict) and "level" in val:
+                    level_str = str(val["level"]).upper()
+                else:
+                    level_str = str(val).upper()
+
+                update_logging_level(level_str)
+                logger.info(f"Initialized log level from DB: {level_str}")
             else:
                 # Default behavior
                 if not setup_done:
@@ -111,46 +113,56 @@ async def lifespan(app: FastAPI):
                 # Load allowed origins from DB
                 config = await repo.get_by_key("security.allowed_origins")
                 cors_enabled_config = await repo.get_by_key("security.cors_enabled")
-                
+
                 # Load CORS Enabled status
                 cors_enabled = False
                 if cors_enabled_config and cors_enabled_config.value is not None:
-                     val = cors_enabled_config.value
-                     if isinstance(val, dict) and "enabled" in val:
-                         cors_enabled = bool(val["enabled"])
-                     else:
-                         cors_enabled = bool(val)
-                
+                    val = cors_enabled_config.value
+                    if isinstance(val, dict) and "enabled" in val:
+                        cors_enabled = bool(val["enabled"])
+                    else:
+                        cors_enabled = bool(val)
+
                 SystemConfigCache.set_cors_enabled(cors_enabled)
                 logger.info(f"CORS Enabled: {cors_enabled}")
 
-                if config and isinstance(config.value, dict) and "origins" in config.value:
+                if (
+                    config
+                    and isinstance(config.value, dict)
+                    and "origins" in config.value
+                ):
                     SystemConfigCache.set_allowed_origins(config.value["origins"])
-                    logger.info(f"Loaded allowed origins from DB: {config.value['origins']}")
+                    logger.info(
+                        f"Loaded allowed origins from DB: {config.value['origins']}"
+                    )
                 else:
-                     # Fallback to env var if DB config missing but setup is done
-                     allowed_origins_str = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
-                     origins = [o.strip() for o in allowed_origins_str.split(",") if o.strip()]
-                     SystemConfigCache.set_allowed_origins(origins)
-                     logger.info(f"Loaded allowed origins from ENV: {origins}")
+                    # Fallback to env var if DB config missing but setup is done
+                    allowed_origins_str = os.getenv(
+                        "ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
+                    )
+                    origins = [
+                        o.strip() for o in allowed_origins_str.split(",") if o.strip()
+                    ]
+                    SystemConfigCache.set_allowed_origins(origins)
+                    logger.info(f"Loaded allowed origins from ENV: {origins}")
                 # Load SMTP Configuration from DB
                 smtp_config = await repo.get_by_key("system.smtp")
                 if smtp_config and isinstance(smtp_config.value, dict):
-                     SystemConfigCache.set_smtp_config(smtp_config.value)
-                     logger.info("Loaded SMTP configuration from DB.")
+                    SystemConfigCache.set_smtp_config(smtp_config.value)
+                    logger.info("Loaded SMTP configuration from DB.")
                 else:
-                     SystemConfigCache.set_smtp_config(None)
-                     logger.info("No SMTP configuration found in DB.")
+                    SystemConfigCache.set_smtp_config(None)
+                    logger.info("No SMTP configuration found in DB.")
 
                 # Load LLM optimization mode from DB
                 llm_mode_config = await repo.get_by_key("llm.optimization_mode")
                 if llm_mode_config and llm_mode_config.value:
                     raw = llm_mode_config.value
-                    mode_str = (
-                        raw.get("mode") if isinstance(raw, dict) else str(raw)
-                    )
+                    mode_str = raw.get("mode") if isinstance(raw, dict) else str(raw)
                     SystemConfigCache.set_llm_mode(mode_str or "")
-                    logger.info(f"LLM optimization mode: {SystemConfigCache.get_llm_mode()}")
+                    logger.info(
+                        f"LLM optimization mode: {SystemConfigCache.get_llm_mode()}"
+                    )
                 else:
                     logger.info(
                         f"No LLM optimization mode configured; defaulting to "
@@ -159,10 +171,9 @@ async def lifespan(app: FastAPI):
 
             else:
                 logger.info("Setup not completed. Allowing all origins for setup mode.")
-                SystemConfigCache.set_cors_enabled(True) # Enable CORS for setup
+                SystemConfigCache.set_cors_enabled(True)  # Enable CORS for setup
     except Exception as e:
         logger.error(f"Failed to initialize system config cache: {e}")
-
 
     # --- Start the outbox sweeper ---
     from app.infrastructure.messaging.outbox_sweeper import run_outbox_sweeper
@@ -222,9 +233,9 @@ async def correlation_id_middleware(request: Request, call_next):
 
 
 # --- Dynamic CORS Middleware Configuration ---
-from starlette.middleware.base import BaseHTTPMiddleware
-from app.core.config_cache import SystemConfigCache
-from fastapi.responses import PlainTextResponse
+from starlette.middleware.base import BaseHTTPMiddleware  # noqa: E402
+from app.core.config_cache import SystemConfigCache  # noqa: E402
+from fastapi.responses import PlainTextResponse  # noqa: E402
 
 _CORS_ALLOWED_HEADERS = (
     "Content-Type, Authorization, X-Correlation-ID, Accept, Origin, X-Requested-With"
@@ -328,7 +339,8 @@ app.include_router(logs_router, prefix="/api/v1/admin", tags=["Admin: System Log
 # Router for Chat
 app.include_router(chat_router, prefix="/api/v1/chat", tags=["Chat"])
 
-from app.api.v1.routers.admin_users import router as admin_users_router
+from app.api.v1.routers.admin_users import router as admin_users_router  # noqa: E402
+
 app.include_router(admin_users_router, prefix="/api/v1")
 
 

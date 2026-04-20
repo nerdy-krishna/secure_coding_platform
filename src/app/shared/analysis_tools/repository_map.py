@@ -455,7 +455,9 @@ class RepositoryMappingEngine:
                         f"Skipped: No language grammar found for this file type. Error: {e}"
                     ],
                 )
-            except Exception as e:  # Catch other unexpected errors during _parse_file for this specific file
+            except (
+                Exception
+            ) as e:  # Catch other unexpected errors during _parse_file for this specific file
                 self.logger.error(
                     f"Unexpected error parsing file {file_path}, skipping this file: {e}",
                     exc_info=True,

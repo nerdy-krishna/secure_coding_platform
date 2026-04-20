@@ -55,13 +55,10 @@ def _split_template_around_code_bundle(
         logger.warning(
             f"Template formatting failed ({e}); falling back to single-string prompt."
         )
-        combined = (
-            f"{domain_scoping_instruction}\n\n"
-            + template_text.format(
-                vulnerability_patterns=vulnerability_patterns_str,
-                secure_patterns=secure_patterns_str,
-                code_bundle=code_bundle,
-            )
+        combined = f"{domain_scoping_instruction}\n\n" + template_text.format(
+            vulnerability_patterns=vulnerability_patterns_str,
+            secure_patterns=secure_patterns_str,
+            code_bundle=code_bundle,
         )
         return None, combined
 

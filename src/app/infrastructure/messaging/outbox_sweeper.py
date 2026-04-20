@@ -71,9 +71,7 @@ async def run_outbox_sweeper(stop_event: asyncio.Event) -> None:
             logger.error(f"Outbox sweeper tick failed: {e}", exc_info=True)
 
         try:
-            await asyncio.wait_for(
-                stop_event.wait(), timeout=SWEEP_INTERVAL_SECONDS
-            )
+            await asyncio.wait_for(stop_event.wait(), timeout=SWEEP_INTERVAL_SECONDS)
         except asyncio.TimeoutError:
             continue
 

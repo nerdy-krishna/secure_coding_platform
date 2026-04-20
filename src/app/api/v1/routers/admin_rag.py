@@ -43,9 +43,6 @@ logger = logging.getLogger(__name__)
 rag_router = APIRouter(prefix="/rag", tags=["Admin: RAG Management"])
 
 
-
-
-
 class ReprocessRequest(BaseModel):
     framework_name: str
     target_languages: List[str]
@@ -227,9 +224,11 @@ async def get_preprocessing_job_status(
         status=job.status,
         estimated_cost=job.estimated_cost,
         actual_cost=job.actual_cost,
-        processed_documents=[EnrichedDocument(**doc) for doc in job.processed_documents]
-        if job.processed_documents
-        else None,
+        processed_documents=(
+            [EnrichedDocument(**doc) for doc in job.processed_documents]
+            if job.processed_documents
+            else None
+        ),
         error_message=job.error_message,
     )
 

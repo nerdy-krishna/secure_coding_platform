@@ -21,7 +21,7 @@ mock_llm_config_repo = AsyncMock(spec=LLMConfigRepository)
 # but it calls it IN init.
 # So we must patch it before instantiation.
 
-from unittest.mock import patch
+from unittest.mock import patch  # noqa: E402
 
 with patch(
     "app.core.services.security_standards_service.get_rag_service",

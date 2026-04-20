@@ -2,7 +2,9 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from app.api.v1 import models as api_models
 from app.infrastructure.database import models as db_models
-from app.infrastructure.database.repositories.system_config_repo import SystemConfigRepository
+from app.infrastructure.database.repositories.system_config_repo import (
+    SystemConfigRepository,
+)
 from app.infrastructure.auth.core import current_active_user
 
 router = APIRouter(
@@ -11,12 +13,14 @@ router = APIRouter(
     responses={404: {"description": "Not found"}},
 )
 
+
 async def get_admin_user(current_user: db_models.User = Depends(current_active_user)):
     if not current_user.is_superuser:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Not enough privileges"
         )
     return current_user
+
 
 @router.get("/", response_model=List[api_models.SystemConfigurationRead])
 async def get_all_system_configs(
@@ -31,11 +35,12 @@ async def get_all_system_configs(
     for config in configs:
         if config.is_secret:
             # We clone the object or modify a copy to return masked value
-            # Since Pydantic from_attributes=True, it reads from ORM. 
+            # Since Pydantic from_attributes=True, it reads from ORM.
             # We might need to handle masking manually or trusting the frontend to not show it?
             # Ideally, security-wise, we should not send the value at all if it's secret.
             pass
     return configs
+
 
 @router.put("/{key}", response_model=api_models.SystemConfigurationRead)
 async def set_system_config(
@@ -49,20 +54,28 @@ async def set_system_config(
     """
     # Check if exists
     existing = await repo.get_by_key(key)
-    
+
     # Merge update data into create model
     create_data = {}
     if existing:
         create_data = {
             "key": key,
             "value": config.value if config.value is not None else existing.value,
-            "description": config.description if config.description is not None else existing.description,
-            "is_secret": config.is_secret if config.is_secret is not None else existing.is_secret,
-            "encrypted": config.encrypted if config.encrypted is not None else existing.encrypted,
+            "description": (
+                config.description
+                if config.description is not None
+                else existing.description
+            ),
+            "is_secret": (
+                config.is_secret if config.is_secret is not None else existing.is_secret
+            ),
+            "encrypted": (
+                config.encrypted if config.encrypted is not None else existing.encrypted
+            ),
         }
     else:
         if config.value is None:
-             raise HTTPException(status_code=400, detail="Value is required for new key")
+            raise HTTPException(status_code=400, detail="Value is required for new key")
         create_data = {
             "key": key,
             "value": config.value,
@@ -76,6 +89,7 @@ async def set_system_config(
 
     # Dynamic updates to cache
     from app.core.config_cache import SystemConfigCache
+
     if key == "system.smtp":
         SystemConfigCache.set_smtp_config(system_config.value)
     elif key == "security.allowed_origins" and isinstance(system_config.value, dict):
@@ -89,6 +103,7 @@ async def set_system_config(
             SystemConfigCache.set_cors_enabled(bool(val))
 
     return result
+
 
 @router.delete("/{key}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_system_config(
