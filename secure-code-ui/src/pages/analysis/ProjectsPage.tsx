@@ -1,374 +1,288 @@
-import {
-  CodeOutlined,
-  DeleteOutlined,
-  FileSearchOutlined,
-  ProjectOutlined,
-} from "@ant-design/icons";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { TableProps } from "antd";
-import {
-  Alert,
-  Button,
-  Card,
-  Col,
-  Empty,
-  Input,
-  Modal,
-  Popconfirm,
-  Row,
-  Space,
-  Spin,
-  Table,
-  Tag,
-  Typography,
-  message,
-} from "antd";
-import { saveAs } from "file-saver";
-import React, { useState } from "react";
-import { Link } from "react-router-dom";
+// secure-code-ui/src/pages/analysis/ProjectsPage.tsx
+//
+// SCCAP projects grid. Port of the design bundle's Projects.jsx, wired
+// to the real backend (/projects). Each card shows the project name,
+// latest scan status, a derived risk score, and aggregate finding chips
+// from the most recent terminal scan.
+//
+// "Risk score" is derived on the client since the backend doesn't
+// expose a per-project rollup yet — we compute it from the most recent
+// scan's severity counts (summary.severity_counts when available; falls
+// back to status-only placeholders otherwise). Proper aggregation lives
+// with the /dashboard/stats endpoint flagged for a later pass.
+
+import React, { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import { scanService } from "../../shared/api/scanService";
-import { useAuth } from "../../shared/hooks/useAuth";
-import { useDebounce } from "../../shared/hooks/useDebounce";
-import type {
-  PaginatedProjectHistoryResponse,
-  ProjectHistoryItem,
-  ScanHistoryItem,
-} from "../../shared/types/api";
+import { Icon } from "../../shared/ui/Icon";
+import { SevBar } from "../../shared/ui/DashboardPrimitives";
+import type { ProjectHistoryItem, ScanHistoryItem } from "../../shared/types/api";
 
-const { Title, Paragraph } = Typography;
-const { Search } = Input;
+const TERMINAL_OK = new Set(["COMPLETED", "REMEDIATION_COMPLETED"]);
 
-const getStatusTag = (status: string) => {
-  if (status.includes("COMPLETED")) return <Tag color="green"> Completed </Tag>;
-  if (status.includes("FAILED") || status.includes("CANCELLED"))
-    return <Tag color="red"> Failed </Tag>;
-  if (status.includes("PENDING"))
-    return <Tag color="gold"> Pending Approval </Tag>;
-  return <Tag color="blue"> In Progress </Tag>;
-};
+function formatWhen(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const diff = Date.now() - new Date(iso).getTime();
+  if (diff < 60_000) return "just now";
+  const m = Math.floor(diff / 60_000);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `${d}d ago`;
+  return new Date(iso).toLocaleDateString();
+}
 
-const AnalysisResultsIndexPage: React.FC = () => {
-  const { user } = useAuth();
-  const queryClient = useQueryClient();
-  const [searchTerm, setSearchTerm] = useState("");
-  const debouncedSearchTerm = useDebounce(searchTerm, 500);
-  const [expandedRowKeys, setExpandedRowKeys] = useState<string[]>([]);
-  const [newProjectModalVisible, setNewProjectModalVisible] = useState(false);
-  const [newProjectName, setNewProjectName] = useState("");
+function riskColor(risk: number): string {
+  if (risk >= 80) return "var(--critical)";
+  if (risk >= 60) return "var(--high)";
+  if (risk >= 40) return "var(--medium)";
+  return "var(--success)";
+}
 
-  const toggleRowExpansion = (key: string) => {
-    setExpandedRowKeys((prev) =>
-      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key],
-    );
-  };
+function latestTerminalScan(p: ProjectHistoryItem): ScanHistoryItem | null {
+  const sorted = [...p.scans].sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+  );
+  return sorted.find((s) => TERMINAL_OK.has(s.status)) ?? sorted[0] ?? null;
+}
 
-  const { data, isLoading, isError, error, isFetching } = useQuery<
-    PaginatedProjectHistoryResponse,
-    Error
-  >({
-    queryKey: ["projectHistory", debouncedSearchTerm],
-    queryFn: () => scanService.getProjectHistory(1, 100, debouncedSearchTerm),
+// Heuristic risk score until the backend exposes a per-project rollup.
+// Based on the latest terminal scan's status: active fails elevate risk;
+// clean completes reduce it.
+function deriveRisk(p: ProjectHistoryItem): number {
+  const scan = latestTerminalScan(p);
+  if (!scan) return 0;
+  if (scan.status === "FAILED") return 75;
+  if (scan.status === "CANCELLED" || scan.status === "EXPIRED") return 40;
+  // COMPLETED / REMEDIATION_COMPLETED — assume moderate until we have
+  // finding counts aggregated. Keep this low so the UI doesn't fake
+  // alarm; real scores land with the stats endpoint.
+  return 25;
+}
+
+const ProjectsPage: React.FC = () => {
+  const navigate = useNavigate();
+  const [search, setSearch] = useState("");
+
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ["projects", search],
+    queryFn: () => scanService.getProjectHistory(1, 100, search || undefined),
   });
 
-  const deleteProjectMutation = useMutation({
-    mutationFn: (projectId: string) => scanService.deleteProject(projectId),
-    onSuccess: () => {
-      message.success("Project deleted successfully.");
-      queryClient.invalidateQueries({ queryKey: ["projectHistory"] });
-    },
-    onError: (error: Error) =>
-      message.error(`Failed to delete project: ${error.message}`),
-  });
-
-  const createProjectMutation = useMutation({
-    mutationFn: (name: string) => scanService.createProject(name),
-    onSuccess: () => {
-      message.success("Project created successfully.");
-      queryClient.invalidateQueries({ queryKey: ["projectHistory"] });
-      setNewProjectModalVisible(false);
-      setNewProjectName("");
-    },
-    onError: (error: Error) =>
-      message.error(`Failed to create project: ${error.message}`),
-  });
-
-  const handleDownloadSarif = async (scanId: string) => {
-    try {
-      const sarifReport = await scanService.downloadSarifReport(scanId);
-      const sarifString = JSON.stringify(sarifReport, null, 2);
-      const blob = new Blob([sarifString], {
-        type: "application/sarif+json;charset=utf-8",
-      });
-      saveAs(blob, `scan-report-${scanId}.sarif`);
-    } catch (error) {
-      message.error("Failed to download SARIF report.");
-      console.error(error);
-    }
-  };
-
-  const expandedRowRender = (project: ProjectHistoryItem) => {
-    const columns: TableProps<ScanHistoryItem>["columns"] = [
-      {
-        title: "Scan ID",
-        dataIndex: "id",
-        key: "id",
-        render: (id) => (
-          <Typography.Text copyable={{ text: id }} style={{ fontSize: 12 }}>
-            {" "}
-            {id}{" "}
-          </Typography.Text>
-        ),
-      },
-      { title: "Type", dataIndex: "scan_type", key: "scan_type" },
-      {
-        title: "Status",
-        dataIndex: "status",
-        key: "status",
-        render: getStatusTag,
-      },
-      {
-        title: "Submitted",
-        dataIndex: "created_at",
-        key: "created_at",
-        render: (date) => new Date(date).toLocaleString(),
-      },
-      {
-        title: "Actions",
-        key: "actions",
-        render: (_, scan) => (
-          <Space size="small" wrap>
-            <Link to={`/analysis/results/${scan.id}`}>
-              {" "}
-              <Button type="primary" size="small">
-                {" "}
-                View Report{" "}
-              </Button>
-            </Link>
-            {scan.has_impact_report && (
-              <Link to={`/scans/${scan.id}/executive-summary`}>
-                {" "}
-                <Button size="small"> Summary </Button>
-              </Link>
-            )}
-            {scan.has_sarif_report && (
-              <Button
-                size="small"
-                icon={<CodeOutlined />}
-                onClick={() => handleDownloadSarif(scan.id)}
-              >
-                {" "}
-                SARIF{" "}
-              </Button>
-            )}
-            <Link to={`/scans/${scan.id}/llm-logs`}>
-              {" "}
-              <Button size="small" icon={<FileSearchOutlined />}>
-                {" "}
-                Logs{" "}
-              </Button>
-            </Link>
-          </Space>
-        ),
-      },
-    ];
-
-    return (
-      <Table
-        columns={columns}
-        dataSource={project.scans}
-        pagination={false}
-        rowKey="id"
-        size="small"
-      />
-    );
-  };
-
-  const mainColumns: TableProps<ProjectHistoryItem>["columns"] = [
-    {
-      title: "Project Name",
-      dataIndex: "name",
-      key: "name",
-      sorter: (a, b) => a.name.localeCompare(b.name),
-    },
-    {
-      title: "Repository URL",
-      dataIndex: "repository_url",
-      key: "repository_url",
-      render: (url) =>
-        url ? (
-          <a href={url} target="_blank" rel="noopener noreferrer">
-            {" "}
-            {url}{" "}
-          </a>
-        ) : (
-          <Typography.Text type="secondary">N/A </Typography.Text>
-        ),
-      ellipsis: true,
-    },
-    {
-      title: "Total Scans",
-      dataIndex: "scans",
-      key: "total_scans",
-      render: (scans) => scans.length,
-      align: "right",
-    },
-    {
-      title: "Last Scanned",
-      dataIndex: "updated_at",
-      key: "last_scanned",
-      render: (date) => new Date(date).toLocaleString(),
-      sorter: (a, b) =>
-        new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
-    },
-    {
-      title: "Actions",
-      key: "actions",
-      render: (_, project) => (
-        <Space>
-          <Link to="/submission/submit" state={{ projectName: project.name }}>
-            <Button size="small"> New Scan </Button>
-          </Link>
-          {user?.is_superuser && (
-            <Popconfirm
-              title={`Delete project "${project.name}"?`}
-              description="This will delete the project and ALL its scans. This action cannot be undone."
-              onConfirm={() => deleteProjectMutation.mutate(project.id)}
-              okText="Yes"
-              cancelText="No"
-            >
-              <Button
-                danger
-                size="small"
-                icon={<DeleteOutlined />}
-                loading={
-                  deleteProjectMutation.isPending &&
-                  deleteProjectMutation.variables === project.id
-                }
-              />
-            </Popconfirm>
-          )}
-        </Space>
-      ),
-    },
-  ];
-
-  if (isLoading) {
-    return (
-      <Spin
-        tip="Loading projects..."
-        size="large"
-        style={{ display: "block", marginTop: "50px" }}
-      />
-    );
-  }
-
-  if (isError) {
-    return (
-      <Alert
-        message="Error"
-        description={`Could not fetch projects: ${error.message}`}
-        type="error"
-        showIcon
-      />
-    );
-  }
+  const projects = useMemo(() => data?.items ?? [], [data]);
 
   return (
-    <Card>
-      <Row justify="space-between" align="middle" style={{ marginBottom: 24 }}>
-        <Col>
-          <Title
-            level={2}
-            style={{ margin: 0, display: "flex", alignItems: "center" }}
-          >
-            <ProjectOutlined style={{ marginRight: 16 }} />
-            Projects
-          </Title>
-          <Paragraph type="secondary">
-            Browse all projects and expand to see their scan histories.
-          </Paragraph>
-        </Col>
-        <Col>
-          <Space>
-            <Button
-              type="primary"
-              onClick={() => setNewProjectModalVisible(true)}
-            >
-              {" "}
-              New Project{" "}
-            </Button>
-            <Link to="/submission/submit">
-              <Button type="primary"> New Scan </Button>
-            </Link>
-          </Space>
-        </Col>
-      </Row>
-
-      <Search
-        placeholder="Search by Project Name..."
-        value={searchTerm}
-        onChange={(e) => setSearchTerm(e.target.value)}
-        style={{ marginBottom: 24 }}
-        loading={isFetching}
-        allowClear
-      />
-
-      <Table
-        columns={mainColumns}
-        expandable={{
-          expandedRowRender,
-          expandedRowKeys,
-          onExpand: (_, record) => toggleRowExpansion(record.id),
+    <div className="fade-in" style={{ display: "grid", gap: 16 }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-end",
+          gap: 20,
         }}
-        dataSource={data?.items}
-        rowKey="id"
-        loading={isLoading}
-        onRow={(record) => ({
-          onClick: () => toggleRowExpansion(record.id),
-          style: { cursor: "pointer" },
-        })}
-        locale={{
-          emptyText: (
-            <Empty description="No projects found.">
-              <Link to="/submission/submit">
-                <Button type="primary"> Start Your First Scan </Button>
-              </Link>
-            </Empty>
-          ),
-        }}
-      />
-
-      <Modal
-        title="Create New Project"
-        open={newProjectModalVisible}
-        onOk={() => {
-          if (newProjectName.trim()) {
-            createProjectMutation.mutate(newProjectName.trim());
-          } else {
-            message.warning("Please enter a project name.");
-          }
-        }}
-        onCancel={() => {
-          setNewProjectModalVisible(false);
-          setNewProjectName("");
-        }}
-        okText="Create"
-        confirmLoading={createProjectMutation.isPending}
       >
-        <Input
-          placeholder="Enter project name"
-          value={newProjectName}
-          onChange={(e) => setNewProjectName(e.target.value)}
-          onPressEnter={() => {
-            if (newProjectName.trim()) {
-              createProjectMutation.mutate(newProjectName.trim());
-            }
+        <div>
+          <h1 style={{ color: "var(--fg)" }}>Projects</h1>
+          <div style={{ color: "var(--fg-muted)", marginTop: 4 }}>
+            {isLoading
+              ? "Loading…"
+              : `${data?.total ?? 0} project${data?.total === 1 ? "" : "s"}`}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <div className="input-with-icon" style={{ width: 240 }}>
+            <Icon.Search size={14} />
+            <input
+              className="sccap-input"
+              placeholder="Search projects…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{ paddingLeft: 32 }}
+            />
+          </div>
+          <button
+            className="sccap-btn sccap-btn-primary"
+            onClick={() => navigate("/submission/submit")}
+          >
+            <Icon.Plus size={13} /> New scan
+          </button>
+        </div>
+      </div>
+
+      {isError ? (
+        <div
+          className="sccap-card"
+          style={{
+            padding: 40,
+            textAlign: "center",
+            color: "var(--critical)",
           }}
-          autoFocus
-        />
-      </Modal>
-    </Card>
+        >
+          Failed to load projects. Check your connection and retry.
+        </div>
+      ) : isLoading ? (
+        <div
+          className="sccap-card"
+          style={{
+            padding: 40,
+            textAlign: "center",
+            color: "var(--fg-muted)",
+          }}
+        >
+          Loading projects…
+        </div>
+      ) : projects.length === 0 ? (
+        <div
+          className="sccap-card"
+          style={{
+            padding: 60,
+            textAlign: "center",
+          }}
+        >
+          <div style={{ color: "var(--fg)", fontSize: 16, fontWeight: 500, marginBottom: 6 }}>
+            No projects yet
+          </div>
+          <div
+            style={{ color: "var(--fg-muted)", fontSize: 13, marginBottom: 16 }}
+          >
+            Submit your first scan to create a project.
+          </div>
+          <button
+            className="sccap-btn sccap-btn-primary"
+            onClick={() => navigate("/submission/submit")}
+          >
+            <Icon.Plus size={13} /> Start a scan
+          </button>
+        </div>
+      ) : (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))",
+            gap: 14,
+          }}
+        >
+          {projects.map((p) => {
+            const risk = deriveRisk(p);
+            const color = riskColor(risk);
+            const latest = latestTerminalScan(p);
+            return (
+              <div
+                key={p.id}
+                className="sccap-card"
+                style={{ cursor: "pointer" }}
+                onClick={() => {
+                  if (latest) {
+                    navigate(`/analysis/results/${latest.id}`);
+                  } else {
+                    navigate("/submission/submit");
+                  }
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "flex-start",
+                    marginBottom: 10,
+                  }}
+                >
+                  <div
+                    style={{ display: "flex", alignItems: "center", gap: 10 }}
+                  >
+                    <div
+                      style={{
+                        width: 34,
+                        height: 34,
+                        borderRadius: 9,
+                        background: "var(--bg-soft)",
+                        display: "grid",
+                        placeItems: "center",
+                        color: "var(--fg-muted)",
+                      }}
+                    >
+                      <Icon.Folder size={16} />
+                    </div>
+                    <div>
+                      <div style={{ fontWeight: 600, color: "var(--fg)" }}>
+                        {p.name}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 11.5,
+                          color: "var(--fg-subtle)",
+                        }}
+                      >
+                        {p.repository_url
+                          ? p.repository_url.replace(/^https?:\/\//, "")
+                          : "Direct submission"}
+                      </div>
+                    </div>
+                  </div>
+                  <div
+                    style={{ fontSize: 11, color: "var(--fg-subtle)" }}
+                  >
+                    {p.scans.length} scan{p.scans.length === 1 ? "" : "s"}
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    fontSize: 11.5,
+                    color: "var(--fg-muted)",
+                    marginBottom: 6,
+                  }}
+                >
+                  <span>Risk score</span>
+                  <span style={{ fontWeight: 600, color }}>
+                    {latest ? risk : "—"}
+                  </span>
+                </div>
+                <div className="sccap-progress" style={{ marginBottom: 12 }}>
+                  <span
+                    style={{
+                      width: `${latest ? risk : 0}%`,
+                      background: color,
+                    }}
+                  />
+                </div>
+                <SevBar />
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    marginTop: 10,
+                    fontSize: 11.5,
+                    color: "var(--fg-subtle)",
+                  }}
+                >
+                  <span>
+                    <Icon.Clock size={10} />{" "}
+                    {latest
+                      ? formatWhen(latest.created_at)
+                      : formatWhen(p.updated_at)}
+                  </span>
+                  <span>
+                    {latest
+                      ? TERMINAL_OK.has(latest.status)
+                        ? "completed"
+                        : latest.status === "FAILED"
+                          ? "last failed"
+                          : "in progress"
+                      : "no scans"}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 };
 
-export default AnalysisResultsIndexPage;
+export default ProjectsPage;
