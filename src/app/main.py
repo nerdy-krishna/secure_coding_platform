@@ -194,9 +194,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Secure Coding Platform API",
+    title="SCCAP API",
     version="0.1.0",
-    description="API for the Secure Coding Platform, providing analysis, generation, and GRC features.",
+    description="API for SCCAP — the Secure Coding & Compliance Automation Platform. Provides analysis, remediation, and compliance features.",
     lifespan=lifespan,
 )
 
@@ -377,4 +377,4 @@ app.include_router(
 @app.get("/", tags=["Root"])
 async def read_root():
     """A simple root endpoint to confirm the API is running."""
-    return {"message": "Welcome to the Secure Coding Platform API!"}
+    return {"message": "Welcome to the SCCAP API!"}

@@ -1,0 +1,206 @@
+/* ===========================================================
+   SCCAP design tokens — ported from the Claude Design handoff
+   bundle (project/styles.css). Two color variations × light/dark,
+   toggled at runtime by the `data-theme` and `data-variant`
+   attributes on document.documentElement.
+
+   This file intentionally contains ONLY custom-property
+   definitions — no styling rules — so it can coexist with the
+   current Ant-based pages without visible effect. Utilities that
+   consume these tokens live in `primitives.css`; the shell swap
+   in G.1 picks them up.
+   =========================================================== */
+
+:root {
+  /* type */
+  --font-sans: 'Inter Tight', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+
+  /* radii */
+  --r-xs: 6px;
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 22px;
+  --r-pill: 999px;
+
+  /* motion */
+  --ease: cubic-bezier(.2,.8,.2,1);
+}
+
+/* ============ LIGHT — Variation A (indigo + warm risk) ============ */
+:root,
+[data-theme='light'][data-variant='A'] {
+  --bg: #fbfaf7;               /* warm paper */
+  --bg-elev: #ffffff;
+  --bg-soft: #f5f3ee;
+  --bg-inset: #efece5;
+  --border: #e7e3d8;
+  --border-strong: #d6d1c2;
+  --fg: #1a1b20;
+  --fg-muted: #5b5e68;
+  --fg-subtle: #878a94;
+
+  --primary: #4f46e5;          /* indigo */
+  --primary-weak: #eef0ff;
+  --primary-strong: #3730a3;
+  --primary-ink: #ffffff;
+
+  --accent: #0ea5a4;           /* teal */
+  --accent-weak: #e0f4f3;
+
+  --critical: #dc2626;
+  --critical-weak: #fde8e8;
+  --high: #ea580c;
+  --high-weak: #feecd9;
+  --medium: #d97706;
+  --medium-weak: #fef3c7;
+  --low: #0891b2;
+  --low-weak: #e0f2fe;
+  --info: #6366f1;
+  --info-weak: #eef0ff;
+  --success: #15803d;
+  --success-weak: #dcfce7;
+
+  --diff-add: #dcfce7;
+  --diff-add-line: #bbf7d0;
+  --diff-del: #fee2e2;
+  --diff-del-line: #fecaca;
+
+  --shadow-xs: 0 1px 2px rgba(20, 18, 10, .04);
+  --shadow-sm: 0 2px 8px rgba(20, 18, 10, .06);
+  --shadow-md: 0 8px 24px rgba(20, 18, 10, .08);
+  --shadow-lg: 0 24px 64px rgba(20, 18, 10, .12);
+}
+
+/* ============ LIGHT — Variation B (teal + cool risk) ============ */
+[data-theme='light'][data-variant='B'] {
+  --bg: #f7f9fb;
+  --bg-elev: #ffffff;
+  --bg-soft: #eef2f6;
+  --bg-inset: #e6ecf2;
+  --border: #dce3ea;
+  --border-strong: #c5cfd8;
+  --fg: #0e1726;
+  --fg-muted: #4b5868;
+  --fg-subtle: #7a8699;
+
+  --primary: #0d9488;           /* teal */
+  --primary-weak: #ccfbf1;
+  --primary-strong: #0f766e;
+  --primary-ink: #ffffff;
+
+  --accent: #2563eb;            /* blue */
+  --accent-weak: #dbeafe;
+
+  --critical: #e11d48;          /* rose */
+  --critical-weak: #ffe4e6;
+  --high: #c026d3;              /* magenta */
+  --high-weak: #fae8ff;
+  --medium: #2563eb;
+  --medium-weak: #dbeafe;
+  --low: #0891b2;
+  --low-weak: #cffafe;
+  --info: #6366f1;
+  --info-weak: #e0e7ff;
+  --success: #059669;
+  --success-weak: #d1fae5;
+
+  --diff-add: #d1fae5;
+  --diff-add-line: #a7f3d0;
+  --diff-del: #ffe4e6;
+  --diff-del-line: #fecdd3;
+
+  --shadow-xs: 0 1px 2px rgba(6, 14, 30, .04);
+  --shadow-sm: 0 2px 8px rgba(6, 14, 30, .06);
+  --shadow-md: 0 8px 24px rgba(6, 14, 30, .08);
+  --shadow-lg: 0 24px 64px rgba(6, 14, 30, .12);
+}
+
+/* ============ DARK — Variation A ============ */
+[data-theme='dark'][data-variant='A'] {
+  --bg: #0e0f13;
+  --bg-elev: #16181f;
+  --bg-soft: #1b1e27;
+  --bg-inset: #11131a;
+  --border: #262937;
+  --border-strong: #343849;
+  --fg: #f0eee6;
+  --fg-muted: #a5a7b3;
+  --fg-subtle: #7c7f8d;
+
+  --primary: #818cf8;
+  --primary-weak: #1c1e3a;
+  --primary-strong: #a5b4fc;
+  --primary-ink: #0e0f13;
+
+  --accent: #2dd4bf;
+  --accent-weak: #0e2a29;
+
+  --critical: #f87171;
+  --critical-weak: #2a1315;
+  --high: #fb923c;
+  --high-weak: #2a1a0e;
+  --medium: #fbbf24;
+  --medium-weak: #2a2109;
+  --low: #38bdf8;
+  --low-weak: #0a2233;
+  --info: #a5b4fc;
+  --info-weak: #1c1e3a;
+  --success: #4ade80;
+  --success-weak: #0c2718;
+
+  --diff-add: #0f2a1c;
+  --diff-add-line: #184a30;
+  --diff-del: #2a1315;
+  --diff-del-line: #4a1e22;
+
+  --shadow-xs: 0 1px 2px rgba(0,0,0,.4);
+  --shadow-sm: 0 2px 8px rgba(0,0,0,.4);
+  --shadow-md: 0 8px 24px rgba(0,0,0,.5);
+  --shadow-lg: 0 24px 64px rgba(0,0,0,.6);
+}
+
+/* ============ DARK — Variation B ============ */
+[data-theme='dark'][data-variant='B'] {
+  --bg: #08101a;
+  --bg-elev: #0f1a26;
+  --bg-soft: #142131;
+  --bg-inset: #0a1522;
+  --border: #1e2e42;
+  --border-strong: #2b405a;
+  --fg: #e8f0fa;
+  --fg-muted: #9eaec2;
+  --fg-subtle: #6c7e93;
+
+  --primary: #2dd4bf;
+  --primary-weak: #0a2724;
+  --primary-strong: #5eead4;
+  --primary-ink: #06241f;
+
+  --accent: #60a5fa;
+  --accent-weak: #0e2043;
+
+  --critical: #fb7185;
+  --critical-weak: #2a0f17;
+  --high: #e879f9;
+  --high-weak: #26102a;
+  --medium: #60a5fa;
+  --medium-weak: #0e2043;
+  --low: #22d3ee;
+  --low-weak: #062430;
+  --info: #a78bfa;
+  --info-weak: #1a0f33;
+  --success: #34d399;
+  --success-weak: #0a2920;
+
+  --diff-add: #0a2920;
+  --diff-add-line: #124b37;
+  --diff-del: #2a0f17;
+  --diff-del-line: #4a1722;
+
+  --shadow-xs: 0 1px 2px rgba(0,0,0,.4);
+  --shadow-sm: 0 2px 8px rgba(0,0,0,.4);
+  --shadow-md: 0 8px 24px rgba(0,0,0,.5);
+  --shadow-lg: 0 24px 64px rgba(0,0,0,.6);
+}

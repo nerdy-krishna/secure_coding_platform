@@ -6,7 +6,7 @@ services:
       context: .
       dockerfile: Dockerfile
       target: api
-    container_name: secure_coding_platform_app
+    container_name: sccap_app
     env_file:
       - .env
     environment:
@@ -44,7 +44,7 @@ services:
 
   db:
     image: postgres:16
-    container_name: secure_coding_platform_db
+    container_name: sccap_db
     env_file:
       - .env
     environment:
@@ -65,7 +65,7 @@ services:
 
   rabbitmq:
     image: rabbitmq:3.12-management
-    container_name: secure_coding_platform_rabbitmq
+    container_name: sccap_rabbitmq
     env_file:
       - .env
     environment:
@@ -86,7 +86,7 @@ services:
 
   vector_db:
     image: chromadb/chroma:0.5.3
-    container_name: secure_coding_platform_vector_db
+    container_name: sccap_vector_db
     environment:
       - LOG_LEVEL=DEBUG
       - IS_PERSISTENT=TRUE
@@ -111,7 +111,7 @@ services:
       context: .
       dockerfile: Dockerfile
       target: worker
-    container_name: secure_coding_platform_worker
+    container_name: sccap_worker
     env_file:
       - .env
     volumes:
@@ -140,7 +140,7 @@ services:
 
   fluentd:
     build: ./fluentd
-    container_name: secure_coding_platform_fluentd
+    container_name: sccap_fluentd
     volumes:
       - ./fluentd/log:/fluentd/log
     ports:
@@ -161,7 +161,7 @@ services:
 
   loki:
     image: grafana/loki:3.4.2
-    container_name: secure_coding_platform_loki
+    container_name: sccap_loki
     ports:
       - "3100:3100"
     command: -config.file=/etc/loki/local-config.yaml
@@ -172,7 +172,7 @@ services:
 
   grafana:
     image: grafana/grafana:11.5.2
-    container_name: secure_coding_platform_grafana
+    container_name: sccap_grafana
     ports:
       - "3000:3000"
     environment:
@@ -195,7 +195,7 @@ services:
       args:
         - VITE_API_BASE_URL=${VITE_API_BASE_URL:-/api/v1}
         - VITE_ALLOWED_HOSTS=${VITE_ALLOWED_HOSTS}
-    container_name: secure_coding_platform_ui
+    container_name: sccap_ui
     environment:
       - SSL_ENABLED=${SSL_ENABLED:-false}
       - SSL_DOMAIN=${SSL_DOMAIN:-}

@@ -30,7 +30,7 @@ export default function Home() {
   return (
     <Layout
       title={`Welcome to ${siteConfig.title}`}
-      description="Secure Coding Platform - AI-powered open-source platform for secure code analysis, generation, and multi-framework compliance.">
+      description="SCCAP - AI-powered open-source platform for secure code analysis, generation, and multi-framework compliance.">
       <HomepageHeader />
       <main>
         <section className={styles.features}>
@@ -47,7 +47,7 @@ export default function Home() {
               </div>
               <div className={clsx('col col--4')}>
                 <h3>Open Source & Extensible</h3>
-                <p>Built as a full-scope open-source platform, the Secure Coding Platform is ready for community contributions and custom integrations.</p>
+                <p>Built as a full-scope open-source platform, the SCCAP is ready for community contributions and custom integrations.</p>
               </div>
             </div>
           </div>

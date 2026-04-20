@@ -10,7 +10,7 @@ import {themes as prismThemes} from 'prism-react-renderer';
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
-  title: 'Secure Coding Platform',
+  title: 'SCCAP',
   tagline: 'AI-Powered Open Source Secure Coding Assistant',
   favicon: 'img/favicon.ico',
 
@@ -132,7 +132,7 @@ const config = {
             ],
           },
         ],
-        copyright: `Copyright © ${new Date().getFullYear()} Secure Coding Platform. Built with Docusaurus.`,
+        copyright: `Copyright © ${new Date().getFullYear()} SCCAP. Built with Docusaurus.`,
       },
       prism: {
         theme: prismThemes.github,

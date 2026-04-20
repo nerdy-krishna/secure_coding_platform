@@ -139,7 +139,7 @@ def create_sarif_report(findings: List[VulnerabilityFinding]) -> Dict[str, Any]:
             {
                 "tool": {
                     "driver": {
-                        "name": "Secure Coding Platform SARIF Report",
+                        "name": "SCCAP SARIF Report",
                         "rules": list(rules.values()),
                     }
                 },

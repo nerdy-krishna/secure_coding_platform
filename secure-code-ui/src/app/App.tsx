@@ -55,7 +55,7 @@ const LoadingScreen: React.FC = () => (
     }}
   >
     <h2>Connecting to Services...</h2>
-    <p> Please wait while the Secure Coding Platform is starting up.</p>
+    <p> Please wait while SCCAP is starting up.</p>
   </div>
 );
 

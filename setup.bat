@@ -1,9 +1,9 @@
 @echo off
 
-:: setup.bat - Easy Installation Script for Secure Coding Platform
+:: setup.bat - Easy Installation Script for SCCAP
 
 echo ==================================================
-echo    Secure Coding Platform - Setup Wizard
+echo    SCCAP - Setup Wizard
 echo ==================================================
 echo.
 
@@ -182,7 +182,7 @@ docker compose up -d --build
 echo [*] Waiting for database to be healthy...
 :wait_loop
 timeout /t 2 /nobreak >nul
-for /f "tokens=*" %%i in ('docker inspect -f "{{.State.Health.Status}}" secure_coding_platform_db') do set DB_STATUS=%%i
+for /f "tokens=*" %%i in ('docker inspect -f "{{.State.Health.Status}}" sccap_db') do set DB_STATUS=%%i
 if "%DB_STATUS%"=="healthy" goto db_healthy
 echo  ...waiting for db...
 goto wait_loop

@@ -272,7 +272,7 @@ style = {{ marginRight: 8 }}
   </div>
   </Content>
   < Footer style = {{ textAlign: "center" }}>
-    Secure Coding Platform ©{ new Date().getFullYear() }
+    SCCAP ©{ new Date().getFullYear() }
 </Footer>
   </Layout>
   </Layout>

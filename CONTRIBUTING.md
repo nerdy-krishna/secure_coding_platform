@@ -1,6 +1,6 @@
-# Contributing to the Secure Coding Platform
+# Contributing to the SCCAP
 
-First off, thank you for considering contributing to the Secure Coding Platform! We welcome contributions from everyone and are excited to see this project grow with the help of the community. Your contributions, whether big or small, are valuable to us.
+First off, thank you for considering contributing to the SCCAP! We welcome contributions from everyone and are excited to see this project grow with the help of the community. Your contributions, whether big or small, are valuable to us.
 
 This document provides guidelines for contributing to the platform. Please take a moment to review it.
 
@@ -19,7 +19,7 @@ This document provides guidelines for contributing to the platform. Please take 
 
 ## How Can I Contribute?
 
-There are many ways to contribute to the Secure Coding Platform:
+There are many ways to contribute to the SCCAP:
 
 ### Reporting Bugs
 
@@ -36,7 +36,7 @@ You can report bugs by [opening an issue](https://github.com/your-username/secur
 
 We welcome suggestions for new features or enhancements to existing ones.
 * Clearly describe the feature or enhancement you are proposing.
-* Explain why this feature would be useful to users of the Secure Coding Platform.
+* Explain why this feature would be useful to users of the SCCAP.
 * If possible, provide examples or mockups.
 
 You can suggest enhancements by [opening an issue](https://github.com/your-username/secure-code-platform/issues) on GitHub, labeling it as an "enhancement" or "feature request". ### Submitting Code Changes
@@ -82,7 +82,7 @@ Please adhere to the coding standards outlined in our [Coding Standards Document
 
 ## Code of Conduct
 
-This project and everyone participating in it is governed by the [Secure Coding Platform Code of Conduct](./CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code. Please report unacceptable behavior.
+This project and everyone participating in it is governed by the [SCCAP Code of Conduct](./CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code. Please report unacceptable behavior.
 
 ## Getting Help
 
