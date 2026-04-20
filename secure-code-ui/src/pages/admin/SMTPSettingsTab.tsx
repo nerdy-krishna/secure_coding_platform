@@ -1,19 +1,12 @@
 // secure-code-ui/src/pages/admin/SMTPSettingsTab.tsx
-import React, { useEffect, useState } from "react";
-import {
-  Form,
-  Input,
-  InputNumber,
-  Button,
-  Switch,
-  Typography,
-  message,
-  Spin,
-} from "antd";
-import { SaveOutlined } from "@ant-design/icons";
-import apiClient from "../../shared/api/apiClient";
+//
+// SMTP outgoing-mail configuration. Data stays in the same system_config
+// row (`system.smtp`); UI ports off antd to SCCAP primitives.
 
-const { Title, Paragraph } = Typography;
+import React, { useEffect, useState } from "react";
+import apiClient from "../../shared/api/apiClient";
+import { Icon } from "../../shared/ui/Icon";
+import { useToast } from "../../shared/ui/Toast";
 
 const SMTP_CONFIG_KEY = "system.smtp";
 
@@ -32,62 +25,54 @@ interface SystemConfigRow {
   value: SmtpSettings | Record<string, unknown> | null;
 }
 
+const DEFAULTS: SmtpSettings = {
+  host: "",
+  port: 587,
+  user: "",
+  password: "",
+  from: "",
+  tls: true,
+  ssl: false,
+};
+
 const SMTPSettingsTab: React.FC = () => {
-  const [form] = Form.useForm();
-  const [loading, setLoading] = useState<boolean>(true);
-  const [saving, setSaving] = useState<boolean>(false);
+  const toast = useToast();
+  const [form, setForm] = useState<SmtpSettings>(DEFAULTS);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    const fetchSmtpConfig = async () => {
+    (async () => {
       try {
-        const response = await apiClient.get<SystemConfigRow[]>(
-          "/admin/system-config/",
-        );
-        const configs = response.data;
-        const smtpConfig = configs.find((c) => c.key === SMTP_CONFIG_KEY);
-
-        if (smtpConfig && smtpConfig.value) {
-          form.setFieldsValue(smtpConfig.value);
-        } else {
-          // Set sensible defaults if none exists
-          form.setFieldsValue({
-            host: "",
-            port: 587,
-            user: "",
-            password: "",
-            from: "",
-            tls: true,
-            ssl: false,
-          });
+        const response =
+          await apiClient.get<SystemConfigRow[]>("/admin/system-config/");
+        const smtp = response.data.find((c) => c.key === SMTP_CONFIG_KEY);
+        if (smtp && smtp.value && typeof smtp.value === "object") {
+          setForm({ ...DEFAULTS, ...(smtp.value as Partial<SmtpSettings>) });
         }
-      } catch (error) {
-        console.error("Failed to fetch SMTP config:", error);
-        message.error("Could not load current SMTP settings.");
+      } catch {
+        toast.error("Could not load current SMTP settings.");
       } finally {
         setLoading(false);
       }
-    };
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-    fetchSmtpConfig();
-  }, [form]);
-
-  const onFinish = async (values: SmtpSettings) => {
+  const onSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     setSaving(true);
-    // We structure the payload to match what SystemConfigTab expects
-    const payload = {
-      key: SMTP_CONFIG_KEY,
-      value: values,
-      description: "Dedicated SMTP Configuration",
-      is_secret: true, // Mark as secret to hide password in raw logs if possible
-      encrypted: false,
-    };
-
     try {
-      await apiClient.put(`/admin/system-config/${SMTP_CONFIG_KEY}`, payload);
-      message.success("SMTP Configuration saved successfully!");
-    } catch (error) {
-      console.error("Failed to save SMTP config:", error);
-      message.error("Failed to save SMTP preferences.");
+      await apiClient.put(`/admin/system-config/${SMTP_CONFIG_KEY}`, {
+        key: SMTP_CONFIG_KEY,
+        value: form,
+        description: "Dedicated SMTP Configuration",
+        is_secret: true,
+        encrypted: false,
+      });
+      toast.success("SMTP configuration saved.");
+    } catch {
+      toast.error("Failed to save SMTP preferences.");
     } finally {
       setSaving(false);
     }
@@ -95,109 +80,191 @@ const SMTPSettingsTab: React.FC = () => {
 
   if (loading) {
     return (
-      <Spin
-        tip="Loading SMTP Settings..."
-        style={{ display: "block", margin: "40px auto" }}
-      />
+      <div
+        className="sccap-card"
+        style={{
+          padding: 40,
+          textAlign: "center",
+          color: "var(--fg-muted)",
+        }}
+      >
+        Loading SMTP settings…
+      </div>
     );
   }
 
-  return (
-    <div>
-      <Title level={2}> SMTP Settings </Title>
-      <Paragraph>
-        Configure the outgoing mail server details required to send password
-        reset and user invitation emails.
-      </Paragraph>
-
-      <Form
-        form={form}
-        layout="vertical"
-        onFinish={onFinish}
-        style={{ maxWidth: "600px", marginTop: "24px" }}
-      >
-        <Form.Item
-          name="host"
-          label="SMTP Host (Server)"
-          rules={[
-            { required: true, message: "Please enter the SMTP host address" },
-          ]}
-        >
-          <Input placeholder="e.g. smtp.sendgrid.net" />
-        </Form.Item>
-
-        <Form.Item
-          name="port"
-          label="SMTP Port"
-          rules={[{ required: true, message: "Please enter the SMTP port" }]}
-        >
-          <InputNumber
-            style={{ width: "100%" }}
-            placeholder="e.g. 587 or 465"
-          />
-        </Form.Item>
-
-        <Form.Item
-          name="user"
-          label="SMTP Username"
-          rules={[
-            { required: true, message: "Please enter the SMTP username" },
-          ]}
-        >
-          <Input placeholder="e.g. apikey or user@domain.com" />
-        </Form.Item>
-
-        <Form.Item
-          name="password"
-          label="SMTP Password"
-          rules={[
-            { required: true, message: "Please enter the SMTP password" },
-          ]}
-        >
-          <Input.Password placeholder="Enter password / API key" />
-        </Form.Item>
-
-        <Form.Item
-          name="from"
-          label="Sender Address ('From')"
-          rules={[
-            {
-              required: true,
-              message: "Please enter the sender email address",
-            },
-            { type: "email", message: "Please enter a valid email address" },
-          ]}
-        >
-          <Input placeholder="e.g. noreply@domain.com" />
-        </Form.Item>
-
-        <div style={{ display: "flex", gap: "32px" }}>
-          <Form.Item
-            name="tls"
-            label="Use TLS (STARTTLS)"
-            valuePropName="checked"
+  const Field: React.FC<{
+    label: string;
+    hint?: string;
+    children: React.ReactNode;
+  }> = ({ label, hint, children }) => (
+    <label style={{ display: "grid", gap: 6 }}>
+      <span style={{ fontSize: 12, color: "var(--fg-muted)" }}>
+        {label}
+        {hint && (
+          <span
+            style={{
+              marginLeft: 8,
+              color: "var(--fg-subtle)",
+              fontWeight: 400,
+            }}
           >
-            <Switch />
-          </Form.Item>
+            {hint}
+          </span>
+        )}
+      </span>
+      {children}
+    </label>
+  );
 
-          <Form.Item name="ssl" label="Use SSL" valuePropName="checked">
-            <Switch />
-          </Form.Item>
+  return (
+    <div className="fade-in" style={{ display: "grid", gap: 16 }}>
+      <div>
+        <h1 style={{ color: "var(--fg)" }}>
+          <Icon.Mail size={18} /> SMTP settings
+        </h1>
+        <div style={{ color: "var(--fg-muted)", marginTop: 4 }}>
+          Outgoing mail server for password reset and user invitations.
+        </div>
+      </div>
+
+      <form
+        onSubmit={onSubmit}
+        className="surface"
+        style={{
+          padding: 22,
+          display: "grid",
+          gap: 14,
+          maxWidth: 640,
+        }}
+      >
+        <Field label="SMTP host">
+          <input
+            className="sccap-input"
+            placeholder="smtp.sendgrid.net"
+            value={form.host}
+            onChange={(e) => setForm({ ...form, host: e.target.value })}
+            required
+          />
+        </Field>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <Field label="Port">
+            <input
+              className="sccap-input"
+              type="number"
+              min={1}
+              max={65535}
+              value={form.port}
+              onChange={(e) =>
+                setForm({ ...form, port: Number(e.target.value) })
+              }
+              required
+            />
+          </Field>
+          <Field label="Sender address" hint="(From)">
+            <input
+              className="sccap-input"
+              type="email"
+              placeholder="noreply@domain.com"
+              value={form.from}
+              onChange={(e) => setForm({ ...form, from: e.target.value })}
+              required
+            />
+          </Field>
         </div>
 
-        <Form.Item style={{ marginTop: "16px" }}>
-          <Button
-            type="primary"
-            htmlType="submit"
-            icon={<SaveOutlined />}
-            loading={saving}
+        <Field label="Username">
+          <input
+            className="sccap-input"
+            placeholder="apikey or user@domain.com"
+            value={form.user}
+            onChange={(e) => setForm({ ...form, user: e.target.value })}
+            required
+          />
+        </Field>
+
+        <Field label="Password">
+          <input
+            className="sccap-input"
+            type="password"
+            placeholder="Enter password / API key"
+            value={form.password}
+            onChange={(e) => setForm({ ...form, password: e.target.value })}
+            required
+          />
+        </Field>
+
+        <div
+          style={{
+            display: "flex",
+            gap: 24,
+            marginTop: 6,
+            alignItems: "center",
+          }}
+        >
+          <InlineToggle
+            label="STARTTLS"
+            value={form.tls}
+            onChange={(v) => setForm({ ...form, tls: v })}
+          />
+          <InlineToggle
+            label="SSL"
+            value={form.ssl}
+            onChange={(v) => setForm({ ...form, ssl: v })}
+          />
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            marginTop: 10,
+          }}
+        >
+          <button
+            type="submit"
+            className="sccap-btn sccap-btn-primary"
+            disabled={saving}
           >
-            Save SMTP Settings
-          </Button>
-        </Form.Item>
-      </Form>
+            <Icon.Check size={13} /> {saving ? "Saving…" : "Save SMTP settings"}
+          </button>
+        </div>
+      </form>
     </div>
   );
 };
+
+const InlineToggle: React.FC<{
+  label: string;
+  value: boolean;
+  onChange: (v: boolean) => void;
+}> = ({ label, value, onChange }) => (
+  <label
+    style={{
+      display: "inline-flex",
+      alignItems: "center",
+      gap: 10,
+      fontSize: 13,
+      color: "var(--fg)",
+      cursor: "pointer",
+    }}
+  >
+    <div
+      className={`sccap-switch ${value ? "on" : ""}`}
+      role="switch"
+      aria-checked={value}
+      tabIndex={0}
+      onClick={() => onChange(!value)}
+      onKeyDown={(e) => {
+        if (e.key === " " || e.key === "Enter") {
+          e.preventDefault();
+          onChange(!value);
+        }
+      }}
+    />
+    {label}
+  </label>
+);
 
 export default SMTPSettingsTab;

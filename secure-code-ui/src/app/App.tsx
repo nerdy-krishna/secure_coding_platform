@@ -9,6 +9,7 @@ import {
 } from "react-router-dom";
 import { useAuth } from "../shared/hooks/useAuth";
 import { AuthProvider } from "./providers/AuthProvider";
+import { ToastProvider } from "../shared/ui/Toast";
 
 import LLMSettingsPage from "../features/admin-settings/components/LLMSettingsPage";
 import DashboardPage from "../pages/account/DashboardPage";
@@ -188,9 +189,11 @@ const queryClient = new QueryClient();
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <AppContent />
-      </AuthProvider>
+      <ToastProvider>
+        <AuthProvider>
+          <AppContent />
+        </AuthProvider>
+      </ToastProvider>
     </QueryClientProvider>
   );
 }
