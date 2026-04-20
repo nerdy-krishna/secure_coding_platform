@@ -31,10 +31,54 @@ const ForgotPasswordPage: React.FC = () => {
   };
 
   return (
-    <div className="surface" style={{ padding: 32 }}>
-      <h2 style={{ textAlign: "center", color: "var(--fg)", marginBottom: 8 }}>
-        Forgot password
-      </h2>
+    <div
+      className="surface"
+      style={{
+        padding: 36,
+        boxShadow: "var(--shadow-md)",
+        position: "relative",
+        overflow: "hidden",
+      }}
+    >
+      <div
+        aria-hidden
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          height: 3,
+          background:
+            "linear-gradient(90deg, var(--primary) 0%, var(--accent) 100%)",
+        }}
+      />
+      <div style={{ textAlign: "center", marginBottom: 18 }}>
+        <div
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 48,
+            height: 48,
+            borderRadius: 12,
+            background: "var(--primary-weak)",
+            color: "var(--primary)",
+            marginBottom: 12,
+          }}
+        >
+          <Icon.Mail size={22} />
+        </div>
+        <div
+          style={{
+            fontSize: 20,
+            fontWeight: 600,
+            color: "var(--fg)",
+            letterSpacing: "-0.01em",
+          }}
+        >
+          Forgot password
+        </div>
+      </div>
       {success ? (
         <div style={{ textAlign: "center", display: "grid", gap: 12 }}>
           <div style={{ color: "var(--fg-muted)", fontSize: 13 }}>

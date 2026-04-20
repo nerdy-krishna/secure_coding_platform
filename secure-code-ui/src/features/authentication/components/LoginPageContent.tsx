@@ -1,6 +1,8 @@
 // secure-code-ui/src/features/authentication/components/LoginPageContent.tsx
 //
-// SCCAP login form. Native inputs; useAuth() login wiring unchanged.
+// SCCAP login form. Uses the same design tokens / primitives as the rest
+// of the app so light/dark × A/B variant switching from AuthLayout's
+// floating toggle ripples through without extra wiring.
 
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
@@ -45,34 +47,68 @@ const LoginPageContent: React.FC = () => {
     <form
       onSubmit={onSubmit}
       className="surface"
-      style={{ padding: 32, display: "grid", gap: 16 }}
+      style={{
+        padding: 36,
+        display: "grid",
+        gap: 18,
+        boxShadow: "var(--shadow-md)",
+        position: "relative",
+        overflow: "hidden",
+      }}
     >
-      <div style={{ textAlign: "center", marginBottom: 4 }}>
+      {/* Top accent stripe picks up the active --primary. */}
+      <div
+        aria-hidden
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          height: 3,
+          background:
+            "linear-gradient(90deg, var(--primary) 0%, var(--accent) 100%)",
+        }}
+      />
+
+      <div style={{ textAlign: "center" }}>
         <div
           style={{
             display: "inline-flex",
             alignItems: "center",
-            gap: 10,
-            color: "var(--fg)",
-            fontSize: 20,
-            fontWeight: 600,
+            justifyContent: "center",
+            width: 52,
+            height: 52,
+            borderRadius: 14,
+            background: "var(--primary-weak)",
+            color: "var(--primary)",
+            marginBottom: 12,
           }}
         >
-          <Icon.Shield size={22} color="var(--primary)" /> SCCAP
+          <Icon.Shield size={26} />
+        </div>
+        <div
+          style={{
+            fontSize: 22,
+            fontWeight: 600,
+            color: "var(--fg)",
+            letterSpacing: "-0.01em",
+          }}
+        >
+          Welcome back
         </div>
         <div
           style={{
             color: "var(--fg-muted)",
-            fontSize: 12.5,
+            fontSize: 13,
             marginTop: 4,
           }}
         >
-          Secure Coding & Compliance Automation Platform
+          Sign in to your SCCAP workspace.
         </div>
       </div>
 
       <label style={{ display: "grid", gap: 6 }}>
-        <span style={{ fontSize: 12, color: "var(--fg-muted)" }}>
+        <span style={{ fontSize: 12, color: "var(--fg-muted)", fontWeight: 500 }}>
           Username or email
         </span>
         <div className="input-with-icon">
@@ -91,7 +127,27 @@ const LoginPageContent: React.FC = () => {
       </label>
 
       <label style={{ display: "grid", gap: 6 }}>
-        <span style={{ fontSize: 12, color: "var(--fg-muted)" }}>Password</span>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "baseline",
+          }}
+        >
+          <span style={{ fontSize: 12, color: "var(--fg-muted)", fontWeight: 500 }}>
+            Password
+          </span>
+          <Link
+            to="/forgot-password"
+            style={{
+              color: "var(--primary)",
+              fontSize: 11.5,
+              textDecoration: "none",
+            }}
+          >
+            Forgot?
+          </Link>
+        </div>
         <div className="input-with-icon">
           <Icon.Lock size={14} />
           <input
@@ -123,7 +179,7 @@ const LoginPageContent: React.FC = () => {
           onChange={(e) => setForm({ ...form, remember: e.target.checked })}
           style={{ accentColor: "var(--primary)" }}
         />
-        Remember me
+        Remember me on this device
       </label>
 
       <button
@@ -133,16 +189,8 @@ const LoginPageContent: React.FC = () => {
         style={{ width: "100%" }}
       >
         {authLoading ? "Signing in…" : "Log in"}
+        {!authLoading && <Icon.ArrowR size={14} />}
       </button>
-
-      <div style={{ textAlign: "center", fontSize: 12.5 }}>
-        <Link
-          to="/forgot-password"
-          style={{ color: "var(--primary)", textDecoration: "none" }}
-        >
-          Forgot password?
-        </Link>
-      </div>
     </form>
   );
 };

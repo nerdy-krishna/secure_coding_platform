@@ -51,17 +51,54 @@ const ResetPasswordPage: React.FC = () => {
     <form
       onSubmit={onSubmit}
       className="surface"
-      style={{ padding: 32, display: "grid", gap: 16 }}
+      style={{
+        padding: 36,
+        display: "grid",
+        gap: 16,
+        boxShadow: "var(--shadow-md)",
+        position: "relative",
+        overflow: "hidden",
+      }}
     >
-      <h2
+      <div
+        aria-hidden
         style={{
-          textAlign: "center",
-          color: "var(--fg)",
-          marginBottom: 8,
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          height: 3,
+          background:
+            "linear-gradient(90deg, var(--primary) 0%, var(--accent) 100%)",
         }}
-      >
-        Set a new password
-      </h2>
+      />
+      <div style={{ textAlign: "center" }}>
+        <div
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 48,
+            height: 48,
+            borderRadius: 12,
+            background: "var(--primary-weak)",
+            color: "var(--primary)",
+            marginBottom: 12,
+          }}
+        >
+          <Icon.Key size={22} />
+        </div>
+        <div
+          style={{
+            fontSize: 20,
+            fontWeight: 600,
+            color: "var(--fg)",
+            letterSpacing: "-0.01em",
+          }}
+        >
+          Set a new password
+        </div>
+      </div>
       <div
         style={{
           textAlign: "center",
