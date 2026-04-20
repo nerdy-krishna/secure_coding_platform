@@ -20,7 +20,6 @@ import SMTPSettingsTab from "../pages/admin/SMTPSettingsTab";
 import AgentManagementPage from "../pages/admin/AgentManagementPage";
 import FrameworkManagementPage from "../pages/admin/FrameworkManagementPage";
 import PromptManagementPage from "../pages/admin/PromptManagementPage";
-import RAGManagementPage from "../pages/admin/RAGManagementPage";
 import ExecutiveSummaryPage from "../pages/analysis/ExecutiveSummaryPage";
 import LlmLogViewerPage from "../pages/analysis/LlmLogViewerPage";
 import ProjectsPage from "../pages/analysis/ProjectsPage";
@@ -174,7 +173,13 @@ function AppContent() {
             element={<FrameworkManagementPage />}
           />
           <Route path="/admin/prompts" element={<PromptManagementPage />} />
-          <Route path="/admin/rag" element={<RAGManagementPage />} />
+          {/* /admin/rag has been merged into /compliance; redirect any
+              bookmarks and the ?framework=…&action=git-ingest deep-link
+              (now unused — the Compliance page handles ingestion inline). */}
+          <Route
+            path="/admin/rag"
+            element={<Navigate to="/compliance" replace />}
+          />
         </Route>
 
         <Route path="/" element={<RouteGuard requires="root-redirect" />} />
