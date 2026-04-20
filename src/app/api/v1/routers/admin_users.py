@@ -1,7 +1,7 @@
 import logging
 import secrets
 import string
-from typing import List, Optional
+from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr
@@ -15,11 +15,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin", tags=["Admin: Users"])
 
+
 class AdminUserCreate(BaseModel):
     email: EmailStr
     is_active: bool = True
     is_superuser: bool = False
     is_verified: bool = False
+
 
 @router.post(
     "/users",
@@ -41,18 +43,19 @@ async def admin_create_user(
         if existing_user:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="User with this email already exists."
+                detail="User with this email already exists.",
             )
     except Exception:
-        pass # get_by_email might raise if not found
+        pass  # get_by_email might raise if not found
 
     # Generate a strong, random placeholder password
     alphabet = string.ascii_letters + string.digits + string.punctuation
-    placeholder_password = ''.join(secrets.choice(alphabet) for i in range(32))
+    placeholder_password = "".join(secrets.choice(alphabet) for i in range(32))
 
     try:
         # We need a proper user dict for fastapi_users user_manager.create
         from app.infrastructure.auth.schemas import UserCreate
+
         create_schema = UserCreate(
             email=user_in.email,
             password=placeholder_password,
@@ -61,19 +64,24 @@ async def admin_create_user(
             is_verified=user_in.is_verified,
         )
         created_user = await user_manager.create(create_schema, safe=True)
-        
+
         # Trigger the forgot password flow to send the setup email
         await user_manager.forgot_password(created_user)
-        
-        logger.info(f"Admin created a new user {created_user.email} and trigger an email setup.")
+
+        logger.info(
+            f"Admin created a new user {created_user.email} and trigger an email setup."
+        )
         return created_user
 
     except Exception as e:
-        logger.error(f"Failed to create user {user_in.email} via admin: {e}", exc_info=True)
+        logger.error(
+            f"Failed to create user {user_in.email} via admin: {e}", exc_info=True
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while creating the user."
+            detail="An error occurred while creating the user.",
         )
+
 
 @router.get(
     "/users",
@@ -93,6 +101,7 @@ async def admin_list_users(
     # We can get the session from the user_manager.user_db.session
     try:
         from sqlalchemy import select
+
         result = await user_manager.user_db.session.execute(select(User))
         users = result.scalars().all()
     except Exception as e:

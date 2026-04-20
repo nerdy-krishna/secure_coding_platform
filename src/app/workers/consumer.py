@@ -122,9 +122,7 @@ async def _run_workflow_for_scan(
             timeout=settings.SCAN_WORKFLOW_TIMEOUT_SECONDS,
         )
 
-        logger.info(
-            f"WORKFLOW: worker_workflow completed for SID: {scan_id_str_log}."
-        )
+        logger.info(f"WORKFLOW: worker_workflow completed for SID: {scan_id_str_log}.")
 
         if final_graph_state and not final_graph_state.get("error_message"):
             success = True
@@ -193,11 +191,7 @@ async def _build_initial_state(
         logger.error(f"MSG: Invalid scan_id UUID: {scan_id_str}")
         return None
 
-    corr_id = (
-        message.correlation_id
-        or body.get("correlation_id")
-        or str(uuid.uuid4())
-    )
+    corr_id = message.correlation_id or body.get("correlation_id") or str(uuid.uuid4())
     correlation_id_var.set(corr_id)
 
     initial_state: WorkerState = {
@@ -296,9 +290,7 @@ class WorkerRunner:
             if self._stop_event.is_set():
                 break
             try:
-                await asyncio.wait_for(
-                    self._stop_event.wait(), timeout=self._backoff
-                )
+                await asyncio.wait_for(self._stop_event.wait(), timeout=self._backoff)
             except asyncio.TimeoutError:
                 pass
             self._backoff = min(self._backoff * 2, _BACKOFF_CAP_SECONDS)
@@ -332,7 +324,9 @@ class WorkerRunner:
                 await queue.consume(_handle_message)
                 queues.append(queue_name)
 
-            logger.info(f"WORKER: Consuming from queues: {queues}. Waiting for messages…")
+            logger.info(
+                f"WORKER: Consuming from queues: {queues}. Waiting for messages…"
+            )
             await self._stop_event.wait()
         finally:
             if self._connection is not None and not self._connection.is_closed:

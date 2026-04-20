@@ -33,10 +33,19 @@ class LLMConfigurationBase(BaseModel):
 
 class SystemConfigurationBase(BaseModel):
     key: str = Field(..., description="The unique key for the configuration setting.")
-    value: Dict[str, Any] = Field(..., description="The value of the configuration setting (JSON).")
-    description: Optional[str] = Field(None, description="A description of what this setting controls.")
-    is_secret: bool = Field(False, description="Whether this setting contains sensitive information (masked in UI).")
-    encrypted: bool = Field(False, description="Whether this setting is encrypted in the database.")
+    value: Dict[str, Any] = Field(
+        ..., description="The value of the configuration setting (JSON)."
+    )
+    description: Optional[str] = Field(
+        None, description="A description of what this setting controls."
+    )
+    is_secret: bool = Field(
+        False,
+        description="Whether this setting contains sensitive information (masked in UI).",
+    )
+    encrypted: bool = Field(
+        False, description="Whether this setting is encrypted in the database."
+    )
 
 
 class SystemConfigurationCreate(SystemConfigurationBase):

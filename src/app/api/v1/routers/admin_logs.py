@@ -7,7 +7,9 @@ from app.infrastructure.auth.core import current_superuser
 from app.infrastructure.database import models as db_models
 
 from app.api.v1 import models as api_models
-from app.infrastructure.database.repositories.system_config_repo import SystemConfigRepository
+from app.infrastructure.database.repositories.system_config_repo import (
+    SystemConfigRepository,
+)
 from app.infrastructure.database.database import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -51,7 +53,7 @@ async def set_log_level(
     try:
         # 1. Update Runtime
         update_logging_level(update.level)
-        
+
         # 2. Persist to DB
         repo = SystemConfigRepository(db)
         config_create = api_models.SystemConfigurationCreate(
@@ -59,7 +61,7 @@ async def set_log_level(
             value={"level": update.level},
             description="System Log Level",
             is_secret=False,
-            encrypted=False
+            encrypted=False,
         )
         await repo.set_value(config_create)
 

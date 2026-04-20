@@ -293,9 +293,7 @@ class LLMClient:
             cache_read_tokens=token_callback.cache_read_tokens,
         )
 
-    def _build_invoke_input(
-        self, system_prompt: Optional[str], prompt: str
-    ) -> Any:
+    def _build_invoke_input(self, system_prompt: Optional[str], prompt: str) -> Any:
         """Returns the input to pass to structured_llm.ainvoke().
 
         - Anthropic + non-empty system_prompt → [SystemMessage(cache_control),

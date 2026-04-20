@@ -8,6 +8,7 @@ from app.infrastructure.database.models import User
 # --- START: THE FINAL FIX ---
 # Import the correctly named dependency from the central database module.
 from app.infrastructure.database.database import get_db
+
 # --- END: THE FINAL FIX ---
 
 

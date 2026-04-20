@@ -113,9 +113,11 @@ async def generate_impact_report_node(
         prompt_template_name="Impact Report Generation",
         prompt_context=prompt_context_for_log,
         raw_response=llm_response.raw_output,
-        parsed_output=llm_response.parsed_output.model_dump()
-        if llm_response.parsed_output
-        else None,
+        parsed_output=(
+            llm_response.parsed_output.model_dump()
+            if llm_response.parsed_output
+            else None
+        ),
         error=llm_response.error,
         file_path="N/A (Impact Report)",
         cost=llm_response.cost,

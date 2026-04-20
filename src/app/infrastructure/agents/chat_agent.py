@@ -250,9 +250,11 @@ class ChatAgent:
                     "frameworks": frameworks,
                 },
                 raw_response=llm_response.raw_output,
-                parsed_output=llm_response.parsed_output.model_dump()
-                if llm_response.parsed_output
-                else None,
+                parsed_output=(
+                    llm_response.parsed_output.model_dump()
+                    if llm_response.parsed_output
+                    else None
+                ),
                 error=llm_response.error,
                 cost=llm_response.cost,
                 input_tokens=llm_response.prompt_tokens,
