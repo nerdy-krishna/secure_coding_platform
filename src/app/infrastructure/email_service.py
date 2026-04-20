@@ -56,7 +56,7 @@ async def send_password_reset_email(email_to: EmailStr, token: str, reset_url_ba
     <html>
         <body>
             <h2>Password Reset / Setup</h2>
-            <p>You have been invited to join the Secure Coding Platform or requested a password reset.</p>
+            <p>You have been invited to join SCCAP, or requested a password reset.</p>
             <p>Please click the link below to set your password:</p>
             <p><a href="{reset_url}">{reset_url}</a></p>
             <br>
@@ -66,7 +66,7 @@ async def send_password_reset_email(email_to: EmailStr, token: str, reset_url_ba
     """
 
     message = MessageSchema(
-        subject="Password Reset / Setup for Secure Coding Platform",
+        subject="Password Reset / Setup for SCCAP",
         recipients=[email_to],
         body=html_content,
         subtype=MessageType.html

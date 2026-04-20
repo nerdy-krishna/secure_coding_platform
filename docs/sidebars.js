@@ -10,7 +10,7 @@ const sidebars = {
       link: {
         type: 'generated-index',
         title: 'Introduction',
-        description: 'Learn about the Secure Coding Platform.',
+        description: 'Learn about the SCCAP.',
         slug: '/introduction',
       },
       collapsible: true,
@@ -45,7 +45,7 @@ const sidebars = {
       link: {
         type: 'generated-index',
         title: 'User Guide',
-        description: 'How to use the Secure Coding Platform features.',
+        description: 'How to use the SCCAP features.',
         slug: '/user-guide',
       },
       collapsible: true,

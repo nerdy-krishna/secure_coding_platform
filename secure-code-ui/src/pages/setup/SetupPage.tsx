@@ -139,7 +139,7 @@ const SetupPage: React.FC = () => {
     >
       <Card style={{ width: "100%", maxWidth: 640 }}>
         <Title level={3} style={{ textAlign: "center", marginBottom: 8 }}>
-          Secure Coding Platform Setup
+          SCCAP Setup
         </Title>
         <Paragraph type="secondary" style={{ textAlign: "center" }}>
           Configure deployment, the admin account, and your LLM provider.

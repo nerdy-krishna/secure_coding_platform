@@ -1,10 +1,10 @@
 #!/bin/bash
 set -e
 
-# setup.sh - Easy Installation Script for Secure Coding Platform
+# setup.sh - Easy Installation Script for SCCAP
 
 echo "=================================================="
-echo "   Secure Coding Platform - Setup Wizard"
+echo "   SCCAP - Setup Wizard"
 echo "=================================================="
 echo ""
 
@@ -201,7 +201,7 @@ echo "[*] Waiting for database to be healthy..."
 # Simple wait loop for db container
 MAX_RETRIES=30
 COUNT=0
-until [ "$(docker inspect -f '{{.State.Health.Status}}' secure_coding_platform_db 2>/dev/null)" == "healthy" ]; do
+until [ "$(docker inspect -f '{{.State.Health.Status}}' sccap_db 2>/dev/null)" == "healthy" ]; do
     if [ $COUNT -gt $MAX_RETRIES ]; then
         echo "Error: Database failed to become healthy in time."
         exit 1

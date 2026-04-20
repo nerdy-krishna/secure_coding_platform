@@ -5,7 +5,7 @@ title: User Guide Overview
 
 # User Guide
 
-This section contains guides for users of the Secure Coding Platform.
+This section contains guides for users of the SCCAP.
 
 ## Core Features
 *   [**Submitting Code**](./code-analysis/submitting-code.md): Learn how to upload files or connect repositories.

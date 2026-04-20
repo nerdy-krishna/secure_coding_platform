@@ -1,0 +1,268 @@
+/* ===========================================================
+   SCCAP primitive utility classes — ported from the Claude
+   Design handoff bundle. These are consumed by new Phase-G
+   pages (TopNav shell, Dashboard, Submit, Results, etc.).
+
+   Classes here are opt-in: nothing applies globally except the
+   scrollbar styling and the monospace/serif defaults on `pre`
+   / `code` via the `.mono` helper. Ant Design pages continue
+   rendering as before.
+   =========================================================== */
+
+/* ============ utility primitives ============ */
+.surface {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+}
+.surface-soft {
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+.inset {
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+
+.mono { font-family: var(--font-mono); font-variant-ligatures: none; }
+.muted { color: var(--fg-muted); }
+.subtle { color: var(--fg-subtle); }
+
+/* ============ chips / tags ============ */
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 10px;
+  border-radius: var(--r-pill);
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid var(--border);
+  background: var(--bg-soft);
+  color: var(--fg-muted);
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.chip .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+.chip-critical { color: var(--critical); background: var(--critical-weak); border-color: transparent; }
+.chip-high     { color: var(--high);     background: var(--high-weak);     border-color: transparent; }
+.chip-medium   { color: var(--medium);   background: var(--medium-weak);   border-color: transparent; }
+.chip-low      { color: var(--low);      background: var(--low-weak);      border-color: transparent; }
+.chip-info     { color: var(--info);     background: var(--info-weak);     border-color: transparent; }
+.chip-success  { color: var(--success);  background: var(--success-weak);  border-color: transparent; }
+.chip-ai       { color: var(--primary);  background: var(--primary-weak);  border-color: transparent; }
+
+/* ============ buttons ============ */
+.sccap-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 8px 14px;
+  border-radius: var(--r-sm);
+  font-weight: 500;
+  font-size: 13.5px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--fg);
+  cursor: pointer;
+  transition: all .15s var(--ease);
+  line-height: 1;
+  white-space: nowrap;
+  font-family: inherit;
+}
+.sccap-btn:hover { border-color: var(--border-strong); background: var(--bg-soft); }
+.sccap-btn:active { transform: translateY(0.5px); }
+.sccap-btn svg { width: 14px; height: 14px; }
+
+.sccap-btn-primary {
+  background: var(--primary);
+  color: var(--primary-ink);
+  border-color: var(--primary);
+}
+.sccap-btn-primary:hover { background: var(--primary-strong); border-color: var(--primary-strong); }
+
+.sccap-btn-ghost { border-color: transparent; background: transparent; color: var(--fg-muted); }
+.sccap-btn-ghost:hover { background: var(--bg-soft); color: var(--fg); }
+
+.sccap-btn-sm { padding: 5px 10px; font-size: 12.5px; }
+.sccap-btn-lg { padding: 11px 18px; font-size: 14.5px; }
+.sccap-btn-icon { padding: 7px; border-radius: var(--r-sm); }
+.sccap-btn-icon svg { width: 16px; height: 16px; }
+
+.sccap-btn-danger { background: var(--critical); color: white; border-color: var(--critical); }
+
+/* ============ inputs ============ */
+.sccap-input, .sccap-select, .sccap-textarea {
+  width: 100%;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 8px 12px;
+  color: var(--fg);
+  font-size: 13.5px;
+  font-family: inherit;
+  transition: border-color .15s var(--ease), box-shadow .15s var(--ease);
+}
+.sccap-input:focus, .sccap-select:focus, .sccap-textarea:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--primary) 20%, transparent);
+}
+.input-with-icon { position: relative; }
+.input-with-icon svg { position: absolute; top: 50%; left: 10px; transform: translateY(-50%); width: 14px; height: 14px; color: var(--fg-subtle); pointer-events: none; }
+.input-with-icon .sccap-input { padding-left: 32px; }
+
+/* ============ card ============ */
+.sccap-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 20px;
+  transition: border-color .15s var(--ease), box-shadow .15s var(--ease);
+}
+.sccap-card:hover { border-color: var(--border-strong); }
+
+/* ============ stat bar ============ */
+.stat-bar {
+  display: flex;
+  height: 8px;
+  border-radius: var(--r-pill);
+  overflow: hidden;
+  background: var(--bg-soft);
+}
+.stat-bar > span { display: block; height: 100%; }
+
+/* ============ notif dot on nav ============ */
+.notif-dot { position: absolute; top: 6px; right: 6px; width: 8px; height: 8px; background: var(--critical); border-radius: 50%; border: 2px solid var(--bg-elev); }
+
+/* ============ kbd ============ */
+.kbd {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  color: var(--fg-muted);
+}
+
+/* ============ animated bg + spinner ============ */
+@keyframes sccap-sheen {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.sheen {
+  background: linear-gradient(90deg,
+    var(--bg-soft) 0%,
+    color-mix(in oklch, var(--primary) 25%, var(--bg-soft)) 50%,
+    var(--bg-soft) 100%);
+  background-size: 200% 100%;
+  animation: sccap-sheen 2.2s linear infinite;
+}
+
+@keyframes sccap-pulse-dot { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+.pulse-dot { animation: sccap-pulse-dot 1.4s ease-in-out infinite; }
+
+@keyframes sccap-spin { to { transform: rotate(360deg); } }
+.sccap-spin { animation: sccap-spin 1s linear infinite; }
+
+/* ============ diff viewer ============ */
+.diff {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+.diff-row { display: grid; grid-template-columns: 40px 40px 1fr; }
+.diff-row > span:nth-child(1),
+.diff-row > span:nth-child(2) {
+  padding: 0 10px;
+  color: var(--fg-subtle);
+  text-align: right;
+  user-select: none;
+  border-right: 1px solid var(--border);
+  background: var(--bg-soft);
+}
+.diff-row > span:nth-child(3) { padding: 0 14px; white-space: pre; }
+.diff-row.add { background: var(--diff-add); }
+.diff-row.add > span:nth-child(3)::before { content: '+ '; color: var(--success); }
+.diff-row.del { background: var(--diff-del); }
+.diff-row.del > span:nth-child(3)::before { content: '− '; color: var(--critical); }
+.diff-row.ctx > span:nth-child(3)::before { content: '  '; }
+
+/* ============ transitions ============ */
+.fade-in { animation: sccap-fade-in .3s var(--ease); }
+@keyframes sccap-fade-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+/* ============ severity bars ============ */
+.sev-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+.sev-row .label { width: 72px; color: var(--fg-muted); }
+.sev-row .bar { flex: 1; height: 6px; background: var(--bg-soft); border-radius: 99px; overflow: hidden; }
+.sev-row .bar > span { display: block; height: 100%; border-radius: 99px; }
+.sev-row .num { width: 32px; text-align: right; font-variant-numeric: tabular-nums; font-weight: 500; }
+
+/* ============ utility table ============ */
+.sccap-t { width: 100%; border-collapse: collapse; font-size: 13px; }
+.sccap-t th { text-align: left; font-weight: 500; color: var(--fg-muted); font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--bg-soft); }
+.sccap-t td { padding: 12px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.sccap-t tr:last-child td { border-bottom: none; }
+.sccap-t tr:hover td { background: var(--bg-soft); }
+.sccap-t tr { cursor: pointer; }
+
+/* ============ section headers / dividers / tabs / radio-group /
+   switch / progress — kept as-is from the prototype, scoped names
+   where they might collide with other rulesets ============ */
+
+.section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; gap: 12px; }
+.section-head h3 { display: flex; align-items: center; gap: 10px; }
+
+.sccap-divider { height: 1px; background: var(--border); margin: 16px 0; }
+.sccap-divider-v { width: 1px; background: var(--border); align-self: stretch; }
+
+.sccap-progress { height: 6px; background: var(--bg-soft); border-radius: 99px; overflow: hidden; }
+.sccap-progress > span { display: block; height: 100%; background: var(--primary); border-radius: 99px; transition: width .4s var(--ease); }
+
+.sccap-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); }
+.sccap-tab {
+  padding: 10px 14px;
+  font-size: 13.5px;
+  color: var(--fg-muted);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  cursor: pointer;
+  font-weight: 500;
+  display: inline-flex; align-items: center; gap: 8px;
+  transition: color .15s var(--ease), border-color .15s var(--ease);
+}
+.sccap-tab:hover { color: var(--fg); }
+.sccap-tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+.sccap-tab .count { background: var(--bg-soft); border-radius: 99px; padding: 1px 8px; font-size: 11px; }
+.sccap-tab.active .count { background: var(--primary-weak); color: var(--primary); }
+
+.radio-group { display: inline-flex; background: var(--bg-soft); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 3px; gap: 2px; }
+.radio-group button { padding: 5px 11px; border-radius: 5px; background: transparent; border: none; font-size: 12.5px; color: var(--fg-muted); font-weight: 500; cursor: pointer; transition: all .12s var(--ease); font-family: inherit; }
+.radio-group button:hover { color: var(--fg); }
+.radio-group button.active { background: var(--bg-elev); color: var(--fg); box-shadow: var(--shadow-xs); }
+
+.sccap-switch { position: relative; width: 34px; height: 20px; background: var(--border-strong); border-radius: 99px; cursor: pointer; transition: background .2s var(--ease); flex: none; }
+.sccap-switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; background: white; border-radius: 50%; transition: transform .2s var(--ease); }
+.sccap-switch.on { background: var(--primary); }
+.sccap-switch.on::after { transform: translateX(14px); }
+
+/* code blocks when used via the .mono/.code helpers — kept from
+   the prototype but under a scope-safe name to avoid conflicting
+   with any rules Ant pages might have. */
+pre.sccap-code {
+  font-family: var(--font-mono);
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.55;
+  margin: 0;
+}

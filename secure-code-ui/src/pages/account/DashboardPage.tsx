@@ -8,7 +8,7 @@ const DashboardPage: React.FC = () => {
   return (
     <div>
       <Title level={2}>Dashboard</Title>
-      <p>Welcome to your Secure Coding Platform dashboard!</p>
+      <p>Welcome to your SCCAP dashboard!</p>
       {/* Dashboard content will go here */}
     </div>
   );

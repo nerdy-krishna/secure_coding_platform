@@ -1,6 +1,6 @@
 # Configuration Guide
 
-The Secure Coding Platform is configured primarily through environment variables defined in a `.env` file located in the project root.
+The SCCAP is configured primarily through environment variables defined in a `.env` file located in the project root.
 
 > ⚠️ It is crucial to set up this file correctly before running the application.
 

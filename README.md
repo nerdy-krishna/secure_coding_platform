@@ -1,6 +1,6 @@
-# AI-Powered Secure Coding & Compliance Automation Platform
+# SCCAP — Secure Coding & Compliance Automation Platform
 
-This is an open-source, AI-powered tool designed to help developers and security teams audit code for vulnerabilities and apply intelligent remediations automatically. The platform's "Audit-First, Remediate-Intelligently" approach ensures full control and visibility throughout the security analysis process.
+An open-source, AI-powered tool that helps developers and security teams audit code for vulnerabilities and apply intelligent remediations automatically. SCCAP's "Audit-First, Remediate-Intelligently" approach ensures full control and visibility throughout the security analysis process.
 
 ## Key Features
 

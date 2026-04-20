@@ -5,7 +5,7 @@ title: Installation Guide
 
 # Installation Guide
 
-The Secure Coding Platform is designed for local setup and deployment using Docker and Docker Compose. This guide will walk you through the process.
+The SCCAP is designed for local setup and deployment using Docker and Docker Compose. This guide will walk you through the process.
 
 ## Prerequisites
 
@@ -170,7 +170,7 @@ If your build fails with disk space errors despite having plenty of free space o
 
 
 1.  **Clone the Repository**:
-    Open your terminal and clone the Secure Coding Platform repository:
+    Open your terminal and clone the SCCAP repository:
     ```bash
     git clone https://github.com/nerdy-krishna/secure_coding_platform.git
     cd secure-code-platform
