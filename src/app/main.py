@@ -176,6 +176,45 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to initialize system config cache: {e}")
 
+    # --- Seed default framework rows ---
+    # The Compliance page tracks 3 defaults (asvs, proactive_controls,
+    # cheatsheets) in ChromaDB, but the Scan and Advisor pages read the
+    # list from the `frameworks` table via /admin/frameworks/. Without a
+    # row here, users can't select a default in a scan even after admin
+    # ingests it. Seed unconditionally so the defaults are always
+    # selectable — ingestion only enriches the RAG docs.
+    try:
+        from app.core.services.compliance_service import DEFAULT_FRAMEWORKS
+        from app.infrastructure.database import models as db_models
+        from sqlalchemy import select as _select
+
+        async with AsyncSessionLocal() as session:
+            existing = await session.execute(
+                _select(db_models.Framework.name).where(
+                    db_models.Framework.name.in_(list(DEFAULT_FRAMEWORKS.keys()))
+                )
+            )
+            present = {row[0] for row in existing.all()}
+            inserted = 0
+            for name, meta in DEFAULT_FRAMEWORKS.items():
+                if name in present:
+                    continue
+                session.add(
+                    db_models.Framework(
+                        name=name,
+                        description=meta["description"],
+                    )
+                )
+                inserted += 1
+            if inserted:
+                await session.commit()
+                logger.info(
+                    f"Seeded {inserted} default framework row(s): "
+                    f"{sorted(set(DEFAULT_FRAMEWORKS.keys()) - present)}"
+                )
+    except Exception as e:
+        logger.error(f"Failed to seed default framework rows: {e}")
+
     # --- Start the outbox sweeper ---
     from app.infrastructure.messaging.outbox_sweeper import run_outbox_sweeper
 
