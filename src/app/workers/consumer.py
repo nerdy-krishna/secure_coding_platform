@@ -1,24 +1,45 @@
-import pika
-import os
-import logging
-import logging.config
+"""RabbitMQ consumer — aio_pika async native.
+
+Replaces the old pika.BlockingConnection + thread-bridge-to-asyncio pattern
+with a single asyncio event loop that does everything inline: connect to
+RabbitMQ, consume messages, invoke the LangGraph workflow, ack/nack. Killed:
+
+- `_async_loop` + daemon thread running `asyncio.new_event_loop()`
+- `_pika_connection.add_callback_threadsafe` + the `_finalize_delivery` dance
+- `schedule_task_on_async_loop` + `call_soon_threadsafe`
+- The `asyncio_thread_worker_target` with its `run_until_complete` cleanup
+
+Preserved: exponential reconnect backoff, scan-workflow timeout, FAILED-on-
+crash DB update, duplicate-delivery idempotency precheck.
+
+aio_pika's `connect_robust` auto-reconnects on network blips, but we still
+wrap the consume loop in exponential backoff for the "RabbitMQ is down for
+a while" case.
+"""
+
 import asyncio
 import json
-import threading
-import time
-from typing import Callable, Optional
-
-from langchain_core.runnables import RunnableConfig
+import logging
+import logging.config
+import signal
 import uuid
-from dotenv import load_dotenv
+from typing import Optional
 
-from app.infrastructure.workflows.worker_graph import (
-    get_workflow,
-    WorkerState,
-    close_workflow_resources,
+import aio_pika
+from aio_pika.abc import (
+    AbstractIncomingMessage,
+    AbstractRobustConnection,
 )
+from dotenv import load_dotenv
+from langchain_core.runnables import RunnableConfig
+
 from app.config.config import settings
 from app.config.logging_config import LOGGING_CONFIG, correlation_id_var
+from app.infrastructure.workflows.worker_graph import (
+    WorkerState,
+    close_workflow_resources,
+    get_workflow,
+)
 from app.shared.lib.scan_status import (
     STATUS_FAILED,
     STATUS_PENDING_APPROVAL,
@@ -26,60 +47,45 @@ from app.shared.lib.scan_status import (
     STATUS_QUEUED_FOR_SCAN,
 )
 
-# Scan statuses the workflow knows how to handle. Any other status received by
-# the worker means the scan is either already in-flight on another worker, has
-# already completed, or was cancelled — all duplicate-delivery cases that we
-# should ACK without re-invoking the graph.
+logging.config.dictConfig(LOGGING_CONFIG)
+logging.captureWarnings(True)
+logger = logging.getLogger(__name__)
+logging.getLogger("aio_pika").setLevel(logging.WARNING)
+logging.getLogger("aiormq").setLevel(logging.WARNING)
+
+load_dotenv()
+
+# Scan statuses the workflow knows how to handle. Any other status received
+# by the worker means the scan is either already in-flight on another worker,
+# has already completed, or was cancelled — all duplicate-delivery cases that
+# we should ACK without re-invoking the graph.
 _WORKFLOW_ENTRY_STATUSES = frozenset(
     {STATUS_QUEUED, STATUS_QUEUED_FOR_SCAN, STATUS_PENDING_APPROVAL}
 )
 
-from pika.adapters.blocking_connection import BlockingChannel
-from pika.spec import (
-    BasicProperties,
-    Basic,
-)
-from pika.exceptions import AMQPConnectionError
-
-logging.config.dictConfig(LOGGING_CONFIG)
-logging.captureWarnings(True)
-logger = logging.getLogger(__name__)
-
-logging.getLogger("pika").setLevel(logging.WARNING)
-
-load_dotenv()
-
-RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "rabbitmq")
-RABBITMQ_PORT = os.getenv("RABBITMQ_PORT_DOCKER", "5672")
-RABBITMQ_USER = os.getenv("RABBITMQ_DEFAULT_USER", "devuser_scp")
-RABBITMQ_PASS = os.getenv("RABBITMQ_DEFAULT_PASS", "YourStrongRabbitPassword!")
-
-_async_loop: Optional[asyncio.AbstractEventLoop] = None
-_event_loop_thread: Optional[threading.Thread] = None
-_pika_connection: Optional[pika.BlockingConnection] = None
-_pika_channel: Optional[BlockingChannel] = None
-
-_stop_event = threading.Event()
+# Reconnect backoff for the outer consume loop. aio_pika's robust connection
+# handles per-op retries; this catches the "broker down for minutes" case
+# where the connection itself can't be established.
+_BACKOFF_START_SECONDS = 1.0
+_BACKOFF_CAP_SECONDS = 30.0
 
 
-async def run_graph_task_wrapper(initial_state: WorkerState, delivery_tag: int):
+async def _run_workflow_for_scan(
+    initial_state: WorkerState,
+) -> bool:
+    """Invokes the LangGraph workflow for a given scan. Returns success flag.
+
+    Handles the idempotency precheck, the timeout-wrapped invocation, and the
+    FAILED-on-crash DB update. Does NOT ack/nack — the caller owns that.
     """
-    Gets the compiled workflow and executes it with a checkpointer configuration.
-    """
-    global _pika_channel, _pika_connection
     scan_id_uuid = initial_state["scan_id"]
     scan_id_str_log = str(scan_id_uuid)
     logger.info(
-        f"ASYNC WRAPPER: Starting/Resuming worker_workflow for scan_id: {scan_id_str_log}"
+        f"WORKFLOW: Starting/Resuming worker_workflow for scan_id: {scan_id_str_log}"
     )
 
-    success = False
-    timed_out = False
-
-    # Idempotency check: if the scan is not in one of the workflow's entry
-    # statuses, this is a duplicate delivery (RabbitMQ redelivered after a
-    # network blip, or the outbox sweeper re-published after a race with the
-    # primary publish). ACK silently without running the workflow again.
+    # Idempotency precheck: if the scan is past one of the workflow's entry
+    # statuses, this is a duplicate delivery.
     try:
         from app.infrastructure.database import AsyncSessionLocal
         from app.infrastructure.database.repositories.scan_repo import ScanRepository
@@ -89,25 +95,24 @@ async def run_graph_task_wrapper(initial_state: WorkerState, delivery_tag: int):
             existing = await repo.get_scan(scan_id_uuid)
         if existing is None:
             logger.warning(
-                f"ASYNC WRAPPER: Scan {scan_id_str_log} not found in DB; ACKing."
+                f"WORKFLOW: Scan {scan_id_str_log} not found in DB; ACKing as noop."
             )
-            success = True
-            _finalize_delivery(delivery_tag, success, scan_id_str_log)
-            return
+            return True
         if existing.status not in _WORKFLOW_ENTRY_STATUSES:
             logger.info(
-                f"ASYNC WRAPPER: Scan {scan_id_str_log} already in status "
-                f"'{existing.status}' — treating as duplicate delivery, ACKing."
+                f"WORKFLOW: Scan {scan_id_str_log} already in status "
+                f"'{existing.status}' — treating as duplicate delivery."
             )
-            success = True
-            _finalize_delivery(delivery_tag, success, scan_id_str_log)
-            return
+            return True
     except Exception as e:
         logger.warning(
-            f"ASYNC WRAPPER: Idempotency precheck failed for {scan_id_str_log}: {e}. "
+            f"WORKFLOW: Idempotency precheck failed for {scan_id_str_log}: {e}. "
             f"Proceeding with workflow invocation.",
             exc_info=True,
         )
+
+    success = False
+    timed_out = False
 
     try:
         worker_workflow = await get_workflow()
@@ -118,7 +123,7 @@ async def run_graph_task_wrapper(initial_state: WorkerState, delivery_tag: int):
         )
 
         logger.info(
-            f"ASYNC WRAPPER: worker_workflow completed for SID: {scan_id_str_log}."
+            f"WORKFLOW: worker_workflow completed for SID: {scan_id_str_log}."
         )
 
         if final_graph_state and not final_graph_state.get("error_message"):
@@ -129,25 +134,21 @@ async def run_graph_task_wrapper(initial_state: WorkerState, delivery_tag: int):
                 if final_graph_state
                 else "Workflow returned no state"
             )
-            logger.error(f"ASYNC WRAPPER: Graph processing failed. Error: {error_msg}")
-            success = False
+            logger.error(f"WORKFLOW: Graph processing failed. Error: {error_msg}")
 
     except asyncio.TimeoutError:
         timed_out = True
         logger.error(
-            f"ASYNC WRAPPER: Scan {scan_id_str_log} exceeded "
+            f"WORKFLOW: Scan {scan_id_str_log} exceeded "
             f"{settings.SCAN_WORKFLOW_TIMEOUT_SECONDS}s timeout; cancelling workflow."
         )
-        success = False
     except Exception as e:
         logger.error(
-            f"ASYNC WRAPPER: Exception during worker_workflow invocation: {e}",
+            f"WORKFLOW: Exception during worker_workflow invocation: {e}",
             exc_info=True,
         )
-        success = False
 
-    # On any failure (timeout, exception, or workflow-reported error), mark the
-    # scan FAILED in the main DB so the UI doesn't show it stuck mid-flight.
+    # On any failure, mark the scan FAILED so the UI doesn't show it stuck.
     if not success:
         try:
             from app.infrastructure.database import AsyncSessionLocal
@@ -159,293 +160,219 @@ async def run_graph_task_wrapper(initial_state: WorkerState, delivery_tag: int):
                 repo = ScanRepository(db)
                 await repo.update_status(scan_id_uuid, STATUS_FAILED)
             logger.info(
-                f"ASYNC WRAPPER: Set scan status to FAILED in DB for SID: {scan_id_str_log}"
+                f"WORKFLOW: Set scan status to FAILED in DB for SID: {scan_id_str_log}"
                 + (" (timeout)" if timed_out else "")
             )
         except Exception as db_err:
             logger.error(
-                f"ASYNC WRAPPER: FAILED TO UPDATE STATUS IN DB for SID: {scan_id_str_log}. Error: {db_err}"
+                f"WORKFLOW: FAILED TO UPDATE STATUS IN DB for SID: {scan_id_str_log}. "
+                f"Error: {db_err}"
             )
 
-    _finalize_delivery(delivery_tag, success, scan_id_str_log)
+    return success
 
 
-def _finalize_delivery(delivery_tag: int, success: bool, scan_id_str_log: str) -> None:
-    """Thread-safely ACK or NACK a pika delivery from the asyncio thread."""
-    if not (_pika_connection and _pika_connection.is_open):
-        return
-
-    def pika_finalize_message():
-        try:
-            if _pika_channel and _pika_channel.is_open:
-                if success:
-                    _pika_channel.basic_ack(delivery_tag=delivery_tag)
-                else:
-                    _pika_channel.basic_nack(
-                        delivery_tag=delivery_tag, requeue=False
-                    )
-        except Exception as e_pika_finalize:
-            logger.error(
-                f"PIKA FINALIZE: Exception for SID {scan_id_str_log}: {e_pika_finalize}",
-                exc_info=True,
-            )
-
-    _pika_connection.add_callback_threadsafe(pika_finalize_message)
-
-
-def schedule_task_on_async_loop(target_coroutine_func: Callable, *args, **kwargs):
-    """
-    Schedules a target coroutine function to be run on the asyncio event loop.
-    The target_coroutine_func will be wrapped with asyncio.create_task.
-    """
-    global _async_loop
-    if _async_loop and _async_loop.is_running():
-
-        def _scheduler():
-            asyncio.create_task(target_coroutine_func(*args, **kwargs))
-            logger.debug(
-                f"ASYNC SCHEDULER (via _scheduler): Task created for {target_coroutine_func.__name__}"
-            )
-
-        _async_loop.call_soon_threadsafe(_scheduler)
-        logger.info(
-            f"ASYNC SCHEDULER: Task for {target_coroutine_func.__name__} scheduled via call_soon_threadsafe."
-        )
-    else:
-        logger.error(
-            f"ASYNC SCHEDULER: Asyncio loop not available/running. Task for {target_coroutine_func.__name__} not scheduled."
-        )
-
-
-def pika_message_callback(
-    ch: BlockingChannel,
-    method: Basic.Deliver,
-    properties: BasicProperties,
-    body: bytes,
-):
-    """Pika callback for received messages from all queues."""
+async def _build_initial_state(
+    message: AbstractIncomingMessage,
+) -> Optional[WorkerState]:
+    """Parses the message body into a WorkerState. Returns None on parse error."""
     try:
-        message_data = json.loads(body.decode("utf-8"))
-        scan_id_str = message_data.get("scan_id")
+        body = json.loads(message.body.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        logger.error(f"MSG: Failed to decode message body: {e}", exc_info=True)
+        return None
 
-        corr_id = getattr(properties, "correlation_id", None) or message_data.get("correlation_id") or str(uuid.uuid4())
-        correlation_id_var.set(corr_id)
+    scan_id_str = body.get("scan_id")
+    if not scan_id_str:
+        logger.error("MSG: Invalid message — no scan_id.")
+        return None
 
-        logger.info(
-            f"PIKA CB: Received message from queue '{method.routing_key}'. Delivery Tag: {method.delivery_tag}."
-        )
+    try:
+        scan_uuid = uuid.UUID(scan_id_str)
+    except ValueError:
+        logger.error(f"MSG: Invalid scan_id UUID: {scan_id_str}")
+        return None
 
-        if not scan_id_str:
-            logger.error("PIKA CB: Invalid message - no scan_id.")
-            ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+    corr_id = (
+        message.correlation_id
+        or body.get("correlation_id")
+        or str(uuid.uuid4())
+    )
+    correlation_id_var.set(corr_id)
+
+    initial_state: WorkerState = {
+        "scan_id": scan_uuid,
+        "scan_type": "AUDIT",  # overwritten by the DB value in retrieve_and_prepare_data
+        "current_scan_status": None,
+        "utility_llm_config_id": None,
+        "fast_llm_config_id": None,
+        "reasoning_llm_config_id": None,
+        "files": None,
+        "initial_file_map": None,
+        "final_file_map": None,
+        "repository_map": None,
+        "dependency_graph": None,
+        "all_relevant_agents": {},
+        "live_codebase": None,
+        "findings": [],
+        "proposed_fixes": None,
+        "agent_results": None,
+        "impact_report": None,
+        "sarif_report": None,
+        "error_message": None,
+    }
+
+    # Queue-type routing hints (scan_type gets overwritten by the DB value
+    # regardless; this is mostly for logging).
+    queue_name = message.routing_key or ""
+    if queue_name == settings.RABBITMQ_REMEDIATION_QUEUE:
+        logger.info(f"MSG: REMEDIATION trigger for scan_id: {scan_uuid}")
+        initial_state["scan_type"] = "AUDIT_AND_REMEDIATE"
+    elif queue_name == settings.RABBITMQ_APPROVAL_QUEUE:
+        logger.info(f"MSG: Resuming ANALYSIS for scan_id: {scan_uuid}")
+    else:
+        logger.info(f"MSG: Starting new ANALYSIS for scan_id: {scan_uuid}")
+
+    return initial_state
+
+
+async def _handle_message(message: AbstractIncomingMessage) -> None:
+    """Top-level message handler. ACK on success, reject (no requeue) on failure.
+
+    The `async with message.process(...)` context manager ACKs the message on
+    clean exit and NACKs on exception. We use `requeue=False` so poison
+    messages don't loop; FAILED scan status is already persisted by
+    `_run_workflow_for_scan` for UI visibility.
+    """
+    logger.info(
+        f"MSG: Received from queue '{message.routing_key}' "
+        f"(delivery_tag={message.delivery_tag})."
+    )
+
+    async with message.process(requeue=False, ignore_processed=True):
+        initial_state = await _build_initial_state(message)
+        if initial_state is None:
+            # Parse failures: reject explicitly so the message isn't requeued.
+            await message.reject(requeue=False)
             return
 
-        scan_uuid = uuid.UUID(scan_id_str)
-
-        initial_worker_state: WorkerState = {
-            "scan_id": scan_uuid,
-            "scan_type": "AUDIT",  # This will be overwritten by the DB value
-            "current_scan_status": None,
-            "utility_llm_config_id": None,
-            "fast_llm_config_id": None,
-            "reasoning_llm_config_id": None,
-            "files": None,
-            "initial_file_map": None,
-            "final_file_map": None,
-            "repository_map": None,
-            "dependency_graph": None,
-            "all_relevant_agents": {},
-            "live_codebase": None,
-            "findings": [],
-            "proposed_fixes": None,
-            "agent_results": None,
-            "impact_report": None,
-            "sarif_report": None,
-            "error_message": None,
-        }
-
-        queue_name = method.routing_key
-        # This block is now updated to set the correct key
-        if queue_name == settings.RABBITMQ_REMEDIATION_QUEUE:
-            logger.info(
-                f"PIKA CB: Received REMEDIATION trigger for scan_id: {scan_uuid}"
-            )
-            initial_worker_state["scan_type"] = "AUDIT_AND_REMEDIATE"
-        elif queue_name == settings.RABBITMQ_APPROVAL_QUEUE:
-            logger.info(f"PIKA CB: Resuming ANALYSIS for scan_id: {scan_uuid}")
-            # The scan_type is already set from the DB, no need to change it here
-            pass
-        else:
-            logger.info(f"PIKA CB: Starting new ANALYSIS for scan_id: {scan_uuid}")
-            # The scan_type will be correctly read from the DB in the first step
-            pass
-
-        schedule_task_on_async_loop(
-            run_graph_task_wrapper, initial_worker_state, method.delivery_tag
-        )
-
-    except (json.JSONDecodeError, ValueError) as e:
-        logger.error(
-            f"PIKA CB: Failed to parse message body or UUID: {e}", exc_info=True
-        )
-        ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+        success = await _run_workflow_for_scan(initial_state)
+        if not success:
+            # Explicit reject so `message.process`'s implicit ack doesn't
+            # win. `reject(requeue=False)` is idempotent with
+            # `ignore_processed=True`.
+            await message.reject(requeue=False)
 
 
-def asyncio_thread_worker_target():
-    """Target function for the thread that runs the asyncio event loop."""
-    global _async_loop
-    _async_loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(_async_loop)
-    logger.info("ASYNCIO THREAD: Event loop created and set for this thread.")
-    try:
-        logger.info("ASYNCIO THREAD: Starting loop.run_forever().")
-        _async_loop.run_forever()
-    except KeyboardInterrupt:
-        logger.info(
-            "ASYNCIO THREAD: KeyboardInterrupt received in asyncio thread (should be handled by main Pika thread)."
-        )
-    finally:
-        logger.info("ASYNCIO THREAD: loop.run_forever() exited.")
-        if _async_loop.is_running():
-            logger.warning(
-                "ASYNCIO THREAD: Loop still shows as running after run_forever exited; attempting to stop again."
-            )
-            _async_loop.call_soon_threadsafe(_async_loop.stop)
+class WorkerRunner:
+    """Manages the connection + consumer lifecycle."""
+
+    def __init__(self) -> None:
+        self._connection: Optional[AbstractRobustConnection] = None
+        self._stop_event = asyncio.Event()
+        self._backoff = _BACKOFF_START_SECONDS
+
+    def request_stop(self) -> None:
+        logger.info("WORKER: Stop requested.")
+        self._stop_event.set()
+
+    async def run(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                await self._consume_forever()
+                # If _consume_forever returns cleanly (not via exception),
+                # it's because stop was requested. Break out.
+                break
+            except asyncio.CancelledError:
+                logger.info("WORKER: Run cancelled.")
+                raise
+            except Exception as e:
+                logger.error(
+                    f"WORKER: Consume loop error: {e}. "
+                    f"Retrying in {self._backoff:.0f}s.",
+                    exc_info=True,
+                )
+
+            if self._stop_event.is_set():
+                break
+            try:
+                await asyncio.wait_for(
+                    self._stop_event.wait(), timeout=self._backoff
+                )
+            except asyncio.TimeoutError:
+                pass
+            self._backoff = min(self._backoff * 2, _BACKOFF_CAP_SECONDS)
+
+        logger.info("WORKER: Run loop exited.")
+
+    async def _consume_forever(self) -> None:
+        if not settings.RABBITMQ_URL:
+            raise ValueError("RABBITMQ_URL is not configured.")
+
+        logger.info("WORKER: Connecting to RabbitMQ...")
+        self._connection = await aio_pika.connect_robust(settings.RABBITMQ_URL)
+        logger.info("WORKER: RabbitMQ connection established.")
+        self._backoff = _BACKOFF_START_SECONDS  # reset after successful connect
 
         try:
-            logger.info("ASYNCIO THREAD: Cleaning up remaining tasks...")
-            all_tasks = asyncio.all_tasks(loop=_async_loop)
-            current_task = asyncio.current_task(loop=_async_loop)
-            tasks_to_cancel = [t for t in all_tasks if t is not current_task]
+            channel = await self._connection.channel()
+            # prefetch=1 keeps us aligned with the old blocking behavior —
+            # one scan at a time per worker. Increase if you want per-worker
+            # parallelism across scans (analyze_files_parallel already gives
+            # us intra-scan parallelism via the CONCURRENT_LLM_LIMIT semaphore).
+            await channel.set_qos(prefetch_count=1)
 
-            if tasks_to_cancel:
-                logger.info(
-                    f"ASYNCIO THREAD: Cancelling {len(tasks_to_cancel)} outstanding tasks."
-                )
-                for task in tasks_to_cancel:
-                    task.cancel()
-                _async_loop.run_until_complete(
-                    asyncio.gather(*tasks_to_cancel, return_exceptions=True)
-                )
-                logger.info("ASYNCIO THREAD: Outstanding tasks cancelled.")
-            else:
-                logger.info("ASYNCIO THREAD: No outstanding tasks to cancel.")
-        except Exception as e_shutdown:
-            logger.error(
-                f"ASYNCIO THREAD: Error during task cleanup on shutdown: {e_shutdown}",
-                exc_info=True,
-            )
+            queues = []
+            for queue_name in (
+                settings.RABBITMQ_SUBMISSION_QUEUE,
+                settings.RABBITMQ_APPROVAL_QUEUE,
+                settings.RABBITMQ_REMEDIATION_QUEUE,
+            ):
+                queue = await channel.declare_queue(queue_name, durable=True)
+                await queue.consume(_handle_message)
+                queues.append(queue_name)
 
-        if not _async_loop.is_closed():
-            _async_loop.close()
-        logger.info("ASYNCIO THREAD: Event loop closed. Thread exiting.")
-
-
-def start_worker_consumer():
-    global _event_loop_thread, _async_loop, _pika_connection, _pika_channel, _stop_event
-    _stop_event.clear()
-
-    if not (_event_loop_thread and _event_loop_thread.is_alive()):
-        _event_loop_thread = threading.Thread(
-            target=asyncio_thread_worker_target,
-            name="AsyncioEventLoopThread",
-            daemon=True,
-        )
-        _event_loop_thread.start()
-        logger.info("WORKER: Started asyncio event loop manager thread.")
-        time.sleep(1)
-    else:
-        logger.info("WORKER: Asyncio event loop manager thread already running.")
-
-    # Exponential backoff on reconnect: 1s, 2s, 4s, 8s, 16s, capped at 30s.
-    # Reset to 1s on a successful connection so a single transient blip doesn't
-    # make the next failure wait the full 30s.
-    backoff_seconds = 1.0
-    BACKOFF_CAP = 30.0
-
-    while not _stop_event.is_set():
-        try:
-            logger.info("WORKER: Attempting RabbitMQ connection...")
-            if not settings.RABBITMQ_URL:
-                raise ValueError("RABBITMQ_URL not set in settings.")
-
-            parameters = pika.URLParameters(settings.RABBITMQ_URL)
-            _pika_connection = pika.BlockingConnection(parameters)
-            _pika_channel = _pika_connection.channel()
-            logger.info("WORKER: RabbitMQ connection successful.")
-            backoff_seconds = 1.0  # Reset after a successful connect.
-
-            submission_queue = settings.RABBITMQ_SUBMISSION_QUEUE
-            approval_queue = settings.RABBITMQ_APPROVAL_QUEUE
-            remediation_queue = settings.RABBITMQ_REMEDIATION_QUEUE
-
-            _pika_channel.queue_declare(queue=submission_queue, durable=True)
-            _pika_channel.queue_declare(queue=approval_queue, durable=True)
-            _pika_channel.queue_declare(queue=remediation_queue, durable=True)
-            _pika_channel.basic_qos(prefetch_count=1)
-
-            _pika_channel.basic_consume(
-                queue=submission_queue, on_message_callback=pika_message_callback
-            )
-            _pika_channel.basic_consume(
-                queue=approval_queue, on_message_callback=pika_message_callback
-            )
-            _pika_channel.basic_consume(
-                queue=remediation_queue, on_message_callback=pika_message_callback
-            )
-
-            logger.info("WORKER: Waiting for messages...")
-            _pika_channel.start_consuming()
-
-        except AMQPConnectionError as conn_err:
-            logger.error(
-                f"WORKER: RabbitMQ connection error: {conn_err}. "
-                f"Retrying in {backoff_seconds:.0f}s."
-            )
-        except KeyboardInterrupt:
-            logger.info("WORKER: KeyboardInterrupt received. Shutting down consumer.")
-            _stop_event.set()
-        except Exception as e:
-            logger.error(
-                f"WORKER: Unexpected error in main Pika consumer loop: {e}. "
-                f"Retrying in {backoff_seconds:.0f}s.",
-                exc_info=True,
-            )
+            logger.info(f"WORKER: Consuming from queues: {queues}. Waiting for messages…")
+            await self._stop_event.wait()
         finally:
-            if _pika_connection and _pika_connection.is_open:
-                _pika_connection.close()
-            logger.info("WORKER: Pika connection closed for this iteration.")
+            if self._connection is not None and not self._connection.is_closed:
+                await self._connection.close()
+                self._connection = None
+            logger.info("WORKER: Connection closed.")
 
-        if _stop_event.is_set():
-            break
-        time.sleep(backoff_seconds)
-        backoff_seconds = min(backoff_seconds * 2, BACKOFF_CAP)
 
-    logger.info("WORKER: Finalizing shutdown...")
-    if _async_loop and _async_loop.is_running():
-        logger.info("WORKER: Closing workflow resources...")
-        future = asyncio.run_coroutine_threadsafe(
-            close_workflow_resources(), _async_loop
-        )
+async def _async_main() -> None:
+    runner = WorkerRunner()
+
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
         try:
-            future.result(timeout=5)
+            loop.add_signal_handler(sig, runner.request_stop)
+        except NotImplementedError:
+            # add_signal_handler is not supported on Windows; fall through.
+            pass
+
+    try:
+        await runner.run()
+    finally:
+        logger.info("WORKER: Closing workflow resources…")
+        try:
+            await close_workflow_resources()
         except Exception as e:
             logger.error(f"WORKER: Error during workflow resource cleanup: {e}")
+        logger.info("WORKER: Consumer has fully shut down.")
 
-        logger.info("WORKER: Signaling asyncio loop to stop.")
-        _async_loop.call_soon_threadsafe(_async_loop.stop)
 
-    if _event_loop_thread and _event_loop_thread.is_alive():
-        logger.info("WORKER: Waiting for asyncio event loop thread to join...")
-        _event_loop_thread.join(timeout=5)
-        if _event_loop_thread.is_alive():
-            logger.warning("WORKER: Asyncio event loop thread did not join in time.")
-
-    logger.info("WORKER: Consumer has fully shut down.")
+def start_worker_consumer() -> None:
+    """Entry point wrapper. Runs the async main loop to completion."""
+    try:
+        asyncio.run(_async_main())
+    except KeyboardInterrupt:
+        logger.info("WORKER: KeyboardInterrupt at top level; exiting.")
 
 
 if __name__ == "__main__":
-    logger.info("Starting RabbitMQ worker consumer script (__main__)...")
+    logger.info("Starting RabbitMQ worker consumer script (__main__)…")
     try:
         start_worker_consumer()
     except Exception as e:

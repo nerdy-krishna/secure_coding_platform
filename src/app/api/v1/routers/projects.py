@@ -7,16 +7,19 @@ from fastapi import (
     Depends,
     HTTPException,
     Query,
+    Request,
     UploadFile,
     File,
     Form,
     Response,
     status,
 )
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.infrastructure.database import models as db_models
 from app.api.v1 import models as api_models
+from app.config.config import settings
 from app.infrastructure.auth.core import current_active_user, current_superuser
 from app.config.logging_config import correlation_id_var
 from app.core.services.scan_service import SubmissionService
@@ -225,6 +228,122 @@ async def cancel_scan_analysis(
     """Cancels a scan, typically one that is pending cost approval."""
     await service.cancel_scan(scan_id, user)
     return {"message": "Scan has been cancelled successfully."}
+
+
+@router.get("/scans/{scan_id}/stream")
+async def stream_scan_progress(
+    scan_id: uuid.UUID,
+    request: Request,
+    user: db_models.User = Depends(current_active_user),
+    service: SubmissionService = Depends(get_scan_service),
+):
+    """Server-Sent Events stream of a scan's progress.
+
+    Emits a `scan_state` event for status transitions, a `scan_event` for
+    each new pipeline stage (ScanEvent row), and a terminal `done` event
+    when the scan reaches a final state. The client reconnects via
+    EventSource's native retry.
+
+    Implementation: polls the DB at 1-second intervals — simpler than
+    wiring LangGraph event streaming and sufficient for the per-stage
+    granularity the UI wants. Can be upgraded later if we need per-file
+    finding deltas mid-scan.
+    """
+    # Authz: reuse the existing service check.
+    scan = await service.get_scan_status(scan_id)
+    if scan.user_id != user.id and not user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to stream this scan.",
+        )
+
+    terminal_statuses = {
+        "COMPLETED",
+        "REMEDIATION_COMPLETED",
+        "FAILED",
+        "CANCELLED",
+        "EXPIRED",
+    }
+    poll_interval_seconds = 1.0
+    # Bound on the stream's lifetime as a safety net; the scan-workflow
+    # timeout (default 2h) dominates in practice.
+    max_stream_seconds = settings.SCAN_WORKFLOW_TIMEOUT_SECONDS
+
+    async def event_generator():
+        import asyncio as _asyncio
+        import json as _json
+        import time as _time
+
+        start = _time.monotonic()
+        last_event_id = 0
+        last_status: Optional[str] = None
+
+        while True:
+            if await request.is_disconnected():
+                logger.info(
+                    "SSE: client disconnected, ending stream.",
+                    extra={"scan_id": str(scan_id), "user_id": user.id},
+                )
+                return
+            if _time.monotonic() - start > max_stream_seconds:
+                yield (
+                    f"event: timeout\n"
+                    f"data: {_json.dumps({'scan_id': str(scan_id)})}\n\n"
+                )
+                return
+
+            scan = await service.get_scan_status(scan_id)
+
+            # Emit on status change (including the first tick).
+            if scan.status != last_status:
+                last_status = scan.status
+                payload = {
+                    "scan_id": str(scan_id),
+                    "status": scan.status,
+                }
+                yield (
+                    f"event: scan_state\n"
+                    f"data: {_json.dumps(payload)}\n\n"
+                )
+
+            # Emit any ScanEvents with id > last_event_id.
+            events = sorted(
+                (e for e in (scan.events or []) if e.id > last_event_id),
+                key=lambda e: e.id,
+            )
+            for e in events:
+                last_event_id = e.id
+                payload = {
+                    "scan_id": str(scan_id),
+                    "event_id": e.id,
+                    "stage_name": e.stage_name,
+                    "status": e.status,
+                    "timestamp": e.timestamp.isoformat() if e.timestamp else None,
+                }
+                yield (
+                    f"event: scan_event\n"
+                    f"id: {e.id}\n"
+                    f"data: {_json.dumps(payload)}\n\n"
+                )
+
+            if scan.status in terminal_statuses:
+                yield (
+                    f"event: done\n"
+                    f"data: {_json.dumps({'scan_id': str(scan_id), 'status': scan.status})}\n\n"
+                )
+                return
+
+            await _asyncio.sleep(poll_interval_seconds)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # disable nginx buffering for SSE
+            "Connection": "keep-alive",
+        },
+    )
 
 
 class SelectiveRemediationRequest(BaseModel):
