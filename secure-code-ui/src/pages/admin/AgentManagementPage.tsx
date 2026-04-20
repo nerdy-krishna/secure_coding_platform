@@ -1,24 +1,10 @@
-// src/pages/admin/AgentManagementPage.tsx
-import {
-  DeleteOutlined,
-  EditOutlined,
-  PlusOutlined,
-  RobotOutlined,
-} from "@ant-design/icons";
+// secure-code-ui/src/pages/admin/AgentManagementPage.tsx
+//
+// Admin surface for the specialized AI security agents. CRUD wiring
+// stays on agentService (/admin/agents/); presentation is ported to
+// SCCAP primitives — card-grid plus a shared modal for create/edit.
+
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { TableProps } from "antd";
-import {
-  Button,
-  Card,
-  Form,
-  Input,
-  Modal,
-  Popconfirm,
-  Space,
-  Table,
-  Typography,
-  message,
-} from "antd";
 import { AxiosError } from "axios";
 import React, { useEffect, useState } from "react";
 import { agentService } from "../../shared/api/agentService";
@@ -27,212 +13,404 @@ import type {
   AgentRead,
   AgentUpdate,
 } from "../../shared/types/api";
+import { Icon } from "../../shared/ui/Icon";
+import { Modal } from "../../shared/ui/Modal";
+import { useToast } from "../../shared/ui/Toast";
 
-const { Title, Paragraph } = Typography;
+interface FormState {
+  name: string;
+  description: string;
+  domain_query: string;
+}
+
+const EMPTY_FORM: FormState = { name: "", description: "", domain_query: "" };
 
 const AgentManagementPage: React.FC = () => {
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingAgent, setEditingAgent] = useState<AgentRead | null>(null);
-  const [form] = Form.useForm();
+  const toast = useToast();
   const queryClient = useQueryClient();
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editing, setEditing] = useState<AgentRead | null>(null);
+  const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
-  const {
-    data: agents,
-    isLoading,
-    isError,
-    error,
-  } = useQuery<AgentRead[], Error>({
+  const { data: agents, isLoading, isError, error } = useQuery<
+    AgentRead[],
+    Error
+  >({
     queryKey: ["agents"],
     queryFn: agentService.getAgents,
   });
 
   useEffect(() => {
-    if (editingAgent) {
-      form.setFieldsValue(editingAgent);
-      setIsModalOpen(true);
-    } else {
-      form.resetFields();
+    if (isError) {
+      toast.error(`Failed to load agents: ${error.message}`);
     }
-  }, [editingAgent, form]);
+  }, [isError, error, toast]);
 
-  const handleApiError = (err: unknown, action: string) => {
-    const errorDetail =
+  useEffect(() => {
+    if (editing) {
+      setForm({
+        name: editing.name,
+        description: editing.description,
+        domain_query:
+          typeof editing.domain_query === "string"
+            ? editing.domain_query
+            : JSON.stringify(editing.domain_query, null, 2),
+      });
+      setModalOpen(true);
+    }
+  }, [editing]);
+
+  const onApiError = (err: unknown, verb: string) => {
+    const detail =
       err instanceof AxiosError
         ? (err.response?.data as { detail?: string })?.detail
-        : "An unknown error occurred.";
-    message.error(`Failed to ${action} agent: ${errorDetail}`);
+        : "Unknown error";
+    toast.error(`Failed to ${verb} agent: ${detail ?? "unknown error"}`);
   };
 
   const createMutation = useMutation({
     mutationFn: agentService.createAgent,
     onSuccess: () => {
-      message.success("Agent created successfully!");
+      toast.success("Agent created.");
       queryClient.invalidateQueries({ queryKey: ["agents"] });
-      setIsModalOpen(false);
+      closeModal();
     },
-    onError: (err) => handleApiError(err, "create"),
+    onError: (err) => onApiError(err, "create"),
   });
 
   const updateMutation = useMutation({
-    mutationFn: (data: { agentId: string; agentData: AgentUpdate }) =>
-      agentService.updateAgent(data.agentId, data.agentData),
+    mutationFn: ({ id, data }: { id: string; data: AgentUpdate }) =>
+      agentService.updateAgent(id, data),
     onSuccess: () => {
-      message.success("Agent updated successfully!");
+      toast.success("Agent updated.");
       queryClient.invalidateQueries({ queryKey: ["agents"] });
-      setIsModalOpen(false);
+      closeModal();
     },
-    onError: (err) => handleApiError(err, "update"),
+    onError: (err) => onApiError(err, "update"),
   });
 
   const deleteMutation = useMutation({
     mutationFn: agentService.deleteAgent,
     onSuccess: () => {
-      message.success("Agent deleted successfully!");
+      toast.success("Agent deleted.");
       queryClient.invalidateQueries({ queryKey: ["agents"] });
     },
-    onError: (err) => handleApiError(err, "delete"),
+    onError: (err) => onApiError(err, "delete"),
   });
 
-  const handleModalSubmit = async () => {
+  const closeModal = () => {
+    setModalOpen(false);
+    setEditing(null);
+    setForm(EMPTY_FORM);
+  };
+
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.name || !form.description || !form.domain_query) {
+      toast.error("All fields are required.");
+      return;
+    }
+    // `domain_query` is stored server-side as an object; the admin UI
+    // edits it as raw text. Try parsing JSON; fall back to the raw
+    // string which the backend accepts as a free-text RAG query.
+    let domainQuery: unknown = form.domain_query;
     try {
-      const values = await form.validateFields();
-      if (editingAgent) {
-        updateMutation.mutate({
-          agentId: editingAgent.id,
-          agentData: values as AgentUpdate,
-        });
-      } else {
-        createMutation.mutate(values as AgentCreate);
-      }
+      domainQuery = JSON.parse(form.domain_query);
     } catch {
-      // Ant Design Form surfaces validation errors inline; no further handling needed.
+      // keep as string
+    }
+    const payload = {
+      name: form.name,
+      description: form.description,
+      domain_query: domainQuery,
+    };
+    if (editing) {
+      updateMutation.mutate({
+        id: editing.id,
+        data: payload as unknown as AgentUpdate,
+      });
+    } else {
+      createMutation.mutate(payload as unknown as AgentCreate);
     }
   };
 
-  const handleCancel = () => {
-    setIsModalOpen(false);
-    setEditingAgent(null);
-  };
-
-  const columns: TableProps<AgentRead>["columns"] = [
-    {
-      title: "Name",
-      dataIndex: "name",
-      key: "name",
-      sorter: (a, b) => a.name.localeCompare(b.name),
-    },
-    {
-      title: "Description",
-      dataIndex: "description",
-      key: "description",
-      ellipsis: true,
-    },
-    {
-      title: "Domain Query",
-      dataIndex: "domain_query",
-      key: "domain_query",
-      ellipsis: true,
-    },
-    {
-      title: "Action",
-      key: "action",
-      width: 180,
-      render: (_, record) => (
-        <Space>
-          <Button
-            icon={<EditOutlined />}
-            onClick={() => setEditingAgent(record)}
-          >
-            Edit
-          </Button>
-          <Popconfirm
-            title="Delete Agent"
-            description="Are you sure you want to delete this agent?"
-            onConfirm={() => deleteMutation.mutate(record.id)}
-            okText="Yes"
-            cancelText="No"
-          >
-            <Button danger icon={<DeleteOutlined />}>
-              Delete
-            </Button>
-          </Popconfirm>
-        </Space>
-      ),
-    },
-  ];
-
-  if (isError) {
-    message.error(`Error fetching agents: ${error.message}`);
-  }
+  const pending = createMutation.isPending || updateMutation.isPending;
 
   return (
-    <Card>
-      <Title level={2}>
-        <RobotOutlined style={{ marginRight: 8 }} /> Agent Management
-      </Title>
-      <Paragraph type="secondary">
-        Create, edit, and manage the specialized AI agents that perform security
-        analysis.
-      </Paragraph>
-      <Button
-        type="primary"
-        icon={<PlusOutlined />}
-        onClick={() => setIsModalOpen(true)}
-        style={{ marginBottom: 16 }}
+    <div className="fade-in" style={{ display: "grid", gap: 16 }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-end",
+          gap: 12,
+        }}
       >
-        Create Agent
-      </Button>
-      <Table
-        columns={columns}
-        dataSource={agents}
-        loading={isLoading}
-        rowKey="id"
-        scroll={{ x: true }}
-      />
+        <div>
+          <h1 style={{ color: "var(--fg)" }}>
+            <Icon.Cpu size={18} /> AI agents
+          </h1>
+          <div style={{ color: "var(--fg-muted)", marginTop: 4 }}>
+            Specialized analysis agents and their RAG retrieval queries.
+          </div>
+        </div>
+        <button
+          className="sccap-btn sccap-btn-primary"
+          onClick={() => {
+            setEditing(null);
+            setForm(EMPTY_FORM);
+            setModalOpen(true);
+          }}
+        >
+          <Icon.Plus size={13} /> Create agent
+        </button>
+      </div>
+
+      {isLoading ? (
+        <div
+          className="sccap-card"
+          style={{
+            padding: 40,
+            textAlign: "center",
+            color: "var(--fg-muted)",
+          }}
+        >
+          Loading agents…
+        </div>
+      ) : !agents || agents.length === 0 ? (
+        <div
+          className="sccap-card"
+          style={{ padding: 60, textAlign: "center" }}
+        >
+          <div style={{ color: "var(--fg)", fontWeight: 500, marginBottom: 4 }}>
+            No agents yet
+          </div>
+          <div style={{ color: "var(--fg-muted)", fontSize: 13 }}>
+            Create your first specialized analysis agent.
+          </div>
+        </div>
+      ) : (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))",
+            gap: 14,
+          }}
+        >
+          {agents.map((a) => (
+            <div key={a.id} className="sccap-card">
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
+                  marginBottom: 10,
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 36,
+                      height: 36,
+                      borderRadius: 9,
+                      background: "var(--primary-weak)",
+                      color: "var(--primary)",
+                      display: "grid",
+                      placeItems: "center",
+                    }}
+                  >
+                    <Icon.Sparkle size={16} />
+                  </div>
+                  <div>
+                    <div style={{ fontWeight: 600, color: "var(--fg)" }}>
+                      {a.name}
+                    </div>
+                    <div
+                      style={{ fontSize: 11, color: "var(--fg-subtle)" }}
+                      className="mono"
+                    >
+                      {a.id.slice(0, 8)}
+                    </div>
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 4 }}>
+                  <button
+                    className="sccap-btn sccap-btn-icon sccap-btn-ghost"
+                    aria-label="Edit"
+                    onClick={() => setEditing(a)}
+                  >
+                    <Icon.Edit size={13} />
+                  </button>
+                  <button
+                    className="sccap-btn sccap-btn-icon sccap-btn-ghost"
+                    aria-label="Delete"
+                    onClick={() => setConfirmDeleteId(a.id)}
+                  >
+                    <Icon.Trash size={13} />
+                  </button>
+                </div>
+              </div>
+
+              <div
+                style={{
+                  fontSize: 12.5,
+                  color: "var(--fg-muted)",
+                  lineHeight: 1.5,
+                  marginBottom: 10,
+                  minHeight: 36,
+                }}
+              >
+                {a.description || <em>No description.</em>}
+              </div>
+
+              <div
+                style={{
+                  fontSize: 10.5,
+                  color: "var(--fg-subtle)",
+                  textTransform: "uppercase",
+                  letterSpacing: ".06em",
+                  marginBottom: 4,
+                }}
+              >
+                RAG query
+              </div>
+              <div
+                className="inset mono"
+                style={{
+                  padding: "8px 10px",
+                  fontSize: 11.5,
+                  maxHeight: 80,
+                  overflow: "hidden",
+                  color: "var(--fg-muted)",
+                }}
+              >
+                {typeof a.domain_query === "string"
+                  ? a.domain_query
+                  : JSON.stringify(a.domain_query)}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       <Modal
-        title={editingAgent ? "Edit Agent" : "Create New Agent"}
-        open={isModalOpen}
-        onOk={handleModalSubmit}
-        onCancel={handleCancel}
-        confirmLoading={createMutation.isPending || updateMutation.isPending}
-        destroyOnClose
-        width={720}
+        open={modalOpen}
+        onClose={closeModal}
+        title={editing ? "Edit agent" : "Create new agent"}
+        width={640}
+        footer={
+          <>
+            <button
+              className="sccap-btn sccap-btn-sm"
+              onClick={closeModal}
+              disabled={pending}
+            >
+              Cancel
+            </button>
+            <button
+              className="sccap-btn sccap-btn-primary sccap-btn-sm"
+              onClick={onSubmit}
+              disabled={pending}
+            >
+              {pending
+                ? "Saving…"
+                : editing
+                  ? "Save changes"
+                  : "Create agent"}
+            </button>
+          </>
+        }
       >
-        <Form form={form} layout="vertical" name="agent_form">
-          <Form.Item
-            name="name"
-            label="Agent Name"
-            rules={[
-              { required: true, message: "Please enter the agent name." },
-            ]}
-          >
-            <Input placeholder="e.g., TerraformSecurityAgent" />
-          </Form.Item>
-          <Form.Item
-            name="description"
-            label="Description"
-            rules={[
-              { required: true, message: "Please provide a description." },
-            ]}
-          >
-            <Input.TextArea
+        <form onSubmit={onSubmit} style={{ display: "grid", gap: 14 }}>
+          <label style={{ display: "grid", gap: 6 }}>
+            <span style={{ fontSize: 12, color: "var(--fg-muted)" }}>
+              Agent name
+            </span>
+            <input
+              className="sccap-input"
+              placeholder="e.g. TerraformSecurityAgent"
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              required
+              autoFocus
+            />
+          </label>
+          <label style={{ display: "grid", gap: 6 }}>
+            <span style={{ fontSize: 12, color: "var(--fg-muted)" }}>
+              Description
+            </span>
+            <textarea
+              className="sccap-input"
               rows={3}
-              placeholder="Describe the agent's purpose..."
+              placeholder="What does this agent focus on?"
+              value={form.description}
+              onChange={(e) =>
+                setForm({ ...form, description: e.target.value })
+              }
+              required
             />
-          </Form.Item>
-          <Form.Item
-            name="domain_query"
-            label="Domain Query for RAG"
-            rules={[{ required: true, message: "Please provide a RAG query." }]}
-          >
-            <Input.TextArea
+          </label>
+          <label style={{ display: "grid", gap: 6 }}>
+            <span style={{ fontSize: 12, color: "var(--fg-muted)" }}>
+              Domain query for RAG
+            </span>
+            <textarea
+              className="sccap-input mono"
               rows={4}
-              placeholder="Enter comma-separated keywords for fetching context from the knowledge base..."
+              placeholder="Comma-separated keywords or JSON query spec…"
+              value={form.domain_query}
+              onChange={(e) =>
+                setForm({ ...form, domain_query: e.target.value })
+              }
+              required
             />
-          </Form.Item>
-        </Form>
+          </label>
+          <button type="submit" style={{ display: "none" }} />
+        </form>
       </Modal>
-    </Card>
+
+      <Modal
+        open={confirmDeleteId !== null}
+        onClose={() => setConfirmDeleteId(null)}
+        title="Delete agent?"
+        width={420}
+        footer={
+          <>
+            <button
+              className="sccap-btn sccap-btn-sm"
+              onClick={() => setConfirmDeleteId(null)}
+              disabled={deleteMutation.isPending}
+            >
+              Cancel
+            </button>
+            <button
+              className="sccap-btn sccap-btn-danger sccap-btn-sm"
+              onClick={() => {
+                if (confirmDeleteId) {
+                  deleteMutation.mutate(confirmDeleteId);
+                  setConfirmDeleteId(null);
+                }
+              }}
+              disabled={deleteMutation.isPending}
+            >
+              {deleteMutation.isPending ? "Deleting…" : "Delete"}
+            </button>
+          </>
+        }
+      >
+        <div style={{ color: "var(--fg-muted)", fontSize: 13 }}>
+          This removes the agent from framework mappings and future scans.
+          Past scan results are unaffected.
+        </div>
+      </Modal>
+    </div>
   );
 };
 

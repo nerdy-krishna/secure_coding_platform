@@ -1,40 +1,11 @@
 // secure-code-ui/src/features/admin-settings/components/LLMSettingsPage.tsx
+//
+// LLM provider configurations CRUD. Ported to SCCAP primitives; wiring
+// and endpoints are unchanged.
 
-import {
-  ClearOutlined,
-  DeleteOutlined,
-  EditOutlined,
-  PlusOutlined,
-} from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Button,
-  Card,
-  Col,
-  Form,
-  Input,
-  InputNumber,
-  message,
-  Popconfirm,
-  Row,
-  Select,
-  Space,
-  Table,
-  Tag,
-  Tooltip,
-  Typography,
-  type TablePaginationConfig,
-  type TableProps,
-} from "antd";
-import type { RuleObject } from "antd/es/form";
 import { AxiosError } from "axios";
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   llmConfigService,
   type LLMConfigurationUpdate,
@@ -43,65 +14,93 @@ import type {
   LLMConfiguration,
   LLMConfigurationCreate,
 } from "../../../shared/types/api";
+import { Icon } from "../../../shared/ui/Icon";
+import { useToast } from "../../../shared/ui/Toast";
 
-const { Title, Paragraph, Text } = Typography;
-const { Option } = Select;
+const LLM_PROVIDERS = ["openai", "google", "anthropic"] as const;
+type Provider = (typeof LLM_PROVIDERS)[number];
 
-const LLM_PROVIDERS = ["openai", "google", "anthropic"];
+interface FormState {
+  name: string;
+  provider: Provider;
+  model_name: string;
+  tokenizer: string;
+  input_cost_per_million: string;
+  output_cost_per_million: string;
+  api_key: string;
+}
+
+const EMPTY_FORM: FormState = {
+  name: "",
+  provider: "anthropic",
+  model_name: "",
+  tokenizer: "",
+  input_cost_per_million: "",
+  output_cost_per_million: "",
+  api_key: "",
+};
+
+function axiosDetail(err: unknown): string {
+  const e = err as {
+    response?: { data?: { detail?: string | { msg: string }[] } };
+    message?: string;
+  };
+  const detail = e.response?.data?.detail;
+  if (Array.isArray(detail)) return detail.map((d) => d.msg).join(", ");
+  return detail || e.message || "Unknown error";
+}
+
+function parseAsUTC(dateString?: string | null): Date | null {
+  if (!dateString) return null;
+  const normalized = /Z|[+-]\d{2}:\d{2}$/.test(dateString)
+    ? dateString
+    : `${dateString}Z`;
+  const d = new Date(normalized);
+  return isNaN(d.getTime()) ? null : d;
+}
+
 const LLMSettingsPage: React.FC = () => {
-  const [form] = Form.useForm();
+  const toast = useToast();
   const queryClient = useQueryClient();
-  const formCardRef = useRef<HTMLDivElement | null>(null);
-  const [editingConfig, setEditingConfig] = useState<LLMConfiguration | null>(
-    null,
-  );
-  const [pagination, setPagination] = useState({
-    current: 1,
-    pageSize: 10,
-  });
+  const formRef = useRef<HTMLDivElement | null>(null);
+  const [editing, setEditing] = useState<LLMConfiguration | null>(null);
+  const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [providerFilter, setProviderFilter] = useState<Provider | "all">("all");
 
-  const {
-    data: llmConfigs,
-    isLoading,
-    isError,
-    error,
-  } = useQuery<LLMConfiguration[], Error>({
+  const { data: llmConfigs, isLoading, isError, error } = useQuery<
+    LLMConfiguration[],
+    Error
+  >({
     queryKey: ["llmConfigs"],
     queryFn: llmConfigService.getLlmConfigs,
   });
 
-  // --- MODIFIED useEffect ---
   useEffect(() => {
-    if (editingConfig) {
-      // This populates the form with the data of the config being edited.
-      form.setFieldsValue({
-        ...editingConfig,
-        api_key: "", // Always clear the API key field for security
-      });
-      formCardRef.current?.scrollIntoView({
-        behavior: "smooth",
-        block: "start",
-      });
-    } else {
-      // This resets the form when we are not in edit mode.
-      form.resetFields();
+    if (isError) {
+      toast.error(`Failed to load LLM configurations: ${error.message}`);
     }
-  }, [editingConfig, form]); // Dependency array is kept to ensure reactivity
+  }, [isError, error, toast]);
 
-  const handleApiError = (
-    err: AxiosError,
-    action: "create" | "update" | "delete",
-  ) => {
-    const errorDetail =
-      (err.response?.data as { detail?: string | { msg: string }[] })?.detail ||
-      "An unknown error occurred.";
-    if (Array.isArray(errorDetail)) {
-      const messages = errorDetail.map((d) => d.msg).join(", ");
-      message.error(`Failed to ${action} configuration: ${messages}`);
-    } else {
-      message.error(`Failed to ${action} configuration: ${errorDetail}`);
+  useEffect(() => {
+    if (editing) {
+      setForm({
+        name: editing.name,
+        provider: (LLM_PROVIDERS as readonly string[]).includes(editing.provider)
+          ? (editing.provider as Provider)
+          : "anthropic",
+        model_name: editing.model_name,
+        tokenizer: editing.tokenizer ?? "",
+        input_cost_per_million: String(editing.input_cost_per_million ?? ""),
+        output_cost_per_million: String(editing.output_cost_per_million ?? ""),
+        api_key: "",
+      });
+      formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     }
-  };
+  }, [editing]);
+
+  const onError = (err: AxiosError, verb: string) =>
+    toast.error(`Failed to ${verb} configuration: ${axiosDetail(err)}`);
 
   const createMutation = useMutation<
     LLMConfiguration,
@@ -110,11 +109,11 @@ const LLMSettingsPage: React.FC = () => {
   >({
     mutationFn: llmConfigService.createLlmConfig,
     onSuccess: () => {
-      message.success("LLM configuration created successfully!");
+      toast.success("LLM configuration created.");
       queryClient.invalidateQueries({ queryKey: ["llmConfigs"] });
-      form.resetFields();
+      setForm(EMPTY_FORM);
     },
-    onError: (err) => handleApiError(err, "create"),
+    onError: (err) => onError(err, "create"),
   });
 
   const updateMutation = useMutation<
@@ -124,329 +123,438 @@ const LLMSettingsPage: React.FC = () => {
   >({
     mutationFn: ({ id, data }) => llmConfigService.updateLlmConfig(id, data),
     onSuccess: () => {
-      message.success("LLM configuration updated successfully!");
+      toast.success("LLM configuration updated.");
       queryClient.invalidateQueries({ queryKey: ["llmConfigs"] });
-      setEditingConfig(null);
+      setEditing(null);
+      setForm(EMPTY_FORM);
     },
-    onError: (err) => handleApiError(err, "update"),
+    onError: (err) => onError(err, "update"),
   });
 
   const deleteMutation = useMutation<void, AxiosError, string>({
     mutationFn: llmConfigService.deleteLlmConfig,
     onSuccess: () => {
-      message.success("LLM configuration deleted successfully!");
+      toast.success("LLM configuration deleted.");
       queryClient.invalidateQueries({ queryKey: ["llmConfigs"] });
     },
-    onError: (err) => handleApiError(err, "delete"),
+    onError: (err) => onError(err, "delete"),
   });
 
-  const handleSubmit = (values: LLMConfigurationCreate) => {
-    const payload = {
-      ...values,
-      input_cost_per_million: Number(values.input_cost_per_million),
-      output_cost_per_million: Number(values.output_cost_per_million),
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const input = Number(form.input_cost_per_million);
+    const output = Number(form.output_cost_per_million);
+    if (
+      !form.name ||
+      !form.provider ||
+      !form.model_name ||
+      isNaN(input) ||
+      input < 0 ||
+      isNaN(output) ||
+      output < 0
+    ) {
+      toast.error("Please fill all required fields with valid values.");
+      return;
+    }
+    if (!editing && !form.api_key) {
+      toast.error("API key is required for new configurations.");
+      return;
+    }
+
+    const payload: LLMConfigurationCreate = {
+      name: form.name,
+      provider: form.provider,
+      model_name: form.model_name,
+      tokenizer: form.tokenizer || null,
+      input_cost_per_million: input,
+      output_cost_per_million: output,
+      api_key: form.api_key,
     };
-    if (editingConfig) {
-      if (!payload.api_key) {
-        delete (payload as Partial<LLMConfigurationCreate>).api_key;
-      }
-      updateMutation.mutate({ id: editingConfig.id, data: payload });
+    if (editing) {
+      const updatePayload: LLMConfigurationUpdate = { ...payload };
+      if (!form.api_key) delete updatePayload.api_key;
+      updateMutation.mutate({ id: editing.id, data: updatePayload });
     } else {
       createMutation.mutate(payload);
     }
   };
 
-  const handleCancelEdit = () => {
-    setEditingConfig(null);
-  };
-
-  const parseAsUTCDate = (
-    dateString: string | null | undefined,
-  ): Date | null => {
-    if (!dateString) return null;
-    let utcDateString = dateString;
-    if (!/Z|[+-]\d{2}:\d{2}$/.test(dateString)) {
-      utcDateString += "Z";
-    }
-    const date = new Date(utcDateString);
-    return isNaN(date.getTime()) ? null : date;
-  };
-
-  const formatDisplayDate = useCallback(
-    (dateString: string | null | undefined): string => {
-      const date = parseAsUTCDate(dateString);
-      return date ? date.toLocaleString() : "N/A";
-    },
-    [],
-  );
-
-  const handleDelete = useCallback(
-    (configId: string) => {
-      deleteMutation.mutate(configId);
-    },
-    [deleteMutation],
-  );
-
-  const columns: TableProps<LLMConfiguration>["columns"] = useMemo(
-    () => [
-      {
-        title: "Name",
-        dataIndex: "name",
-        key: "name",
-        sorter: (a, b) => a.name.localeCompare(b.name),
-      },
-      {
-        title: "Provider",
-        dataIndex: "provider",
-        key: "provider",
-        render: (provider) => <Tag>{provider.toUpperCase()}</Tag>,
-        filters: LLM_PROVIDERS.map((p) => ({
-          text: p.toUpperCase(),
-          value: p,
-        })),
-        onFilter: (value, record) => record.provider === value,
-      },
-      { title: "Model Name", dataIndex: "model_name", key: "model_name" },
-      {
-        title: "Tokenizer",
-        dataIndex: "tokenizer",
-        key: "tokenizer",
-        render: (text) => text || <Text type="secondary">auto</Text>,
-      },
-      {
-        title: "Input Cost ($/1M)",
-        dataIndex: "input_cost_per_million",
-        key: "input_cost_per_million",
-        render: (cost) => <Text>${cost ? cost.toFixed(6) : "0.00"}</Text>,
-        sorter: (a, b) => a.input_cost_per_million - b.input_cost_per_million,
-      },
-      {
-        title: "Output Cost ($/1M)",
-        dataIndex: "output_cost_per_million",
-        key: "output_cost_per_million",
-        render: (cost) => <Text>${cost ? cost.toFixed(6) : "0.00"}</Text>,
-        sorter: (a, b) => a.output_cost_per_million - b.output_cost_per_million,
-      },
-      {
-        title: "Created At",
-        dataIndex: "created_at",
-        key: "created_at",
-        render: (text) => formatDisplayDate(text),
-        sorter: (a, b) =>
-          (parseAsUTCDate(a.created_at)?.getTime() || 0) -
-          (parseAsUTCDate(b.created_at)?.getTime() || 0),
-      },
-      {
-        title: "Action",
-        key: "action",
-        render: (_, record) => (
-          <Space>
-            <Button
-              icon={<EditOutlined />}
-              onClick={() => setEditingConfig(record)}
-              disabled={editingConfig?.id === record.id}
-            >
-              Edit
-            </Button>
-            <Popconfirm
-              title="Delete this configuration?"
-              description="This action cannot be undone."
-              onConfirm={() => handleDelete(record.id)}
-              okText="Yes"
-              cancelText="No"
-            >
-              <Button
-                danger
-                icon={<DeleteOutlined />}
-                loading={
-                  deleteMutation.isPending &&
-                  deleteMutation.variables === record.id
-                }
-              >
-                Delete
-              </Button>
-            </Popconfirm>
-          </Space>
-        ),
-      },
-    ],
-    [formatDisplayDate, handleDelete, deleteMutation, editingConfig],
-  );
-
-  if (isError) {
-    message.error(`Error fetching configurations: ${error.message}`);
-  }
-
   const isMutating = createMutation.isPending || updateMutation.isPending;
-  const costValidator = (_: RuleObject, value: string) => {
-    if (value && (isNaN(parseFloat(value)) || parseFloat(value) < 0)) {
-      return Promise.reject(new Error("Please enter a valid positive number."));
-    }
-    return Promise.resolve();
-  };
+
+  const filtered = (llmConfigs ?? []).filter((c) =>
+    providerFilter === "all" ? true : c.provider === providerFilter,
+  );
 
   return (
-    <Space direction="vertical" size="large" style={{ display: "flex" }}>
-      <Card ref={formCardRef}>
-        <Title level={3}>
-          {editingConfig
-            ? `Edit: ${editingConfig.name}`
-            : "Create New LLM Configuration"}
-        </Title>
-        <Paragraph type="secondary">
-          {editingConfig
-            ? "Update the details for this configuration."
-            : "Add a new Large Language Model provider configuration."}
-        </Paragraph>
-        <Form form={form} layout="vertical" onFinish={handleSubmit}>
-          <Row gutter={24}>
-            <Col xs={24} sm={12}>
-              <Form.Item
-                name="name"
-                label="Configuration Name"
-                rules={[
-                  { required: true, message: "Please enter a unique name." },
-                ]}
-              >
-                <Input placeholder="e.g., OpenAI GPT-4o Mini" />
-              </Form.Item>
-            </Col>
-            <Col xs={24} sm={12}>
-              <Form.Item
-                name="provider"
-                label="Provider"
-                rules={[
-                  { required: true, message: "Please select a provider." },
-                ]}
-              >
-                <Select placeholder="Select a provider">
-                  {LLM_PROVIDERS.map((p) => (
-                    <Option key={p} value={p}>
-                      {p.charAt(0).toUpperCase() + p.slice(1)}
-                    </Option>
-                  ))}
-                </Select>
-              </Form.Item>
-            </Col>
-          </Row>
-          <Row gutter={24}>
-            <Col xs={24} sm={12}>
-              <Form.Item
-                name="model_name"
-                label="Model Name"
-                rules={[
-                  { required: true, message: "Please enter the model name." },
-                ]}
-              >
-                <Input placeholder="e.g., gpt-4o-2024-05-13" />
-              </Form.Item>
-            </Col>
-            <Col xs={24} sm={12}>
-              <Tooltip title="Optional. Specify a tiktoken tokenizer (e.g., 'cl100k_base'). If blank, the system will try to infer it from the model name.">
-                <Form.Item name="tokenizer" label="Tokenizer Name">
-                  <Input placeholder="Default: cl100k_base" />
-                </Form.Item>
-              </Tooltip>
-            </Col>
-          </Row>
-          <Row gutter={24}>
-            <Col xs={24} sm={12}>
-              <Form.Item
-                name="input_cost_per_million"
-                label="Input Cost per 1,000,000 Tokens ($)"
-                rules={[
-                  { required: true, message: "Input cost is required." },
-                  { validator: costValidator },
-                ]}
-              >
-                <InputNumber
-                  style={{ width: "100%" }}
-                  placeholder="e.g., 0.15"
-                  step="0.01"
-                  stringMode
-                />
-              </Form.Item>
-            </Col>
-            <Col xs={24} sm={12}>
-              <Form.Item
-                name="output_cost_per_million"
-                label="Output Cost per 1,000,000 Tokens ($)"
-                rules={[
-                  { required: true, message: "Output cost is required." },
-                  { validator: costValidator },
-                ]}
-              >
-                <InputNumber
-                  style={{ width: "100%" }}
-                  placeholder="e.g., 0.60"
-                  step="0.01"
-                  stringMode
-                />
-              </Form.Item>
-            </Col>
-          </Row>
-          <Form.Item
-            name="api_key"
-            label="API Key"
-            rules={[
-              {
-                required: !editingConfig,
-                message: "API key is required for new configurations.",
-              },
-            ]}
+    <div className="fade-in" style={{ display: "grid", gap: 16 }}>
+      <div>
+        <h1 style={{ color: "var(--fg)" }}>
+          <Icon.Sparkle size={18} /> LLM configurations
+        </h1>
+        <div style={{ color: "var(--fg-muted)", marginTop: 4 }}>
+          Models and API keys consumed by the scan and advisor workflows.
+        </div>
+      </div>
+
+      <div className="surface" ref={formRef} style={{ padding: 22 }}>
+        <h3 style={{ color: "var(--fg)", marginBottom: 4 }}>
+          {editing ? `Edit: ${editing.name}` : "Create new LLM configuration"}
+        </h3>
+        <div
+          style={{
+            color: "var(--fg-muted)",
+            fontSize: 12.5,
+            marginBottom: 14,
+          }}
+        >
+          {editing
+            ? "Leave the API key blank to keep the existing secret."
+            : "All three scan slots can share a single configuration."}
+        </div>
+        <form onSubmit={onSubmit} style={{ display: "grid", gap: 12 }}>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: 12,
+            }}
           >
-            <Input.Password
-              placeholder={
-                editingConfig
-                  ? "Leave blank to keep existing key"
-                  : "Enter secret API key"
-              }
-            />
-          </Form.Item>
-          <Form.Item>
-            <Space>
-              <Button
-                type="primary"
-                htmlType="submit"
-                icon={editingConfig ? <EditOutlined /> : <PlusOutlined />}
-                loading={isMutating}
+            <Field label="Name">
+              <input
+                className="sccap-input"
+                placeholder="OpenAI GPT-4o Mini"
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                required
+              />
+            </Field>
+            <Field label="Provider">
+              <select
+                className="sccap-input"
+                value={form.provider}
+                onChange={(e) =>
+                  setForm({ ...form, provider: e.target.value as Provider })
+                }
+                required
               >
-                {editingConfig
-                  ? "Update Configuration"
-                  : "Create Configuration"}
-              </Button>
-              {editingConfig && (
-                <Button icon={<ClearOutlined />} onClick={handleCancelEdit}>
-                  Cancel
-                </Button>
-              )}
-            </Space>
-          </Form.Item>
-        </Form>
-      </Card>
-      <Card>
-        <Title level={3}>Existing LLM Configurations</Title>
-        <Table
-          columns={columns}
-          dataSource={llmConfigs}
-          loading={isLoading}
-          rowKey="id"
-          pagination={{
-            ...pagination,
-            showSizeChanger: true,
-            pageSizeOptions: ["10", "20", "50"],
+                {LLM_PROVIDERS.map((p) => (
+                  <option key={p} value={p}>
+                    {p[0].toUpperCase() + p.slice(1)}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Model name">
+              <input
+                className="sccap-input mono"
+                placeholder="claude-sonnet-4.5"
+                value={form.model_name}
+                onChange={(e) =>
+                  setForm({ ...form, model_name: e.target.value })
+                }
+                required
+              />
+            </Field>
+            <Field label="Tokenizer" hint="(optional, inferred)">
+              <input
+                className="sccap-input mono"
+                placeholder="e.g. cl100k_base"
+                value={form.tokenizer}
+                onChange={(e) =>
+                  setForm({ ...form, tokenizer: e.target.value })
+                }
+              />
+            </Field>
+            <Field label="Input cost ($ per 1M tokens)">
+              <input
+                className="sccap-input mono"
+                type="number"
+                step="0.01"
+                min="0"
+                placeholder="0.15"
+                value={form.input_cost_per_million}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    input_cost_per_million: e.target.value,
+                  })
+                }
+                required
+              />
+            </Field>
+            <Field label="Output cost ($ per 1M tokens)">
+              <input
+                className="sccap-input mono"
+                type="number"
+                step="0.01"
+                min="0"
+                placeholder="0.60"
+                value={form.output_cost_per_million}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    output_cost_per_million: e.target.value,
+                  })
+                }
+                required
+              />
+            </Field>
+          </div>
+          <Field label="API key">
+            <input
+              className="sccap-input mono"
+              type="password"
+              placeholder={
+                editing
+                  ? "Leave blank to keep existing key"
+                  : "sk-ant-…"
+              }
+              value={form.api_key}
+              onChange={(e) => setForm({ ...form, api_key: e.target.value })}
+            />
+          </Field>
+
+          <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+            <button
+              type="submit"
+              className="sccap-btn sccap-btn-primary"
+              disabled={isMutating}
+            >
+              {editing ? <Icon.Edit size={13} /> : <Icon.Plus size={13} />}
+              {isMutating
+                ? "Saving…"
+                : editing
+                  ? "Update configuration"
+                  : "Create configuration"}
+            </button>
+            {editing && (
+              <button
+                type="button"
+                className="sccap-btn"
+                onClick={() => {
+                  setEditing(null);
+                  setForm(EMPTY_FORM);
+                }}
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+        </form>
+      </div>
+
+      <div className="surface" style={{ padding: 0 }}>
+        <div
+          className="section-head"
+          style={{ padding: "14px 18px 10px", marginBottom: 0 }}
+        >
+          <h3 style={{ margin: 0 }}>
+            Existing configurations ({filtered.length})
+          </h3>
+          <select
+            className="sccap-input"
+            value={providerFilter}
+            onChange={(e) =>
+              setProviderFilter(e.target.value as Provider | "all")
+            }
+            style={{ width: 180, fontSize: 12.5 }}
+          >
+            <option value="all">All providers</option>
+            {LLM_PROVIDERS.map((p) => (
+              <option key={p} value={p}>
+                {p[0].toUpperCase() + p.slice(1)}
+              </option>
+            ))}
+          </select>
+        </div>
+        {isLoading ? (
+          <div
+            style={{
+              padding: 40,
+              textAlign: "center",
+              color: "var(--fg-muted)",
+            }}
+          >
+            Loading…
+          </div>
+        ) : filtered.length === 0 ? (
+          <div
+            style={{
+              padding: 40,
+              textAlign: "center",
+              color: "var(--fg-muted)",
+            }}
+          >
+            No configurations match the current filter.
+          </div>
+        ) : (
+          <table className="sccap-t">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Provider</th>
+                <th>Model</th>
+                <th>Tokenizer</th>
+                <th>Input $/1M</th>
+                <th>Output $/1M</th>
+                <th>Created</th>
+                <th style={{ width: 80 }} />
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((cfg) => (
+                <tr key={cfg.id} style={{ cursor: "default" }}>
+                  <td style={{ fontWeight: 500 }}>{cfg.name}</td>
+                  <td>
+                    <span className="chip">{cfg.provider.toUpperCase()}</span>
+                  </td>
+                  <td className="mono" style={{ fontSize: 12 }}>
+                    {cfg.model_name}
+                  </td>
+                  <td className="mono" style={{ fontSize: 11.5 }}>
+                    {cfg.tokenizer ? (
+                      cfg.tokenizer
+                    ) : (
+                      <span style={{ color: "var(--fg-subtle)" }}>auto</span>
+                    )}
+                  </td>
+                  <td
+                    className="mono"
+                    style={{ fontVariantNumeric: "tabular-nums" }}
+                  >
+                    ${cfg.input_cost_per_million?.toFixed(6) ?? "0.00"}
+                  </td>
+                  <td
+                    className="mono"
+                    style={{ fontVariantNumeric: "tabular-nums" }}
+                  >
+                    ${cfg.output_cost_per_million?.toFixed(6) ?? "0.00"}
+                  </td>
+                  <td style={{ color: "var(--fg-muted)", fontSize: 12 }}>
+                    {parseAsUTC(cfg.created_at)?.toLocaleDateString() ?? "—"}
+                  </td>
+                  <td>
+                    <div style={{ display: "flex", gap: 4 }}>
+                      <button
+                        className="sccap-btn sccap-btn-icon sccap-btn-ghost"
+                        aria-label="Edit"
+                        onClick={() => setEditing(cfg)}
+                        disabled={editing?.id === cfg.id}
+                      >
+                        <Icon.Edit size={12} />
+                      </button>
+                      <button
+                        className="sccap-btn sccap-btn-icon sccap-btn-ghost"
+                        aria-label="Delete"
+                        onClick={() => setConfirmDeleteId(cfg.id)}
+                      >
+                        <Icon.Trash size={12} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {confirmDeleteId && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setConfirmDeleteId(null)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,.45)",
+            display: "grid",
+            placeItems: "center",
+            zIndex: 1000,
           }}
-          onChange={(newPagination: TablePaginationConfig) => {
-            setPagination({
-              current: newPagination.current ?? 1,
-              pageSize: newPagination.pageSize ?? 10,
-            });
-          }}
-          scroll={{ x: true }}
-        />
-      </Card>
-    </Space>
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="surface"
+            style={{ width: 420, maxWidth: "90%" }}
+          >
+            <div
+              style={{
+                padding: "16px 20px",
+                borderBottom: "1px solid var(--border)",
+                fontWeight: 600,
+              }}
+            >
+              Delete LLM configuration?
+            </div>
+            <div
+              style={{
+                padding: 20,
+                fontSize: 13,
+                color: "var(--fg-muted)",
+              }}
+            >
+              This cannot be undone. Active scans referencing this config
+              will fail.
+            </div>
+            <div
+              style={{
+                borderTop: "1px solid var(--border)",
+                padding: "12px 20px",
+                display: "flex",
+                justifyContent: "flex-end",
+                gap: 8,
+              }}
+            >
+              <button
+                className="sccap-btn sccap-btn-sm"
+                onClick={() => setConfirmDeleteId(null)}
+                disabled={deleteMutation.isPending}
+              >
+                Cancel
+              </button>
+              <button
+                className="sccap-btn sccap-btn-danger sccap-btn-sm"
+                onClick={() => {
+                  if (confirmDeleteId) {
+                    deleteMutation.mutate(confirmDeleteId);
+                    setConfirmDeleteId(null);
+                  }
+                }}
+                disabled={deleteMutation.isPending}
+              >
+                {deleteMutation.isPending ? "Deleting…" : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 };
+
+const Field: React.FC<{
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}> = ({ label, hint, children }) => (
+  <label style={{ display: "grid", gap: 6 }}>
+    <span style={{ fontSize: 12, color: "var(--fg-muted)" }}>
+      {label}
+      {hint && (
+        <span
+          style={{
+            marginLeft: 8,
+            color: "var(--fg-subtle)",
+            fontWeight: 400,
+          }}
+        >
+          {hint}
+        </span>
+      )}
+    </span>
+    {children}
+  </label>
+);
 
 export default LLMSettingsPage;

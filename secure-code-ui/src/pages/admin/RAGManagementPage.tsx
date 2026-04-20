@@ -1,38 +1,12 @@
-import {
-  CloudUploadOutlined,
-  DeleteOutlined,
-  DownloadOutlined,
-  EditOutlined,
-  EyeOutlined,
-  PlusOutlined,
-  SecurityScanOutlined,
-  CheckOutlined,
-  CloseOutlined,
-  GlobalOutlined,
-  FileTextOutlined,
-} from "@ant-design/icons";
+// secure-code-ui/src/pages/admin/RAGManagementPage.tsx
+//
+// RAG / Security-Standards knowledge-base admin page. Ported to SCCAP
+// primitives. The heavy ingestion wizard (FrameworkIngestionModal)
+// still uses antd — porting that end-to-end is substantial and tracked
+// as a G.7 follow-up; the outer page shell, cards, job banner, and
+// document viewer all move to SCCAP tokens here.
+
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { TableProps } from "antd";
-import {
-  Alert,
-  Button,
-  Card,
-  Col,
-  Form,
-  Input,
-  Modal,
-  Popconfirm,
-  Row,
-  Space,
-  Spin,
-  Table,
-  Tag,
-  Tooltip,
-  Typography,
-  message,
-  Switch,
-} from "antd";
-import type { RcFile } from "antd/es/upload";
 import { AxiosError } from "axios";
 import { saveAs } from "file-saver";
 import React, { useEffect, useState } from "react";
@@ -47,350 +21,317 @@ import type {
   RAGDocument,
   RAGJobStatusResponse,
 } from "../../shared/types/api";
+import { Icon } from "../../shared/ui/Icon";
+import { Modal } from "../../shared/ui/Modal";
+import { useToast } from "../../shared/ui/Toast";
 import { FrameworkIngestionModal } from "./FrameworkIngestionModal";
 
-const { Title, Paragraph } = Typography;
-
-/** Extract a user-facing error string from an axios-style thrown error. */
 function axiosErrorDetail(err: unknown): string {
-  const e = err as { response?: { data?: { detail?: string } }; message?: string };
+  const e = err as {
+    response?: { data?: { detail?: string } };
+    message?: string;
+  };
   return e.response?.data?.detail || e.message || "Unknown error";
 }
 
-// --- Sub-component for Viewing Documents ---
+// -----------------------------------------------------------------------------
+// Document viewer modal
+// -----------------------------------------------------------------------------
+
 const ViewDocumentsModal: React.FC<{
   frameworkName: string;
-  visible: boolean;
+  open: boolean;
   onClose: () => void;
-}> = ({ frameworkName, visible, onClose }) => {
-  const {
-    data: documents,
-    isLoading,
-    isError,
-  } = useQuery<RAGDocument[], Error>({
+}> = ({ frameworkName, open, onClose }) => {
+  const { data: documents, isLoading, isError } = useQuery<
+    RAGDocument[],
+    Error
+  >({
     queryKey: ["ragDocuments", frameworkName],
     queryFn: () => ragService.getDocuments(frameworkName),
-    enabled: visible,
+    enabled: open,
   });
 
-  const columns: TableProps<RAGDocument>["columns"] = React.useMemo(() => {
-    if (!documents || documents.length === 0) {
-      return [
-        { title: "ID", dataIndex: "id", key: "id" },
-        { title: "Document", dataIndex: "document", key: "document" },
-      ];
-    }
-    const metadataKeys = [
-      ...new Set(
-        documents.flatMap((doc: RAGDocument) => Object.keys(doc.metadata)),
-      ),
-    ];
-    const metadataColumns = metadataKeys.map((key: string) => ({
-      title: key
-        .replace(/_/g, " ")
-        .replace(/\b\w/g, (l: string) => l.toUpperCase()),
-      dataIndex: ["metadata", key],
-      key: key,
-      ellipsis: true,
-      render: (text: unknown) => {
-        if (typeof text === "boolean") {
-          return text ? (
-            <Tag color="green"> Yes </Tag>
-          ) : (
-            <Tag color="red">No</Tag>
-          );
-        }
-        return text?.toString();
-      },
-    }));
-
-    return [
-      { title: "ID", dataIndex: "id", key: "id", fixed: "left", width: 150 },
-      {
-        title: "Document Content",
-        dataIndex: "document",
-        key: "document",
-        ellipsis: true,
-        width: 400,
-      },
-      ...metadataColumns,
-    ];
-  }, [documents]);
+  const metadataKeys = React.useMemo(
+    () =>
+      documents
+        ? Array.from(
+            new Set(documents.flatMap((d) => Object.keys(d.metadata))),
+          )
+        : [],
+    [documents],
+  );
 
   return (
     <Modal
-      title={`Documents for "${frameworkName}"`}
-      open={visible}
-      onCancel={onClose}
-      footer={<Button onClick={onClose}> Close </Button>}
-      width={1200}
-      destroyOnClose
+      open={open}
+      onClose={onClose}
+      title={`Documents in "${frameworkName}"`}
+      width="min(1100px, 95vw)"
+      footer={
+        <button className="sccap-btn sccap-btn-sm" onClick={onClose}>
+          Close
+        </button>
+      }
     >
-      <Table
-        loading={isLoading}
-        dataSource={documents}
-        rowKey="id"
-        columns={columns}
-        scroll={{ x: true }}
-        locale={{
-          emptyText: isError
-            ? "Error loading documents."
-            : "No documents found for this framework.",
-        }}
-      />
+      {isLoading ? (
+        <div
+          style={{
+            padding: 40,
+            textAlign: "center",
+            color: "var(--fg-muted)",
+          }}
+        >
+          Loading documents…
+        </div>
+      ) : isError ? (
+        <div
+          style={{
+            padding: 20,
+            color: "var(--critical)",
+            fontSize: 13,
+          }}
+        >
+          Error loading documents.
+        </div>
+      ) : !documents || documents.length === 0 ? (
+        <div
+          style={{
+            padding: 20,
+            color: "var(--fg-muted)",
+            fontSize: 13,
+          }}
+        >
+          No documents for this framework.
+        </div>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table className="sccap-t">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th style={{ minWidth: 280 }}>Content</th>
+                {metadataKeys.map((k) => (
+                  <th key={k}>{k.replace(/_/g, " ")}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {documents.map((d) => (
+                <tr key={d.id} style={{ cursor: "default" }}>
+                  <td className="mono" style={{ fontSize: 11 }}>
+                    {d.id}
+                  </td>
+                  <td
+                    style={{
+                      fontSize: 12,
+                      maxWidth: 420,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                    title={d.document}
+                  >
+                    {d.document}
+                  </td>
+                  {metadataKeys.map((k) => {
+                    const val = (d.metadata as Record<string, unknown>)[k];
+                    if (typeof val === "boolean") {
+                      return (
+                        <td key={k}>
+                          <span
+                            className={`chip ${val ? "chip-success" : ""}`}
+                          >
+                            {val ? "Yes" : "No"}
+                          </span>
+                        </td>
+                      );
+                    }
+                    return (
+                      <td
+                        key={k}
+                        style={{
+                          fontSize: 12,
+                          color: "var(--fg-muted)",
+                        }}
+                      >
+                        {val !== undefined && val !== null
+                          ? String(val)
+                          : "—"}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </Modal>
   );
 };
 
-// --- Standard Framework Card ---
-const StandardFrameworkCard: React.FC<{
+// -----------------------------------------------------------------------------
+// Framework card — used for both standard and custom frameworks
+// -----------------------------------------------------------------------------
+
+type CardType = "scanning" | "knowledge" | "custom";
+
+const FrameworkCard: React.FC<{
   name: string;
   displayName: string;
   description: string;
-  docCount: number;
-  type: "scanning" | "knowledge";
-  onUpdate: (name: string) => void;
-  onDelete: (name: string) => void;
-  onIngest: () => void; // Trigger ingestion/upload
+  docCount?: number;
+  cardType: CardType;
+  installed: boolean;
   isLoading?: boolean;
+  onView: () => void;
+  onEdit: () => void;
+  onIngest: () => void;
+  onDelete: () => void;
 }> = ({
-  name,
   displayName,
   description,
   docCount,
-  type,
-  onUpdate,
-  onDelete,
-  onIngest,
+  cardType,
+  installed,
   isLoading,
+  onView,
+  onEdit,
+  onIngest,
+  onDelete,
 }) => {
-  const [isViewModalVisible, setIsViewModalVisible] = useState(false);
-  const isInstalled = docCount > 0;
-
-  const actions = [];
-
-  if (isInstalled) {
-    actions.push(
-      <Tooltip title="View Documents" key="view">
-        <Button
-          type="text"
-          icon={<EyeOutlined />}
-          onClick={() => setIsViewModalVisible(true)}
-        />
-      </Tooltip>,
-    );
-
-    actions.push(
-      <Tooltip title="Edit / Add Languages" key="update">
-        <Button
-          type="text"
-          icon={<EditOutlined />}
-          onClick={() => onUpdate(name)}
-        />
-      </Tooltip>,
-    );
-  }
-
-  // Update/Install Action (Re-upload / Re-fetch)
-  actions.push(
-    <Tooltip
-      title={isInstalled ? "Re-upload / Re-fetch Source" : "Upload Framework"}
-      key="ingest"
-    >
-      <Button
-        type="text"
-        icon={<CloudUploadOutlined />}
-        onClick={onIngest}
-        loading={isLoading}
-      >
-        {!isInstalled && "Upload"}
-      </Button>
-    </Tooltip>,
-  );
-
-  if (isInstalled) {
-    actions.push(
-      <Popconfirm
-        key="delete"
-        title="Delete Standard Framework?"
-        description="This will remove all ingested documents for this standard. You can re-ingest them later."
-        onConfirm={() => onDelete(name)}
-        okText="Yes, Delete"
-        cancelText="No"
-      >
-        <Tooltip title="Delete Documents">
-          <Button danger type="text" icon={<DeleteOutlined />} />
-        </Tooltip>
-      </Popconfirm>,
-    );
-  }
+  const badgeColor =
+    cardType === "scanning"
+      ? "chip-info"
+      : cardType === "knowledge"
+        ? "chip-medium"
+        : "chip-ai";
+  const badgeLabel =
+    cardType === "scanning"
+      ? "Scanning standard"
+      : cardType === "knowledge"
+        ? "Knowledge base"
+        : "Custom";
+  const badgeIcon =
+    cardType === "scanning"
+      ? Icon.Shield
+      : cardType === "knowledge"
+        ? Icon.BookOpen
+        : Icon.Layers;
+  const BadgeIcon = badgeIcon;
 
   return (
-    <Col xs={24} sm={12} md={8}>
-      <Card
-        title={
-          <Space>
-            {displayName}
-            {docCount > 0 && <Tag color="green"> {docCount} docs </Tag>}
-          </Space>
-        }
-        actions={actions}
-        style={{ height: "100%", minHeight: 180 }}
+    <div className="sccap-card">
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-start",
+          marginBottom: 8,
+        }}
       >
-        <div style={{ marginBottom: 8 }}>
-          {type === "scanning" ? (
-            <Tag color="blue" icon={<SecurityScanOutlined />}>
-              {" "}
-              Scanning Standard{" "}
-            </Tag>
-          ) : (
-            <Tag color="orange" icon={<FileTextOutlined />}>
-              {" "}
-              Knowledge Base{" "}
-            </Tag>
-          )}
+        <div style={{ fontWeight: 600, color: "var(--fg)" }}>
+          {displayName}
         </div>
-        <Paragraph ellipsis={{ rows: 3 }}> {description} </Paragraph>
-      </Card>
-      {isViewModalVisible && (
-        <ViewDocumentsModal
-          frameworkName={name}
-          visible={isViewModalVisible}
-          onClose={() => setIsViewModalVisible(false)}
-        />
-      )}
-    </Col>
-  );
-};
-
-// --- Custom Framework Card ---
-const FrameworkCard: React.FC<{
-  framework: FrameworkRead;
-  onUpdate: (name: string) => void;
-}> = ({ framework, onUpdate }) => {
-  const [isViewModalVisible, setIsViewModalVisible] = useState(false);
-  const queryClient = useQueryClient();
-
-  const deleteMutation = useMutation({
-    mutationFn: () => frameworkService.deleteFramework(framework.id),
-    onSuccess: () => {
-      message.success(`Framework "${framework.name}" deleted successfully.`);
-      queryClient.invalidateQueries({ queryKey: ["frameworks"] });
-    },
-    onError: (error: AxiosError) => {
-      message.error(`Failed to delete framework: ${error.message}`);
-    },
-  });
-
-  const actions = [
-    <Tooltip title="View Documents" key="view">
-      <Button
-        type="text"
-        icon={<EyeOutlined />}
-        onClick={() => setIsViewModalVisible(true)}
-      />
-    </Tooltip>,
-    <Tooltip title="Edit / Add Languages" key="update">
-      <Button
-        type="text"
-        icon={<EditOutlined />}
-        onClick={() => onUpdate(framework.name)}
-      />
-    </Tooltip>,
-    <Popconfirm
-      key="delete"
-      title="Delete Framework?"
-      description="This action cannot be undone. It will remove the framework and its associations."
-      onConfirm={() => deleteMutation.mutate()}
-      okText="Yes, Delete"
-      cancelText="No"
-    >
-      <Tooltip title="Delete Framework">
-        <Button
-          danger
-          type="text"
-          icon={<DeleteOutlined />}
-          loading={deleteMutation.isPending}
-        />
-      </Tooltip>
-    </Popconfirm>,
-  ];
-
-  return (
-    <Col xs={24} sm={12} md={8}>
-      <Card
-        title={framework.name}
-        actions={actions}
-        style={{ height: "100%", minHeight: 180 }}
-      >
-        <div style={{ marginBottom: 8 }}>
-          <Tag color="purple" icon={<GlobalOutlined />}>
-            {" "}
-            Custom Framework{" "}
-          </Tag>
-        </div>
-        <Paragraph ellipsis={{ rows: 3 }}> {framework.description} </Paragraph>
-      </Card>
-      {isViewModalVisible && (
-        <ViewDocumentsModal
-          frameworkName={framework.name}
-          visible={isViewModalVisible}
-          onClose={() => setIsViewModalVisible(false)}
-        />
-      )}
-    </Col>
-  );
-};
-
-// --- Add New Framework Card ---
-const AddFrameworkCard: React.FC<{ onClick: () => void }> = ({ onClick }) => (
-  <Col xs={24} sm={12} md={8}>
-    <Card
-      hoverable
-      style={{
-        height: "100%",
-        minHeight: 180,
-        borderStyle: "dashed",
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
-        background: "#fafafa",
-      }}
-      onClick={onClick}
-    >
-      <div style={{ textAlign: "center" }}>
-        <PlusOutlined
-          style={{ fontSize: 32, color: "#1890ff", marginBottom: 16 }}
-        />
-        <Paragraph strong style={{ fontSize: 16, marginBottom: 0 }}>
-          {" "}
-          Add Custom Framework{" "}
-        </Paragraph>
-        <Paragraph type="secondary">
-          {" "}
-          Upload CSV or define a new standard{" "}
-        </Paragraph>
+        {docCount !== undefined && docCount > 0 && (
+          <span className="chip chip-success">{docCount} docs</span>
+        )}
       </div>
-    </Card>
-  </Col>
-);
+      <div style={{ marginBottom: 10 }}>
+        <span className={`chip ${badgeColor}`}>
+          <BadgeIcon size={10} /> {badgeLabel}
+        </span>
+      </div>
+      <div
+        style={{
+          fontSize: 12.5,
+          color: "var(--fg-muted)",
+          lineHeight: 1.5,
+          marginBottom: 14,
+          minHeight: 46,
+          display: "-webkit-box",
+          WebkitLineClamp: 3,
+          WebkitBoxOrient: "vertical",
+          overflow: "hidden",
+        }}
+      >
+        {description}
+      </div>
+      <div
+        style={{
+          display: "flex",
+          gap: 4,
+          paddingTop: 10,
+          borderTop: "1px solid var(--border)",
+          justifyContent: "space-between",
+        }}
+      >
+        <div style={{ display: "flex", gap: 4 }}>
+          {installed && (
+            <>
+              <button
+                className="sccap-btn sccap-btn-icon sccap-btn-ghost sccap-btn-sm"
+                aria-label="View documents"
+                title="View documents"
+                onClick={onView}
+              >
+                <Icon.Eye size={13} />
+              </button>
+              <button
+                className="sccap-btn sccap-btn-icon sccap-btn-ghost sccap-btn-sm"
+                aria-label="Edit or add languages"
+                title="Edit or re-ingest"
+                onClick={onEdit}
+              >
+                <Icon.Edit size={13} />
+              </button>
+            </>
+          )}
+          <button
+            className="sccap-btn sccap-btn-ghost sccap-btn-sm"
+            aria-label={installed ? "Re-upload" : "Upload"}
+            title={installed ? "Re-upload source" : "Upload framework"}
+            onClick={onIngest}
+            disabled={isLoading}
+          >
+            <Icon.Upload size={13} />{" "}
+            {isLoading ? "Working…" : installed ? "Re-upload" : "Upload"}
+          </button>
+        </div>
+        {installed && (
+          <button
+            className="sccap-btn sccap-btn-icon sccap-btn-ghost sccap-btn-sm"
+            aria-label="Delete"
+            title="Delete documents"
+            onClick={onDelete}
+            style={{ color: "var(--critical)" }}
+          >
+            <Icon.Trash size={13} />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// -----------------------------------------------------------------------------
+// Main page
+// -----------------------------------------------------------------------------
 
 const RAGManagementPage: React.FC = () => {
+  const toast = useToast();
   const queryClient = useQueryClient();
 
-  // State
   const [pollingJobId, setPollingJobId] = useState<string | null>(null);
-  const [ingestionModalVisible, setIngestionModalVisible] = useState(false);
+  const [ingestionModalOpen, setIngestionModalOpen] = useState(false);
   const [ingestionInitialValues, setIngestionInitialValues] = useState<
     { frameworkName: string; isEdit?: boolean } | undefined
   >(undefined);
-
-  // Standard Framework Loading States
   const [ingestLoading, setIngestLoading] = useState<string | null>(null);
 
-  // Modals for Standard Fetch
-  const [proactiveModalVisible, setProactiveModalVisible] = useState(false);
-  const [cheatsheetModalVisible, setCheatsheetModalVisible] = useState(false);
+  const [proactiveOpen, setProactiveOpen] = useState(false);
+  const [cheatsheetOpen, setCheatsheetOpen] = useState(false);
   const [proactiveUrl, setProactiveUrl] = useState(
     "https://github.com/OWASP/www-project-proactive-controls/tree/master/docs/the-top-10",
   );
@@ -399,15 +340,18 @@ const RAGManagementPage: React.FC = () => {
   );
 
   const [scanReady, setScanReady] = useState(true);
+  const [viewName, setViewName] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<{
+    name: string;
+    isCustom: boolean;
+    id?: string;
+  } | null>(null);
 
   useEffect(() => {
-    const storedJobId = sessionStorage.getItem("rag_processing_job_id");
-    if (storedJobId) {
-      setPollingJobId(storedJobId);
-    }
+    const stored = sessionStorage.getItem("rag_processing_job_id");
+    if (stored) setPollingJobId(stored);
   }, []);
 
-  // Queries
   const { data: frameworks = [], isLoading: isLoadingFrameworks } = useQuery<
     FrameworkRead[]
   >({
@@ -441,9 +385,7 @@ const RAGManagementPage: React.FC = () => {
     },
     enabled: !!pollingJobId,
     refetchOnWindowFocus: true,
-    refetchInterval: (
-      query: any /* eslint-disable-line @typescript-eslint/no-explicit-any */,
-    ) => {
+    refetchInterval: (query) => {
       const status = query.state.data?.status;
       return status === "PROCESSING" || status === "PENDING_APPROVAL"
         ? 3000
@@ -454,7 +396,7 @@ const RAGManagementPage: React.FC = () => {
   const approveMutation = useMutation({
     mutationFn: (jobId: string) => ragService.approveJob(jobId),
     onSuccess: () => {
-      message.success("Job approved and is now processing in the background.");
+      toast.success("Job approved; processing in background.");
       pollStatus();
     },
   });
@@ -463,26 +405,35 @@ const RAGManagementPage: React.FC = () => {
     mutationFn: (payload: PreprocessingResponse) =>
       ragService.ingestProcessed(payload),
     onSuccess: (data: { message: string }) => {
-      message.success(data.message);
+      toast.success(data.message);
       queryClient.invalidateQueries({ queryKey: ["frameworks"] });
       handleReset();
     },
     onError: (error: AxiosError) => {
-      const errorDetail =
-        (error.response?.data as { detail: string })?.detail || error.message;
-      message.error(`Ingestion failed: ${errorDetail}`);
+      const detail =
+        (error.response?.data as { detail?: string })?.detail || error.message;
+      toast.error(`Ingestion failed: ${detail}`);
     },
   });
 
-  // Actions
+  const deleteCustomMutation = useMutation({
+    mutationFn: (id: string) => frameworkService.deleteFramework(id),
+    onSuccess: () => {
+      toast.success("Custom framework deleted.");
+      queryClient.invalidateQueries({ queryKey: ["frameworks"] });
+    },
+    onError: (error: AxiosError) =>
+      toast.error(`Delete failed: ${error.message}`),
+  });
+
   const handleOpenIngestionModal = (
     frameworkName?: string,
-    isEdit: boolean = false,
+    isEdit = false,
   ) => {
     setIngestionInitialValues(
       frameworkName ? { frameworkName, isEdit } : undefined,
     );
-    setIngestionModalVisible(true);
+    setIngestionModalOpen(true);
   };
 
   const handleIngestionSuccess = (jobId: string) => {
@@ -498,46 +449,39 @@ const RAGManagementPage: React.FC = () => {
   };
 
   const handleDownload = () => {
-    if (
-      !jobStatus?.processed_documents ||
-      jobStatus.processed_documents.length === 0
-    )
-      return;
+    if (!jobStatus?.processed_documents?.length) return;
     const { processed_documents, framework_name } = jobStatus;
-
-    const metadataKeys = Object.keys(
-      processed_documents[0].metadata || {},
-    ).sort();
-    const header = ["id", "document", ...metadataKeys].join(",");
-
+    const metaKeys = Object.keys(processed_documents[0].metadata || {}).sort();
+    const header = ["id", "document", ...metaKeys].join(",");
     const rows = processed_documents.map((doc: EnrichedDocument) => {
-      const metadataValues = metadataKeys.map((key) => {
-        const value = doc.metadata[key as keyof typeof doc.metadata] ?? "";
-        return `"${String(value).replace(/"/g, '""')}"`;
+      const metaVals = metaKeys.map((k) => {
+        const v = doc.metadata[k as keyof typeof doc.metadata] ?? "";
+        return `"${String(v).replace(/"/g, '""')}"`;
       });
-
       return [
         `"${doc.id}"`,
         `"${doc.enriched_content.replace(/"/g, '""')}"`,
-        ...metadataValues,
+        ...metaVals,
       ].join(",");
     });
-
-    const csvContent = `${header}\n${rows.join("\n")}`;
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const csv = `${header}\n${rows.join("\n")}`;
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     saveAs(blob, `${framework_name}_processed.csv`);
   };
 
-  // Standard Framework Handlers
-  const handleUploadASVS = async (file: RcFile) => {
+  const handleUploadASVS = async (file: File) => {
     setIngestLoading("asvs");
     try {
-      const res = await ragService.ingestASVS(file);
-      message.success(res.message);
+      // ragService.ingestASVS accepts any File-shaped object; antd RcFile
+      // inherits from File at runtime, so a native File is equivalent.
+      const res = await ragService.ingestASVS(
+        file as unknown as Parameters<typeof ragService.ingestASVS>[0],
+      );
+      toast.success(res.message);
       refetchStats();
       queryClient.invalidateQueries({ queryKey: ["ragDocuments", "asvs"] });
     } catch (error) {
-      message.error(`ASVS ingestion failed: ${axiosErrorDetail(error)}`);
+      toast.error(`ASVS ingestion failed: ${axiosErrorDetail(error)}`);
     } finally {
       setIngestLoading(null);
     }
@@ -547,16 +491,14 @@ const RAGManagementPage: React.FC = () => {
     setIngestLoading("proactive");
     try {
       const res = await ragService.ingestProactiveControls(proactiveUrl);
-      message.success(res.message);
+      toast.success(res.message);
       refetchStats();
-      setProactiveModalVisible(false);
+      setProactiveOpen(false);
       queryClient.invalidateQueries({
         queryKey: ["ragDocuments", "proactive_controls"],
       });
     } catch (error) {
-      message.error(
-        `Proactive Controls fetch failed: ${axiosErrorDetail(error)}`,
-      );
+      toast.error(`Proactive Controls fetch failed: ${axiosErrorDetail(error)}`);
     } finally {
       setIngestLoading(null);
     }
@@ -566,14 +508,14 @@ const RAGManagementPage: React.FC = () => {
     setIngestLoading("cheatsheet");
     try {
       const res = await ragService.ingestCheatsheet(cheatsheetUrl);
-      message.success(res.message);
+      toast.success(res.message);
       refetchStats();
-      setCheatsheetModalVisible(false);
+      setCheatsheetOpen(false);
       queryClient.invalidateQueries({
         queryKey: ["ragDocuments", "cheatsheets"],
       });
     } catch (error) {
-      message.error(`Cheatsheets fetch failed: ${axiosErrorDetail(error)}`);
+      toast.error(`Cheatsheets fetch failed: ${axiosErrorDetail(error)}`);
     } finally {
       setIngestLoading(null);
     }
@@ -583,57 +525,93 @@ const RAGManagementPage: React.FC = () => {
     try {
       const docs = await ragService.getDocuments(frameworkName);
       if (docs && docs.length > 0) {
-        const ids = docs.map((d) => d.id);
-        await ragService.deleteDocuments(ids);
-        message.success(
-          `Deleted ${ids.length} documents for ${frameworkName}.`,
-        );
-        refetchStats(); // Update counts
+        await ragService.deleteDocuments(docs.map((d) => d.id));
+        toast.success(`Deleted ${docs.length} documents for ${frameworkName}.`);
+        refetchStats();
       } else {
-        message.info("No documents to delete.");
+        toast.info("No documents to delete.");
       }
     } catch (error) {
-      message.error(
-        `Failed to delete standard documents: ${axiosErrorDetail(error)}`,
-      );
+      toast.error(`Delete failed: ${axiosErrorDetail(error)}`);
     }
   };
 
-  // --- Render Job Status Banner ---
-  const renderJobStatus = () => {
+  const customFrameworks = frameworks.filter(
+    (fw) => !["asvs", "proactive_controls", "cheatsheets"].includes(fw.name),
+  );
+
+  // -------- Job status banner --------
+  const renderJobBanner = () => {
     if (!pollingJobId || !jobStatus) return null;
 
     if (jobStatus.status === "PENDING_APPROVAL") {
-      // This state is mostly handled by the modal now, but if the user closes it early:
       return (
-        <Alert
-          type="warning"
-          message={`Job Pending Approval: ${jobStatus.framework_name}`}
-          action={
-            <Button
-              size="small"
-              type="primary"
-              onClick={() => approveMutation.mutate(pollingJobId!)}
-              loading={approveMutation.isPending}
+        <div
+          className="sccap-card"
+          style={{
+            background: "var(--medium-weak)",
+            borderColor: "var(--medium)",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            padding: 16,
+          }}
+        >
+          <div>
+            <div
+              style={{
+                fontSize: 11,
+                textTransform: "uppercase",
+                letterSpacing: ".06em",
+                color: "var(--medium)",
+                fontWeight: 600,
+              }}
             >
-              Approve
-            </Button>
-          }
-          style={{ marginBottom: 24 }}
-        />
+              Pending approval
+            </div>
+            <div style={{ color: "var(--fg)", marginTop: 2 }}>
+              {jobStatus.framework_name}
+            </div>
+          </div>
+          <button
+            className="sccap-btn sccap-btn-primary sccap-btn-sm"
+            onClick={() => approveMutation.mutate(pollingJobId)}
+            disabled={approveMutation.isPending}
+          >
+            <Icon.Check size={12} /> Approve
+          </button>
+        </div>
       );
     }
 
     if (jobStatus.status === "PROCESSING" || isPolling) {
       return (
-        <Alert
-          type="info"
-          message={`Processing Framework: ${jobStatus.framework_name || "..."} `}
-          description="Enriching documents with LLM patterns. This may take a few minutes."
-          icon={<Spin />}
-          showIcon
-          style={{ marginBottom: 24 }}
-        />
+        <div
+          className="sccap-card"
+          style={{
+            background: "var(--info-weak)",
+            borderColor: "var(--info)",
+            padding: 16,
+          }}
+        >
+          <div
+            style={{
+              fontSize: 11,
+              textTransform: "uppercase",
+              letterSpacing: ".06em",
+              color: "var(--info)",
+              fontWeight: 600,
+            }}
+          >
+            Processing
+          </div>
+          <div style={{ color: "var(--fg)", marginTop: 2 }}>
+            {jobStatus.framework_name || "…"}
+          </div>
+          <div style={{ fontSize: 12.5, color: "var(--fg-muted)", marginTop: 4 }}>
+            Enriching documents with LLM patterns. This may take a few minutes.
+          </div>
+        </div>
       );
     }
 
@@ -644,116 +622,205 @@ const RAGManagementPage: React.FC = () => {
         processed_documents: jobStatus.processed_documents || [],
         scan_ready: scanReady,
       };
-
       return (
-        <Card style={{ marginBottom: 24, borderColor: "#52c41a" }}>
-          <Space direction="vertical" style={{ width: "100%" }}>
-            <Alert
-              type="success"
-              message={`Preprocessing Complete for ${jobStatus.framework_name}`}
-              showIcon
-            />
-
+        <div
+          className="sccap-card"
+          style={{
+            borderColor: "var(--success)",
+            padding: 16,
+            display: "grid",
+            gap: 12,
+          }}
+        >
+          <div>
             <div
               style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                marginTop: 8,
+                fontSize: 11,
+                textTransform: "uppercase",
+                letterSpacing: ".06em",
+                color: "var(--success)",
+                fontWeight: 600,
               }}
             >
-              <span>Mark as Scan Ready ? </span>
-              <Switch
-                checkedChildren={<CheckOutlined />}
-                unCheckedChildren={<CloseOutlined />}
-                checked={scanReady}
-                onChange={setScanReady}
-              />
-              <Tooltip title="If enabled, this framework will be used by the security scanner agent. If disabled, it will be used for chat context only.">
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  {" "}
-                  (?){" "}
-                </Typography.Text>
-              </Tooltip>
+              Preprocessing complete
             </div>
-
-            <Space>
-              <Button icon={<DownloadOutlined />} onClick={handleDownload}>
-                Download Processed CSV
-              </Button>
-              <Button
-                type="primary"
-                icon={<PlusOutlined />}
-                onClick={() => ingestMutation.mutate(finalPayload)}
-                loading={ingestMutation.isPending}
-              >
-                Finalize Ingestion(Save to DB)
-              </Button>
-              <Button onClick={handleReset}> Cancel / New </Button>
-            </Space>
-          </Space>
-        </Card>
+            <div style={{ color: "var(--fg)", marginTop: 2 }}>
+              {jobStatus.framework_name}
+            </div>
+          </div>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+            }}
+          >
+            <div
+              className={`sccap-switch ${scanReady ? "on" : ""}`}
+              role="switch"
+              aria-checked={scanReady}
+              tabIndex={0}
+              onClick={() => setScanReady(!scanReady)}
+              onKeyDown={(e) => {
+                if (e.key === " " || e.key === "Enter") {
+                  e.preventDefault();
+                  setScanReady(!scanReady);
+                }
+              }}
+            />
+            <span style={{ fontSize: 13, color: "var(--fg)" }}>
+              {scanReady
+                ? "Scan-ready (used by the scanner agent)"
+                : "Chat-context only"}
+            </span>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              className="sccap-btn sccap-btn-sm"
+              onClick={handleDownload}
+            >
+              <Icon.Download size={12} /> Download CSV
+            </button>
+            <button
+              className="sccap-btn sccap-btn-primary sccap-btn-sm"
+              onClick={() => ingestMutation.mutate(finalPayload)}
+              disabled={ingestMutation.isPending}
+            >
+              <Icon.Plus size={12} /> Finalize ingestion
+            </button>
+            <button className="sccap-btn sccap-btn-sm" onClick={handleReset}>
+              Cancel
+            </button>
+          </div>
+        </div>
       );
     }
 
     if (jobStatus.status === "FAILED") {
       return (
-        <Alert
-          type="error"
-          message="Job Failed"
-          description={jobStatus.error_message}
-          action={
-            <Button size="small" type="primary" onClick={handleReset}>
-              {" "}
-              Close{" "}
-            </Button>
-          }
-          style={{ marginBottom: 24 }}
-        />
+        <div
+          className="sccap-card"
+          style={{
+            background: "var(--critical-weak)",
+            borderColor: "var(--critical)",
+            padding: 16,
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
+        >
+          <div>
+            <div
+              style={{
+                fontSize: 11,
+                textTransform: "uppercase",
+                letterSpacing: ".06em",
+                color: "var(--critical)",
+                fontWeight: 600,
+              }}
+            >
+              Job failed
+            </div>
+            <div style={{ color: "var(--fg)", marginTop: 2, fontSize: 13 }}>
+              {jobStatus.error_message}
+            </div>
+          </div>
+          <button className="sccap-btn sccap-btn-sm" onClick={handleReset}>
+            Close
+          </button>
+        </div>
       );
     }
-
     return null;
   };
 
   return (
-    <Space direction="vertical" style={{ width: "100%" }} size="large">
+    <div className="fade-in" style={{ display: "grid", gap: 18 }}>
       <div>
-        <Title level={2} style={{ margin: 0 }}>
-          {" "}
-          Security Standards{" "}
-        </Title>
-        <Paragraph style={{ marginTop: 8 }}>
-          {" "}
-          Manage security frameworks and cheat sheets used for scanning
-          applications and context for security advisors.
-        </Paragraph>
+        <h1 style={{ color: "var(--fg)" }}>
+          <Icon.BookOpen size={18} /> Knowledge base
+        </h1>
+        <div style={{ color: "var(--fg-muted)", marginTop: 4 }}>
+          Security standards and RAG sources used for scanning and advisor
+          context.
+        </div>
       </div>
 
-      {/* Global Job Status */}
-      {renderJobStatus()}
+      {renderJobBanner()}
 
-      {/* Grid of Frameworks */}
-      <Spin spinning={isLoadingFrameworks || isLoadingStats}>
-        <Row gutter={[16, 16]}>
-          {/* 1. Add Custom Framework Card */}
-          <AddFrameworkCard onClick={() => handleOpenIngestionModal()} />
+      {isLoadingFrameworks || isLoadingStats ? (
+        <div
+          className="sccap-card"
+          style={{
+            padding: 40,
+            textAlign: "center",
+            color: "var(--fg-muted)",
+          }}
+        >
+          Loading frameworks…
+        </div>
+      ) : (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))",
+            gap: 14,
+          }}
+        >
+          <div
+            className="sccap-card"
+            onClick={() => handleOpenIngestionModal()}
+            style={{
+              display: "grid",
+              placeItems: "center",
+              minHeight: 200,
+              borderStyle: "dashed",
+              borderColor: "var(--border-strong)",
+              background: "var(--bg-soft)",
+              cursor: "pointer",
+              textAlign: "center",
+            }}
+          >
+            <div>
+              <Icon.Plus size={20} />
+              <div
+                style={{
+                  fontWeight: 500,
+                  color: "var(--fg)",
+                  marginTop: 8,
+                }}
+              >
+                Add custom framework
+              </div>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: "var(--fg-muted)",
+                  marginTop: 2,
+                }}
+              >
+                Upload CSV or define a new standard.
+              </div>
+            </div>
+          </div>
 
-          {/* 2. Standard Frameworks */}
-          <StandardFrameworkCard
+          <FrameworkCard
             name="asvs"
             displayName="OWASP ASVS"
             description="Application Security Verification Standard. Best for comprehensive auditing."
             docCount={stats.asvs || 0}
-            type="scanning"
-            onUpdate={(name) => handleOpenIngestionModal(name, true)} // ASVS ignores this? No, we need explicit handler.
-            onDelete={handleDeleteStandard}
-            onIngest={() => {
-              document.getElementById("hidden-asvs-input")?.click();
-            }}
+            cardType="scanning"
+            installed={(stats.asvs || 0) > 0}
             isLoading={ingestLoading === "asvs"}
+            onView={() => setViewName("asvs")}
+            onEdit={() => handleOpenIngestionModal("asvs", true)}
+            onIngest={() =>
+              document.getElementById("hidden-asvs-input")?.click()
+            }
+            onDelete={() =>
+              setConfirmDelete({ name: "asvs", isCustom: false })
+            }
           />
-          {/* Hidden Upload for ASVS */}
           <input
             type="file"
             id="hidden-asvs-input"
@@ -761,100 +828,196 @@ const RAGManagementPage: React.FC = () => {
             style={{ display: "none" }}
             onChange={(e) => {
               const file = e.target.files?.[0];
-              if (file) {
-                handleUploadASVS(file as unknown as RcFile);
-              }
-              e.target.value = ""; // Reset
+              if (file) handleUploadASVS(file);
+              e.target.value = "";
             }}
           />
 
-          <StandardFrameworkCard
+          <FrameworkCard
             name="proactive_controls"
             displayName="OWASP Proactive Controls"
             description="Developer-focused controls (C1-C10). Great for chat context."
             docCount={stats.proactive_controls || 0}
-            type="knowledge"
-            onUpdate={() => setProactiveModalVisible(true)}
-            onDelete={handleDeleteStandard}
-            onIngest={() => setProactiveModalVisible(true)}
+            cardType="knowledge"
+            installed={(stats.proactive_controls || 0) > 0}
             isLoading={ingestLoading === "proactive"}
+            onView={() => setViewName("proactive_controls")}
+            onEdit={() => setProactiveOpen(true)}
+            onIngest={() => setProactiveOpen(true)}
+            onDelete={() =>
+              setConfirmDelete({ name: "proactive_controls", isCustom: false })
+            }
           />
 
-          <StandardFrameworkCard
+          <FrameworkCard
             name="cheatsheets"
             displayName="OWASP Cheatsheets"
             description="Topic-specific security cheatsheets."
             docCount={stats.cheatsheets || 0}
-            type="knowledge"
-            onUpdate={() => setCheatsheetModalVisible(true)}
-            onDelete={handleDeleteStandard}
-            onIngest={() => setCheatsheetModalVisible(true)}
+            cardType="knowledge"
+            installed={(stats.cheatsheets || 0) > 0}
             isLoading={ingestLoading === "cheatsheet"}
+            onView={() => setViewName("cheatsheets")}
+            onEdit={() => setCheatsheetOpen(true)}
+            onIngest={() => setCheatsheetOpen(true)}
+            onDelete={() =>
+              setConfirmDelete({ name: "cheatsheets", isCustom: false })
+            }
           />
 
-          {/* 3. Custom Frameworks */}
-          {frameworks
-            .filter(
-              (fw) =>
-                !["asvs", "proactive_controls", "cheatsheets"].includes(
-                  fw.name,
-                ),
-            )
-            .map((fw) => (
-              <FrameworkCard
-                key={fw.id}
-                framework={fw}
-                onUpdate={(name) => handleOpenIngestionModal(name, true)}
-              />
-            ))}
-        </Row>
-      </Spin>
+          {customFrameworks.map((fw) => (
+            <FrameworkCard
+              key={fw.id}
+              name={fw.name}
+              displayName={fw.name}
+              description={fw.description}
+              cardType="custom"
+              installed
+              onView={() => setViewName(fw.name)}
+              onEdit={() => handleOpenIngestionModal(fw.name, true)}
+              onIngest={() => handleOpenIngestionModal(fw.name, true)}
+              onDelete={() =>
+                setConfirmDelete({
+                  name: fw.name,
+                  isCustom: true,
+                  id: fw.id,
+                })
+              }
+            />
+          ))}
+        </div>
+      )}
 
-      {/* Modals */}
+      {viewName && (
+        <ViewDocumentsModal
+          frameworkName={viewName}
+          open={viewName !== null}
+          onClose={() => setViewName(null)}
+        />
+      )}
+
+      {/* Ingestion wizard — left on antd for now; tracked in G.7. */}
       <FrameworkIngestionModal
-        visible={ingestionModalVisible}
-        onCancel={() => setIngestionModalVisible(false)}
+        visible={ingestionModalOpen}
+        onCancel={() => setIngestionModalOpen(false)}
         onSuccess={handleIngestionSuccess}
         initialValues={ingestionInitialValues}
         llmConfigs={llmConfigs}
       />
 
       <Modal
+        open={proactiveOpen}
+        onClose={() => setProactiveOpen(false)}
         title="Fetch Proactive Controls"
-        open={proactiveModalVisible}
-        onCancel={() => setProactiveModalVisible(false)}
-        onOk={handleFetchProactive}
-        confirmLoading={ingestLoading === "proactive"}
-        okText="Start Fetch"
+        footer={
+          <>
+            <button
+              className="sccap-btn sccap-btn-sm"
+              onClick={() => setProactiveOpen(false)}
+            >
+              Cancel
+            </button>
+            <button
+              className="sccap-btn sccap-btn-primary sccap-btn-sm"
+              onClick={handleFetchProactive}
+              disabled={ingestLoading === "proactive"}
+            >
+              {ingestLoading === "proactive" ? "Fetching…" : "Start fetch"}
+            </button>
+          </>
+        }
       >
-        <Form layout="vertical">
-          <Form.Item label="GitHub URL">
-            <Input
-              value={proactiveUrl}
-              onChange={(e) => setProactiveUrl(e.target.value)}
-            />
-          </Form.Item>
-        </Form>
+        <label style={{ display: "grid", gap: 6 }}>
+          <span style={{ fontSize: 12, color: "var(--fg-muted)" }}>
+            GitHub URL
+          </span>
+          <input
+            className="sccap-input mono"
+            value={proactiveUrl}
+            onChange={(e) => setProactiveUrl(e.target.value)}
+            style={{ fontSize: 12 }}
+          />
+        </label>
       </Modal>
 
       <Modal
+        open={cheatsheetOpen}
+        onClose={() => setCheatsheetOpen(false)}
         title="Fetch Cheatsheets"
-        open={cheatsheetModalVisible}
-        onCancel={() => setCheatsheetModalVisible(false)}
-        onOk={handleFetchCheatsheets}
-        confirmLoading={ingestLoading === "cheatsheet"}
-        okText="Start Fetch"
+        footer={
+          <>
+            <button
+              className="sccap-btn sccap-btn-sm"
+              onClick={() => setCheatsheetOpen(false)}
+            >
+              Cancel
+            </button>
+            <button
+              className="sccap-btn sccap-btn-primary sccap-btn-sm"
+              onClick={handleFetchCheatsheets}
+              disabled={ingestLoading === "cheatsheet"}
+            >
+              {ingestLoading === "cheatsheet" ? "Fetching…" : "Start fetch"}
+            </button>
+          </>
+        }
       >
-        <Form layout="vertical">
-          <Form.Item label="GitHub URL">
-            <Input
-              value={cheatsheetUrl}
-              onChange={(e) => setCheatsheetUrl(e.target.value)}
-            />
-          </Form.Item>
-        </Form>
+        <label style={{ display: "grid", gap: 6 }}>
+          <span style={{ fontSize: 12, color: "var(--fg-muted)" }}>
+            GitHub URL
+          </span>
+          <input
+            className="sccap-input mono"
+            value={cheatsheetUrl}
+            onChange={(e) => setCheatsheetUrl(e.target.value)}
+            style={{ fontSize: 12 }}
+          />
+        </label>
       </Modal>
-    </Space>
+
+      <Modal
+        open={confirmDelete !== null}
+        onClose={() => setConfirmDelete(null)}
+        title={
+          confirmDelete?.isCustom
+            ? "Delete custom framework?"
+            : "Delete standard documents?"
+        }
+        width={460}
+        footer={
+          <>
+            <button
+              className="sccap-btn sccap-btn-sm"
+              onClick={() => setConfirmDelete(null)}
+              disabled={deleteCustomMutation.isPending}
+            >
+              Cancel
+            </button>
+            <button
+              className="sccap-btn sccap-btn-danger sccap-btn-sm"
+              onClick={() => {
+                if (!confirmDelete) return;
+                if (confirmDelete.isCustom && confirmDelete.id) {
+                  deleteCustomMutation.mutate(confirmDelete.id);
+                } else {
+                  handleDeleteStandard(confirmDelete.name);
+                }
+                setConfirmDelete(null);
+              }}
+              disabled={deleteCustomMutation.isPending}
+            >
+              {deleteCustomMutation.isPending ? "Deleting…" : "Delete"}
+            </button>
+          </>
+        }
+      >
+        <div style={{ color: "var(--fg-muted)", fontSize: 13 }}>
+          {confirmDelete?.isCustom
+            ? `This removes the framework "${confirmDelete?.name}" and all of its ingested documents. The action cannot be undone.`
+            : `This removes every ingested document for "${confirmDelete?.name}". You can re-ingest from source at any time.`}
+        </div>
+      </Modal>
+    </div>
   );
 };
 

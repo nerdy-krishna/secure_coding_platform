@@ -1,31 +1,19 @@
-import React, { useState, useEffect } from "react";
-import {
-  Table,
-  Button,
-  Modal,
-  Form,
-  Input,
-  Switch,
-  message,
-  Popconfirm,
-  Typography,
-  Divider,
-  Row,
-  Col,
-  Select,
-  Spin,
-  Checkbox,
-  List,
-} from "antd";
-import { PlusOutlined, EditOutlined, DeleteOutlined } from "@ant-design/icons";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+// secure-code-ui/src/pages/admin/SystemConfigTab.tsx
+//
+// Platform-wide system settings: log level, LLM optimization mode, CORS
+// policy, and raw system_config CRUD. Ported to SCCAP primitives.
+// Wiring is unchanged — the same systemConfigService + logService endpoints
+// drive everything; only the presentation moves off antd.
+
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import React, { useEffect, useState } from "react";
 import apiClient from "../../shared/api/apiClient";
 import { logService } from "../../shared/api/logService";
 import { systemConfigService } from "../../shared/api/systemConfigService";
-
-const { Text, Title, Paragraph } = Typography;
-
 import type { JsonValue } from "../../shared/types/api";
+import { Icon } from "../../shared/ui/Icon";
+import { Modal } from "../../shared/ui/Modal";
+import { useToast } from "../../shared/ui/Toast";
 
 interface SystemConfig {
   key: string;
@@ -37,173 +25,49 @@ interface SystemConfig {
   updated_at: string;
 }
 
+type LogLevel = "DEBUG" | "INFO" | "WARNING" | "ERROR";
+type LlmMode = "multi_provider" | "anthropic_optimized";
+
+const LOG_LEVELS: { value: LogLevel; label: string }[] = [
+  { value: "DEBUG", label: "DEBUG (verbose — includes prompts)" },
+  { value: "INFO", label: "INFO (standard)" },
+  { value: "WARNING", label: "WARNING (errors only)" },
+  { value: "ERROR", label: "ERROR" },
+];
+
+const LLM_MODES: { value: LlmMode; label: string }[] = [
+  { value: "anthropic_optimized", label: "Anthropic optimized (prompt caching + tuned variants)" },
+  { value: "multi_provider", label: "Multi-provider (generic, no caching)" },
+];
+
+const emptyForm = {
+  key: "",
+  value: "",
+  description: "",
+  is_secret: false,
+  encrypted: false,
+};
+type FormState = typeof emptyForm;
+
 const SystemConfigTab: React.FC = () => {
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingKey, setEditingKey] = useState<string | null>(null);
-  const [form] = Form.useForm();
+  const toast = useToast();
   const queryClient = useQueryClient();
 
-  // Settings State
-  const [logLevel, setLogLevel] = useState<string>("INFO");
-  const [loadingLogs, setLoadingLogs] = useState<boolean>(false);
-  const [loadingCors, setLoadingCors] = useState<boolean>(false);
-  const [corsEnabled, setCorsEnabled] = useState<boolean>(false);
+  const [logLevel, setLogLevel] = useState<LogLevel>("INFO");
+  const [llmMode, setLlmMode] = useState<LlmMode>("multi_provider");
+  const [corsEnabled, setCorsEnabled] = useState(false);
   const [allowedOrigins, setAllowedOrigins] = useState<string[]>([]);
-  const [originInput, setOriginInput] = useState<string>("");
-  const [llmMode, setLlmMode] = useState<"multi_provider" | "anthropic_optimized">(
-    "multi_provider",
-  );
-  const [loadingLlmMode, setLoadingLlmMode] = useState<boolean>(false);
+  const [originInput, setOriginInput] = useState("");
 
-  useEffect(() => {
-    fetchConfigs();
-  }, []);
+  const [loadingMeta, setLoadingMeta] = useState(true);
+  const [savingLog, setSavingLog] = useState(false);
+  const [savingMode, setSavingMode] = useState(false);
+  const [savingCors, setSavingCors] = useState(false);
 
-  const fetchConfigs = async () => {
-    setLoadingLogs(true);
-    setLoadingCors(true);
-    try {
-      try {
-        const logData = await logService.getLogLevel();
-        setLogLevel(logData.level);
-      } catch (e) {
-        console.error("Failed to fetch log level", e);
-      }
-
-      try {
-        const allConfigs = await systemConfigService.getAll();
-        const corsEnabledConfig = allConfigs.find(c => c.key === "security.cors_enabled");
-        const originsConfig = allConfigs.find(c => c.key === "security.allowed_origins");
-
-        if (corsEnabledConfig && corsEnabledConfig.value !== undefined) {
-          setCorsEnabled(Boolean(corsEnabledConfig.value));
-        }
-
-        if (
-          originsConfig &&
-          originsConfig.value &&
-          typeof originsConfig.value === "object" &&
-          !Array.isArray(originsConfig.value) &&
-          Array.isArray((originsConfig.value as { origins?: unknown }).origins)
-        ) {
-          setAllowedOrigins(
-            (originsConfig.value as { origins: string[] }).origins,
-          );
-        }
-
-        const llmModeConfig = allConfigs.find(
-          (c) => c.key === "llm.optimization_mode",
-        );
-        if (llmModeConfig && llmModeConfig.value) {
-          const raw = llmModeConfig.value;
-          const mode =
-            typeof raw === "string" ? raw : (raw as { mode?: string }).mode;
-          if (mode === "anthropic_optimized" || mode === "multi_provider") {
-            setLlmMode(mode);
-          }
-        }
-      } catch (e) {
-        console.error("Failed to fetch system configs", e);
-      }
-    } catch (error) {
-      console.error("Failed to fetch settings:", error);
-      message.error("Failed to fetch settings.");
-    } finally {
-      setLoadingLogs(false);
-      setLoadingCors(false);
-    }
-  };
-
-  const handleLogLevelChange = async (value: string) => {
-    setLoadingLogs(true);
-    try {
-      await logService.setLogLevel(value as "DEBUG" | "INFO" | "WARNING" | "ERROR");
-      setLogLevel(value);
-      message.success(`System log level set to ${value}`);
-    } catch (error) {
-      console.error("Failed to set log level:", error);
-      message.error("Failed to update log level.");
-    } finally {
-      setLoadingLogs(false);
-    }
-  };
-
-  const handleLlmModeChange = async (
-    mode: "multi_provider" | "anthropic_optimized",
-  ) => {
-    if (mode === llmMode) return;
-    const previous = llmMode;
-    setLoadingLlmMode(true);
-    setLlmMode(mode);
-    try {
-      await systemConfigService.update("llm.optimization_mode", {
-        value: { mode },
-      });
-      message.success(
-        mode === "anthropic_optimized"
-          ? "Switched to Anthropic-optimized mode. Existing prompt caches will be invalidated on the next scan."
-          : "Switched to Multi-Provider (Generic) mode.",
-      );
-      queryClient.invalidateQueries({ queryKey: ["system-configs"] });
-    } catch (error) {
-      console.error("Failed to update LLM optimization mode:", error);
-      setLlmMode(previous);
-      message.error("Failed to update LLM optimization mode.");
-    } finally {
-      setLoadingLlmMode(false);
-    }
-  };
-
-  const handleCorsToggle = async (
-    e: { target: { checked: boolean } },
-  ) => {
-    const newValue = e.target.checked;
-    setLoadingCors(true);
-    try {
-      setCorsEnabled(newValue);
-      await systemConfigService.update("security.cors_enabled", { value: newValue });
-      message.success(`CORS ${newValue ? "Enabled" : "Disabled"}`);
-      queryClient.invalidateQueries({ queryKey: ["system-configs"] });
-    } catch (error) {
-      console.error("Failed to update CORS setting:", error);
-      setCorsEnabled(!newValue);
-      message.error("Failed to update CORS setting.");
-    } finally {
-      setLoadingCors(false);
-    }
-  };
-
-  const addOrigin = async () => {
-    if (!originInput) return;
-    if (allowedOrigins.includes(originInput)) {
-      message.warning("Origin already exists");
-      return;
-    }
-    const newOrigins = [...allowedOrigins, originInput];
-    updateOrigins(newOrigins);
-    setOriginInput("");
-  };
-
-  const removeOrigin = async (origin: string) => {
-    const newOrigins = allowedOrigins.filter(o => o !== origin);
-    updateOrigins(newOrigins);
-  };
-
-  const updateOrigins = async (newOrigins: string[]) => {
-    setLoadingCors(true);
-    try {
-      setAllowedOrigins(newOrigins);
-      await systemConfigService.update("security.allowed_origins", { value: { origins: newOrigins } });
-      message.success("Allowed origins updated");
-      queryClient.invalidateQueries({ queryKey: ["system-configs"] });
-    } catch (error) {
-      console.error("Failed to update origins:", error);
-      message.error("Failed to update allowed origins.");
-      fetchConfigs();
-    } finally {
-      setLoadingCors(false);
-    }
-  };
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [form, setForm] = useState<FormState>(emptyForm);
+  const [confirmDeleteKey, setConfirmDeleteKey] = useState<string | null>(null);
 
   const { data: configs, isLoading } = useQuery({
     queryKey: ["system-configs"],
@@ -214,315 +78,631 @@ const SystemConfigTab: React.FC = () => {
   });
 
   const createMutation = useMutation({
-    mutationFn: (
-      values: {
-        key: string;
-        value: JsonValue;
-        description?: string;
-        is_secret?: boolean;
-        encrypted?: boolean;
-      },
-    ) => apiClient.put(`/admin/system-config/${values.key}`, values),
+    mutationFn: (data: {
+      key: string;
+      value: JsonValue;
+      description?: string;
+      is_secret?: boolean;
+      encrypted?: boolean;
+    }) => apiClient.put(`/admin/system-config/${data.key}`, data),
     onSuccess: () => {
-      message.success("Configuration saved successfully");
-      setIsModalOpen(false);
-      form.resetFields();
+      toast.success("Setting saved.");
+      setModalOpen(false);
+      setForm(emptyForm);
       queryClient.invalidateQueries({ queryKey: ["system-configs"] });
-      fetchConfigs(); // Refresh local settings states if updated via table
+      loadMeta();
     },
-    onError: () => message.error("Failed to save configuration"),
+    onError: () => toast.error("Failed to save setting."),
   });
 
   const deleteMutation = useMutation({
     mutationFn: (key: string) =>
       apiClient.delete(`/admin/system-config/${key}`),
     onSuccess: () => {
-      message.success("Configuration deleted successfully");
+      toast.success("Setting deleted.");
       queryClient.invalidateQueries({ queryKey: ["system-configs"] });
     },
-    onError: () => message.error("Failed to delete configuration"),
+    onError: () => toast.error("Failed to delete setting."),
   });
 
-  const handleAdd = () => {
-    setEditingKey(null);
-    form.resetFields();
-    setIsModalOpen(true);
-  };
+  const loadMeta = async () => {
+    setLoadingMeta(true);
+    try {
+      const [logRes, all] = await Promise.all([
+        logService.getLogLevel().catch(() => null),
+        systemConfigService.getAll().catch(() => []),
+      ]);
+      if (logRes?.level) setLogLevel(logRes.level as LogLevel);
 
-  const handleEdit = (record: SystemConfig) => {
-    setEditingKey(record.key);
-    // Clean deep clone to avoid mutating original
-    const values = { ...record };
-    if (typeof values.value === "object") {
-      values.value = JSON.stringify(values.value, null, 2);
-    }
-    form.setFieldsValue(values);
-    setIsModalOpen(true);
-  };
+      const corsCfg = all.find((c) => c.key === "security.cors_enabled");
+      if (corsCfg?.value !== undefined)
+        setCorsEnabled(Boolean(corsCfg.value));
 
-  const handleDelete = (key: string) => {
-    deleteMutation.mutate(key);
-  };
-
-  const handleOk = () => {
-    form.validateFields().then((values) => {
-      try {
-        // The value field on the modal is a JSON string; parse into a
-        // JsonValue before submitting.
-        const parsedValue = JSON.parse(values.value as string) as JsonValue;
-        values.value = parsedValue;
-
-        createMutation.mutate(values);
-      } catch {
-        message.error("Invalid JSON format for Value");
+      const originsCfg = all.find((c) => c.key === "security.allowed_origins");
+      if (
+        originsCfg?.value &&
+        typeof originsCfg.value === "object" &&
+        !Array.isArray(originsCfg.value) &&
+        Array.isArray((originsCfg.value as { origins?: unknown }).origins)
+      ) {
+        setAllowedOrigins(
+          (originsCfg.value as { origins: string[] }).origins,
+        );
       }
+
+      const modeCfg = all.find((c) => c.key === "llm.optimization_mode");
+      if (modeCfg?.value) {
+        const raw = modeCfg.value;
+        const mode =
+          typeof raw === "string" ? raw : (raw as { mode?: string }).mode;
+        if (mode === "anthropic_optimized" || mode === "multi_provider") {
+          setLlmMode(mode);
+        }
+      }
+    } finally {
+      setLoadingMeta(false);
+    }
+  };
+
+  useEffect(() => {
+    loadMeta();
+  }, []);
+
+  const handleLogLevelChange = async (value: LogLevel) => {
+    setSavingLog(true);
+    try {
+      await logService.setLogLevel(value);
+      setLogLevel(value);
+      toast.success(`Log level set to ${value}.`);
+    } catch {
+      toast.error("Failed to update log level.");
+    } finally {
+      setSavingLog(false);
+    }
+  };
+
+  const handleLlmModeChange = async (mode: LlmMode) => {
+    if (mode === llmMode) return;
+    const prev = llmMode;
+    setSavingMode(true);
+    setLlmMode(mode);
+    try {
+      await systemConfigService.update("llm.optimization_mode", {
+        value: { mode },
+      });
+      toast.success(
+        mode === "anthropic_optimized"
+          ? "Switched to Anthropic-optimized. Prompt caches invalidate on next scan."
+          : "Switched to multi-provider generic mode.",
+      );
+      queryClient.invalidateQueries({ queryKey: ["system-configs"] });
+    } catch {
+      setLlmMode(prev);
+      toast.error("Failed to update LLM optimization mode.");
+    } finally {
+      setSavingMode(false);
+    }
+  };
+
+  const handleCorsToggle = async (value: boolean) => {
+    setSavingCors(true);
+    const prev = corsEnabled;
+    setCorsEnabled(value);
+    try {
+      await systemConfigService.update("security.cors_enabled", {
+        value,
+      });
+      toast.success(`CORS ${value ? "enabled" : "disabled"}.`);
+      queryClient.invalidateQueries({ queryKey: ["system-configs"] });
+    } catch {
+      setCorsEnabled(prev);
+      toast.error("Failed to update CORS setting.");
+    } finally {
+      setSavingCors(false);
+    }
+  };
+
+  const updateOrigins = async (next: string[]) => {
+    setSavingCors(true);
+    const prev = allowedOrigins;
+    setAllowedOrigins(next);
+    try {
+      await systemConfigService.update("security.allowed_origins", {
+        value: { origins: next },
+      });
+      toast.success("Allowed origins updated.");
+      queryClient.invalidateQueries({ queryKey: ["system-configs"] });
+    } catch {
+      setAllowedOrigins(prev);
+      toast.error("Failed to update allowed origins.");
+    } finally {
+      setSavingCors(false);
+    }
+  };
+
+  const addOrigin = () => {
+    const trimmed = originInput.trim();
+    if (!trimmed) return;
+    if (allowedOrigins.includes(trimmed)) {
+      toast.warn("Origin already exists.");
+      return;
+    }
+    updateOrigins([...allowedOrigins, trimmed]);
+    setOriginInput("");
+  };
+
+  const openEdit = (cfg: SystemConfig) => {
+    setEditingKey(cfg.key);
+    setForm({
+      key: cfg.key,
+      value:
+        typeof cfg.value === "object"
+          ? JSON.stringify(cfg.value, null, 2)
+          : String(cfg.value ?? ""),
+      description: cfg.description ?? "",
+      is_secret: cfg.is_secret,
+      encrypted: cfg.encrypted,
+    });
+    setModalOpen(true);
+  };
+
+  const openCreate = () => {
+    setEditingKey(null);
+    setForm(emptyForm);
+    setModalOpen(true);
+  };
+
+  const onSave = () => {
+    let parsed: JsonValue;
+    try {
+      parsed = JSON.parse(form.value) as JsonValue;
+    } catch {
+      toast.error("Invalid JSON for Value.");
+      return;
+    }
+    createMutation.mutate({
+      key: form.key,
+      value: parsed,
+      description: form.description,
+      is_secret: form.is_secret,
+      encrypted: form.encrypted,
     });
   };
 
-  const columns = [
-    {
-      title: "Key",
-      dataIndex: "key",
-      key: "key",
-      render: (text: string) => <Text strong > { text } </Text>,
-    },
-    {
-      title: "Value",
-      dataIndex: "value",
-      key: "value",
-      render: (val: JsonValue, record: SystemConfig) => {
-        if (record.is_secret) return <Text type="secondary" >******** </Text>;
-        if (typeof val === "object")
-          return <Text code > { JSON.stringify(val) } </Text>;
-        return <Text>{ String(val) } </Text>;
-      },
-    },
-    {
-      title: "Description",
-      dataIndex: "description",
-      key: "description",
-    },
-    {
-      title: "Secret",
-      dataIndex: "is_secret",
-      key: "is_secret",
-      render: (val: boolean) => (val ? "Yes" : "No"),
-    },
-    {
-      title: "Actions",
-      key: "actions",
-      render: (_: unknown, record: SystemConfig) => (
-        <div style= {{ display: "flex", gap: 8 }}>
-          <Button
-            icon={ <EditOutlined /> }
-size = "small"
-onClick = {() => handleEdit(record)}
-          />
-  < Popconfirm
-title = "Delete setting"
-description = "Are you sure you want to delete this setting?"
-onConfirm = {() => handleDelete(record.key)}
-okText = "Yes"
-cancelText = "No"
-  >
-  <Button
-              icon={ <DeleteOutlined /> }
-size = "small"
-danger
-loading = { deleteMutation.isPending }
-  />
-  </Popconfirm>
-  </div>
-      ),
-    },
-  ];
+  return (
+    <div className="fade-in" style={{ display: "grid", gap: 20 }}>
+      <div>
+        <h1 style={{ color: "var(--fg)" }}>
+          <Icon.Settings size={18} /> Platform settings
+        </h1>
+        <div style={{ color: "var(--fg-muted)", marginTop: 4 }}>
+          Core system behavior, LLM mode, CORS, and raw config key/values.
+        </div>
+      </div>
 
-return (
-  <div>
-  <Title level= { 2} > Platform Settings </Title>
-    <Paragraph>
-        Configure core system behavior, global variables, and environmental settings.
-      </Paragraph>
-
-{/* System Logs Section */ }
-<Divider />
-  < Title level = { 4} > System Logs </Title>
-    <Paragraph>
-        Control the verbosity of the backend application logs.< br />
-  <Text type="secondary" >
-    Select <strong>DEBUG</strong> to see full LLM prompts and responses (useful for debugging). Select <strong>INFO</strong> for standard operation.
-          </Text>
-      </Paragraph>
-      < Row >
-      <Col xs= { 24} sm = { 12} md = { 8} >
-        <Spin spinning={ loadingLogs }>
-          <Select
-              value={ logLevel }
-style = {{ width: "100%" }}
-onChange = { handleLogLevelChange }
-options = {
-  [
-    { value: 'DEBUG', label: 'DEBUG (Verbose - Includes Prompts)' },
-    { value: 'INFO', label: 'INFO (Standard)' },
-    { value: 'WARNING', label: 'WARNING (Errors Only)' },
-              ]}
-  />
-  </Spin>
-  </Col>
-  </Row>
-
-{/* LLM Optimization Mode Section */}
-<Divider />
-  < Title level={ 4 }> LLM Optimization Mode </Title>
-    <Paragraph>
-        Choose how the platform tunes prompts and features for your LLM.<br />
-          <Text type="secondary" >
-            <strong>Anthropic Optimized</strong> enables prompt caching, tuned
-            prompt variants, and tool use (requires an Anthropic model).
-            <strong> Multi-Provider (Generic)</strong> works across OpenAI,
-            Anthropic, and Google with portable prompts and no caching.
-          </Text>
-      </Paragraph>
-      < Spin spinning={ loadingLlmMode }>
-        <Select
-            value={ llmMode }
-style = {{ width: "100%", maxWidth: 420 }}
-onChange = { handleLlmModeChange }
-options = {
-  [
-    {
-      value: "anthropic_optimized",
-      label: "Anthropic Optimized (prompt caching + tuned variants)",
-    },
-    {
-      value: "multi_provider",
-      label: "Multi-Provider (Generic)",
-    },
-              ]
-}
-          />
-  <div style={ { marginTop: 8, color: "#888", fontSize: "12px" } }>
-    Switching modes invalidates Anthropic prompt caches on the next scan.
-            Make sure at least one Anthropic LLM config exists before switching
-            to Anthropic Optimized.
-          </div>
-</Spin>
-
-{/* CORS Configuration Section */ }
-<Divider />
-  < Title level = { 4} > CORS Configuration </Title>
-    <Paragraph>
-        Manage Cross - Origin Resource Sharing(CORS) settings.< br />
-  <Text type="secondary" >
-    Enable strict CORS policies to restrict API access to specific domains.
-        </Text>
-      </Paragraph>
-
-      < Spin spinning = { loadingCors } >
-        <div style={ { marginBottom: 16 } }>
-          <Checkbox checked={ corsEnabled } onChange = { handleCorsToggle } >
-            Enable CORS Configuration
-              </Checkbox>
-              < div style = {{ marginTop: 8, color: '#888', fontSize: '12px' }}>
-                If disabled, allow blocked(or strict same - origin depending on middleware logic).
-          </div>
-                  </div>
-
-{
-  corsEnabled && (
-    <div style={ { paddingLeft: 20, borderLeft: '2px solid #ddd' } }>
-      <Text strong > Allowed Origins </Text>
-        < div style = {{ display: "flex", gap: "8px", marginTop: "8px", marginBottom: "16px", maxWidth: "500px" }
-}>
-  <Input
-                value={ originInput }
-onChange = {(e) => setOriginInput(e.target.value)}
-placeholder = "https://my-domain.com"
-onPressEnter = { addOrigin }
-  />
-  <Button onClick={ addOrigin } type = "primary" > Add </Button>
-    </div>
-
-    < List
-size = "small"
-bordered
-dataSource = { allowedOrigins }
-style = {{ maxWidth: "500px" }}
-renderItem = {(item) => (
-  <List.Item
-                  actions= { [<Button type= "link" danger onClick={() => removeOrigin(item) } > Remove </Button>]}
-                >
-  { item }
-  </List.Item>
-              )}
-            />
-  </div>
-        )}
-</Spin>
-
-  < Divider />
-  <Title level={ 4 }> Global Variables </Title>
-    < div
-style = {{
-  marginBottom: 16,
-    display: "flex",
-      justifyContent: "space-between",
-        alignItems: "center"
-}}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: 16,
+        }}
       >
-  <Paragraph style={ { margin: 0 } }>
-    Manage lower - level configuration records.
-        </Paragraph>
-      < Button type = "primary" icon = {< PlusOutlined />} onClick = { handleAdd } >
-        Add Setting
-          </Button>
-          </div>
-          < Table
-columns = { columns }
-dataSource = { configs }
-rowKey = "key"
-loading = { isLoading }
-pagination = {{ pageSize: 10 }}
-      />
+        <SettingsCard
+          title="System logs"
+          description="Backend log verbosity. DEBUG includes full LLM prompts and responses."
+        >
+          <select
+            className="sccap-input"
+            value={logLevel}
+            onChange={(e) => handleLogLevelChange(e.target.value as LogLevel)}
+            disabled={savingLog || loadingMeta}
+            style={{ maxWidth: 380 }}
+          >
+            {LOG_LEVELS.map((l) => (
+              <option key={l.value} value={l.value}>
+                {l.label}
+              </option>
+            ))}
+          </select>
+        </SettingsCard>
 
-  < Modal
-title = { editingKey? "Edit Setting": "Add Setting" }
-open = { isModalOpen }
-onOk = { handleOk }
-onCancel = {() => setIsModalOpen(false)}
-confirmLoading = { createMutation.isPending }
-  >
-  <Form form={ form } layout = "vertical" >
-    <Form.Item name="key" label = "Key" rules = { [{ required: true }]} >
-      <Input
-              disabled={ !!editingKey }
-placeholder = "e.g. GLOBAL_ALERT_MESSAGE"
-  />
-  </Form.Item>
-  < Form.Item
-name = "value"
-label = "Value (JSON)"
-rules = { [{ required: true }]}
-  >
-  <Input.TextArea
-              rows={ 4 }
-placeholder = '{"message": "Maintenance Mode"}'
-  />
-  </Form.Item>
-  < Form.Item name = "description" label = "Description" >
-    <Input placeholder="Short description of this setting" />
-      </Form.Item>
-      < Form.Item
-name = "is_secret"
-label = "Is Secret?"
-valuePropName = "checked"
-  >
-  <Switch />
-  </Form.Item>
-  </Form>
-  </Modal>
-  </div>
+        <SettingsCard
+          title="LLM optimization mode"
+          description="Anthropic-optimized enables prompt caching and tuned variants (needs an Anthropic model). Generic is portable across providers."
+        >
+          <select
+            className="sccap-input"
+            value={llmMode}
+            onChange={(e) => handleLlmModeChange(e.target.value as LlmMode)}
+            disabled={savingMode || loadingMeta}
+            style={{ maxWidth: 380 }}
+          >
+            {LLM_MODES.map((m) => (
+              <option key={m.value} value={m.value}>
+                {m.label}
+              </option>
+            ))}
+          </select>
+          <div
+            style={{
+              marginTop: 8,
+              fontSize: 11.5,
+              color: "var(--fg-subtle)",
+            }}
+          >
+            Switching invalidates Anthropic prompt caches on the next scan.
+          </div>
+        </SettingsCard>
+      </div>
+
+      <SettingsCard
+        title="CORS configuration"
+        description="Restrict API access to specific domains. When disabled, the default middleware policy applies."
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div
+            className={`sccap-switch ${corsEnabled ? "on" : ""}`}
+            role="switch"
+            aria-checked={corsEnabled}
+            tabIndex={0}
+            onClick={() => !savingCors && handleCorsToggle(!corsEnabled)}
+            onKeyDown={(e) => {
+              if ((e.key === " " || e.key === "Enter") && !savingCors) {
+                e.preventDefault();
+                handleCorsToggle(!corsEnabled);
+              }
+            }}
+          />
+          <span style={{ fontSize: 13, color: "var(--fg)" }}>
+            {corsEnabled ? "CORS enforcement enabled" : "CORS enforcement disabled"}
+          </span>
+        </div>
+
+        {corsEnabled && (
+          <div
+            style={{
+              marginTop: 16,
+              paddingTop: 14,
+              borderTop: "1px solid var(--border)",
+            }}
+          >
+            <div
+              style={{
+                fontSize: 11,
+                color: "var(--fg-muted)",
+                textTransform: "uppercase",
+                letterSpacing: ".06em",
+                marginBottom: 8,
+              }}
+            >
+              Allowed origins
+            </div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+              <input
+                className="sccap-input"
+                placeholder="https://my-domain.com"
+                value={originInput}
+                onChange={(e) => setOriginInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addOrigin();
+                  }
+                }}
+                style={{ flex: 1, maxWidth: 420 }}
+              />
+              <button
+                className="sccap-btn sccap-btn-primary sccap-btn-sm"
+                onClick={addOrigin}
+                disabled={savingCors || !originInput.trim()}
+              >
+                <Icon.Plus size={12} /> Add
+              </button>
+            </div>
+            {allowedOrigins.length === 0 ? (
+              <div style={{ fontSize: 12, color: "var(--fg-subtle)" }}>
+                No origins yet. All cross-origin requests will be blocked.
+              </div>
+            ) : (
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 6,
+                }}
+              >
+                {allowedOrigins.map((o) => (
+                  <span
+                    key={o}
+                    className="chip"
+                    style={{ paddingRight: 6 }}
+                  >
+                    <span className="mono" style={{ fontSize: 11 }}>
+                      {o}
+                    </span>
+                    <button
+                      aria-label={`Remove ${o}`}
+                      onClick={() =>
+                        updateOrigins(
+                          allowedOrigins.filter((x) => x !== o),
+                        )
+                      }
+                      style={{
+                        border: "none",
+                        background: "transparent",
+                        color: "var(--fg-muted)",
+                        cursor: "pointer",
+                        padding: 0,
+                        lineHeight: 1,
+                      }}
+                    >
+                      <Icon.X size={11} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </SettingsCard>
+
+      <div className="surface" style={{ padding: 0 }}>
+        <div
+          className="section-head"
+          style={{ padding: "14px 18px 10px", marginBottom: 0 }}
+        >
+          <h3 style={{ margin: 0 }}>Raw system configuration</h3>
+          <button
+            className="sccap-btn sccap-btn-primary sccap-btn-sm"
+            onClick={openCreate}
+          >
+            <Icon.Plus size={12} /> Add setting
+          </button>
+        </div>
+        {isLoading ? (
+          <div
+            style={{
+              padding: 40,
+              textAlign: "center",
+              color: "var(--fg-muted)",
+            }}
+          >
+            Loading…
+          </div>
+        ) : !configs || configs.length === 0 ? (
+          <div
+            style={{
+              padding: 40,
+              textAlign: "center",
+              color: "var(--fg-muted)",
+            }}
+          >
+            No custom settings stored.
+          </div>
+        ) : (
+          <table className="sccap-t">
+            <thead>
+              <tr>
+                <th>Key</th>
+                <th>Value</th>
+                <th>Description</th>
+                <th>Secret</th>
+                <th style={{ width: 80 }} />
+              </tr>
+            </thead>
+            <tbody>
+              {configs.map((cfg) => (
+                <tr key={cfg.key} style={{ cursor: "default" }}>
+                  <td className="mono" style={{ fontWeight: 500 }}>
+                    {cfg.key}
+                  </td>
+                  <td
+                    className="mono"
+                    style={{
+                      fontSize: 12,
+                      maxWidth: 320,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      color: "var(--fg-muted)",
+                    }}
+                  >
+                    {cfg.is_secret
+                      ? "••••••••"
+                      : typeof cfg.value === "object"
+                        ? JSON.stringify(cfg.value)
+                        : String(cfg.value)}
+                  </td>
+                  <td style={{ color: "var(--fg-muted)", fontSize: 12.5 }}>
+                    {cfg.description || ""}
+                  </td>
+                  <td>
+                    {cfg.is_secret ? (
+                      <span className="chip chip-medium">Secret</span>
+                    ) : (
+                      <span
+                        className="chip"
+                        style={{ color: "var(--fg-subtle)" }}
+                      >
+                        No
+                      </span>
+                    )}
+                  </td>
+                  <td>
+                    <div style={{ display: "flex", gap: 4 }}>
+                      <button
+                        className="sccap-btn sccap-btn-icon sccap-btn-ghost"
+                        aria-label="Edit"
+                        onClick={() => openEdit(cfg)}
+                      >
+                        <Icon.Edit size={12} />
+                      </button>
+                      <button
+                        className="sccap-btn sccap-btn-icon sccap-btn-ghost"
+                        aria-label="Delete"
+                        onClick={() => setConfirmDeleteKey(cfg.key)}
+                      >
+                        <Icon.Trash size={12} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <Modal
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        title={editingKey ? "Edit setting" : "Add setting"}
+        width={640}
+        footer={
+          <>
+            <button
+              className="sccap-btn sccap-btn-sm"
+              onClick={() => setModalOpen(false)}
+              disabled={createMutation.isPending}
+            >
+              Cancel
+            </button>
+            <button
+              className="sccap-btn sccap-btn-primary sccap-btn-sm"
+              onClick={onSave}
+              disabled={createMutation.isPending}
+            >
+              {createMutation.isPending ? "Saving…" : "Save"}
+            </button>
+          </>
+        }
+      >
+        <div style={{ display: "grid", gap: 12 }}>
+          <label style={{ display: "grid", gap: 4 }}>
+            <span style={{ fontSize: 11, color: "var(--fg-muted)" }}>
+              Key
+            </span>
+            <input
+              className="sccap-input mono"
+              placeholder="e.g. GLOBAL_ALERT_MESSAGE"
+              value={form.key}
+              onChange={(e) => setForm({ ...form, key: e.target.value })}
+              disabled={!!editingKey}
+            />
+          </label>
+          <label style={{ display: "grid", gap: 4 }}>
+            <span style={{ fontSize: 11, color: "var(--fg-muted)" }}>
+              Value (JSON)
+            </span>
+            <textarea
+              className="sccap-input mono"
+              rows={6}
+              placeholder='{"message": "Maintenance mode"}'
+              value={form.value}
+              onChange={(e) => setForm({ ...form, value: e.target.value })}
+              style={{ fontSize: 12.5 }}
+            />
+          </label>
+          <label style={{ display: "grid", gap: 4 }}>
+            <span style={{ fontSize: 11, color: "var(--fg-muted)" }}>
+              Description
+            </span>
+            <input
+              className="sccap-input"
+              placeholder="Short description"
+              value={form.description}
+              onChange={(e) =>
+                setForm({ ...form, description: e.target.value })
+              }
+            />
+          </label>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              marginTop: 4,
+            }}
+          >
+            <div
+              className={`sccap-switch ${form.is_secret ? "on" : ""}`}
+              role="switch"
+              aria-checked={form.is_secret}
+              tabIndex={0}
+              onClick={() => setForm({ ...form, is_secret: !form.is_secret })}
+              onKeyDown={(e) => {
+                if (e.key === " " || e.key === "Enter") {
+                  e.preventDefault();
+                  setForm({ ...form, is_secret: !form.is_secret });
+                }
+              }}
+            />
+            <span style={{ fontSize: 13, color: "var(--fg)" }}>
+              Mark as secret (value hidden in UI)
+            </span>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={confirmDeleteKey !== null}
+        onClose={() => setConfirmDeleteKey(null)}
+        title="Delete setting?"
+        width={420}
+        footer={
+          <>
+            <button
+              className="sccap-btn sccap-btn-sm"
+              onClick={() => setConfirmDeleteKey(null)}
+              disabled={deleteMutation.isPending}
+            >
+              Cancel
+            </button>
+            <button
+              className="sccap-btn sccap-btn-danger sccap-btn-sm"
+              onClick={() => {
+                if (confirmDeleteKey) {
+                  deleteMutation.mutate(confirmDeleteKey);
+                  setConfirmDeleteKey(null);
+                }
+              }}
+              disabled={deleteMutation.isPending}
+            >
+              {deleteMutation.isPending ? "Deleting…" : "Delete"}
+            </button>
+          </>
+        }
+      >
+        <div style={{ color: "var(--fg-muted)", fontSize: 13 }}>
+          Removing this key reverts any feature reading it to the code
+          default. This is irreversible from the UI.
+        </div>
+      </Modal>
+    </div>
   );
 };
+
+const SettingsCard: React.FC<{
+  title: string;
+  description: string;
+  children: React.ReactNode;
+}> = ({ title, description, children }) => (
+  <div className="sccap-card">
+    <div style={{ fontWeight: 600, color: "var(--fg)", marginBottom: 4 }}>
+      {title}
+    </div>
+    <div
+      style={{
+        color: "var(--fg-muted)",
+        fontSize: 12.5,
+        marginBottom: 12,
+        lineHeight: 1.5,
+      }}
+    >
+      {description}
+    </div>
+    {children}
+  </div>
+);
 
 export default SystemConfigTab;
