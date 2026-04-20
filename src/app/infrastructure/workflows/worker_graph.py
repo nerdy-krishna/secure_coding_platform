@@ -99,6 +99,10 @@ class WorkerState(TypedDict):
     all_relevant_agents: Dict[str, RelevantAgent]
     live_codebase: Optional[Dict[str, str]]
     findings: List[VulnerabilityFinding]
+    # Raw per-agent fix proposals collected by analyze_files_parallel_node and
+    # consumed by consolidate_and_patch_node. Carries (finding, suggestion)
+    # pairs before correlation; the correlated findings live in `findings`.
+    proposed_fixes: Optional[List[FixResult]]
     agent_results: Optional[List[Dict[str, Any]]]
     impact_report: Optional[Dict[str, Any]]
     sarif_report: Optional[Dict[str, Any]]
@@ -443,51 +447,28 @@ async def estimate_cost_node(state: WorkerState) -> Dict[str, Any]:
     return {}
 
 
-async def consolidation_node(state: WorkerState) -> Dict[str, Any]:
+async def _resolve_file_fix_conflicts(
+    file_fixes: List[FixResult],
+    file_content: str,
+    reasoning_llm_config_id: uuid.UUID,
+    owasp_rank_map: Dict[str, int],
+    scan_id: uuid.UUID,
+) -> List[FixResult]:
+    """Given all proposed fixes for one file, return the non-overlapping set to apply.
+
+    Extracted from the old `consolidation_node` (per-file loop) so the new
+    single-pass `consolidate_and_patch_node` can call it over files in parallel
+    after the analyze step has collected every fix against original content.
+
+    Low-confidence and snippet-less fixes are dropped. Overlapping fixes are
+    sent to the merge agent; non-overlapping fixes pass through unchanged.
     """
-    Consolidates agent results.
-    - Returns ALL findings, regardless of mode.
-    - For REMEDIATE mode, it identifies overlapping fixes, uses an LLM to merge them,
-      and returns a list of final, non-overlapping fixes to be applied.
-    """
-    scan_id = state["scan_id"]
-    scan_type = state["scan_type"]
-    agent_results = state.get("agent_results") or []
-    reasoning_llm_config_id = state.get("reasoning_llm_config_id")
+    if not file_fixes:
+        return []
 
-    all_findings = [
-        item
-        for sublist in (res.get("findings", []) for res in agent_results)
-        for item in sublist
-    ]
-    all_fixes = [
-        item
-        for sublist in (res.get("fixes", []) for res in agent_results)
-        for item in sublist
-    ]
-
-    # For AUDIT/SUGGEST modes, or if no fixes were generated, return all findings and no fixes to apply.
-    if scan_type != "REMEDIATE" or not all_fixes:
-        return {"findings": all_findings, "fixes_to_apply": []}
-
-    if not reasoning_llm_config_id:
-        return {
-            "error_message": "Consolidation node requires reasoning_llm_config_id for REMEDIATE mode."
-        }
-
-    # --- New Prioritized Fix Selection & Merging Logic for REMEDIATE mode ---
-    sorted_fixes = sorted(all_fixes, key=lambda f: f.finding.line_number)
+    sorted_fixes = sorted(file_fixes, key=lambda f: f.finding.line_number)
     fixes_to_apply: List[FixResult] = []
-
     confidence_map = {"High": 3, "Medium": 2, "Low": 1}
-
-    async with AsyncSessionLocal() as session:
-        cwe_ids = list(set([f.finding.cwe for f in sorted_fixes]))
-        stmt = select(CweOwaspMapping).where(CweOwaspMapping.cwe_id.in_(cwe_ids))
-        result = await session.execute(stmt)
-        owasp_rank_map = {
-            mapping.cwe_id: mapping.owasp_rank for mapping in result.scalars().all()
-        }
 
     i = 0
     while i < len(sorted_fixes):
@@ -525,12 +506,11 @@ async def consolidation_node(state: WorkerState) -> Dict[str, Any]:
             else:
                 break
 
-        winner = None
+        winner: Optional[FixResult] = None
         if len(conflict_group) > 1:
             logger.info(
                 f"Resolving conflict among {len(conflict_group)} fixes via Merge Agent for scan {scan_id}."
             )
-
             conflict_group.sort(
                 key=lambda f: (
                     f.finding.cvss_score or 0,
@@ -541,12 +521,7 @@ async def consolidation_node(state: WorkerState) -> Dict[str, Any]:
                 ),
                 reverse=True,
             )
-
-            # Since the orchestrator passes the full file for verification, we can use it here.
-            # Note: This assumes all conflicts are within the same file, which is guaranteed by the logic.
-            code_to_search = state.get("file_content_for_verification", "")
-            if code_to_search:
-                # Determine the full code block spanning all conflicting fixes
+            if file_content:
                 min_line = min(f.finding.line_number for f in conflict_group)
                 max_line = max(
                     f.finding.line_number
@@ -554,17 +529,17 @@ async def consolidation_node(state: WorkerState) -> Dict[str, Any]:
                     - 1
                     for f in conflict_group
                 )
-                code_lines = code_to_search.splitlines(keepends=True)
+                code_lines = file_content.splitlines(keepends=True)
                 original_block = "".join(code_lines[min_line - 1 : max_line])
 
                 winner = await _run_merge_agent(
                     reasoning_llm_config_id,
                     original_block,
                     conflict_group,
-                    code_to_search,
+                    file_content,
                 )
 
-            # Fallback to highest-priority if merge agent fails or context is missing
+            # Fall back to highest-priority if merge agent fails or context missing.
             if not winner:
                 winner = conflict_group[0]
         else:
@@ -576,21 +551,27 @@ async def consolidation_node(state: WorkerState) -> Dict[str, Any]:
 
         i = j
 
-    logger.info(
-        f"Consolidated fixes for scan {scan_id}: from {len(all_fixes)} to {len(fixes_to_apply)} non-overlapping fixes."
-    )
-
-    # Return ALL findings, but only the winning fixes to be applied.
-    return {"findings": all_findings, "fixes_to_apply": fixes_to_apply}
+    return fixes_to_apply
 
 
-async def dependency_aware_analysis_orchestrator(state: WorkerState) -> Dict[str, Any]:
-    """
-    The main orchestrator node that processes files based on their dependency order.
+async def analyze_files_parallel_node(state: WorkerState) -> Dict[str, Any]:
+    """Single-pass analysis: every agent runs against the original code.
+
+    Replaces the old iterative `dependency_aware_analysis_orchestrator`
+    (D.5 decision, F.5.2). Key differences:
+      - All files are analyzed in parallel (bounded by CONCURRENT_LLM_LIMIT).
+        No topological ordering; no cross-file patch propagation — all agents
+        see `live_codebase` (the ORIGINAL_SUBMISSION snapshot content).
+      - No mid-graph DB writes: findings and proposed fixes collect into
+        returned state. Consolidation + patch + snapshot persistence happen
+        once in `consolidate_and_patch_node` and `save_results_node`.
+      - The dependency graph is still used to build the per-file `dep_summary`
+        that enriches each agent's prompt, since that summary is sourced from
+        the repository map (stable regardless of processing order).
     """
     scan_id, scan_type = state["scan_id"], state["scan_type"]
     logger.info(
-        f"Starting dependency-aware analysis for scan {scan_id} in '{scan_type}' mode."
+        f"Starting single-pass analysis for scan {scan_id} in '{scan_type}' mode."
     )
 
     # --- REVISED GUARD CLAUSE BLOCK ---
@@ -620,232 +601,259 @@ async def dependency_aware_analysis_orchestrator(state: WorkerState) -> Dict[str
         return {"error_message": "Orchestrator is missing 'reasoning_llm_config_id'."}
     # --- END REVISED GUARD CLAUSE BLOCK ---
 
-    # NOTE (Phase D.1): status transitions flow through returned state; the
-    # terminal save_final_report node commits the final status. A future
-    # "persist_status" side-effect node can publish intermediate statuses to
-    # the DB between major nodes without fighting the checkpointer. For now
-    # we skip the mid-graph write — the UI shows ANALYZING_CONTEXT until the
-    # run completes, which is acceptable for the first pass.
-    # REMEDIATE-specific iterative DB save/re-fetch below is retained pending
-    # Phase D.5's investigation into whether iterative cross-file patching
-    # is load-bearing (if not, D.5 collapses it to a single-pass apply).
-
-    try:
-        processing_order = list(nx.topological_sort(dependency_graph))
-    except nx.NetworkXUnfeasible:
-        logger.warning(
-            f"Circular dependency in scan {scan_id}, falling back to alphabetical order."
-        )
-        processing_order = sorted(list(dependency_graph.nodes()))
-
-    all_scan_findings: List[VulnerabilityFinding] = []
     generic_agent_graph = build_generic_specialized_agent_graph()
     semaphore = asyncio.Semaphore(CONCURRENT_LLM_LIMIT)
 
-    # Initialize the file map for REMEDIATE scans from the correct source
-    initial_file_map = state.get("initial_file_map")
-    current_file_map = (
-        initial_file_map.copy() if scan_type == "REMEDIATE" and initial_file_map else {}
-    )
-
-    async with AsyncSessionLocal() as db:
-        repo = ScanRepository(db)
-
-        for file_path in processing_order:
-            # For REMEDIATE scans, fetch the latest version of the file from DB using the map
-            if scan_type == "REMEDIATE":
-                file_hash = current_file_map.get(file_path)
-                if not file_hash:
-                    continue
-                content_map = await repo.get_source_files_by_hashes([file_hash])
-                file_content = content_map.get(file_hash, "")
-            else:
-                file_content = live_codebase[file_path]
-
-            file_summary = repository_map.files.get(file_path)
-            if not file_summary:
-                continue
-
-            token_count = len(file_content) / 4
-            is_large_file = token_count > CHUNK_ONLY_IF_LARGER_THAN
-
-            chunks: List[CodeChunk] = []
-            if is_large_file:
-                logger.info(
-                    f"{file_path} is a large file, applying chunking.",
-                    extra={"scan_id": str(scan_id)},
-                )
-                chunks = semantic_chunker(file_content, file_summary)
-            else:
-                chunks = [
-                    {
-                        "symbol_name": file_path,
-                        "code": file_content,
-                        "start_line": 1,
-                        "end_line": len(file_content.splitlines()),
-                    }
+    def build_dep_summary(file_path: str) -> str:
+        """Per-file dependency context. Pure read from repository_map; safe to
+        compute concurrently across files."""
+        if file_path not in dependency_graph:
+            return ""
+        dep_parts: List[str] = []
+        for dep_path in dependency_graph.successors(file_path):
+            dep_file_summary = repository_map.files.get(dep_path)
+            if dep_file_summary and dep_file_summary.symbols:
+                symbol_sigs = [
+                    f"  - {s.type} {s.name} (line {s.line_number})"
+                    for s in dep_file_summary.symbols[:15]
                 ]
+                dep_parts.append(f"# File: {dep_path}\n" + "\n".join(symbol_sigs))
+        if not dep_parts:
+            return ""
+        return (
+            "# --- [DEPENDENCY CONTEXT: symbols from imported files] ---\n"
+            + "\n".join(dep_parts)
+            + "\n# --- [END DEPENDENCY CONTEXT] ---\n\n"
+        )
 
-            # --- Build Dependency Summary from existing graph + repository_map ---
-            dep_summary = ""
-            if file_path in dependency_graph:
-                dep_parts = []
-                for dep_path in dependency_graph.successors(file_path):
-                    dep_file_summary = repository_map.files.get(dep_path)
-                    if dep_file_summary and dep_file_summary.symbols:
-                        symbol_sigs = [
-                            f"  - {s.type} {s.name} (line {s.line_number})"
-                            for s in dep_file_summary.symbols[:15]
-                        ]
-                        dep_parts.append(
-                            f"# File: {dep_path}\n" + "\n".join(symbol_sigs)
-                        )
-                if dep_parts:
-                    dep_summary = (
-                        "# --- [DEPENDENCY CONTEXT: symbols from imported files] ---\n"
-                        + "\n".join(dep_parts)
-                        + "\n# --- [END DEPENDENCY CONTEXT] ---\n\n"
-                    )
-            # --- End Dependency Summary ---
-
-            relevant_agents_for_file = resolve_agents_for_file(
-                file_path, all_relevant_agents
+    def chunk_file(file_path: str, file_content: str) -> List[CodeChunk]:
+        file_summary = repository_map.files.get(file_path)
+        if not file_summary:
+            return []
+        token_count = len(file_content) / 4
+        if token_count > CHUNK_ONLY_IF_LARGER_THAN:
+            logger.info(
+                f"{file_path} is a large file, applying chunking.",
+                extra={"scan_id": str(scan_id)},
             )
-            if not relevant_agents_for_file:
-                logger.info(
-                    f"No agents triaged for file {file_path}, skipping.",
-                    extra={"scan_id": str(scan_id)},
-                )
-                continue
+            return semantic_chunker(file_content, file_summary)
+        return [
+            {
+                "symbol_name": file_path,
+                "code": file_content,
+                "start_line": 1,
+                "end_line": len(file_content.splitlines()),
+            }
+        ]
 
-            findings_for_file: List[VulnerabilityFinding] = []
+    async def run_agent_with_sem(coro):
+        async with semaphore:
+            return await coro
 
-            for chunk in chunks:
-                tasks = []
-                for agent in relevant_agents_for_file:
+    async def analyze_one_file(
+        file_path: str,
+    ) -> Dict[str, List[Any]]:
+        file_content = live_codebase.get(file_path)
+        if not file_content:
+            return {"findings": [], "fixes": []}
 
-                    async def run_with_semaphore(coro):
-                        async with semaphore:
-                            return await coro
+        chunks = chunk_file(file_path, file_content)
+        if not chunks:
+            return {"findings": [], "fixes": []}
 
-                    # Prepend dependency summary to the chunk code for richer LLM context
-                    enriched_code = (
-                        f"{dep_summary}{chunk['code']}"
-                        if dep_summary
-                        else chunk["code"]
-                    )
+        relevant_agents = resolve_agents_for_file(file_path, all_relevant_agents)
+        if not relevant_agents:
+            return {"findings": [], "fixes": []}
 
-                    initial_agent_state: SpecializedAgentState = {
-                        "scan_id": scan_id,
-                        "llm_config_id": reasoning_llm_id,
-                        "filename": file_path,
-                        "code_snippet": enriched_code,
-                        "file_content_for_verification": file_content,
-                        "workflow_mode": "remediate"
-                        if scan_type in ("REMEDIATE", "SUGGEST")
-                        else "audit",
-                        "findings": [],
-                        "fixes": [],
-                        "error": None,
-                    }
-                    tasks.append(
-                        run_with_semaphore(
-                            generic_agent_graph.ainvoke(
-                                initial_agent_state,
-                                config={"configurable": cast(dict, agent)},
-                            )
+        dep_summary = build_dep_summary(file_path)
+
+        file_findings: List[VulnerabilityFinding] = []
+        file_fixes: List[FixResult] = []
+
+        for chunk in chunks:
+            enriched_code = (
+                f"{dep_summary}{chunk['code']}" if dep_summary else chunk["code"]
+            )
+            tasks = []
+            for agent in relevant_agents:
+                initial_agent_state: SpecializedAgentState = {
+                    "scan_id": scan_id,
+                    "llm_config_id": reasoning_llm_id,
+                    "filename": file_path,
+                    "code_snippet": enriched_code,
+                    "file_content_for_verification": file_content,
+                    "workflow_mode": "remediate"
+                    if scan_type in ("REMEDIATE", "SUGGEST")
+                    else "audit",
+                    "findings": [],
+                    "fixes": [],
+                    "error": None,
+                }
+                tasks.append(
+                    run_agent_with_sem(
+                        generic_agent_graph.ainvoke(
+                            initial_agent_state,
+                            config={"configurable": cast(dict, agent)},
                         )
                     )
-
-                agent_raw_results = await asyncio.gather(*tasks, return_exceptions=True)
-                agent_results = [
-                    r
-                    for r in agent_raw_results
-                    if not isinstance(r, BaseException) and r is not None
-                ]
-
-                for result in agent_results:
-                    findings_for_file.extend(result.get("findings", []))
-
-            # --- HYBRID LOGIC ---
-            if scan_type == "REMEDIATE" and findings_for_file:
-                # 1. Save raw findings for this file
-                await repo.save_findings(scan_id, findings_for_file)
-
-                # 2. Retrieve them to get DB IDs and state
-                retrieved_findings_db = await repo.get_findings_for_scan_and_file(
-                    scan_id, file_path
                 )
-                retrieved_findings = [
-                    VulnerabilityFinding.model_validate(f, from_attributes=True)
-                    for f in retrieved_findings_db
-                ]
 
-                # 3. Consolidate fixes
-                temp_state_for_consolidation = cast(
-                    WorkerState,
-                    {
-                        "scan_id": scan_id,
-                        "scan_type": scan_type,
-                        "reasoning_llm_config_id": reasoning_llm_id,
-                        "file_content_for_verification": file_content,
-                        # agent_results is needed for the FixResult structure
-                        "agent_results": [
-                            {
-                                "findings": retrieved_findings,
-                                "fixes": [
-                                    FixResult(finding=f, suggestion=f.fixes)
-                                    for f in retrieved_findings
-                                    if f.fixes
-                                ],
-                            }
-                        ],
-                    },
-                )
-                consolidation_result = await consolidation_node(
-                    temp_state_for_consolidation
-                )
-                fixes_to_apply = consolidation_result.get("fixes_to_apply", [])
+            agent_results = await asyncio.gather(*tasks, return_exceptions=True)
+            for r in agent_results:
+                if isinstance(r, BaseException) or r is None:
+                    continue
+                file_findings.extend(r.get("findings", []))
+                # The agent returns `fixes` as a separate list of FixResult
+                # objects; collect them directly for the terminal consolidation.
+                file_fixes.extend(r.get("fixes", []))
 
-                # 4. Apply patch and propagate state via DB
-                if fixes_to_apply:
-                    temp_file_content = file_content
-                    applied_finding_ids = []
-                    for fix in sorted(
-                        fixes_to_apply, key=lambda f: f.finding.line_number
-                    ):
-                        applied_finding_ids.append(fix.finding.id)
-                        if (
-                            fix.suggestion.original_snippet
-                            and fix.suggestion.original_snippet in temp_file_content
-                        ):
-                            temp_file_content = temp_file_content.replace(
-                                fix.suggestion.original_snippet, fix.suggestion.code, 1
-                            )
+        return {"findings": file_findings, "fixes": file_fixes}
 
-                    # Persist the new file content and update the in-memory map
-                    new_hashes = await repo.get_or_create_source_files(
-                        [
-                            {
-                                "path": file_path,
-                                "content": temp_file_content,
-                                "language": get_language_from_filename(file_path),
-                            }
-                        ]
-                    )
-                    current_file_map[file_path] = new_hashes[0]
+    # All files analyzed in parallel. Concurrency across files is bounded
+    # inside each run_agent_with_sem invocation (the same semaphore gates
+    # agent calls regardless of which file they belong to).
+    file_tasks = [analyze_one_file(fp) for fp in live_codebase.keys()]
+    file_results = await asyncio.gather(*file_tasks, return_exceptions=True)
 
-                    # Mark the applied findings in the DB
-                    await repo.mark_findings_as_applied(applied_finding_ids)
+    all_scan_findings: List[VulnerabilityFinding] = []
+    all_proposed_fixes: List[FixResult] = []
+    for r in file_results:
+        if isinstance(r, BaseException):
+            logger.error(
+                f"File analysis task failed for scan {scan_id}: {r}", exc_info=r
+            )
+            continue
+        all_scan_findings.extend(r.get("findings", []))
+        all_proposed_fixes.extend(r.get("fixes", []))
 
-                all_scan_findings.extend(retrieved_findings)
-            else:
-                all_scan_findings.extend(findings_for_file)
+    logger.info(
+        f"Single-pass analysis complete for scan {scan_id}: "
+        f"{len(all_scan_findings)} findings, {len(all_proposed_fixes)} proposed fixes."
+    )
 
     return {
         "findings": all_scan_findings,
-        "final_file_map": current_file_map if scan_type == "REMEDIATE" else None,
+        "proposed_fixes": all_proposed_fixes,
     }
+
+
+async def consolidate_and_patch_node(state: WorkerState) -> Dict[str, Any]:
+    """Terminal consolidation for REMEDIATE scans.
+
+    Runs after `correlate_findings`. Groups the `proposed_fixes` collected by
+    the single-pass analyzer by file, resolves per-file conflicts (line-range
+    overlap detection + merge agent), applies the resolved fixes to the
+    ORIGINAL file content in one pass, and builds the final file_map for the
+    POST_REMEDIATION snapshot saved by `save_results_node`.
+
+    For AUDIT mode this is a no-op. For SUGGEST mode we keep the correlated
+    findings with their embedded `fixes` field (so the UI shows suggested
+    fixes) but do not build a POST_REMEDIATION snapshot.
+    """
+    scan_id = state["scan_id"]
+    scan_type = state["scan_type"]
+
+    if scan_type != "REMEDIATE":
+        return {}
+
+    proposed_fixes = state.get("proposed_fixes") or []
+    if not proposed_fixes:
+        return {}
+
+    reasoning_llm_id = state.get("reasoning_llm_config_id")
+    if not reasoning_llm_id:
+        return {
+            "error_message": "consolidate_and_patch requires reasoning_llm_config_id."
+        }
+
+    live_codebase = state.get("live_codebase") or {}
+    initial_file_map = state.get("initial_file_map") or {}
+
+    # Group proposed fixes by file (they can only conflict within a file).
+    fixes_by_file: Dict[str, List[FixResult]] = {}
+    for fix in proposed_fixes:
+        fp = fix.finding.file_path or ""
+        if not fp:
+            continue
+        fixes_by_file.setdefault(fp, []).append(fix)
+
+    # Pre-compute the OWASP rank map once for all files' conflict resolution.
+    async with AsyncSessionLocal() as session:
+        cwe_ids = list({f.finding.cwe for f in proposed_fixes if f.finding.cwe})
+        owasp_rank_map: Dict[str, int] = {}
+        if cwe_ids:
+            stmt = select(CweOwaspMapping).where(CweOwaspMapping.cwe_id.in_(cwe_ids))
+            result = await session.execute(stmt)
+            owasp_rank_map = {
+                mapping.cwe_id: mapping.owasp_rank for mapping in result.scalars().all()
+            }
+
+    final_file_map = dict(initial_file_map)
+    applied_signatures: set[str] = set()
+
+    # Patch + persist per file. The loop is sequential to keep the merge-agent
+    # calls under our rate limiter's natural flow; parallelizing here would
+    # require threading the semaphore through and the cost/latency win is
+    # small vs. the analysis phase's many-agents-per-file parallelism.
+    async with AsyncSessionLocal() as db:
+        repo = ScanRepository(db)
+        for file_path, file_fixes in fixes_by_file.items():
+            file_content = live_codebase.get(file_path)
+            if not file_content:
+                continue
+
+            resolved = await _resolve_file_fix_conflicts(
+                file_fixes,
+                file_content,
+                reasoning_llm_id,
+                owasp_rank_map,
+                scan_id,
+            )
+            if not resolved:
+                continue
+
+            # Apply fixes in line-number order against the ORIGINAL content
+            # (single pass — not iterative cross-file). Each fix's
+            # original_snippet is expected to match the original file; if a
+            # second fix's snippet already got replaced by an earlier one,
+            # the merge agent should have been involved.
+            patched_content = file_content
+            for fix in sorted(resolved, key=lambda f: f.finding.line_number):
+                snippet = fix.suggestion.original_snippet
+                if snippet and snippet in patched_content:
+                    patched_content = patched_content.replace(
+                        snippet, fix.suggestion.code, 1
+                    )
+                    applied_signatures.add(
+                        f"{file_path}|{fix.finding.cwe}|{fix.finding.line_number}"
+                    )
+
+            new_hashes = await repo.get_or_create_source_files(
+                [
+                    {
+                        "path": file_path,
+                        "content": patched_content,
+                        "language": get_language_from_filename(file_path),
+                    }
+                ]
+            )
+            final_file_map[file_path] = new_hashes[0]
+
+    # Propagate the applied flag onto the post-correlation findings so the
+    # UI and downstream reporting can distinguish applied vs. dropped fixes.
+    findings = list(state.get("findings", []))
+    for f in findings:
+        sig = f"{f.file_path}|{f.cwe}|{f.line_number}"
+        if sig in applied_signatures:
+            f.is_applied_in_remediation = True
+
+    logger.info(
+        f"consolidate_and_patch for scan {scan_id}: "
+        f"patched {len(applied_signatures)} findings across "
+        f"{len([p for p in final_file_map if p in fixes_by_file])} files."
+    )
+
+    return {"findings": findings, "final_file_map": final_file_map}
 
 
 async def correlate_findings_node(state: WorkerState) -> Dict[str, Any]:
@@ -1031,10 +1039,9 @@ workflow = StateGraph(WorkerState)
 # Define all nodes
 workflow.add_node("retrieve_and_prepare_data", retrieve_and_prepare_data_node)
 workflow.add_node("estimate_cost", estimate_cost_node)
-workflow.add_node(
-    "dependency_aware_analysis_orchestrator", dependency_aware_analysis_orchestrator
-)
+workflow.add_node("analyze_files_parallel", analyze_files_parallel_node)
 workflow.add_node("correlate_findings", correlate_findings_node)
+workflow.add_node("consolidate_and_patch", consolidate_and_patch_node)
 workflow.add_node("save_results", save_results_node)
 workflow.add_node("run_impact_reporting", run_impact_reporting)
 workflow.add_node("save_final_report", save_final_report_node)
@@ -1072,7 +1079,7 @@ workflow.add_conditional_edges(
     should_estimate_cost_or_run,
     {
         "estimate_cost": "estimate_cost",
-        "run_analysis": "dependency_aware_analysis_orchestrator",
+        "run_analysis": "analyze_files_parallel",
         "handle_error": "handle_error",
     },
 )
@@ -1081,12 +1088,17 @@ workflow.add_conditional_edges(
 workflow.add_edge("estimate_cost", END)
 
 workflow.add_conditional_edges(
-    "dependency_aware_analysis_orchestrator",
+    "analyze_files_parallel",
     should_continue,
     {"continue": "correlate_findings", "handle_error": "handle_error"},
 )
 workflow.add_conditional_edges(
     "correlate_findings",
+    should_continue,
+    {"continue": "consolidate_and_patch", "handle_error": "handle_error"},
+)
+workflow.add_conditional_edges(
+    "consolidate_and_patch",
     should_continue,
     {"continue": "save_results", "handle_error": "handle_error"},
 )
