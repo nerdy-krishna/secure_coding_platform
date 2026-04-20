@@ -1,574 +1,901 @@
-import {
-  ArrowLeftOutlined,
-  CodeOutlined,
-  FilePdfOutlined,
-  LoadingOutlined,
-  MinusSquareOutlined,
-  PlusSquareOutlined,
-} from "@ant-design/icons";
-import { useQuery } from "@tanstack/react-query";
-import {
-  Alert,
-  Button,
-  Card,
-  Col,
-  Divider,
-  Empty,
-  Input,
-  Layout,
-  Row,
-  Select,
-  Space,
-  Spin,
-  Tag,
-  Typography,
-} from "antd";
-import { saveAs } from "file-saver";
-import React, { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
-import EnhancedDiffViewer from "../../features/results-display/components/EnhancedDiffViewer";
-import FileMergeExplanations from "../../features/results-display/components/FileMergeExplanations";
-import FindingList from "../../features/results-display/components/FindingList";
-import ResultsFileTree from "../../features/results-display/components/ResultsFileTree";
-import ScanSummary from "../../features/results-display/components/ScanSummary";
-import { scanService } from "../../shared/api/scanService";
-import type { Finding, ScanResultResponse } from "../../shared/types/api";
+// secure-code-ui/src/pages/analysis/ResultsPage.tsx
+//
+// SCCAP scan-result view. Port of the design bundle's Results.jsx,
+// wired to the real backend via scanService.getScanResult.
+//
+// Layout:
+//   - Breadcrumb + header with project + scan summary
+//   - Summary strip (risk score + severity counts + AI-fix count)
+//   - Two-column body: findings list (filterable) + detail pane
+//
+// The detail pane renders description, remediation, compliance chips,
+// and (when a fix suggestion exists) a side-by-side diff using the
+// design's `.diff` / `.diff-row` utilities. Actions: SARIF download,
+// navigate to executive summary + LLM logs, apply selective fix.
 
-const { Content, Sider } = Layout;
-const { Title, Paragraph } = Typography;
-const { Option } = Select;
-type GroupableFields = keyof Pick<
+import React, { useCallback, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate, useParams } from "react-router-dom";
+import { message as antdMessage } from "antd";
+import { saveAs } from "file-saver";
+import { scanService } from "../../shared/api/scanService";
+import { Icon } from "../../shared/ui/Icon";
+import { SevBar } from "../../shared/ui/DashboardPrimitives";
+import type {
   Finding,
-  "severity" | "confidence" | "cwe" | "corroborating_agents" | "title"
->;
-type FilterableFields = keyof Pick<
-  Finding,
-  "severity" | "confidence" | "corroborating_agents" | "title"
->;
+  ScanResultResponse,
+  SubmittedFile,
+  SummaryReport,
+} from "../../shared/types/api";
+
+type SeverityFilter = "all" | "critical" | "high" | "medium" | "low";
+
+const SEV_COLOR: Record<string, string> = {
+  CRITICAL: "var(--critical)",
+  HIGH: "var(--high)",
+  MEDIUM: "var(--medium)",
+  LOW: "var(--low)",
+  INFORMATIONAL: "var(--info)",
+};
+
+function flattenFindings(summary?: SummaryReport): Finding[] {
+  if (!summary) return [];
+  return summary.files_analyzed.flatMap((f: SubmittedFile) =>
+    f.findings.map((finding) => ({ ...finding, file_path: f.file_path })),
+  );
+}
+
+function severityRank(s: string): number {
+  const order: Record<string, number> = {
+    CRITICAL: 4,
+    HIGH: 3,
+    MEDIUM: 2,
+    LOW: 1,
+    INFORMATIONAL: 0,
+  };
+  return order[s?.toUpperCase()] ?? 0;
+}
 
 const ResultsPage: React.FC = () => {
   const { scanId } = useParams<{ scanId: string }>();
   const navigate = useNavigate();
-  const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
-  const [activeFindingKeys, setActiveFindingKeys] = useState<string[]>([]);
-  const [sortConfig, setSortConfig] = useState<{
-    field: keyof Finding;
-    order: "asc" | "desc";
-  }>({ field: "severity", order: "desc" });
-  const [filters, setFilters] = useState<
-    Partial<Record<FilterableFields, string[]>>
-  >({});
-  const [groupBy, setGroupBy] = useState<GroupableFields | "none">("severity");
-  const [idFilter, setIdFilter] = useState<string>("");
+  const queryClient = useQueryClient();
 
-  const {
-    data: result,
-    isLoading,
-    isError,
-    error,
-  } = useQuery<ScanResultResponse, Error>({
-    queryKey: ["scanResult", scanId],
-    queryFn: () => {
-      if (!scanId) throw new Error("Scan ID is missing");
-      return scanService.getScanResult(scanId);
-    },
+  const [sevFilter, setSevFilter] = useState<SeverityFilter>("all");
+  const [search, setSearch] = useState("");
+  const [selectedFindingId, setSelectedFindingId] = useState<number | null>(null);
+  const [applyingId, setApplyingId] = useState<number | null>(null);
+
+  const { data, isLoading, isError, error } = useQuery<ScanResultResponse>({
+    queryKey: ["scan-result", scanId],
+    queryFn: () => scanService.getScanResult(scanId!),
     enabled: !!scanId,
-    refetchOnWindowFocus: false,
   });
 
-  const allFindingsForScan = useMemo(() => {
-    return (
-      result?.summary_report?.files_analyzed?.flatMap(
-        (file) => file.findings,
-      ) || []
-    );
-  }, [result]);
+  const applyFix = useMutation({
+    mutationFn: (findingId: number) =>
+      scanService.applySelectiveFixes(scanId!, [findingId]),
+    onSuccess: () => {
+      antdMessage.success("Fix applied. Refreshing results…");
+      queryClient.invalidateQueries({ queryKey: ["scan-result", scanId] });
+    },
+    onError: (err: Error) => antdMessage.error(err.message || "Apply failed"),
+  });
 
-  const allFindingsInFile = useMemo(() => {
-    if (!selectedFilePath) return [];
-    return (
-      result?.summary_report?.files_analyzed?.find(
-        (f) => f.file_path === selectedFilePath,
-      )?.findings || []
-    );
-  }, [result, selectedFilePath]);
+  const allFindings = useMemo(
+    () =>
+      flattenFindings(data?.summary_report).sort(
+        (a, b) => severityRank(b.severity) - severityRank(a.severity),
+      ),
+    [data],
+  );
 
-  const dynamicFilterOptions = useMemo(() => {
-    const options: Record<string, string[]> = {
-      severity: [],
-      confidence: [],
-      corroborating_agents: [],
-      title: [],
-    };
-    const activeFilters = Object.entries(filters).filter(
-      ([, values]) => values && values.length > 0,
-    );
+  const severityCounts = useMemo(() => {
+    const counts = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, INFORMATIONAL: 0 };
+    for (const f of allFindings) {
+      const s = (f.severity || "").toUpperCase();
+      if (s in counts) counts[s as keyof typeof counts] += 1;
+    }
+    return counts;
+  }, [allFindings]);
 
-    for (const key in options) {
-      const otherFilters = activeFilters.filter(
-        ([filterKey]) => filterKey !== key,
-      );
-      const relevantFindings = allFindingsInFile.filter((finding) => {
-        return otherFilters.every(([filterKey, values]) => {
-          const findingValue = finding[filterKey as FilterableFields];
-          if (
-            filterKey === "corroborating_agents" &&
-            Array.isArray(findingValue)
-          ) {
-            return findingValue.some((agent) => values.includes(agent));
-          }
-          return findingValue ? values.includes(String(findingValue)) : false;
-        });
+  const fixesReady = useMemo(
+    () => allFindings.filter((f) => !!f.fixes?.code).length,
+    [allFindings],
+  );
+
+  const filtered = useMemo(
+    () =>
+      allFindings.filter((f) => {
+        if (sevFilter !== "all" && f.severity?.toLowerCase() !== sevFilter)
+          return false;
+        if (
+          search &&
+          !(
+            f.title.toLowerCase().includes(search.toLowerCase()) ||
+            f.file_path.toLowerCase().includes(search.toLowerCase()) ||
+            (f.cwe || "").toLowerCase().includes(search.toLowerCase())
+          )
+        )
+          return false;
+        return true;
+      }),
+    [allFindings, sevFilter, search],
+  );
+
+  const selected =
+    filtered.find((f) => f.id === selectedFindingId) ?? filtered[0] ?? null;
+
+  const downloadSarif = useCallback(async () => {
+    if (!scanId) return;
+    try {
+      const sarif = await scanService.downloadSarifReport(scanId);
+      const blob = new Blob([JSON.stringify(sarif, null, 2)], {
+        type: "application/json",
       });
-      if (key === "corroborating_agents") {
-        options[key] = [
-          ...new Set(
-            relevantFindings.flatMap((f) => f.corroborating_agents || []),
-          ),
-        ];
-      } else {
-        options[key as FilterableFields] = [
-          ...new Set(
-            relevantFindings
-              .map((f) => f[key as FilterableFields])
-              .filter(Boolean),
-          ),
-        ] as string[];
-      }
+      saveAs(blob, `sccap-${scanId.slice(0, 8)}.sarif.json`);
+    } catch (err) {
+      const e = err as { message?: string };
+      antdMessage.error(e.message || "SARIF download failed");
     }
-    return options;
-  }, [allFindingsInFile, filters]);
+  }, [scanId]);
 
-  const filteredAndSortedFindings = useMemo(() => {
-    let findings = [...allFindingsInFile];
-
-    // Apply ID filter first if it exists
-    if (idFilter.trim()) {
-      findings = findings.filter((finding) =>
-        String(finding.id).includes(idFilter.trim()),
-      );
-    }
-
-    // Then, apply the multi-select filters
-    findings = findings.filter((finding) => {
-      return Object.entries(filters).every(([key, values]) => {
-        if (!values || values.length === 0) return true;
-        const keyTyped = key as FilterableFields;
-
-        if (keyTyped === "corroborating_agents") {
-          return (finding.corroborating_agents || []).some((agent) =>
-            values.includes(agent),
-          );
-        }
-
-        const findingValue = finding[keyTyped];
-        return findingValue ? values.includes(String(findingValue)) : false;
-      });
-    });
-
-    const severityOrder: Record<string, number> = {
-      CRITICAL: 5,
-      HIGH: 4,
-      MEDIUM: 3,
-      LOW: 2,
-      INFORMATIONAL: 1,
-    };
-    findings.sort((a, b) => {
-      const field = sortConfig.field;
-      let valA = a[field];
-      let valB = b[field];
-
-      if (field === "severity") {
-        valA = severityOrder[a.severity.toUpperCase()] || 0;
-        valB = severityOrder[b.severity.toUpperCase()] || 0;
-      }
-
-      if (valA === undefined || valA === null) return 1;
-      if (valB === undefined || valB === null) return -1;
-
-      let comparison = 0;
-      if (typeof valA === "string" && typeof valB === "string") {
-        comparison = valA.localeCompare(valB);
-      } else if (typeof valA === "number" && typeof valB === "number") {
-        comparison = valA - valB;
-      }
-
-      return sortConfig.order === "asc" ? comparison : -comparison;
-    });
-
-    return findings;
-  }, [allFindingsInFile, sortConfig, filters, idFilter]);
-
-  const groupedFindings = useMemo(() => {
-    if (groupBy === "none") {
-      return { all: filteredAndSortedFindings };
-    }
-    return filteredAndSortedFindings.reduce(
-      (acc, finding) => {
-        if (groupBy === "corroborating_agents") {
-          const agents =
-            finding.corroborating_agents &&
-            finding.corroborating_agents.length > 0
-              ? finding.corroborating_agents
-              : ["Unknown"];
-          agents.forEach((agent) => {
-            if (!acc[agent]) acc[agent] = [];
-            acc[agent].push(finding);
-          });
-        } else {
-          const key = String(finding[groupBy as keyof Finding] ?? "Unknown");
-          if (!acc[key]) {
-            acc[key] = [];
-          }
-          acc[key].push(finding);
-        }
-        return acc;
-      },
-      {} as Record<string, Finding[]>,
-    );
-  }, [filteredAndSortedFindings, groupBy]);
-
-  useEffect(() => {
-    const filesWithFindings =
-      result?.summary_report?.files_analyzed?.filter(
-        (f) => f.findings.length > 0,
-      ) || [];
-    if (!selectedFilePath && filesWithFindings.length > 0) {
-      setSelectedFilePath(filesWithFindings[0].file_path);
-    }
-  }, [result, selectedFilePath]);
-
-  const handleFilterChange = (key: FilterableFields, values: string[]) => {
-    setFilters((prev) => ({ ...prev, [key]: values }));
-  };
-
-  const handleDownloadSarif = () => {
-    if (result?.sarif_report) {
-      const sarifString = JSON.stringify(result.sarif_report, null, 2);
-      const blob = new Blob([sarifString], {
-        type: "application/sarif+json;charset=utf-8",
-      });
-      saveAs(blob, `scan-report-${scanId}.sarif`);
-    }
-  };
-
-  if (isLoading)
+  if (isLoading) {
     return (
-      <Spin
-        indicator={<LoadingOutlined style={{ fontSize: 48 }} spin />}
-        tip="Loading Report..."
+      <div
+        className="sccap-card"
         style={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          height: "100vh",
-        }}
-      />
-    );
-  if (isError)
-    return (
-      <Alert
-        message="Error"
-        description={error.message}
-        type="error"
-        showIcon
-      />
-    );
-  if (!result || !result.summary_report)
-    return <Empty description="No analysis results found for this scan." />;
-
-  const { summary_report, status, original_code_map, fixed_code_map } = result;
-  const isRemediationComplete = status === "REMEDIATION_COMPLETED";
-
-  const originalCode = original_code_map?.[selectedFilePath || ""] || "";
-  const fixedCode = fixed_code_map?.[selectedFilePath || ""] || "";
-
-  return (
-    <Layout style={{ background: "transparent" }}>
-      <Row justify="space-between" align="middle" style={{ marginBottom: 16 }}>
-        <Col>
-          <Title level={3} style={{ margin: 0 }}>
-            {summary_report.scan_type.replace(/_/g, " ")} Report:{" "}
-            {summary_report.project_name}
-          </Title>
-          <Paragraph
-            copyable={{ text: scanId }}
-            type="secondary"
-            style={{ margin: 0 }}
-          >
-            Scan ID: {scanId}
-          </Paragraph>
-          <Paragraph
-            copyable={{ text: summary_report.project_id }}
-            type="secondary"
-            style={{ margin: 0 }}
-          >
-            Project ID: {summary_report.project_id}
-          </Paragraph>
-        </Col>
-        <Col>
-          <Space>
-            {result?.impact_report && (
-              <Link to={`/scans/${scanId}/executive-summary`}>
-                <Button icon={<FilePdfOutlined />}>Executive Summary</Button>
-              </Link>
-            )}
-            {result?.sarif_report && (
-              <Button icon={<CodeOutlined />} onClick={handleDownloadSarif}>
-                Download SARIF
-              </Button>
-            )}
-            <Button
-              onClick={() => navigate("/account/history")}
-              icon={<ArrowLeftOutlined />}
-            >
-              Back to History
-            </Button>
-          </Space>
-        </Col>
-      </Row>
-
-      <ScanSummary summaryReport={summary_report} />
-
-      <Card size="small" style={{ marginBottom: 16 }}>
-        <Row gutter={[16, 8]} align="bottom">
-          <Col xs={24} sm={12} md={6}>
-            <Typography.Text>Group By:</Typography.Text>
-            <Select
-              value={groupBy}
-              onChange={(value) =>
-                setGroupBy(value as GroupableFields | "none")
-              }
-              style={{ width: "100%" }}
-            >
-              <Option value="none">None</Option>
-              <Option value="severity">Severity</Option>
-              <Option value="confidence">Confidence</Option>
-              <Option value="corroborating_agents">Agent</Option>
-              <Option value="title">Finding Title</Option>
-            </Select>
-          </Col>
-          <Col xs={24} sm={12} md={6}>
-            <Typography.Text>Sort By:</Typography.Text>
-            <Select
-              value={sortConfig.field}
-              onChange={(field) =>
-                setSortConfig((prev) => ({ ...prev, field }))
-              }
-              style={{ width: "100%" }}
-            >
-              <Option value="severity">Severity</Option>
-              <Option value="confidence">Confidence</Option>
-              <Option value="line_number">Line Number</Option>
-              <Option value="title">Finding Title</Option>
-            </Select>
-          </Col>
-          <Col xs={12} sm={12} md={6}>
-            <Typography.Text>Order:</Typography.Text>
-            <Select
-              value={sortConfig.order}
-              onChange={(order) =>
-                setSortConfig((prev) => ({ ...prev, order }))
-              }
-              style={{ width: "100%" }}
-            >
-              <Option value="desc">Descending</Option>
-              <Option value="asc">Ascending</Option>
-            </Select>
-          </Col>
-          <Col xs={12} sm={12} md={6}>
-            <Typography.Text>Filter by Severity:</Typography.Text>
-            <Select
-              mode="multiple"
-              allowClear
-              style={{ width: "100%" }}
-              placeholder="All Severities"
-              onChange={(values) => handleFilterChange("severity", values)}
-              value={filters.severity}
-            >
-              {dynamicFilterOptions.severity.map((s) => (
-                <Option key={s} value={s}>
-                  {s}
-                </Option>
-              ))}
-            </Select>
-          </Col>
-          <Col xs={12} sm={12} md={6}>
-            <Typography.Text>Filter by Confidence:</Typography.Text>
-            <Select
-              mode="multiple"
-              allowClear
-              style={{ width: "100%" }}
-              placeholder="All Confidences"
-              onChange={(values) => handleFilterChange("confidence", values)}
-              value={filters.confidence}
-            >
-              {dynamicFilterOptions.confidence.map((s) => (
-                <Option key={s} value={s}>
-                  {s}
-                </Option>
-              ))}
-            </Select>
-          </Col>
-          <Col xs={12} sm={12} md={6}>
-            <Typography.Text>Filter by Finding ID:</Typography.Text>
-            <Input.Search
-              placeholder="Enter ID"
-              value={idFilter}
-              onChange={(e) => setIdFilter(e.target.value)}
-              allowClear
-            />
-          </Col>
-          <Col xs={12} sm={12} md={6}>
-            <Typography.Text>Filter by Agent:</Typography.Text>
-            <Select
-              mode="multiple"
-              allowClear
-              style={{ width: "100%" }}
-              placeholder="All Agents"
-              onChange={(values) =>
-                handleFilterChange("corroborating_agents", values)
-              }
-              value={filters.corroborating_agents}
-            >
-              {dynamicFilterOptions.corroborating_agents.map((s) => (
-                <Option key={s} value={s}>
-                  {s}
-                </Option>
-              ))}
-            </Select>
-          </Col>
-          <Col xs={24} sm={24} md={12}>
-            <Typography.Text>Filter by Finding Title:</Typography.Text>
-            <Select
-              mode="multiple"
-              allowClear
-              style={{ width: "100%" }}
-              placeholder="All Titles"
-              onChange={(values) => handleFilterChange("title", values)}
-              value={filters.title}
-            >
-              {dynamicFilterOptions.title.map((s) => (
-                <Option key={s} value={s}>
-                  {s}
-                </Option>
-              ))}
-            </Select>
-          </Col>
-        </Row>
-      </Card>
-
-      <Layout
-        style={{
-          background: "#fff",
-          borderRadius: 8,
-          border: "1px solid #f0f0f0",
-          flexDirection: "column",
+          padding: 40,
+          textAlign: "center",
+          color: "var(--fg-muted)",
         }}
       >
-        <Layout>
-          <Sider
-            width={350}
-            style={{
-              background: "#fafafa",
-              padding: "16px",
-              overflow: "auto",
-              borderRight: "1px solid #f0f0f0",
-              borderRadius: "8px 0 0 8px",
-            }}
+        Loading scan results…
+      </div>
+    );
+  }
+
+  if (isError || !data) {
+    return (
+      <div
+        className="sccap-card"
+        style={{
+          padding: 40,
+          textAlign: "center",
+          color: "var(--critical)",
+        }}
+      >
+        Failed to load scan: {(error as Error)?.message || "unknown error"}
+      </div>
+    );
+  }
+
+  const report = data.summary_report;
+  const riskScore = report?.overall_risk_score?.score;
+  const riskLabel = typeof riskScore === "number" ? riskScore : riskScore || "—";
+
+  return (
+    <div className="fade-in" style={{ display: "grid", gap: 16 }}>
+      {/* header */}
+      <div>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            color: "var(--fg-muted)",
+            fontSize: 12,
+            marginBottom: 8,
+          }}
+        >
+          <button
+            className="sccap-btn sccap-btn-sm sccap-btn-ghost"
+            onClick={() => navigate("/analysis/results")}
           >
-            <Title level={5} style={{ marginTop: 0, marginBottom: 16 }}>
-              Analyzed Files
-            </Title>
-            <ResultsFileTree
-              analyzedFiles={summary_report.files_analyzed || []}
-              findings={allFindingsForScan}
-              selectedKeys={selectedFilePath ? [selectedFilePath] : []}
-              onSelect={(keys) => {
-                if (keys.length > 0) {
-                  setSelectedFilePath(keys[0] as string);
-                }
+            <Icon.ChevronL size={12} /> Projects
+          </button>
+          <span>/</span>
+          <span>{report?.project_name ?? "…"}</span>
+          <span>/</span>
+          <span style={{ color: "var(--fg)", fontFamily: "var(--font-mono)" }}>
+            {scanId?.slice(0, 8)}
+          </span>
+        </div>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "flex-end",
+            gap: 20,
+          }}
+        >
+          <div>
+            <h1 style={{ color: "var(--fg)" }}>
+              {report?.project_name ?? "Scan"}{" "}
+              <span
+                style={{
+                  color: "var(--fg-subtle)",
+                  fontWeight: 400,
+                  fontSize: 20,
+                }}
+              >
+                / {report?.scan_type ?? data.status}
+              </span>
+            </h1>
+            <div
+              style={{
+                color: "var(--fg-muted)",
+                marginTop: 4,
+                fontSize: 13,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                flexWrap: "wrap",
               }}
-            />
-          </Sider>
-          <Content
+            >
+              <span>
+                {allFindings.length} finding
+                {allFindings.length === 1 ? "" : "s"}
+              </span>
+              {fixesReady > 0 && (
+                <span className="chip chip-ai">
+                  <Icon.Sparkle size={10} /> {fixesReady} AI fix
+                  {fixesReady === 1 ? "" : "es"} ready
+                </span>
+              )}
+              {report?.selected_frameworks?.length ? (
+                <span style={{ color: "var(--fg-subtle)" }}>
+                  · {report.selected_frameworks.join(", ")}
+                </span>
+              ) : null}
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              className="sccap-btn sccap-btn-sm"
+              onClick={downloadSarif}
+              disabled={!data.sarif_report}
+            >
+              <Icon.Download size={13} /> SARIF
+            </button>
+            <button
+              className="sccap-btn sccap-btn-sm"
+              onClick={() => navigate(`/scans/${scanId}/executive-summary`)}
+            >
+              <Icon.File size={13} /> Executive summary
+            </button>
+            <button
+              className="sccap-btn sccap-btn-sm"
+              onClick={() => navigate(`/scans/${scanId}/llm-logs`)}
+            >
+              <Icon.Terminal size={13} /> LLM logs
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* summary strip */}
+      <div
+        className="surface"
+        style={{
+          padding: 16,
+          display: "grid",
+          gridTemplateColumns: "1.5fr repeat(5, 1fr)",
+          gap: 16,
+          alignItems: "center",
+        }}
+      >
+        <div>
+          <div
             style={{
-              padding: "16px 24px",
-              minHeight: 400,
-              display: "flex",
-              flexDirection: "column",
+              fontSize: 11,
+              color: "var(--fg-muted)",
+              textTransform: "uppercase",
+              letterSpacing: ".06em",
             }}
           >
-            <Row
-              justify="space-between"
-              align="middle"
-              style={{ marginBottom: 16, flexWrap: "wrap", gap: "10px" }}
+            Risk score
+          </div>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "baseline",
+              gap: 10,
+              marginTop: 4,
+            }}
+          >
+            <div
+              style={{
+                fontSize: 28,
+                fontWeight: 600,
+                color:
+                  typeof riskScore === "number"
+                    ? riskScore >= 7
+                      ? "var(--critical)"
+                      : riskScore >= 4
+                        ? "var(--high)"
+                        : "var(--medium)"
+                    : "var(--fg)",
+                letterSpacing: "-0.02em",
+              }}
             >
-              <Title level={5} style={{ margin: 0 }}>
-                Findings in: {selectedFilePath || "..."}
-              </Title>
-              <Space wrap>
-                <Button
-                  size="small"
-                  onClick={() =>
-                    setActiveFindingKeys(
-                      filteredAndSortedFindings.map((f) => f.id.toString()),
-                    )
-                  }
-                  icon={<PlusSquareOutlined />}
-                >
-                  Expand All
-                </Button>
-                <Button
-                  size="small"
-                  onClick={() => setActiveFindingKeys([])}
-                  icon={<MinusSquareOutlined />}
-                >
-                  Collapse All
-                </Button>
-              </Space>
-            </Row>
-
-            <div style={{ flexGrow: 1, overflowY: "auto" }}>
-              {Object.entries(groupedFindings).map(
-                ([groupName, findingsInGroup]) => (
-                  <React.Fragment key={groupName}>
-                    {groupBy !== "none" && (
-                      <Divider orientation="left">
-                        <Tag color="purple">{`${groupBy.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase())}: ${groupName}`}</Tag>
-                      </Divider>
-                    )}
-                    {findingsInGroup.length > 0 ? (
-                      <FindingList
-                        findings={findingsInGroup}
-                        activeKeys={activeFindingKeys}
-                        onActiveKeyChange={(keys) =>
-                          setActiveFindingKeys(keys as string[])
-                        }
-                      />
-                    ) : (
-                      <Empty description="No findings match the current filter criteria." />
-                    )}
-                  </React.Fragment>
-                ),
-              )}
+              {riskLabel}
             </div>
-          </Content>
-        </Layout>
-
-        {isRemediationComplete && selectedFilePath && (
-          <div style={{ padding: "16px 24px 24px 24px" }}>
-            <FileMergeExplanations findings={allFindingsInFile} />
-            <EnhancedDiffViewer
-              title={`Full File Diff: ${selectedFilePath}`}
-              oldCode={originalCode}
-              newCode={fixedCode}
-              filePath={selectedFilePath}
+          </div>
+          <div style={{ marginTop: 6 }}>
+            <SevBar
+              crit={severityCounts.CRITICAL}
+              high={severityCounts.HIGH}
+              med={severityCounts.MEDIUM}
+              low={severityCounts.LOW}
+              info={severityCounts.INFORMATIONAL}
             />
           </div>
+        </div>
+        {[
+          { k: "Critical", v: severityCounts.CRITICAL, c: "var(--critical)" },
+          { k: "High", v: severityCounts.HIGH, c: "var(--high)" },
+          { k: "Medium", v: severityCounts.MEDIUM, c: "var(--medium)" },
+          { k: "Low", v: severityCounts.LOW, c: "var(--low)" },
+          { k: "AI fixes", v: fixesReady, c: "var(--primary)" },
+        ].map((m) => (
+          <div key={m.k}>
+            <div
+              style={{
+                fontSize: 11,
+                color: "var(--fg-muted)",
+                textTransform: "uppercase",
+                letterSpacing: ".06em",
+              }}
+            >
+              {m.k}
+            </div>
+            <div
+              style={{
+                fontSize: 28,
+                fontWeight: 600,
+                color: m.c,
+                letterSpacing: "-0.02em",
+              }}
+            >
+              {m.v}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* body */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "380px 1fr",
+          gap: 16,
+          minHeight: 640,
+        }}
+      >
+        {/* findings list */}
+        <div
+          className="surface"
+          style={{
+            padding: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              padding: 12,
+              borderBottom: "1px solid var(--border)",
+              display: "grid",
+              gap: 8,
+            }}
+          >
+            <div className="input-with-icon">
+              <Icon.Search size={14} />
+              <input
+                className="sccap-input"
+                placeholder="Filter findings…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                style={{ paddingLeft: 32, height: 32 }}
+              />
+            </div>
+            <div className="radio-group" style={{ width: "100%" }}>
+              {(
+                ["all", "critical", "high", "medium", "low"] as SeverityFilter[]
+              ).map((s) => (
+                <button
+                  key={s}
+                  className={sevFilter === s ? "active" : ""}
+                  onClick={() => setSevFilter(s)}
+                  style={{ flex: 1, textTransform: "capitalize" }}
+                >
+                  {s}
+                  {s !== "all" && (
+                    <span style={{ color: "var(--fg-subtle)", marginLeft: 4 }}>
+                      ·
+                      {
+                        allFindings.filter(
+                          (f) => f.severity?.toLowerCase() === s,
+                        ).length
+                      }
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div style={{ flex: 1, overflow: "auto" }}>
+            {filtered.length === 0 ? (
+              <div
+                style={{
+                  padding: 40,
+                  textAlign: "center",
+                  color: "var(--fg-muted)",
+                }}
+              >
+                No findings match this filter.
+              </div>
+            ) : (
+              filtered.map((f) => {
+                const sev = (f.severity || "").toUpperCase();
+                const color = SEV_COLOR[sev] ?? "var(--fg-muted)";
+                const isSel = selected?.id === f.id;
+                return (
+                  <div
+                    key={f.id}
+                    onClick={() => setSelectedFindingId(f.id)}
+                    style={{
+                      padding: "12px 14px",
+                      cursor: "pointer",
+                      borderLeft: `3px solid ${isSel ? color : "transparent"}`,
+                      background: isSel ? "var(--bg-soft)" : "transparent",
+                      borderBottom: "1px solid var(--border)",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        marginBottom: 4,
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: 6,
+                          height: 6,
+                          borderRadius: 99,
+                          background: color,
+                        }}
+                      />
+                      <span
+                        style={{
+                          fontSize: 10.5,
+                          textTransform: "uppercase",
+                          color,
+                          fontWeight: 600,
+                          letterSpacing: ".04em",
+                        }}
+                      >
+                        {sev}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 10.5,
+                          color: "var(--fg-subtle)",
+                          marginLeft: "auto",
+                        }}
+                        className="mono"
+                      >
+                        {f.cwe}
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 13,
+                        fontWeight: 500,
+                        lineHeight: 1.35,
+                        marginBottom: 6,
+                        color: "var(--fg)",
+                      }}
+                    >
+                      {f.title}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 11,
+                        color: "var(--fg-muted)",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: 8,
+                      }}
+                    >
+                      <span
+                        className="mono"
+                        style={{
+                          fontSize: 11,
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          maxWidth: 200,
+                        }}
+                      >
+                        {f.file_path}:{f.line_number}
+                      </span>
+                      {f.fixes?.code && (
+                        <span
+                          className="chip chip-ai"
+                          style={{ fontSize: 10, padding: "1px 7px" }}
+                        >
+                          <Icon.Sparkle size={9} /> fix
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+
+        {/* detail */}
+        {selected ? (
+          <FindingDetail
+            f={selected}
+            applying={applyingId === selected.id && applyFix.isPending}
+            onApply={() => {
+              setApplyingId(selected.id);
+              applyFix.mutate(selected.id);
+            }}
+          />
+        ) : (
+          <div
+            className="surface"
+            style={{
+              padding: 40,
+              textAlign: "center",
+              color: "var(--fg-muted)",
+              alignSelf: "start",
+            }}
+          >
+            {allFindings.length === 0
+              ? "No findings in this scan."
+              : "Select a finding on the left."}
+          </div>
         )}
-      </Layout>
-    </Layout>
+      </div>
+    </div>
+  );
+};
+
+// ============================================================================
+// Detail pane
+// ============================================================================
+
+const FindingDetail: React.FC<{
+  f: Finding;
+  applying: boolean;
+  onApply: () => void;
+}> = ({ f, applying, onApply }) => {
+  const sev = (f.severity || "").toUpperCase();
+  const sevColor = SEV_COLOR[sev] ?? "var(--fg-muted)";
+  const hasFix = !!f.fixes?.code;
+  const beforeLines = (f.fixes?.original_snippet || "").split("\n");
+  const afterLines = (f.fixes?.code || "").split("\n");
+  const alreadyApplied = f.is_applied_in_remediation;
+
+  return (
+    <div
+      className="surface"
+      style={{ padding: 24, overflow: "auto", alignSelf: "start" }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-start",
+          gap: 16,
+          marginBottom: 12,
+        }}
+      >
+        <div style={{ flex: 1 }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              marginBottom: 8,
+              flexWrap: "wrap",
+            }}
+          >
+            <span className={"chip chip-" + sev.toLowerCase()}>
+              <Icon.Alert size={10} /> {sev}
+            </span>
+            {f.cwe && (
+              <span className="chip mono" style={{ fontSize: 10.5 }}>
+                {f.cwe}
+              </span>
+            )}
+            {typeof f.cvss_score === "number" && (
+              <span
+                className="chip"
+                style={{
+                  background: sevColor + "22",
+                  color: sevColor,
+                  border: "none",
+                }}
+              >
+                CVSS {f.cvss_score.toFixed(1)}
+              </span>
+            )}
+            {f.confidence && (
+              <span className="chip" style={{ fontSize: 10.5 }}>
+                {f.confidence} confidence
+              </span>
+            )}
+          </div>
+          <h2 style={{ marginBottom: 8, color: "var(--fg)" }}>{f.title}</h2>
+          <div style={{ fontSize: 12.5, color: "var(--fg-muted)" }}>
+            <span className="mono">{f.file_path}</span> · line{" "}
+            <span className="mono">{f.line_number}</span>
+            {f.corroborating_agents && f.corroborating_agents.length > 0 && (
+              <>
+                <span style={{ margin: "0 8px" }}>·</span>
+                Corroborated by{" "}
+                {f.corroborating_agents.map((a, i) => (
+                  <span
+                    key={i}
+                    className="chip"
+                    style={{
+                      fontSize: 10,
+                      padding: "1px 7px",
+                      marginLeft: 4,
+                    }}
+                  >
+                    {a}
+                  </span>
+                ))}
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="sccap-divider" />
+
+      <div style={{ display: "grid", gap: 18 }}>
+        {f.description && (
+          <div>
+            <h4
+              style={{
+                marginBottom: 6,
+                color: "var(--fg-muted)",
+                fontSize: 11,
+                textTransform: "uppercase",
+                letterSpacing: ".06em",
+              }}
+            >
+              Description
+            </h4>
+            <div
+              style={{
+                fontSize: 13.5,
+                lineHeight: 1.6,
+                color: "var(--fg)",
+                whiteSpace: "pre-wrap",
+              }}
+            >
+              {f.description}
+            </div>
+          </div>
+        )}
+
+        {f.remediation && (
+          <div>
+            <h4
+              style={{
+                marginBottom: 6,
+                color: "var(--fg-muted)",
+                fontSize: 11,
+                textTransform: "uppercase",
+                letterSpacing: ".06em",
+              }}
+            >
+              Remediation
+            </h4>
+            <div
+              style={{
+                fontSize: 13.5,
+                lineHeight: 1.6,
+                color: "var(--fg)",
+                whiteSpace: "pre-wrap",
+              }}
+            >
+              {f.remediation}
+            </div>
+          </div>
+        )}
+
+        {hasFix && (
+          <div>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: 10,
+                flexWrap: "wrap",
+                gap: 8,
+              }}
+            >
+              <h4
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  color: "var(--fg)",
+                  margin: 0,
+                }}
+              >
+                <div
+                  style={{
+                    width: 20,
+                    height: 20,
+                    borderRadius: 5,
+                    background: "var(--primary)",
+                    color: "var(--primary-ink)",
+                    display: "grid",
+                    placeItems: "center",
+                  }}
+                >
+                  <Icon.Sparkle size={11} />
+                </div>
+                AI-suggested fix
+              </h4>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button
+                  className="sccap-btn sccap-btn-sm sccap-btn-primary"
+                  onClick={onApply}
+                  disabled={applying || alreadyApplied}
+                >
+                  {alreadyApplied ? (
+                    <>
+                      <Icon.Check size={12} /> Applied
+                    </>
+                  ) : applying ? (
+                    "Applying…"
+                  ) : (
+                    <>
+                      <Icon.Zap size={12} /> Apply fix
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {f.fixes?.description && (
+              <div
+                style={{
+                  background: "var(--primary-weak)",
+                  borderRadius: 8,
+                  padding: "10px 12px",
+                  marginBottom: 10,
+                  fontSize: 12.5,
+                  color: "var(--fg)",
+                  display: "flex",
+                  gap: 10,
+                  alignItems: "flex-start",
+                }}
+              >
+                <Icon.Sparkle size={14} color="var(--primary)" />
+                <div>
+                  <b>Why this fix:</b> {f.fixes.description}
+                </div>
+              </div>
+            )}
+
+            <div className="diff">
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  background: "var(--bg-soft)",
+                  fontSize: 11,
+                  color: "var(--fg-muted)",
+                  borderBottom: "1px solid var(--border)",
+                }}
+              >
+                <div
+                  style={{
+                    padding: "8px 14px",
+                    borderRight: "1px solid var(--border)",
+                  }}
+                >
+                  <span className="mono" style={{ color: "var(--critical)" }}>
+                    −
+                  </span>{" "}
+                  before · {f.file_path}
+                </div>
+                <div style={{ padding: "8px 14px" }}>
+                  <span className="mono" style={{ color: "var(--success)" }}>
+                    +
+                  </span>{" "}
+                  after · {f.file_path}
+                </div>
+              </div>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  borderTop: "1px solid var(--border)",
+                }}
+              >
+                <div style={{ borderRight: "1px solid var(--border)" }}>
+                  {beforeLines.map((l, i) => (
+                    <div
+                      key={i}
+                      className="diff-row del"
+                      style={{ gridTemplateColumns: "40px 1fr" }}
+                    >
+                      <span>{(f.line_number ?? 1) + i}</span>
+                      <span>{l}</span>
+                    </div>
+                  ))}
+                </div>
+                <div>
+                  {afterLines.map((l, i) => (
+                    <div
+                      key={i}
+                      className="diff-row add"
+                      style={{ gridTemplateColumns: "40px 1fr" }}
+                    >
+                      <span>{(f.line_number ?? 1) + i}</span>
+                      <span>{l}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {f.references && f.references.length > 0 && (
+          <div>
+            <h4
+              style={{
+                marginBottom: 8,
+                color: "var(--fg-muted)",
+                fontSize: 11,
+                textTransform: "uppercase",
+                letterSpacing: ".06em",
+              }}
+            >
+              References
+            </h4>
+            <div style={{ display: "grid", gap: 4 }}>
+              {f.references.map((r, i) => (
+                <a
+                  key={i}
+                  href={r}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    color: "var(--primary)",
+                    fontSize: 12.5,
+                    wordBreak: "break-all",
+                  }}
+                >
+                  <Icon.Link size={11} /> {r}
+                </a>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
   );
 };
 
