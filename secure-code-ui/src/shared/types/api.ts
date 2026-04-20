@@ -1,18 +1,26 @@
 // secure-code-ui/src/shared/types/api.ts
 //
-// Hand-maintained TypeScript types mirroring the FastAPI Pydantic schemas.
+// **Partial facade** over the auto-generated OpenAPI types.
 //
-// ⚠️ An auto-generated counterpart exists at ./api-generated.ts, produced by
-//   `npm run generate:api` against the live FastAPI /openapi.json. Prefer
-//   consulting the generated file as source-of-truth when adding new types;
-//   drift between the two should be resolved toward the generated version.
-//   A full migration to the generated file is planned for Phase G (UI
-//   redesign) so every page's imports can be updated in one sweep.
+// Types whose shape matches the backend schema 1:1 are aliased from
+// `api-generated.ts` (so schema drift fails the TS build). Frontend-only
+// types and ones whose names diverge from the backend (e.g., our flat
+// `ScanResultResponse` vs. generated `AnalysisResultDetailResponse`) stay
+// hand-maintained for now; a full rename sweep is planned for Phase G
+// when every page's imports get rewritten anyway.
+//
+// To regenerate `api-generated.ts` against the current backend:
+//     npm run generate:api
+// The generated file should not be edited by hand.
 
-// UUID is a branded string type used for IDs throughout the API
+import type { components } from "./api-generated";
+
+type Schemas = components["schemas"];
+
+// UUID is a branded string type used for IDs throughout the API.
 type UUID = `${string}-${string}-${string}-${string}-${string}`;
 
-// For Login
+// --- Auth (frontend-only — OAuth2 form payloads, not pydantic-typed) ----
 export interface UserLoginData {
   username: string;
   password: string;
@@ -22,7 +30,6 @@ export interface UserLoginData {
   client_secret?: string;
 }
 
-// For Registration
 export interface UserRegisterData {
   email: string;
   password: string;
@@ -31,20 +38,17 @@ export interface UserRegisterData {
   is_verified?: boolean;
 }
 
-// For User Read
-export interface UserRead {
-  id: string;
-  email: string;
-  is_active: boolean;
-  is_superuser: boolean;
-  is_verified: boolean;
-}
+export type UserRead = Schemas["UserRead"];
 
 export interface TokenResponse {
   access_token: string;
   token_type: string;
 }
 
+// --- LLM Configuration --------------------------------------------------
+// Frontend `LLMConfiguration` diverged from backend `LLMConfigurationRead`
+// historically (different field set). Keep the flat version hand-written,
+// but alias the Create/Update variants that match 1:1.
 export interface LLMConfiguration {
   id: string;
   name: string;
@@ -57,24 +61,17 @@ export interface LLMConfiguration {
   updated_at: string;
 }
 
-export interface LLMConfigurationCreate {
-  name: string;
-  provider: string;
-  model_name: string;
-  tokenizer?: string;
-  api_key: string;
-  input_cost_per_million: number;
-  output_cost_per_million: number;
-}
+export type LLMConfigurationCreate = Schemas["LLMConfigurationCreate"];
+export type LLMConfigurationRead = Schemas["LLMConfigurationRead"];
+export type LLMConfigurationUpdate = Schemas["LLMConfigurationUpdate"];
 
-// --- Chat Schemas (NEW) ---
-export interface ChatSessionCreateRequest {
-  title: string;
-  project_id?: string;
-  llm_config_id: string;
-  frameworks: string[];
-}
+// --- Chat ---------------------------------------------------------------
+export type ChatSessionCreateRequest = Schemas["ChatSessionCreateRequest"];
+export type AskQuestionRequest = Schemas["AskQuestionRequest"];
 
+// ChatSession and ChatMessage are frontend-shaped (match backend
+// ChatSessionResponse/ChatMessageResponse but under different names).
+// Kept hand-written so consumers' imports don't change.
 export interface ChatSession {
   id: string;
   title: string;
@@ -82,10 +79,6 @@ export interface ChatSession {
   llm_config_id?: string;
   frameworks?: string[];
   created_at: string;
-}
-
-export interface AskQuestionRequest {
-  question: string;
 }
 
 export interface ChatMessage {
@@ -96,91 +89,45 @@ export interface ChatMessage {
   cost?: number;
 }
 
-// --- Agent & Framework Schemas (NEW) ---
+// --- Agents -------------------------------------------------------------
+// Backend has no AgentBase; frontend uses it to share the Create/Update shape.
 export interface AgentBase {
   name: string;
   description: string;
   domain_query: string;
 }
 
-export type AgentCreate = AgentBase;
+export type AgentCreate = Schemas["AgentCreate"];
+export type AgentUpdate = Schemas["AgentUpdate"];
+export type AgentRead = Schemas["AgentRead"];
 
-export interface AgentUpdate {
-  name?: string;
-  description?: string;
-  domain_query?: string;
-}
-
-export interface AgentRead {
-  id: string;
-  name: string;
-  description: string;
-  domain_query: string;
-}
-
+// --- Frameworks ---------------------------------------------------------
 export interface FrameworkBase {
   name: string;
   description: string;
 }
 
-export type FrameworkCreate = FrameworkBase;
+export type FrameworkCreate = Schemas["FrameworkCreate"];
+export type FrameworkUpdate = Schemas["FrameworkUpdate"];
+export type FrameworkRead = Schemas["FrameworkRead"];
+export type FrameworkAgentMappingUpdate = Schemas["FrameworkAgentMappingUpdate"];
 
-export interface FrameworkUpdate {
-  name?: string;
-  description?: string;
-}
-
-export interface FrameworkRead extends FrameworkBase {
-  id: string;
-  agents: AgentRead[];
-}
-
-export interface FrameworkAgentMappingUpdate {
-  agent_ids: string[];
-}
-
-// --- RAG Management Schemas ---
+// --- RAG ----------------------------------------------------------------
 export interface RAGDocument {
   id: string;
   document: string;
   metadata: Record<string, JsonValue>;
 }
 
-export interface EnrichedDocument {
-  id: string;
-  original_document: string;
-  enriched_content: string;
-  metadata: Record<string, JsonValue>;
-}
+export type EnrichedDocument = Schemas["EnrichedDocument"];
+export type PreprocessingResponse = Schemas["PreprocessingResponse"];
+export type RAGJobStartResponse = Schemas["RAGJobStartResponse"];
+export type RAGJobStatusResponse = Schemas["RAGJobStatusResponse"];
 
-export interface PreprocessingResponse {
-  framework_name: string;
-  llm_config_name: string;
-  processed_documents: EnrichedDocument[];
-  scan_ready: boolean;
-}
-
-export interface RAGJobStartResponse {
-  job_id: string;
-  framework_name: string;
-  status: string;
-  estimated_cost?: { [key: string]: JsonValue };
-  message: string;
-}
-
-export interface RAGJobStatusResponse {
-  job_id: string;
-  framework_name: string;
-  status: string;
-  estimated_cost?: { [key: string]: JsonValue };
-  actual_cost?: number;
-  processed_documents?: EnrichedDocument[];
-  error_message?: string;
-}
-
-// --- Prompt Template Schemas ---
+// --- Prompt Templates ---------------------------------------------------
 export type PromptVariant = "generic" | "anthropic";
 
+// Backend has no PromptTemplateBase; keep shared shape hand-written.
 export interface PromptTemplateBase {
   name: string;
   template_type: string;
@@ -191,22 +138,11 @@ export interface PromptTemplateBase {
   template_text: string;
 }
 
-export interface PromptTemplateRead extends PromptTemplateBase {
-  id: string;
-}
+export type PromptTemplateCreate = Schemas["PromptTemplateCreate"];
+export type PromptTemplateUpdate = Schemas["PromptTemplateUpdate"];
+export type PromptTemplateRead = Schemas["PromptTemplateRead"];
 
-export type PromptTemplateCreate = PromptTemplateBase;
-
-export interface PromptTemplateUpdate {
-  name?: string;
-  template_type?: string;
-  agent_name?: string | null;
-  variant?: PromptVariant;
-  version?: number;
-  template_text?: string;
-}
-
-// --- Submission Schemas (NEW) ---
+// --- Submission / Scans -------------------------------------------------
 export type ScanType = "AUDIT" | "SUGGEST" | "REMEDIATE";
 
 export interface SubmissionFormValues {
@@ -219,16 +155,12 @@ export interface SubmissionFormValues {
   frameworks: string[];
 }
 
-export interface ScanResponse {
-  scan_id: UUID;
-  project_id: UUID; // ADD THIS
-  message: string;
-}
+export type ScanResponse = Schemas["ScanResponse"];
+export type GitRepoPreviewRequest = Schemas["GitRepoPreviewRequest"];
 
-export interface GitRepoPreviewRequest {
-  repo_url: string;
-}
-
+// --- Scan results (frontend decomposes the backend's single
+// AnalysisResultDetailResponse into several flat types for UI convenience;
+// kept hand-written to avoid a page-wide rename). -----------------------
 export interface SuggestedFix {
   description?: string;
   original_snippet?: string;
@@ -306,7 +238,7 @@ export interface ScanResultResponse {
   status: string;
   summary_report?: SummaryReport;
   impact_report?: ImpactReport;
-  sarif_report?: { [key: string]: JsonValue }; // ADD THIS LINE
+  sarif_report?: { [key: string]: JsonValue };
   original_code_map?: { [filePath: string]: string };
   fixed_code_map?: { [filePath: string]: string };
 }
@@ -319,11 +251,7 @@ export interface CostDetails {
   total_input_tokens: number;
 }
 
-export interface ScanEventItem {
-  stage_name: string;
-  status: string;
-  timestamp: string;
-}
+export type ScanEventItem = Schemas["ScanEventItem"];
 
 export interface ScanHistoryItem {
   id: UUID;
@@ -359,7 +287,7 @@ export interface PaginatedProjectHistoryResponse {
   total: number;
 }
 
-// Defines a type for any valid JSON value, improving type safety over 'any'
+// Defines a type for any valid JSON value, improving type safety over 'any'.
 export type JsonValue =
   | string
   | number
@@ -367,7 +295,6 @@ export type JsonValue =
   | null
   | JsonValue[]
   | { [key: string]: JsonValue };
-
 
 export interface LLMInteractionResponse {
   id: number;
@@ -385,7 +312,5 @@ export interface LLMInteractionResponse {
   error?: string | null;
 }
 
-// --- Setup Schemas ---
-export interface SetupStatusResponse {
-  is_setup_completed: boolean;
-}
+// --- Setup --------------------------------------------------------------
+export type SetupStatusResponse = Schemas["SetupStatusResponse"];
