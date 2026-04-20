@@ -83,11 +83,15 @@ const ScanRunningPage: React.FC = () => {
   useEffect(() => {
     if (!scanId) return;
     const apiBase = (import.meta.env.VITE_API_BASE_URL as string) || "/api/v1";
-    // EventSource doesn't send the axios bearer token automatically; the
-    // cookie-based session (refresh token) authenticates us with the stream
-    // endpoint through nginx's proxy. If the browser blocks that, fall back
-    // to polling (not implemented in this pass — flagged as a follow-up).
-    const url = `${apiBase}/scans/${scanId}/stream`;
+    // EventSource can't send the Authorization header, so the SSE endpoint
+    // also accepts the JWT via `?access_token=` (short-TTL). Fall back to
+    // the (short-lived) cookie if the access token is missing so a first
+    // subscribe after a reload still resolves.
+    const accessToken = localStorage.getItem("accessToken");
+    const qs = accessToken
+      ? `?access_token=${encodeURIComponent(accessToken)}`
+      : "";
+    const url = `${apiBase}/scans/${scanId}/stream${qs}`;
     const es = new EventSource(url, { withCredentials: true });
     esRef.current = es;
 
