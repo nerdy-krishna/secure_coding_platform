@@ -232,9 +232,25 @@ class LLMClient:
                 ),
             )
             parsed_output_value = invoked_result
+            if parsed_output_value is None:
+                # LangChain will return None from with_structured_output when
+                # the model emits no tool calls / no parseable content — most
+                # commonly because the configured model name doesn't exist on
+                # the provider. Surface this as an error instead of silently
+                # falling back to empty content.
+                error_message = (
+                    "LLM returned no parseable structured output. "
+                    f"Check that model name "
+                    f"'{self.db_llm_config.model_name}' is valid for provider "
+                    f"'{self.provider_name}'."
+                )
+                logger.error(error_message)
         except Exception as e:
             logger.error(
-                f"LLM generation or parsing with LangChain failed: {e}", exc_info=True
+                f"LLM generation or parsing with LangChain failed "
+                f"(provider={self.provider_name}, "
+                f"model={self.db_llm_config.model_name}): {e}",
+                exc_info=True,
             )
             error_message = str(e)
 

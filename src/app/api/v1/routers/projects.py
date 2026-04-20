@@ -20,7 +20,11 @@ from pydantic import BaseModel
 from app.infrastructure.database import models as db_models
 from app.api.v1 import models as api_models
 from app.config.config import settings
-from app.infrastructure.auth.core import current_active_user, current_superuser
+from app.infrastructure.auth.core import (
+    current_active_user,
+    current_active_user_sse,
+    current_superuser,
+)
 from app.config.logging_config import correlation_id_var
 from app.core.services.scan_service import SubmissionService
 from app.api.v1.dependencies import get_scan_service, get_llm_config_repository
@@ -236,7 +240,7 @@ async def cancel_scan_analysis(
 async def stream_scan_progress(
     scan_id: uuid.UUID,
     request: Request,
-    user: db_models.User = Depends(current_active_user),
+    user: db_models.User = Depends(current_active_user_sse),
     service: SubmissionService = Depends(get_scan_service),
 ):
     """Server-Sent Events stream of a scan's progress.

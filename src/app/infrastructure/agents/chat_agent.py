@@ -231,7 +231,15 @@ class ChatAgent:
             ai_response_content = llm_response.parsed_output.response
         elif llm_response.error:
             logger.error(
-                f"[{AGENT_NAME}] LLM error for session {session_id}: {llm_response.error}"
+                f"[{AGENT_NAME}] LLM error for session {session_id}: "
+                f"{llm_response.error}"
+            )
+            # Surface the actual error in the chat so admins can diagnose
+            # without digging through container logs. Common culprits:
+            # invalid model name, rate limit, or provider auth failure.
+            ai_response_content = (
+                "I am having trouble processing this request. "
+                f"Backend reported: {llm_response.error}"
             )
 
         # 7. Log interaction and return
