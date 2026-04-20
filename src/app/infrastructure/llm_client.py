@@ -1,9 +1,11 @@
 # src/app/infrastructure/llm_client.py
 
+import json
 import logging
+import re
 import uuid
 import time
-from typing import Type, TypeVar, Optional, NamedTuple, Any, cast
+from typing import Tuple, Type, TypeVar, Optional, NamedTuple, Any, cast
 
 from pydantic import BaseModel, SecretStr
 from app.infrastructure.database import AsyncSessionLocal as async_session_factory
@@ -208,7 +210,18 @@ class LLMClient:
             )
             await rate_limiter.acquire(tokens=prompt_tokens)
 
-        structured_llm = self.chat_model.with_structured_output(response_model)
+        # Gemini's default `with_structured_output` uses function-calling,
+        # which conflicts with prompts that explicitly ask the model to
+        # "Respond ONLY with a valid JSON object" — Gemini emits text JSON
+        # instead of a tool call, leaving LangChain to return None. Switch
+        # Google to json_mode (responseMimeType=application/json + schema),
+        # which matches our prompt style and the structured-output contract.
+        if self.provider_name == "google":
+            structured_llm = self.chat_model.with_structured_output(
+                response_model, method="json_mode"
+            )
+        else:
+            structured_llm = self.chat_model.with_structured_output(response_model)
         token_callback = TokenUsageCallbackHandler(provider_name=self.provider_name)
 
         start_time = time.perf_counter()
@@ -232,19 +245,6 @@ class LLMClient:
                 ),
             )
             parsed_output_value = invoked_result
-            if parsed_output_value is None:
-                # LangChain will return None from with_structured_output when
-                # the model emits no tool calls / no parseable content — most
-                # commonly because the configured model name doesn't exist on
-                # the provider. Surface this as an error instead of silently
-                # falling back to empty content.
-                error_message = (
-                    "LLM returned no parseable structured output. "
-                    f"Check that model name "
-                    f"'{self.db_llm_config.model_name}' is valid for provider "
-                    f"'{self.provider_name}'."
-                )
-                logger.error(error_message)
         except Exception as e:
             logger.error(
                 f"LLM generation or parsing with LangChain failed "
@@ -253,6 +253,35 @@ class LLMClient:
                 exc_info=True,
             )
             error_message = str(e)
+
+        # Manual JSON fallback for Google.
+        # `langchain-google-genai 2.1.5` with_structured_output parser
+        # returns None for some newer / preview Gemini models even though
+        # the raw response contains valid JSON matching the requested
+        # schema. When that happens, retry against the raw chat model and
+        # parse the content ourselves. (Also useful when a cheaper / newer
+        # model doesn't wire up tool-calling yet.)
+        if parsed_output_value is None and self.provider_name == "google":
+            parsed_output_value, fallback_err = await self._google_json_fallback(
+                response_model, invoke_input, token_callback
+            )
+            if parsed_output_value is not None:
+                logger.info(
+                    "Google structured-output fallback parsed raw JSON "
+                    f"(model={self.db_llm_config.model_name})."
+                )
+                error_message = None
+            elif fallback_err:
+                error_message = fallback_err
+
+        if parsed_output_value is None and not error_message:
+            error_message = (
+                "LLM returned no parseable structured output. "
+                f"Check that model name "
+                f"'{self.db_llm_config.model_name}' is valid for provider "
+                f"'{self.provider_name}'."
+            )
+            logger.error(error_message)
 
         # [DEBUG LOGGING]
         if parsed_output_value:
@@ -308,6 +337,55 @@ class LLMClient:
             cache_creation_tokens=token_callback.cache_creation_tokens,
             cache_read_tokens=token_callback.cache_read_tokens,
         )
+
+    async def _google_json_fallback(
+        self,
+        response_model: Type[T],
+        invoke_input: Any,
+        token_callback: "TokenUsageCallbackHandler",
+    ) -> Tuple[Optional[T], Optional[str]]:
+        """Fallback for Google when with_structured_output returns None.
+
+        Invokes the base chat model (no wrapper), extracts JSON from the raw
+        content, validates it against `response_model`, and returns the
+        parsed instance. Returns (None, error_message) if the fallback
+        can't recover either.
+
+        Used only for provider='google' because other providers either
+        support with_structured_output reliably (OpenAI, Anthropic) or are
+        unsupported here. Token usage from the callback populated during
+        the original attempt is preserved — no double-counting.
+        """
+        try:
+            raw = await self.chat_model.ainvoke(
+                invoke_input, config={"callbacks": [token_callback]}
+            )
+        except Exception as e:
+            return None, f"Google fallback ainvoke failed: {e}"
+
+        content = getattr(raw, "content", None)
+        if not isinstance(content, str) or not content.strip():
+            return None, "Google fallback: raw response content was empty."
+
+        # Some Gemini preview models wrap JSON in fenced code blocks or
+        # stray prose. Pull out the first JSON object we can find.
+        match = re.search(r"\{[\s\S]*\}", content)
+        if not match:
+            return (
+                None,
+                f"Google fallback: no JSON object found in raw content "
+                f"(first 80 chars: {content[:80]!r}).",
+            )
+
+        try:
+            data = json.loads(match.group(0))
+        except json.JSONDecodeError as e:
+            return None, f"Google fallback: JSON decode failed: {e}"
+
+        try:
+            return response_model.model_validate(data), None
+        except Exception as e:
+            return None, f"Google fallback: schema validation failed: {e}"
 
     def _build_invoke_input(self, system_prompt: Optional[str], prompt: str) -> Any:
         """Returns the input to pass to structured_llm.ainvoke().
