@@ -57,4 +57,37 @@ export const chatService = {
   deleteSession: async (sessionId: string): Promise<void> => {
     await apiClient.delete(`/chat/sessions/${sessionId}`);
   },
+
+  /**
+   * Fetches the right-rail context blob for a session.
+   */
+  getSessionContext: async (sessionId: string): Promise<ChatSessionContext> => {
+    const response = await apiClient.get<ChatSessionContext>(
+      `/chat/sessions/${sessionId}/context`,
+    );
+    return response.data;
+  },
 };
+
+export interface ChatContextFinding {
+  id: number;
+  title: string;
+  severity: string | null;
+  scan_id: string;
+}
+
+export interface ChatContextFile {
+  path: string;
+  scan_id: string;
+}
+
+export interface ChatContextKnowledgeSource {
+  name: string;
+  type: string;
+}
+
+export interface ChatSessionContext {
+  referenced_findings: ChatContextFinding[];
+  referenced_files: ChatContextFile[];
+  knowledge_sources: ChatContextKnowledgeSource[];
+}
