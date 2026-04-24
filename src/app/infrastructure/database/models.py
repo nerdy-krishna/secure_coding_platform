@@ -489,6 +489,4 @@ class UserGroupMembership(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
-    group: Mapped["UserGroup"] = relationship(
-        "UserGroup", back_populates="memberships"
-    )
+    group: Mapped["UserGroup"] = relationship("UserGroup", back_populates="memberships")
