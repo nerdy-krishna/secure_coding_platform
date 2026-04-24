@@ -12,6 +12,10 @@ services:
     environment:
       - PYTHONPATH=/app/src
       - SERVICE_NAME=app
+      # Pin LiteLLM to its bundled model_prices_and_context_window.json so
+      # cost lookups never hit api.litellm.ai at runtime. The map refreshes
+      # whenever we bump the litellm pin.
+      - LITELLM_LOCAL_MODEL_COST_MAP=True
     volumes:
       - ./src:/app/src
       - ./scripts:/app/scripts
@@ -119,6 +123,7 @@ services:
     environment:
       - PYTHONPATH=/app/src
       - SERVICE_NAME=worker
+      - LITELLM_LOCAL_MODEL_COST_MAP=True
     depends_on:
       db:
         condition: service_healthy

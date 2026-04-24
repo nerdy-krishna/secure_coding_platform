@@ -37,6 +37,13 @@ langchain-google-genai = "^4.2.2"
 langchain-openai = "^1.2.0"
 langgraph = "^1.1.9"
 langgraph-checkpoint-postgres = "^3.0.5"
+# Phase I.2 — LiteLLM as the token-counter + price-table source of truth.
+# Unified tokenizers across providers; community-maintained pricing map at
+# litellm.model_prices_and_context_window. Pinned to ^1.76 because 1.80+
+# exact-pins openai/tiktoken/python-dotenv in ways that clash with
+# langchain-openai 1.2.x; the 1.76 line still uses range constraints
+# (openai>=1.99.5, python-dotenv>=0.2.0, tiktoken>=0.7).
+litellm = "^1.76.0"
 networkx = "^3.5"
 pandas = "^2.3.0"
 passlib = {extras = ["bcrypt"], version = ">=1.7.4,<2.0.0"}

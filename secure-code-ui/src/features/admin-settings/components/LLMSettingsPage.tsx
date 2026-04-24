@@ -142,8 +142,15 @@ const LLMSettingsPage: React.FC = () => {
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const input = Number(form.input_cost_per_million);
-    const output = Number(form.output_cost_per_million);
+    // Input/output cost fields are optional — leaving them blank (or zero)
+    // lets the backend pull live pricing from LiteLLM's maintained map.
+    // Only validate format; zero is a legal sentinel for "use LiteLLM".
+    const input = form.input_cost_per_million === ""
+      ? 0
+      : Number(form.input_cost_per_million);
+    const output = form.output_cost_per_million === ""
+      ? 0
+      : Number(form.output_cost_per_million);
     if (
       !form.name ||
       !form.provider ||
@@ -265,13 +272,13 @@ const LLMSettingsPage: React.FC = () => {
                 }
               />
             </Field>
-            <Field label="Input cost ($ per 1M tokens)">
+            <Field label="Input cost ($ per 1M tokens)" hint="(optional)">
               <input
                 className="sccap-input mono"
                 type="number"
                 step="0.01"
                 min="0"
-                placeholder="0.15"
+                placeholder="auto — LiteLLM map"
                 value={form.input_cost_per_million}
                 onChange={(e) =>
                   setForm({
@@ -279,16 +286,15 @@ const LLMSettingsPage: React.FC = () => {
                     input_cost_per_million: e.target.value,
                   })
                 }
-                required
               />
             </Field>
-            <Field label="Output cost ($ per 1M tokens)">
+            <Field label="Output cost ($ per 1M tokens)" hint="(optional)">
               <input
                 className="sccap-input mono"
                 type="number"
                 step="0.01"
                 min="0"
-                placeholder="0.60"
+                placeholder="auto — LiteLLM map"
                 value={form.output_cost_per_million}
                 onChange={(e) =>
                   setForm({
@@ -296,9 +302,19 @@ const LLMSettingsPage: React.FC = () => {
                     output_cost_per_million: e.target.value,
                   })
                 }
-                required
               />
             </Field>
+          </div>
+          <div
+            style={{
+              fontSize: 11.5,
+              color: "var(--fg-subtle)",
+              marginTop: -4,
+            }}
+          >
+            Leave input/output cost blank to pull live pricing from LiteLLM's
+            community-maintained model-price map. Override only for custom
+            or enterprise endpoints that don't match a public model name.
           </div>
           <Field label="API key">
             <input
