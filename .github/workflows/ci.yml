@@ -122,7 +122,9 @@ jobs:
       POSTGRES_PORT: "5432"
       POSTGRES_HOST_ALEMBIC: localhost
       ASYNC_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/secure_coding_platform
-      ALEMBIC_DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/secure_coding_platform
+      # alembic/env.py drives migrations through create_async_engine(), so
+      # this URL must use the async driver even though Alembic itself is sync.
+      ALEMBIC_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/secure_coding_platform
       SECRET_KEY: test-secret-key-at-least-32-characters-long
       ENCRYPTION_KEY: zH6_8nNpMc7XxS3mLqJdRvKuBtYfGhWePk4AaCcTbEE=
       # Cost lookups stay offline in CI — no LiteLLM network.
