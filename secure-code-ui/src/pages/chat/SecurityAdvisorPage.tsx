@@ -24,6 +24,7 @@ import {
 import { Modal } from "../../shared/ui/Modal";
 import { useToast } from "../../shared/ui/Toast";
 import { chatService } from "../../shared/api/chatService";
+import type { ChatSessionContext } from "../../shared/api/chatService";
 import { frameworkService } from "../../shared/api/frameworkService";
 import { llmConfigService } from "../../shared/api/llmConfigService";
 import { Icon } from "../../shared/ui/Icon";
@@ -98,6 +99,12 @@ const SecurityAdvisorPage: React.FC = () => {
   >({
     queryKey: ["chatMessages", activeSessionId],
     queryFn: () => chatService.getSessionMessages(activeSessionId!),
+    enabled: !!activeSessionId,
+  });
+
+  const { data: sessionContext } = useQuery<ChatSessionContext>({
+    queryKey: ["chatSessionContext", activeSessionId],
+    queryFn: () => chatService.getSessionContext(activeSessionId!),
     enabled: !!activeSessionId,
   });
 
@@ -549,61 +556,111 @@ const SecurityAdvisorPage: React.FC = () => {
         <h4 style={{ marginBottom: 10, color: "var(--fg)" }}>Context</h4>
         {activeSession ? (
           <>
-            <div
-              style={{
-                fontSize: 12,
-                color: "var(--fg-muted)",
-                marginBottom: 6,
-              }}
-            >
-              Frameworks in scope
-            </div>
-            <div style={{ display: "grid", gap: 6, marginBottom: 16 }}>
-              {activeSession.frameworks?.length ? (
-                activeSession.frameworks.map((r, i) => (
+            <RailSection label="Knowledge sources">
+              {sessionContext?.knowledge_sources.length ? (
+                sessionContext.knowledge_sources.map((k) => (
                   <div
-                    key={i}
+                    key={`${k.type}-${k.name}`}
                     className="inset"
-                    style={{ padding: "8px 10px", fontSize: 12 }}
+                    style={{
+                      padding: "8px 10px",
+                      fontSize: 12,
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 8,
+                    }}
                   >
-                    {r}
+                    <span>{k.name}</span>
+                    <span style={{ color: "var(--fg-subtle)" }}>{k.type}</span>
                   </div>
                 ))
               ) : (
-                <div
-                  style={{ fontSize: 12, color: "var(--fg-subtle)" }}
-                >
-                  No frameworks — advisor answers against the general
-                  knowledge base.
-                </div>
+                <RailEmpty text="No frameworks — advisor answers against the general knowledge base." />
               )}
-            </div>
+            </RailSection>
+
+            <RailSection label="Referenced findings">
+              {sessionContext?.referenced_findings.length ? (
+                sessionContext.referenced_findings.map((f) => (
+                  <div
+                    key={f.id}
+                    className="inset"
+                    style={{
+                      padding: "8px 10px",
+                      fontSize: 12,
+                      display: "flex",
+                      gap: 8,
+                      alignItems: "center",
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: 2,
+                        background: sevColor(f.severity),
+                        flexShrink: 0,
+                      }}
+                    />
+                    <span
+                      style={{
+                        flex: 1,
+                        minWidth: 0,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                      title={f.title}
+                    >
+                      {f.title}
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <RailEmpty
+                  text={
+                    activeSession.project_id
+                      ? "No open findings on the linked project yet."
+                      : "Link this session to a project to surface findings."
+                  }
+                />
+              )}
+            </RailSection>
+
+            <RailSection label="Referenced files">
+              {sessionContext?.referenced_files.length ? (
+                sessionContext.referenced_files.map((file) => (
+                  <div
+                    key={file.path}
+                    className="inset"
+                    style={{
+                      padding: "6px 10px",
+                      fontSize: 11.5,
+                      fontFamily: "var(--font-mono)",
+                      color: "var(--fg-muted)",
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                    title={file.path}
+                  >
+                    {file.path}
+                  </div>
+                ))
+              ) : (
+                <RailEmpty text="No file paths yet — ask about a finding to surface its file." />
+              )}
+            </RailSection>
+
             <div
               style={{
-                fontSize: 12,
-                color: "var(--fg-muted)",
-                marginBottom: 6,
-              }}
-            >
-              Session
-            </div>
-            <div
-              style={{
-                fontSize: 11.5,
+                fontSize: 11,
                 color: "var(--fg-subtle)",
                 fontFamily: "var(--font-mono)",
+                marginTop: 8,
               }}
             >
-              {activeSession.id}
-            </div>
-            <div
-              style={{
-                fontSize: 11.5,
-                color: "var(--fg-subtle)",
-                marginTop: 4,
-              }}
-            >
-              Created{" "}
+              {activeSession.id.slice(0, 12)}… · created{" "}
               {new Date(activeSession.created_at).toLocaleString(undefined, {
                 dateStyle: "medium",
                 timeStyle: "short",
@@ -717,5 +774,36 @@ const SecurityAdvisorPage: React.FC = () => {
     </div>
   );
 };
+
+const RailSection: React.FC<{
+  label: string;
+  children: React.ReactNode;
+}> = ({ label, children }) => (
+  <div style={{ marginBottom: 16 }}>
+    <div
+      style={{
+        fontSize: 12,
+        color: "var(--fg-muted)",
+        marginBottom: 6,
+      }}
+    >
+      {label}
+    </div>
+    <div style={{ display: "grid", gap: 6 }}>{children}</div>
+  </div>
+);
+
+const RailEmpty: React.FC<{ text: string }> = ({ text }) => (
+  <div style={{ fontSize: 12, color: "var(--fg-subtle)" }}>{text}</div>
+);
+
+function sevColor(sev: string | null | undefined): string {
+  const s = (sev ?? "").toLowerCase();
+  if (s === "critical") return "var(--critical)";
+  if (s === "high") return "var(--high)";
+  if (s === "medium") return "var(--medium)";
+  if (s === "low") return "var(--low)";
+  return "var(--info)";
+}
 
 export default SecurityAdvisorPage;

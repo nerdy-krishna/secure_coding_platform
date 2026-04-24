@@ -148,6 +148,19 @@ async def ask_question(
     )
 
 
+@router.get("/sessions/{session_id}/context")
+async def get_session_context(
+    session_id: uuid.UUID,
+    user: db_models.User = Depends(current_active_user),
+    chat_service: ChatService = Depends(get_chat_service),
+):
+    """Right-rail context for an Advisor session — frameworks, findings
+    + files most likely discussed, driven by the linked project's latest
+    terminal scan. See `ChatService.get_session_context` for the
+    heuristic."""
+    return await chat_service.get_session_context(session_id, user)
+
+
 @router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_chat_session(
     session_id: uuid.UUID,
