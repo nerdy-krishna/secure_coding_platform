@@ -44,45 +44,41 @@ langgraph-checkpoint-postgres = "^3.0.5"
 # langchain-openai 1.2.x; the 1.76 line still uses range constraints
 # (openai>=1.99.5, python-dotenv>=0.2.0, tiktoken>=0.7).
 litellm = "^1.76.0"
+# Phase I.3 — Pydantic AI for node-level structured output with typed
+# validation-retry. No extras — the provider SDKs (openai, anthropic,
+# google-genai) are already present via LangChain; we only need the
+# core Agent class + pydantic_ai.models.{openai,anthropic,google} classes.
+pydantic-ai = "^1.86.1"
 networkx = "^3.5"
 pandas = "^2.3.0"
 passlib = {extras = ["bcrypt"], version = ">=1.7.4,<2.0.0"}
 pika = ">=1.3.2,<2.0.0"
 psycopg = {extras = ["binary"], version = "^3.2.9"}
 psycopg2-binary = ">=2.9.10,<3.0.0" # For Alembic sync
-pydantic = ">=2.11.5,<3.0.0"
+pydantic = ">=2.12,<3.0.0"  # pydantic-ai 1.86 requires >=2.12
 pydantic-settings = "^2.9.1"
 python = "~3.12"
 python-dotenv = ">=1.1.0,<2.0.0"
 python-jose = {extras = ["cryptography"], version = ">=3.4.0,<4.0.0"}
 sqlalchemy = {extras = ["asyncio"], version = ">=2.0.41,<3.0.0"}
-tiktoken = "^0.9.0"
-uvicorn = {extras = ["standard"], version = ">=0.34.2,<0.35.0"}
+tiktoken = "^0.12.0"  # bumped for pydantic-ai-slim[openai] compat
+uvicorn = {extras = ["standard"], version = ">=0.35.0,<0.40.0"}
 python-multipart = "^0.0.20"
 xhtml2pdf = "^0.2.17"
 cvss = "^3.4"
 
 
-# Worker-only deps: ML inference (torch, sentence-transformers) and AST
-# parsing (tree-sitter). None of these are imported by app.main; they
-# only load inside workflows/worker_graph.py and the RAG preprocessor,
-# which run in the worker container. Marked optional=true so
-# `poetry install` (as used by the api image) doesn't pull them; the
-# worker image installs with `poetry install --with worker`.
+# Worker-only deps: AST parsing (tree-sitter). The embedder was migrated
+# off sentence-transformers / torch to ChromaDB's bundled ONNX default in
+# Phase H.1.1, so those packages aren't needed anymore. Keeping the group
+# structure for future worker-only additions.
 [tool.poetry.group.worker]
 optional = true
 
 [tool.poetry.group.worker.dependencies]
-sentence-transformers = "^4.1.0"
 tree-sitter = ">=0.21.0,<0.22.0"
 tree-sitter-languages = "^1.10.2"
-torch = { version = ">=2.2.0,<3.0.0", source = "pytorch-cpu", markers = "sys_platform == 'linux'" }
 
-
-[[tool.poetry.source]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-priority = "explicit"
 
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.11.11"
