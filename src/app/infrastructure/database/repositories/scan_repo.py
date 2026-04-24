@@ -4,6 +4,7 @@ import datetime
 import hashlib
 from typing import List, Dict, Optional, Any
 
+import sqlalchemy as sa
 from sqlalchemy import String, cast, func, select, update, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -357,13 +358,43 @@ class ScanRepository:
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
+    @staticmethod
+    def _scope_column(
+        column: Any,
+        user_id: int,
+        visible_user_ids: Optional[List[int]],
+    ) -> Any:
+        """Build a WHERE clause for a user_id-owned column.
+
+        `visible_user_ids=None` means "no filter at all" — reserved for
+        the admin path where `scan_scope.visible_user_ids()` returned
+        None. A list means "exactly these users" (always includes the
+        requester; peers come from user_group memberships). Callers
+        that haven't been migrated to pass the list still work — they
+        fall back to the requester's own user_id.
+        """
+        if visible_user_ids is None:
+            # Admin — no filter. Pass a tautology so the caller can
+            # still `.where()` it unconditionally.
+            return sa.true()
+        if not visible_user_ids:
+            return column == user_id
+        return column.in_(visible_user_ids)
+
     async def search_projects_by_name(
-        self, user_id: int, name_query: str
+        self,
+        user_id: int,
+        name_query: str,
+        visible_user_ids: Optional[List[int]] = None,
     ) -> List[db_models.Project]:
-        """Searches for projects by name for a specific user."""
+        """Searches for projects by name within the caller's visibility."""
         stmt = (
             select(db_models.Project)
-            .where(db_models.Project.user_id == user_id)
+            .where(
+                self._scope_column(
+                    db_models.Project.user_id, user_id, visible_user_ids
+                )
+            )
             .where(db_models.Project.name.ilike(f"%{name_query}%"))
             .order_by(db_models.Project.name)
             .limit(10)
@@ -372,13 +403,21 @@ class ScanRepository:
         return list(result.scalars().all())
 
     async def get_scans_count_for_user(
-        self, user_id: int, search: Optional[str], statuses: Optional[List[str]] = None
+        self,
+        user_id: int,
+        search: Optional[str],
+        statuses: Optional[List[str]] = None,
+        visible_user_ids: Optional[List[int]] = None,
     ) -> int:
-        """Counts the total number of scans for a specific user, with optional search and status filters."""
+        """Counts the total number of scans the caller can see."""
         stmt = (
             select(func.count(db_models.Scan.id))
             .join(db_models.Scan.project)
-            .where(db_models.Scan.user_id == user_id)
+            .where(
+                self._scope_column(
+                    db_models.Scan.user_id, user_id, visible_user_ids
+                )
+            )
         )
         if search:
             search_term = f"%{search}%"
@@ -404,8 +443,9 @@ class ScanRepository:
         search: Optional[str],
         sort_order: str,
         statuses: Optional[List[str]] = None,
+        visible_user_ids: Optional[List[int]] = None,
     ) -> List[db_models.Scan]:
-        """Retrieves a paginated list of scans for a user, with searching, sorting, and status filtering."""
+        """Retrieves a paginated list of scans the caller can see."""
         stmt = (
             select(db_models.Scan)
             .join(db_models.Scan.project)
@@ -413,7 +453,11 @@ class ScanRepository:
                 selectinload(db_models.Scan.events),
                 selectinload(db_models.Scan.project),
             )
-            .where(db_models.Scan.user_id == user_id)
+            .where(
+                self._scope_column(
+                    db_models.Scan.user_id, user_id, visible_user_ids
+                )
+            )
         )
         if search:
             search_term = f"%{search}%"
@@ -440,15 +484,24 @@ class ScanRepository:
         return list(result.scalars().all())
 
     async def get_paginated_projects(
-        self, user_id: int, skip: int, limit: int, search: Optional[str]
+        self,
+        user_id: int,
+        skip: int,
+        limit: int,
+        search: Optional[str],
+        visible_user_ids: Optional[List[int]] = None,
     ) -> List[db_models.Project]:
-        """Retrieves a paginated list of projects for a user."""
+        """Retrieves a paginated list of projects the caller can see."""
         stmt = (
             select(db_models.Project)
             .options(
                 selectinload(db_models.Project.scans).joinedload(db_models.Scan.user)
             )
-            .where(db_models.Project.user_id == user_id)
+            .where(
+                self._scope_column(
+                    db_models.Project.user_id, user_id, visible_user_ids
+                )
+            )
         )
         if search:
             stmt = stmt.filter(db_models.Project.name.ilike(f"%{search}%"))
@@ -458,10 +511,17 @@ class ScanRepository:
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
-    async def get_projects_count(self, user_id: int, search: Optional[str]) -> int:
-        """Counts the total number of projects for a specific user."""
+    async def get_projects_count(
+        self,
+        user_id: int,
+        search: Optional[str],
+        visible_user_ids: Optional[List[int]] = None,
+    ) -> int:
+        """Counts the total number of projects the caller can see."""
         stmt = select(func.count(db_models.Project.id)).where(
-            db_models.Project.user_id == user_id
+            self._scope_column(
+                db_models.Project.user_id, user_id, visible_user_ids
+            )
         )
         if search:
             stmt = stmt.filter(db_models.Project.name.ilike(f"%{search}%"))

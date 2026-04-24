@@ -13,12 +13,18 @@
 // but acceptable since each page swap is independent.
 
 import React from "react";
+import { useLocation } from "react-router-dom";
+import AdminSubNav from "./AdminSubNav";
 import { TopNav } from "./TopNav/TopNav";
 import { Tweaks } from "./Tweaks/Tweaks";
 
 const DashboardLayout: React.FC<{ children?: React.ReactNode }> = ({
   children,
 }) => {
+  const { pathname } = useLocation();
+  const isAdminArea =
+    pathname.startsWith("/admin") ||
+    pathname.startsWith("/account/settings/llm");
   return (
     <div
       style={{
@@ -36,6 +42,7 @@ const DashboardLayout: React.FC<{ children?: React.ReactNode }> = ({
           margin: "0 auto",
         }}
       >
+        {isAdminArea && <AdminSubNav />}
         {children}
       </main>
       <Tweaks />

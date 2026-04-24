@@ -1,5 +1,9 @@
+from typing import List, Optional
+
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.infrastructure.auth.core import current_active_user
+from app.infrastructure.database import models as db_models
 from app.infrastructure.database.database import get_db
 from app.infrastructure.database.repositories.llm_config_repo import LLMConfigRepository
 from app.infrastructure.database.repositories.scan_repo import ScanRepository
@@ -10,11 +14,15 @@ from app.infrastructure.database.repositories.prompt_template_repo import (
 )
 from app.infrastructure.database.repositories.chat_repo import ChatRepository
 from app.infrastructure.database.repositories.rag_job_repo import RAGJobRepository
+from app.infrastructure.database.repositories.user_group_repo import (
+    UserGroupRepository,
+)
 from app.core.services.admin_service import AdminService
 from app.core.services.scan_service import SubmissionService as ScanService
 from app.core.services.chat_service import ChatService
 from app.core.services.rag_preprocessor_service import RAGPreprocessorService
 from app.core.services.security_standards_service import SecurityStandardsService
+from app.shared.lib import scan_scope
 
 
 def get_llm_config_repository(
@@ -94,6 +102,25 @@ def get_scan_service(
     repo: ScanRepository = Depends(get_scan_repository),
 ) -> ScanService:
     return ScanService(repo)
+
+
+def get_user_group_repository(
+    db: AsyncSession = Depends(get_db),
+) -> UserGroupRepository:
+    return UserGroupRepository(db)
+
+
+async def get_visible_user_ids(
+    user: db_models.User = Depends(current_active_user),
+    repo: UserGroupRepository = Depends(get_user_group_repository),
+) -> Optional[List[int]]:
+    """Compute the scan-scope filter for the caller.
+
+    Returns `None` for admins (no filter) and `[user.id, ...peers]` for
+    regular users. Used by routers to pass through to scan_service /
+    scan_repo methods that support scoped listing.
+    """
+    return await scan_scope.visible_user_ids(user, repo)
 
 
 def get_security_standards_service(
