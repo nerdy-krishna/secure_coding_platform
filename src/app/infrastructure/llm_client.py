@@ -1,11 +1,9 @@
 # src/app/infrastructure/llm_client.py
 
-import json
 import logging
-import re
 import uuid
 import time
-from typing import Tuple, Type, TypeVar, Optional, NamedTuple, Any, cast
+from typing import Type, TypeVar, Optional, NamedTuple, Any, cast
 
 from pydantic import BaseModel, SecretStr
 from app.infrastructure.database import AsyncSessionLocal as async_session_factory
@@ -48,45 +46,58 @@ class TokenUsageCallbackHandler(AsyncCallbackHandler):
         self.cache_read_tokens: int = 0
 
     async def on_llm_end(self, response: LangChainLLMResult, **kwargs: Any) -> None:
-        """Collect token usage from the LLM response."""
-        llm_output = response.llm_output if response.llm_output else {}
+        """Collect token usage from the LLM response.
 
-        if self.provider_name == "openai":
-            token_usage = llm_output.get("token_usage", {})
-            self.prompt_tokens = token_usage.get("prompt_tokens", 0)
-            self.completion_tokens = token_usage.get("completion_tokens", 0)
-            self.total_tokens = token_usage.get("total_tokens", 0)
-        elif self.provider_name == "anthropic":
-            usage_info = llm_output.get("usage", {})
-            self.prompt_tokens = usage_info.get("input_tokens", 0)
-            self.completion_tokens = usage_info.get("output_tokens", 0)
-            self.cache_creation_tokens = usage_info.get(
-                "cache_creation_input_tokens", 0
-            )
-            self.cache_read_tokens = usage_info.get("cache_read_input_tokens", 0)
-            if self.prompt_tokens and self.completion_tokens:
-                self.total_tokens = self.prompt_tokens + self.completion_tokens
-            elif self.prompt_tokens:
-                self.total_tokens = self.prompt_tokens
-        elif self.provider_name == "google":
-            usage_metadata = (
-                llm_output.get("usage_metadata") or llm_output.get("token_usage") or {}
-            )
-            self.prompt_tokens = (
-                usage_metadata.get("prompt_token_count")
-                or usage_metadata.get("prompt_tokens")
-                or 0
-            )
-            self.completion_tokens = (
-                usage_metadata.get("candidates_token_count")
-                or usage_metadata.get("completion_tokens")
-                or 0
-            )
-            self.total_tokens = (
-                usage_metadata.get("total_token_count")
-                or usage_metadata.get("total_tokens")
+        LangChain 1.x standardises usage across providers on the AI
+        message's `usage_metadata` field (keys: input_tokens,
+        output_tokens, total_tokens, and provider-specific extras under
+        input_token_details / output_token_details). We pull from there
+        first and fall back to the pre-1.x `llm_output` dict — the
+        fallback matters when a provider integration lags behind core.
+        """
+        usage: dict = {}
+        try:
+            generations = response.generations  # List[List[Generation]]
+            if generations and generations[0]:
+                msg = getattr(generations[0][0], "message", None)
+                if msg is not None:
+                    usage = getattr(msg, "usage_metadata", None) or {}
+        except Exception:  # pragma: no cover — defensive
+            usage = {}
+
+        if usage:
+            self.prompt_tokens = int(usage.get("input_tokens") or 0)
+            self.completion_tokens = int(usage.get("output_tokens") or 0)
+            self.total_tokens = int(
+                usage.get("total_tokens")
                 or (self.prompt_tokens + self.completion_tokens)
             )
+            # Provider-specific cache metrics live under input_token_details
+            # (Anthropic: cache_read, cache_creation). OpenAI doesn't ship
+            # a prompt cache; Google doesn't report cache tokens here.
+            details = usage.get("input_token_details") or {}
+            self.cache_creation_tokens = int(details.get("cache_creation") or 0)
+            self.cache_read_tokens = int(details.get("cache_read") or 0)
+        else:
+            # Legacy fallback for providers whose LangChain adapter
+            # hasn't been upgraded to surface usage_metadata.
+            llm_output = response.llm_output or {}
+            for key in ("token_usage", "usage"):
+                section = llm_output.get(key) or {}
+                if section:
+                    self.prompt_tokens = int(
+                        section.get("prompt_tokens") or section.get("input_tokens") or 0
+                    )
+                    self.completion_tokens = int(
+                        section.get("completion_tokens")
+                        or section.get("output_tokens")
+                        or 0
+                    )
+                    self.total_tokens = int(
+                        section.get("total_tokens")
+                        or (self.prompt_tokens + self.completion_tokens)
+                    )
+                    break
 
         cache_note = ""
         if self.cache_creation_tokens or self.cache_read_tokens:
@@ -210,18 +221,12 @@ class LLMClient:
             )
             await rate_limiter.acquire(tokens=prompt_tokens)
 
-        # Gemini's default `with_structured_output` uses function-calling,
-        # which conflicts with prompts that explicitly ask the model to
-        # "Respond ONLY with a valid JSON object" — Gemini emits text JSON
-        # instead of a tool call, leaving LangChain to return None. Switch
-        # Google to json_mode (responseMimeType=application/json + schema),
-        # which matches our prompt style and the structured-output contract.
-        if self.provider_name == "google":
-            structured_llm = self.chat_model.with_structured_output(
-                response_model, method="json_mode"
-            )
-        else:
-            structured_llm = self.chat_model.with_structured_output(response_model)
+        # LangChain 1.x standardises structured output across providers:
+        # a bare Pydantic class selects the provider-native strategy
+        # (json_schema on Google, tool-calling on OpenAI/Anthropic).
+        # The per-provider branches and manual JSON fallback we carried on
+        # 0.3.x are no longer needed.
+        structured_llm = self.chat_model.with_structured_output(response_model)
         token_callback = TokenUsageCallbackHandler(provider_name=self.provider_name)
 
         start_time = time.perf_counter()
@@ -253,26 +258,6 @@ class LLMClient:
                 exc_info=True,
             )
             error_message = str(e)
-
-        # Manual JSON fallback for Google.
-        # `langchain-google-genai 2.1.5` with_structured_output parser
-        # returns None for some newer / preview Gemini models even though
-        # the raw response contains valid JSON matching the requested
-        # schema. When that happens, retry against the raw chat model and
-        # parse the content ourselves. (Also useful when a cheaper / newer
-        # model doesn't wire up tool-calling yet.)
-        if parsed_output_value is None and self.provider_name == "google":
-            parsed_output_value, fallback_err = await self._google_json_fallback(
-                response_model, invoke_input, token_callback
-            )
-            if parsed_output_value is not None:
-                logger.info(
-                    "Google structured-output fallback parsed raw JSON "
-                    f"(model={self.db_llm_config.model_name})."
-                )
-                error_message = None
-            elif fallback_err:
-                error_message = fallback_err
 
         if parsed_output_value is None and not error_message:
             error_message = (
@@ -337,55 +322,6 @@ class LLMClient:
             cache_creation_tokens=token_callback.cache_creation_tokens,
             cache_read_tokens=token_callback.cache_read_tokens,
         )
-
-    async def _google_json_fallback(
-        self,
-        response_model: Type[T],
-        invoke_input: Any,
-        token_callback: "TokenUsageCallbackHandler",
-    ) -> Tuple[Optional[T], Optional[str]]:
-        """Fallback for Google when with_structured_output returns None.
-
-        Invokes the base chat model (no wrapper), extracts JSON from the raw
-        content, validates it against `response_model`, and returns the
-        parsed instance. Returns (None, error_message) if the fallback
-        can't recover either.
-
-        Used only for provider='google' because other providers either
-        support with_structured_output reliably (OpenAI, Anthropic) or are
-        unsupported here. Token usage from the callback populated during
-        the original attempt is preserved — no double-counting.
-        """
-        try:
-            raw = await self.chat_model.ainvoke(
-                invoke_input, config={"callbacks": [token_callback]}
-            )
-        except Exception as e:
-            return None, f"Google fallback ainvoke failed: {e}"
-
-        content = getattr(raw, "content", None)
-        if not isinstance(content, str) or not content.strip():
-            return None, "Google fallback: raw response content was empty."
-
-        # Some Gemini preview models wrap JSON in fenced code blocks or
-        # stray prose. Pull out the first JSON object we can find.
-        match = re.search(r"\{[\s\S]*\}", content)
-        if not match:
-            return (
-                None,
-                f"Google fallback: no JSON object found in raw content "
-                f"(first 80 chars: {content[:80]!r}).",
-            )
-
-        try:
-            data = json.loads(match.group(0))
-        except json.JSONDecodeError as e:
-            return None, f"Google fallback: JSON decode failed: {e}"
-
-        try:
-            return response_model.model_validate(data), None
-        except Exception as e:
-            return None, f"Google fallback: schema validation failed: {e}"
 
     def _build_invoke_input(self, system_prompt: Optional[str], prompt: str) -> Any:
         """Returns the input to pass to structured_llm.ainvoke().

@@ -225,13 +225,9 @@ class SubmissionService:
 
         # Persist an outbox row so the approval message is retried even if
         # RabbitMQ is momentarily unavailable. Same guarantee as the initial
-        # submission flow in _process_and_launch_scan.
-        #
-        # NOTE (Phase D.2 follow-up): a future refactor should express this
-        # pause/resume via LangGraph's interrupt() + Command(resume=...)
-        # primitives so the contract lives in the graph definition rather
-        # than the DB status check in should_estimate_cost_or_run. Deferred
-        # because it needs end-to-end verification this session can't provide.
+        # submission flow in _process_and_launch_scan. The consumer
+        # translates this message into a LangGraph Command(resume=...)
+        # against the paused interrupt() in estimate_cost_node.
         await self.repo.update_status(scan_id, STATUS_QUEUED_FOR_SCAN)
         await self.repo.create_scan_event(
             scan_id=scan_id, stage_name="QUEUED_FOR_SCAN", status="COMPLETED"
