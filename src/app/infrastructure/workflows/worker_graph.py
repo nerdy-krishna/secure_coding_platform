@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, TypedDict, cast
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph import END, StateGraph
 from langgraph.pregel import Pregel
+from langgraph.types import interrupt
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
@@ -68,7 +69,6 @@ from app.shared.lib.scan_status import (  # noqa: E402
     STATUS_FAILED,
     STATUS_GENERATING_REPORTS,
     STATUS_PENDING_APPROVAL,
-    STATUS_QUEUED,
     STATUS_QUEUED_FOR_SCAN,
     STATUS_REMEDIATION_COMPLETED,
 )
@@ -439,7 +439,23 @@ async def estimate_cost_node(state: WorkerState) -> Dict[str, Any]:
             scan_id, STATUS_PENDING_APPROVAL, cost_details
         )
 
-    return {}
+    # Native LangGraph human-in-the-loop gate. The checkpointer persists
+    # state here; execution resumes from this point when the approval
+    # handler calls ainvoke(Command(resume=...)) on the same thread_id.
+    # The resume payload lands as the return value of interrupt().
+    approval_payload = interrupt(
+        {
+            "scan_id": str(scan_id),
+            "estimated_cost": cost_details,
+        }
+    )
+
+    logger.info(
+        "Cost-approval gate resumed for scan %s with payload: %s",
+        scan_id,
+        approval_payload,
+    )
+    return {"current_scan_status": STATUS_QUEUED_FOR_SCAN}
 
 
 async def _resolve_file_fix_conflicts(
@@ -1052,37 +1068,30 @@ def should_continue(state: WorkerState) -> str:
     return "handle_error" if state.get("error_message") else "continue"
 
 
-def should_estimate_cost_or_run(state: WorkerState) -> str:
-    """Routes new scans to cost estimation and approved scans to analysis."""
-    if state.get("error_message"):
-        return "handle_error"
-
-    # This value is fetched from the DB in the first step
-    status = state.get("current_scan_status")
-    logger.info(f"DEBUG: should_estimate_cost_or_run routing with status='{status}'")
-    if status == STATUS_QUEUED:
-        return "estimate_cost"
-    elif status in (STATUS_QUEUED_FOR_SCAN, STATUS_PENDING_APPROVAL):
-        # PENDING_COST_APPROVAL is accepted as a fallback in case the worker
-        # picks up the message before the DB status update commits.
-        return "run_analysis"
-    else:
-        logger.error(f"Routing failed due to unexpected status: {status}")
-        return "handle_error"
+def _route_after_retrieve(state: WorkerState) -> str:
+    """Retrieval either fails early or proceeds to the cost-approval gate."""
+    return "handle_error" if state.get("error_message") else "estimate_cost"
 
 
 workflow.add_conditional_edges(
     "retrieve_and_prepare_data",
-    should_estimate_cost_or_run,
+    _route_after_retrieve,
     {
         "estimate_cost": "estimate_cost",
-        "run_analysis": "analyze_files_parallel",
         "handle_error": "handle_error",
     },
 )
 
-# After estimation, the workflow ends, awaiting user approval
-workflow.add_edge("estimate_cost", END)
+# estimate_cost_node calls interrupt(); the graph pauses there, persists
+# state in the checkpointer, and yields. On approval, the worker calls
+# ainvoke(Command(resume=...)) and execution continues directly to
+# analyze_files_parallel. No DB-status-based routing — the graph shape
+# encodes the pause/resume contract.
+workflow.add_conditional_edges(
+    "estimate_cost",
+    should_continue,
+    {"continue": "analyze_files_parallel", "handle_error": "handle_error"},
+)
 
 workflow.add_conditional_edges(
     "analyze_files_parallel",

@@ -23,7 +23,7 @@ import logging
 import logging.config
 import signal
 import uuid
-from typing import Optional
+from typing import Any, Optional
 
 import aio_pika
 from aio_pika.abc import (
@@ -32,6 +32,7 @@ from aio_pika.abc import (
 )
 from dotenv import load_dotenv
 from langchain_core.runnables import RunnableConfig
+from langgraph.types import Command
 
 from app.config.config import settings
 from app.config.logging_config import LOGGING_CONFIG, correlation_id_var
@@ -72,44 +73,56 @@ _BACKOFF_CAP_SECONDS = 30.0
 
 async def _run_workflow_for_scan(
     initial_state: WorkerState,
+    *,
+    resume_payload: Optional[dict] = None,
 ) -> bool:
     """Invokes the LangGraph workflow for a given scan. Returns success flag.
+
+    `resume_payload=None` starts (or restarts) the workflow with the
+    initial state. `resume_payload={...}` drives a `Command(resume=...)`
+    invocation against the same thread, which unblocks a paused
+    `interrupt()` inside estimate_cost_node. The `thread_id` is derived
+    from the scan id, so the checkpointer finds the paused state.
 
     Handles the idempotency precheck, the timeout-wrapped invocation, and the
     FAILED-on-crash DB update. Does NOT ack/nack — the caller owns that.
     """
     scan_id_uuid = initial_state["scan_id"]
     scan_id_str_log = str(scan_id_uuid)
-    logger.info(
-        f"WORKFLOW: Starting/Resuming worker_workflow for scan_id: {scan_id_str_log}"
-    )
+    action = "Resuming" if resume_payload is not None else "Starting"
+    logger.info(f"WORKFLOW: {action} worker_workflow for scan_id: {scan_id_str_log}")
 
-    # Idempotency precheck: if the scan is past one of the workflow's entry
-    # statuses, this is a duplicate delivery.
-    try:
-        from app.infrastructure.database import AsyncSessionLocal
-        from app.infrastructure.database.repositories.scan_repo import ScanRepository
+    # Idempotency precheck: only meaningful for fresh-start messages. For a
+    # resume, the scan is in STATUS_PENDING_APPROVAL and would fail the
+    # entry-status check — but that's exactly the case we want to resume.
+    if resume_payload is None:
+        try:
+            from app.infrastructure.database import AsyncSessionLocal
+            from app.infrastructure.database.repositories.scan_repo import (
+                ScanRepository,
+            )
 
-        async with AsyncSessionLocal() as db:
-            repo = ScanRepository(db)
-            existing = await repo.get_scan(scan_id_uuid)
-        if existing is None:
+            async with AsyncSessionLocal() as db:
+                repo = ScanRepository(db)
+                existing = await repo.get_scan(scan_id_uuid)
+            if existing is None:
+                logger.warning(
+                    f"WORKFLOW: Scan {scan_id_str_log} not found in DB; "
+                    f"ACKing as noop."
+                )
+                return True
+            if existing.status not in _WORKFLOW_ENTRY_STATUSES:
+                logger.info(
+                    f"WORKFLOW: Scan {scan_id_str_log} already in status "
+                    f"'{existing.status}' — treating as duplicate delivery."
+                )
+                return True
+        except Exception as e:
             logger.warning(
-                f"WORKFLOW: Scan {scan_id_str_log} not found in DB; ACKing as noop."
+                f"WORKFLOW: Idempotency precheck failed for {scan_id_str_log}: {e}. "
+                f"Proceeding with workflow invocation.",
+                exc_info=True,
             )
-            return True
-        if existing.status not in _WORKFLOW_ENTRY_STATUSES:
-            logger.info(
-                f"WORKFLOW: Scan {scan_id_str_log} already in status "
-                f"'{existing.status}' — treating as duplicate delivery."
-            )
-            return True
-    except Exception as e:
-        logger.warning(
-            f"WORKFLOW: Idempotency precheck failed for {scan_id_str_log}: {e}. "
-            f"Proceeding with workflow invocation.",
-            exc_info=True,
-        )
 
     success = False
     timed_out = False
@@ -117,8 +130,13 @@ async def _run_workflow_for_scan(
     try:
         worker_workflow = await get_workflow()
         config: RunnableConfig = {"configurable": {"thread_id": scan_id_str_log}}
+        workflow_input: Any
+        if resume_payload is not None:
+            workflow_input = Command(resume=resume_payload)
+        else:
+            workflow_input = initial_state
         final_graph_state = await asyncio.wait_for(
-            worker_workflow.ainvoke(initial_state, config),
+            worker_workflow.ainvoke(workflow_input, config),
             timeout=settings.SCAN_WORKFLOW_TIMEOUT_SECONDS,
         )
 
@@ -250,7 +268,21 @@ async def _handle_message(message: AbstractIncomingMessage) -> None:
             await message.reject(requeue=False)
             return
 
-        success = await _run_workflow_for_scan(initial_state)
+        resume_payload: Optional[dict] = None
+        if (message.routing_key or "") == settings.RABBITMQ_APPROVAL_QUEUE:
+            try:
+                body = json.loads(message.body.decode("utf-8"))
+            except Exception:
+                body = {}
+            resume_payload = {
+                "scan_id": str(initial_state["scan_id"]),
+                "approved": True,
+                "approver_user_id": body.get("user_id"),
+            }
+
+        success = await _run_workflow_for_scan(
+            initial_state, resume_payload=resume_payload
+        )
         if not success:
             # Explicit reject so `message.process`'s implicit ack doesn't
             # win. `reject(requeue=False)` is idempotent with
