@@ -21,6 +21,8 @@ services:
       - ./scripts:/app/scripts
       - ./alembic.ini:/app/alembic.ini
       - ./alembic:/app/alembic
+      - ./tests:/app/tests
+      - ./pyproject.toml:/app/pyproject.toml:ro
     ports:
       - "${APP_PORT:-8000}:8000"
     depends_on:

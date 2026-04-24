@@ -99,6 +99,20 @@ optional = true
 [tool.poetry.group.test.dependencies]
 pytest = "^8.3.5"
 pytest-asyncio = "^0.23.7"
+pytest-cov = "^7.0.0"
+httpx = ">=0.28,<1.0"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["src"]
+testpaths = ["tests"]
+# The Playwright UI setup test needs a running UI container and a browser;
+# keep it manual and off the default pytest target. Run explicitly with
+# `pytest tests/test_ui_setup.py` when exercising the setup flow.
+addopts = "--ignore=tests/test_ui_setup.py"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
 
 [tool.ruff]
 target-version = "py312"

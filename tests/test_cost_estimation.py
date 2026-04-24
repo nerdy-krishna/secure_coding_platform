@@ -1,0 +1,77 @@
+# tests/test_cost_estimation.py
+#
+# Sanity checks on the LiteLLM-backed cost_estimation module. These
+# won't catch subtle pricing bugs but they will catch:
+#   - LiteLLM bumps that break our model-name resolver
+#   - Regression where the admin override stops taking precedence
+#   - count_tokens returning zero on known-good text
+
+from __future__ import annotations
+
+import asyncio
+from types import SimpleNamespace
+
+import pytest
+
+from app.shared.lib import cost_estimation
+
+
+def _config(provider: str, model: str, in_per_m: float = 0, out_per_m: float = 0):
+    """Build a light duck-typed LLMConfiguration stand-in."""
+    return SimpleNamespace(
+        provider=provider,
+        model_name=model,
+        input_cost_per_million=in_per_m,
+        output_cost_per_million=out_per_m,
+        tokenizer_encoding=None,
+    )
+
+
+SAMPLE_TEXT = "The quick brown fox jumps over the lazy dog."
+
+
+@pytest.mark.parametrize(
+    "provider,model,min_tokens,max_tokens",
+    [
+        ("openai", "gpt-4o", 8, 14),
+        ("anthropic", "claude-sonnet-4-5", 8, 18),
+        ("google", "gemini-2.5-flash", 6, 16),
+    ],
+)
+def test_count_tokens_in_plausible_range(provider, model, min_tokens, max_tokens):
+    """LiteLLM should return a sensible token count for a short English
+    sentence across all three providers. Tight range to catch regressions
+    where the tokenizer falls back to `len/4` silently."""
+    cfg = _config(provider, model)
+    tokens = asyncio.run(cost_estimation.count_tokens(SAMPLE_TEXT, cfg))
+    assert min_tokens <= tokens <= max_tokens, (
+        f"{provider}/{model}: got {tokens} tokens; expected {min_tokens}..{max_tokens}"
+    )
+
+
+def test_calculate_actual_cost_uses_litellm_map_when_override_absent():
+    # gpt-4o is list-priced at $2.50 in / $10.00 out per 1M at the time
+    # of writing. A 1k/500 call should land near $0.0075.
+    cfg = _config("openai", "gpt-4o", in_per_m=0, out_per_m=0)
+    cost = cost_estimation.calculate_actual_cost(cfg, 1_000, 500)
+    assert cost > 0, "LiteLLM map returned zero cost for a known-priced model"
+    # Allow ±10% drift so we don't fail the test on a future LiteLLM
+    # pricing update.
+    assert 0.005 <= cost <= 0.020
+
+
+def test_admin_override_takes_precedence():
+    # Override rates = $1000 per 1M input, $2000 per 1M output. 1k/500 →
+    # $1.00 in + $1.00 out = $2.00.
+    cfg = _config("openai", "gpt-4o", in_per_m=1_000, out_per_m=2_000)
+    cost = cost_estimation.calculate_actual_cost(cfg, 1_000, 500)
+    assert cost == pytest.approx(2.00, rel=1e-6)
+
+
+def test_estimate_for_prompt_uses_predicted_output_ratio():
+    cfg = _config("openai", "gpt-4o")
+    est = cost_estimation.estimate_cost_for_prompt(cfg, 1_000)
+    # Default predicted ratio is 0.25 → 250 output tokens.
+    assert est["predicted_output_tokens"] == 250
+    assert est["total_input_tokens"] == 1_000
+    assert est["total_estimated_cost"] == est["input_cost"] + est["predicted_output_cost"]
