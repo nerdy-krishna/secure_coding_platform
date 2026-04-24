@@ -27,7 +27,11 @@ from app.infrastructure.auth.core import (
 )
 from app.config.logging_config import correlation_id_var
 from app.core.services.scan_service import SubmissionService
-from app.api.v1.dependencies import get_scan_service, get_llm_config_repository
+from app.api.v1.dependencies import (
+    get_scan_service,
+    get_llm_config_repository,
+    get_visible_user_ids,
+)
 from app.infrastructure.database.repositories.llm_config_repo import LLMConfigRepository
 from app.shared.lib.git import clone_repo_and_get_files
 from app.shared.lib.archive import extract_archive_to_files, is_archive_filename
@@ -40,11 +44,14 @@ logger = logging.getLogger(__name__)
 async def get_all_projects(
     user: db_models.User = Depends(current_active_user),
     service: SubmissionService = Depends(get_scan_service),
+    visible_user_ids: Optional[List[int]] = Depends(get_visible_user_ids),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     search: Optional[str] = Query(None, min_length=1, max_length=100),
 ):
-    return await service.get_paginated_projects(user.id, skip, limit, search)
+    return await service.get_paginated_projects(
+        user.id, skip, limit, search, visible_user_ids=visible_user_ids
+    )
 
 
 class CreateProjectRequest(BaseModel):
@@ -80,22 +87,26 @@ async def search_projects_for_user(
     q: str = Query(..., min_length=1, max_length=100),
     user: db_models.User = Depends(current_active_user),
     service: SubmissionService = Depends(get_scan_service),
+    visible_user_ids: Optional[List[int]] = Depends(get_visible_user_ids),
 ):
-    """Searches for projects by name for the current user (for autocomplete)."""
-    return await service.search_projects(user_id=user.id, query=q)
+    """Searches for projects by name visible to the caller (for autocomplete)."""
+    return await service.search_projects(
+        user_id=user.id, query=q, visible_user_ids=visible_user_ids
+    )
 
 
 @router.get("/scans/history", response_model=api_models.PaginatedScanHistoryResponse)
 async def get_user_scan_history(
     user: db_models.User = Depends(current_active_user),
     service: SubmissionService = Depends(get_scan_service),
+    visible_user_ids: Optional[List[int]] = Depends(get_visible_user_ids),
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=100),
     search: Optional[str] = Query(None, min_length=1, max_length=100),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     status: Optional[str] = Query(None),
 ):
-    """Retrieves a paginated list of all scans for the current user."""
+    """Retrieves a paginated list of all scans visible to the caller."""
     return await service.get_paginated_user_scans(
         user_id=user.id,
         skip=(page - 1) * page_size,
@@ -103,6 +114,7 @@ async def get_user_scan_history(
         search=search,
         sort_order=sort_order,
         status=status,
+        visible_user_ids=visible_user_ids,
     )
 
 

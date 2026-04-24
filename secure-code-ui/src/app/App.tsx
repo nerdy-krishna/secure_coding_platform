@@ -16,6 +16,7 @@ import DashboardPage from "../pages/account/DashboardPage";
 import SubmissionHistoryPage from "../pages/account/SubmissionHistoryPage";
 import SystemConfigTab from "../pages/admin/SystemConfigTab";
 import UserManagementTab from "../pages/admin/UserManagement";
+import UserGroupsPage from "../pages/admin/UserGroupsPage";
 import SMTPSettingsTab from "../pages/admin/SMTPSettingsTab";
 import AgentManagementPage from "../pages/admin/AgentManagementPage";
 import FrameworkManagementPage from "../pages/admin/FrameworkManagementPage";
@@ -165,6 +166,7 @@ function AppContent() {
         <Route element={<RouteGuard requires="superuser" />}>
           <Route path="/admin/system" element={<SystemConfigTab />} />
           <Route path="/admin/users" element={<UserManagementTab />} />
+          <Route path="/admin/user-groups" element={<UserGroupsPage />} />
           <Route path="/admin/smtp" element={<SMTPSettingsTab />} />
           <Route path="/account/settings/llm" element={<LLMSettingsPage />} />
           <Route path="/admin/agents" element={<AgentManagementPage />} />

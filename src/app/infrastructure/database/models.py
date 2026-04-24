@@ -439,3 +439,56 @@ class SystemConfiguration(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+# --- Phase H.2 — User Groups + memberships ---------------------------
+# Groups let multiple SCCAP users share scan visibility. A regular user
+# sees their own scans plus scans owned by anyone in the same group;
+# admins see everything. `UserGroup` is the group row; membership is a
+# separate table so users can belong to multiple groups and so we can
+# later add roles per group without reshaping UserGroup.
+
+
+class UserGroup(Base):
+    __tablename__ = "user_groups"
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    created_by: Mapped[int] = mapped_column(ForeignKey("user.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    memberships: Mapped[List["UserGroupMembership"]] = relationship(
+        "UserGroupMembership",
+        back_populates="group",
+        cascade="all, delete-orphan",
+    )
+
+
+class UserGroupMembership(Base):
+    __tablename__ = "user_group_memberships"
+    group_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("user_groups.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), primary_key=True
+    )
+    # "owner" grants manage-members powers within the group (future scope);
+    # "member" is read-only. Today the backend treats both the same for
+    # scan visibility — admins do all management via /admin/user-groups.
+    role: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="member"
+    )
+    joined_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    group: Mapped["UserGroup"] = relationship(
+        "UserGroup", back_populates="memberships"
+    )

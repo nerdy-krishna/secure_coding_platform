@@ -511,8 +511,9 @@ class SubmissionService:
         search: Optional[str],
         sort_order: str,
         status: Optional[str],
+        visible_user_ids: Optional[List[int]] = None,
     ) -> api_models.PaginatedScanHistoryResponse:
-        """Retrieves a paginated list of all scans for a user."""
+        """Retrieves a paginated list of all scans visible to the caller."""
 
         status_filters = []
         if status:
@@ -528,10 +529,16 @@ class SubmissionService:
                 status_filters = [status.upper().replace(" ", "_")]
 
         total = await self.repo.get_scans_count_for_user(
-            user_id, search, status_filters
+            user_id, search, status_filters, visible_user_ids=visible_user_ids
         )
         scans_raw = await self.repo.get_paginated_scans_for_user(
-            user_id, skip, limit, search, sort_order, status_filters
+            user_id,
+            skip,
+            limit,
+            search,
+            sort_order,
+            status_filters,
+            visible_user_ids=visible_user_ids,
         )
 
         history_items = [
@@ -552,10 +559,17 @@ class SubmissionService:
         ]
         return api_models.PaginatedScanHistoryResponse(items=history_items, total=total)
 
-    async def search_projects(self, user_id: int, query: str) -> List[str]:
-        """Searches project names for autocomplete."""
+    async def search_projects(
+        self,
+        user_id: int,
+        query: str,
+        visible_user_ids: Optional[List[int]] = None,
+    ) -> List[str]:
+        """Searches project names for autocomplete (scoped to caller)."""
         projects = await self.repo.search_projects_by_name(
-            user_id=user_id, name_query=query
+            user_id=user_id,
+            name_query=query,
+            visible_user_ids=visible_user_ids,
         )
         return [p.name for p in projects]
 
@@ -591,11 +605,20 @@ class SubmissionService:
         return await self.repo.get_llm_interactions_for_scan(scan_id)
 
     async def get_paginated_projects(
-        self, user_id: int, skip: int, limit: int, search: Optional[str]
+        self,
+        user_id: int,
+        skip: int,
+        limit: int,
+        search: Optional[str],
+        visible_user_ids: Optional[List[int]] = None,
     ) -> api_models.PaginatedProjectHistoryResponse:
-        """Retrieves a paginated list of projects for a user."""
-        total = await self.repo.get_projects_count(user_id, search)
-        projects = await self.repo.get_paginated_projects(user_id, skip, limit, search)
+        """Retrieves a paginated list of projects visible to the caller."""
+        total = await self.repo.get_projects_count(
+            user_id, search, visible_user_ids=visible_user_ids
+        )
+        projects = await self.repo.get_paginated_projects(
+            user_id, skip, limit, search, visible_user_ids=visible_user_ids
+        )
 
         # This part can be optimized later if needed, but is fine for now
         project_items = []
