@@ -94,3 +94,55 @@ jobs:
           load: false
           cache-from: type=gha,scope=worker
           cache-to: type=gha,scope=worker,mode=max
+
+  pytest:
+    name: Backend tests (pytest)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: secure_coding_platform
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Match the default docker-compose DB so tests hit the same schema
+      # shape the app expects.
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: secure_coding_platform
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_HOST_ALEMBIC: localhost
+      ASYNC_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/secure_coding_platform
+      ALEMBIC_DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/secure_coding_platform
+      SECRET_KEY: test-secret-key-at-least-32-characters-long
+      ENCRYPTION_KEY: zH6_8nNpMc7XxS3mLqJdRvKuBtYfGhWePk4AaCcTbEE=
+      # Cost lookups stay offline in CI — no LiteLLM network.
+      LITELLM_LOCAL_MODEL_COST_MAP: "True"
+      # Skip SMTP / fluentd wiring the app lazy-initialises.
+      RABBITMQ_HOST: localhost
+      RABBITMQ_DEFAULT_USER: user
+      RABBITMQ_DEFAULT_PASS: password
+      ALLOWED_ORIGINS: http://localhost:5173
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Poetry
+        run: pip install "poetry==1.8.3"
+      - name: Install dependencies (with test group)
+        run: |
+          poetry install --no-interaction --no-ansi --no-root --without dev --with test
+      - name: Run Alembic migrations
+        run: poetry run alembic upgrade head
+      - name: pytest
+        run: poetry run pytest -xvs

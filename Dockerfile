@@ -8,18 +8,21 @@
 #   base           → runtime OS, non-root user, minimal apt (libpq5, ca-certs)
 #   poetry-base    → base + build-essential + poetry (shared by both builders)
 #   api-builder    → poetry-base + `poetry install --without dev` (no worker
-#                    group) → produces a lean venv without torch / transformers /
-#                    sentence-transformers / tree-sitter
+#                    group) → lean venv without tree-sitter (worker-only)
 #   worker-builder → poetry-base + `poetry install --without dev --with worker`
-#                    → produces the full venv with the ML + AST stack
-#   ml-assets      → worker-builder + pre-downloaded sentence-transformers cache
+#                    → adds the tree-sitter AST stack on top of the API deps
 #   api            → base + api venv + source + git binary (GitPython)
-#   worker         → base + worker venv + ml cache + source (no git)
+#   worker         → base + worker venv + source (no git)
 #
-# The dep split is the main image-size lever. torch alone is 566MB; the
-# API doesn't import it at runtime, so it has no business being in the
-# API image. Non-root (uid 1001) everywhere. BuildKit cache mounts on
+# The dep split keeps tree-sitter + tree-sitter-languages off the API
+# image. Non-root (uid 1001) everywhere. BuildKit cache mounts on
 # pip/poetry keep rebuilds fast.
+#
+# Historical note: an `ml-assets` stage used to pre-download
+# `sentence-transformers/all-MiniLM-L6-v2`. Since Phase H.1.1 we use
+# ChromaDB's bundled ONNX embedder instead (lazy-downloaded to
+# /home/appuser/.cache/chroma on first use), and Phase I.3 dropped
+# sentence-transformers + torch entirely — so the stage went away.
 
 # ---------- base ---------------------------------------------------------
 FROM python:3.12-slim-bookworm AS base
@@ -29,9 +32,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONPATH=/app/src \
-    PATH="/app/.venv/bin:$PATH" \
-    HF_HOME=/app/.cache/huggingface \
-    SENTENCE_TRANSFORMERS_HOME=/app/.cache/sentence-transformers
+    PATH="/app/.venv/bin:$PATH"
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -90,14 +91,6 @@ RUN --mount=type=cache,target=/home/appuser/.cache/pypoetry,uid=1001,gid=1001 \
     --mount=type=cache,target=/home/appuser/.cache/pip,uid=1001,gid=1001 \
     poetry install --no-interaction --no-ansi --no-root --without dev --with worker
 
-# ---------- ml-assets ----------------------------------------------------
-# Pre-downloads the embedding model used by the RAG preprocessor so the
-# worker container starts with a warm cache. Only the worker image copies
-# from this stage.
-FROM worker-builder AS ml-assets
-
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
-
 # ---------- api ----------------------------------------------------------
 FROM base AS api
 
@@ -123,7 +116,6 @@ FROM base AS worker
 USER appuser
 
 COPY --chown=appuser:appuser --from=worker-builder /app/.venv /app/.venv
-COPY --chown=appuser:appuser --from=ml-assets /app/.cache /app/.cache
 COPY --chown=appuser:appuser ./src /app/src
 
 CMD ["python", "-m", "app.workers.consumer"]
