@@ -14,16 +14,34 @@ In today's fast-paced development environment, ensuring code security from the o
 
 ## What We Offer: Core Capabilities
 
-Our platform integrates cutting-edge AI with robust security tools to provide a comprehensive solution:
+SCCAP integrates a multi-agent LLM pipeline with curated security
+knowledge bases. The platform is organized around three surfaces:
 
-* **Proactive Security Guidance**: Leverage interactive chat interfaces that provide guidance on development policies and security best practices tailored to specific scenarios (e.g., "e-commerce platform," "healthcare app"), drawing from a wide array of selectable security frameworks.
-* **Secure Code Generation**: Interactively generate secure code snippets or entire modules. Our AI adheres to your selected security frameworks by default, utilizing customizable instruction templates for project-specific context.
-* **Comprehensive Code Analysis Portal**:
-    * **Versatile Submission**: Submit single files, multiple files, or entire projects via upload or Git repository integration.
-    * **Multi-Framework Scanning**: Analyze your code against multiple security standards simultaneously (OWASP Top 10, ASVS, NIST SSDF, PCI DSS, HIPAA, GDPR, and more).
-    * **Intelligent Remediation**: Receive detailed explanations, suggested fixes, and even auto-remediation attempts for identified vulnerabilities.
-* **GRC-like Requirement Analysis**: Engage in an advanced chat to elicit project details, generating a comprehensive report on applicable security frameworks, compliance needs, and high-level architectural security advice.
-* **Deep Codebase Understanding**: Benefit from intelligent management of large codebases using "repomap" context and smart chunking for effective analysis.
+### For developers and security users
+
+* **Live dashboard** — a real risk ring, five-bucket severity bar, 14-day scan trend sparkline, fixes-ready counter, and monthly LLM spend. Admins see a platform-wide snapshot variant.
+* **Two-phase, user-approved scan** — every scan runs a cheap audit pass first, estimates cost via LiteLLM's model-price map, pauses the LangGraph workflow with a native `interrupt()`, and waits for your `/approve` before the deep analysis runs.
+* **Versatile submission** — file uploads, Git repository URLs, or archive uploads (`.zip` / `.tar.gz`). An interactive file tree lets you include or exclude paths before estimation.
+* **Multi-framework scanning** — pick any combination of the 3 default OWASP frameworks (ASVS, Proactive Controls, Cheatsheets) plus custom frameworks ingested from CSV or Git URLs.
+* **Intelligent, incremental remediation** — choose findings, let specialized agents generate fixes, merge via a dedicated conflict-resolution agent, and download the patched tree.
+* **Per-project stats on the Projects page** — each card shows the latest terminal scan's risk score, severity bar, and fixes-ready count, no client-side heuristics.
+* **Global search** — one TopNav combobox across projects, scans, and findings, always scoped to what the current user is allowed to see.
+* **Security Advisor with live context rail** — framework-scoped chat backed by RAG retrieval, with a right-hand rail that surfaces the knowledge sources, referenced findings, and files most likely discussed.
+* **Executive Summary PDF + SARIF downloads** for any completed scan.
+
+### For security admins
+
+* **User Groups + scoped visibility** — admins create groups and add members by email; regular users see their own scans plus any scan owned by a peer they share a group with; admins see everything.
+* **First-run setup wizard** — the first registered account becomes superuser and is routed through `/setup` before the rest of the app unlocks.
+* **Unified Admin console** — LLM configurations, user groups, users, frameworks (with CSV / git-URL RAG ingestion), agents, prompt templates, SMTP, system config, and runtime logs. A shared sub-nav keeps every surface one click apart.
+* **Encrypted secrets** — every LLM API key and SMTP password is Fernet-encrypted at rest with the installation's `ENCRYPTION_KEY`.
+
+### Integrations and automation
+
+* **MCP server** — the scan + advisor workflow is exposed as MCP tools at `/mcp`, reusing JWT auth so Claude Code, Cursor, or other agentic clients can drive the platform remotely.
+* **LiteLLM-backed cost ledger** — token counting and cost estimation go through LiteLLM's community-maintained model price map, with a per-`LLMConfiguration` admin override for bespoke endpoints. Offline-pinnable via `LITELLM_LOCAL_MODEL_COST_MAP=True`.
+* **Pydantic AI structured output** — every agent returns a validated Pydantic model; malformed outputs trigger a typed retry loop instead of regex fallbacks.
+* **Observability** — every request gets an `X-Correlation-ID` attached to all logs; the stack ships Fluentd → Loki → Grafana dashboards out of the box.
 
 ## Our Vision & Guiding Principles
 
