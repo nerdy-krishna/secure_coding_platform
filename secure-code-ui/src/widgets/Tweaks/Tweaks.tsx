@@ -168,14 +168,14 @@ export const Tweaks: React.FC = () => {
           <div style={{ marginBottom: 4 }}>
             <SectionLabel>Role preview</SectionLabel>
             <div className="radio-group" style={{ width: "100%" }}>
-              {(["dev", "enterprise", "admin"] as SccapRole[]).map((r) => (
+              {(["user", "admin"] as SccapRole[]).map((r) => (
                 <button
                   key={r}
                   className={role === r ? "active" : ""}
                   onClick={() => setRole(r)}
                   style={{ flex: 1, textTransform: "capitalize" }}
                 >
-                  {r === "enterprise" ? "Ent" : r}
+                  {r}
                 </button>
               ))}
             </div>

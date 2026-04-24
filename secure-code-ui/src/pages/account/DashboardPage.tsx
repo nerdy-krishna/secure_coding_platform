@@ -1,24 +1,18 @@
 // secure-code-ui/src/pages/account/DashboardPage.tsx
 //
-// Role-aware dashboard router. Matches the SCCAP design bundle's
-// top-level Dashboard component — picks one of three variants based
-// on the previewed role. Per the plan, `admin` reuses the enterprise
-// view until the backend has a dedicated admin-snapshot dataset; the
-// sign-in gate still enforces real is_superuser for the /admin/*
-// routes regardless of what role is previewed here.
+// Role-aware dashboard router. H.3 dropped the enterprise variant and
+// narrowed roles to user + admin. The choice is driven by the real
+// `user.is_superuser` flag — role preview in Tweaks is cosmetic only,
+// real admin surfaces still require the backend-issued flag.
 
 import React from "react";
-import { useTheme } from "../../app/providers/ThemeProvider";
-import { DevDashboard } from "../../features/dashboard/components/DevDashboard";
-import { EnterpriseDashboard } from "../../features/dashboard/components/EnterpriseDashboard";
+import { AdminSnapshot } from "../../features/dashboard/components/AdminSnapshot";
+import { UserDashboard } from "../../features/dashboard/components/UserDashboard";
+import { useAuth } from "../../shared/hooks/useAuth";
 
 const DashboardPage: React.FC = () => {
-  const { role } = useTheme();
-
-  if (role === "enterprise" || role === "admin") {
-    return <EnterpriseDashboard />;
-  }
-  return <DevDashboard />;
+  const { user } = useAuth();
+  return user?.is_superuser ? <AdminSnapshot /> : <UserDashboard />;
 };
 
 export default DashboardPage;

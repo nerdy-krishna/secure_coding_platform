@@ -26,6 +26,7 @@ from app.api.v1.routers.setup import router as setup_router
 from app.api.v1.routers.admin_config import router as admin_config_router
 from app.api.v1.routers.admin_groups import router as admin_groups_router
 from app.api.v1.routers.admin_seed import router as admin_seed_router
+from app.api.v1.routers.dashboard import router as dashboard_router
 from app.infrastructure.auth.backend import auth_backend
 from app.infrastructure.auth.core import fastapi_users
 from app.infrastructure.auth.schemas import UserRead, UserUpdate
@@ -392,6 +393,7 @@ app.include_router(admin_seed_router, prefix="/api/v1", tags=["Admin: Seed"])
 
 # Router for admin user-group CRUD (scan-scope membership)
 app.include_router(admin_groups_router, prefix="/api/v1", tags=["Admin: User Groups"])
+app.include_router(dashboard_router, prefix="/api/v1", tags=["Dashboard"])
 
 from app.api.v1.routers.admin_users import router as admin_users_router  # noqa: E402
 

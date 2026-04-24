@@ -1,30 +1,26 @@
-// secure-code-ui/src/features/dashboard/components/DevDashboard.tsx
+// secure-code-ui/src/features/dashboard/components/UserDashboard.tsx
 //
-// Individual-developer dashboard. Ported from the SCCAP bundle's
-// DevDashboard variant and wired to real scan data where the current
-// backend exposes it:
-//   - Recent scans table: fetches the first page of /scans/history.
-//   - Top metrics: derived from the same fetch (total, in-progress,
-//     completed-this-week, failed-today). Finding-aggregate metrics
-//     (open findings, critical count, AI-fixes-ready, auto-fix success)
-//     are placeholder — they need a dashboard/stats backend endpoint
-//     to populate efficiently, deferred to a future pass.
-//   - Severity breakdown + "AI insight" card: static for now; will
-//     switch to real aggregate data once the backend endpoint lands.
+// Dashboard for regular users. Renamed from DevDashboard in H.3 and
+// wired to the real `/dashboard/stats` endpoint so the risk ring,
+// severity bar, and 14-day sparkline show live data instead of
+// placeholders.
 
-import React, { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import React, { useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { dashboardService } from "../../../shared/api/dashboardService";
+import type { DashboardStats } from "../../../shared/api/dashboardService";
 import { scanService } from "../../../shared/api/scanService";
+import type { ScanHistoryItem } from "../../../shared/types/api";
 import { useAuth } from "../../../shared/hooks/useAuth";
 import { Icon } from "../../../shared/ui/Icon";
 import {
   MetricCard,
   RiskRing,
   SectionHead,
+  SevBar,
   Spark,
 } from "../../../shared/ui/DashboardPrimitives";
-import type { ScanHistoryItem } from "../../../shared/types/api";
 
 const TERMINAL_STATUSES = new Set([
   "COMPLETED",
@@ -90,60 +86,51 @@ function statusChip(status: string): React.ReactNode {
   );
 }
 
-export const DevDashboard: React.FC = () => {
+const EMPTY_STATS: DashboardStats = {
+  risk_score: 100,
+  open_findings: {
+    critical: 0,
+    high: 0,
+    medium: 0,
+    low: 0,
+    informational: 0,
+  },
+  fixes_ready: 0,
+  scans_this_month: 0,
+  scans_trend: [],
+  cost_this_month_usd: 0,
+};
+
+export const UserDashboard: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
 
-  const { data, isLoading } = useQuery({
-    queryKey: ["dashboard", "recent-scans"],
-    queryFn: () => scanService.getScanHistory(1, 50, undefined, "desc"),
+  const { data: statsData } = useQuery({
+    queryKey: ["dashboard", "stats"],
+    queryFn: dashboardService.getStats,
   });
 
+  const { data: recentData, isLoading: recentLoading } = useQuery({
+    queryKey: ["dashboard", "recent-scans"],
+    queryFn: () => scanService.getScanHistory(1, 10, undefined, "desc"),
+  });
+
+  const stats = statsData ?? EMPTY_STATS;
   const scans: ScanHistoryItem[] = useMemo(
-    () => data?.items ?? [],
-    [data],
+    () => recentData?.items ?? [],
+    [recentData],
   );
-
-  const metrics = useMemo(() => {
-    const now = Date.now();
-    const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
-    const dayAgo = now - 24 * 60 * 60 * 1000;
-
-    let inProgress = 0;
-    let completedThisWeek = 0;
-    let failedToday = 0;
-    const buckets: number[] = Array(10).fill(0); // last 10 days, for the spark
-
-    for (const s of scans) {
-      if (IN_PROGRESS_STATUSES.has(s.status)) inProgress += 1;
-
-      const createdAt = new Date(s.created_at).getTime();
-      const daysAgo = Math.floor((now - createdAt) / (24 * 60 * 60 * 1000));
-      if (daysAgo >= 0 && daysAgo < 10) {
-        buckets[9 - daysAgo] += 1;
-      }
-
-      if (
-        (s.status === "COMPLETED" || s.status === "REMEDIATION_COMPLETED") &&
-        createdAt >= weekAgo
-      ) {
-        completedThisWeek += 1;
-      }
-      if (s.status === "FAILED" && createdAt >= dayAgo) {
-        failedToday += 1;
-      }
-    }
-
-    return {
-      total: data?.total ?? 0,
-      inProgress,
-      completedThisWeek,
-      failedToday,
-      scansPerDay: buckets,
-    };
-  }, [scans, data?.total]);
-
+  const inProgress = useMemo(
+    () => scans.filter((s) => IN_PROGRESS_STATUSES.has(s.status)).length,
+    [scans],
+  );
   const recent = scans.slice(0, 5);
+  const totalOpen =
+    stats.open_findings.critical +
+    stats.open_findings.high +
+    stats.open_findings.medium +
+    stats.open_findings.low +
+    stats.open_findings.informational;
 
   return (
     <div className="fade-in" style={{ display: "grid", gap: 20 }}>
@@ -161,24 +148,21 @@ export const DevDashboard: React.FC = () => {
       >
         <div>
           <div className="chip chip-ai" style={{ marginBottom: 10 }}>
-            <Icon.Sparkle size={11} /> Welcome back{user?.email ? `, ${user.email.split("@")[0]}` : ""}
+            <Icon.Sparkle size={11} /> Welcome back
+            {user?.email ? `, ${user.email.split("@")[0]}` : ""}
           </div>
           <h1 style={{ marginBottom: 6 }}>
-            {metrics.inProgress > 0
-              ? `${metrics.inProgress} scan${metrics.inProgress === 1 ? "" : "s"} in progress.`
-              : metrics.total === 0
-                ? "No scans yet — start your first one."
+            {inProgress > 0
+              ? `${inProgress} scan${inProgress === 1 ? "" : "s"} in progress.`
+              : stats.scans_this_month === 0
+                ? "No scans this month yet — start one."
                 : "All caught up — no scans in progress."}
           </h1>
           <div style={{ color: "var(--fg-muted)", fontSize: 14 }}>
-            {metrics.completedThisWeek} completed this week
-            {metrics.failedToday > 0 && (
-              <>
-                {" "}
-                · <b style={{ color: "var(--critical)" }}>{metrics.failedToday} failed</b> today
-              </>
-            )}
-            .
+            {stats.scans_this_month} scan{stats.scans_this_month === 1 ? "" : "s"}{" "}
+            this month · {totalOpen} open finding
+            {totalOpen === 1 ? "" : "s"} ·{" "}
+            <b>${stats.cost_this_month_usd.toFixed(2)}</b> spent
           </div>
           <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
             <button
@@ -196,9 +180,7 @@ export const DevDashboard: React.FC = () => {
           </div>
         </div>
         <div style={{ display: "grid", placeItems: "center" }}>
-          {/* Risk score is placeholder until the dashboard/stats endpoint lands.
-              Show "—" instead of a real number to avoid implying a fake value. */}
-          <RiskRing score={0} label="Posture" />
+          <RiskRing score={stats.risk_score} label="Posture" />
         </div>
       </div>
 
@@ -211,26 +193,28 @@ export const DevDashboard: React.FC = () => {
         }}
       >
         <MetricCard
-          label="Total scans"
-          value={metrics.total}
-          delta={isLoading ? "loading…" : `${scans.length} recent`}
-          spark={<Spark data={metrics.scansPerDay} idKey="total" />}
+          label="Scans / month"
+          value={stats.scans_this_month}
+          delta={`${stats.scans_trend.reduce((a, b) => a + b, 0)} in last 14 days`}
+          spark={<Spark data={stats.scans_trend} idKey="trend" />}
         />
         <MetricCard
           label="In progress"
-          value={metrics.inProgress}
-          delta={metrics.inProgress > 0 ? "active now" : "idle"}
-          tone={metrics.inProgress > 0 ? "warn" : "default"}
+          value={inProgress}
+          delta={inProgress > 0 ? "active now" : "idle"}
+          tone={inProgress > 0 ? "warn" : "default"}
         />
         <MetricCard
-          label="Completed / week"
-          value={metrics.completedThisWeek}
-          tone="good"
+          label="Open critical"
+          value={stats.open_findings.critical}
+          tone={stats.open_findings.critical > 0 ? "bad" : "good"}
+          delta={`${stats.open_findings.high} high`}
         />
         <MetricCard
-          label="Failed / day"
-          value={metrics.failedToday}
-          tone={metrics.failedToday > 0 ? "bad" : "good"}
+          label="Fixes ready"
+          value={stats.fixes_ready}
+          delta={stats.fixes_ready > 0 ? "AI-suggested" : "nothing queued"}
+          tone={stats.fixes_ready > 0 ? "warn" : "default"}
         />
       </div>
 
@@ -257,7 +241,7 @@ export const DevDashboard: React.FC = () => {
             }
             style={{ padding: "18px 20px 10px", margin: 0 }}
           />
-          {isLoading ? (
+          {recentLoading ? (
             <div
               style={{
                 padding: 40,
@@ -388,25 +372,61 @@ export const DevDashboard: React.FC = () => {
                 </>
               }
             />
-            <div
-              style={{
-                padding: 24,
-                textAlign: "center",
-                color: "var(--fg-muted)",
-                fontSize: 13,
-              }}
-            >
-              Severity breakdown coming soon.
+            <div style={{ padding: "12px 4px 4px" }}>
+              <SevBar
+                crit={stats.open_findings.critical}
+                high={stats.open_findings.high}
+                med={stats.open_findings.medium}
+                low={stats.open_findings.low}
+                info={stats.open_findings.informational}
+              />
               <div
                 style={{
-                  fontSize: 11,
-                  marginTop: 6,
-                  color: "var(--fg-subtle)",
+                  display: "grid",
+                  gridTemplateColumns: "repeat(5, 1fr)",
+                  gap: 6,
+                  marginTop: 14,
+                  fontSize: 11.5,
                 }}
               >
-                Needs a dashboard aggregate endpoint; open individual scans
-                to see per-project findings.
+                <SevLegend
+                  label="Critical"
+                  value={stats.open_findings.critical}
+                  swatch="var(--critical)"
+                />
+                <SevLegend
+                  label="High"
+                  value={stats.open_findings.high}
+                  swatch="var(--high)"
+                />
+                <SevLegend
+                  label="Medium"
+                  value={stats.open_findings.medium}
+                  swatch="var(--medium)"
+                />
+                <SevLegend
+                  label="Low"
+                  value={stats.open_findings.low}
+                  swatch="var(--low)"
+                />
+                <SevLegend
+                  label="Info"
+                  value={stats.open_findings.informational}
+                  swatch="var(--info)"
+                />
               </div>
+              {totalOpen === 0 && (
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: "var(--fg-subtle)",
+                    marginTop: 10,
+                    textAlign: "center",
+                  }}
+                >
+                  No open findings yet.
+                </div>
+              )}
             </div>
           </div>
 
@@ -468,4 +488,25 @@ export const DevDashboard: React.FC = () => {
   );
 };
 
-export default DevDashboard;
+const SevLegend: React.FC<{
+  label: string;
+  value: number;
+  swatch: string;
+}> = ({ label, value, swatch }) => (
+  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+    <span
+      style={{
+        width: 8,
+        height: 8,
+        borderRadius: 2,
+        background: swatch,
+        flexShrink: 0,
+      }}
+    />
+    <span style={{ color: "var(--fg-muted)" }}>
+      {label} <b style={{ color: "var(--fg)" }}>{value}</b>
+    </span>
+  </div>
+);
+
+export default UserDashboard;
