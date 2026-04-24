@@ -9,6 +9,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../../shared/hooks/useAuth";
 import { useTheme, type SccapRole } from "../../app/providers/ThemeProvider";
 import { Icon } from "../../shared/ui/Icon";
+import { SearchCombobox } from "./SearchCombobox";
 
 interface NavItem {
   id: string;
@@ -135,7 +136,7 @@ export const TopNav: React.FC = () => {
             justifyContent: "flex-end",
           }}
         >
-          <SearchStub />
+          <SearchCombobox />
           <button
             className="sccap-btn sccap-btn-icon sccap-btn-ghost"
             title="Settings"
@@ -216,20 +217,6 @@ const Brand: React.FC = () => (
       </div>
     </div>
   </Link>
-);
-
-const SearchStub: React.FC = () => (
-  // UI-only stub for G.1 — wiring to a real search endpoint is a follow-up.
-  <div className="input-with-icon" style={{ width: 220 }}>
-    <Icon.Search size={14} />
-    <input
-      className="sccap-input"
-      placeholder="Search projects, findings…"
-      style={{ paddingLeft: 32, height: 34 }}
-      disabled
-      aria-label="Search (coming soon)"
-    />
-  </div>
 );
 
 interface RoleMenuProps {
