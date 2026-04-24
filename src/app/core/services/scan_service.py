@@ -29,6 +29,7 @@ from app.shared.lib.scan_status import (
     STATUS_QUEUED_FOR_SCAN,
     STATUS_REMEDIATION_COMPLETED,
 )
+from sqlalchemy import func, select
 from itertools import groupby
 from operator import attrgetter
 
@@ -620,8 +621,9 @@ class SubmissionService:
             user_id, skip, limit, search, visible_user_ids=visible_user_ids
         )
 
-        # This part can be optimized later if needed, but is fine for now
-        project_items = []
+        project_items: List[api_models.ProjectHistoryItem] = []
+        latest_terminal_scan_by_project: Dict[uuid.UUID, uuid.UUID] = {}
+
         for project in projects:
             scans_raw = await self.repo.get_paginated_scans_for_project(
                 project.id, 0, 5
@@ -642,6 +644,13 @@ class SubmissionService:
                 )
                 for s in scans_raw
             ]
+            latest_terminal = next(
+                (s for s in scans_raw if s.status in COMPLETED_SCAN_STATUSES),
+                None,
+            )
+            if latest_terminal is not None:
+                latest_terminal_scan_by_project[project.id] = latest_terminal.id
+
             project_item = api_models.ProjectHistoryItem(
                 id=project.id,
                 name=project.name,
@@ -652,9 +661,101 @@ class SubmissionService:
             )
             project_items.append(project_item)
 
+        stats_by_scan = await self._aggregate_project_stats(
+            list(latest_terminal_scan_by_project.values())
+        )
+        for item in project_items:
+            scan_id = latest_terminal_scan_by_project.get(item.id)
+            if scan_id is None:
+                continue
+            item.stats = stats_by_scan.get(scan_id)
+
         return api_models.PaginatedProjectHistoryResponse(
             items=project_items, total=total
         )
+
+    async def _aggregate_project_stats(
+        self, scan_ids: List[uuid.UUID]
+    ) -> Dict[uuid.UUID, api_models.ProjectStats]:
+        """One query, grouped by (scan_id, severity), keyed back by scan_id.
+
+        `fixes_ready` is "findings with an AI fix suggestion that hasn't been
+        applied yet" — same definition as the dashboard rollup, scoped to a
+        single scan instead of the whole visibility set.
+        """
+        if not scan_ids:
+            return {}
+
+        sev_stmt = (
+            select(
+                db_models.Finding.scan_id,
+                func.lower(db_models.Finding.severity).label("sev"),
+                func.count(db_models.Finding.id),
+            )
+            .where(db_models.Finding.scan_id.in_(scan_ids))
+            .where(db_models.Finding.is_applied_in_remediation.is_(False))
+            .group_by(db_models.Finding.scan_id, func.lower(db_models.Finding.severity))
+        )
+        fixes_stmt = (
+            select(
+                db_models.Finding.scan_id,
+                func.count(db_models.Finding.id),
+            )
+            .where(db_models.Finding.scan_id.in_(scan_ids))
+            .where(db_models.Finding.is_applied_in_remediation.is_(False))
+            .where(db_models.Finding.fixes.is_not(None))
+            .group_by(db_models.Finding.scan_id)
+        )
+
+        sev_rows = (await self.repo.db.execute(sev_stmt)).all()
+        fix_rows = (await self.repo.db.execute(fixes_stmt)).all()
+
+        severity_aliases = {
+            "info": "informational",
+            "informational": "informational",
+            "critical": "critical",
+            "high": "high",
+            "medium": "medium",
+            "low": "low",
+        }
+
+        counts: Dict[uuid.UUID, Dict[str, int]] = {
+            scan_id: {
+                "critical": 0,
+                "high": 0,
+                "medium": 0,
+                "low": 0,
+                "informational": 0,
+            }
+            for scan_id in scan_ids
+        }
+        for scan_id, raw_sev, count in sev_rows:
+            if raw_sev is None:
+                continue
+            key = severity_aliases.get(raw_sev)
+            if key:
+                counts[scan_id][key] += int(count)
+
+        fixes: Dict[uuid.UUID, int] = {scan_id: 0 for scan_id in scan_ids}
+        for scan_id, count in fix_rows:
+            fixes[scan_id] = int(count)
+
+        result: Dict[uuid.UUID, api_models.ProjectStats] = {}
+        for scan_id in scan_ids:
+            open_buckets = counts[scan_id]
+            weighted = (
+                open_buckets["critical"] * 15
+                + open_buckets["high"] * 6
+                + open_buckets["medium"] * 2
+                + open_buckets["low"] * 1
+            )
+            risk_score = max(5, 100 - min(95, weighted))
+            result[scan_id] = api_models.ProjectStats(
+                risk_score=risk_score,
+                open_findings=api_models.ProjectOpenFindings(**open_buckets),
+                fixes_ready=fixes[scan_id],
+            )
+        return result
 
     async def delete_scan_by_id(self, scan_id: uuid.UUID, user: db_models.User):
         """Deletes a single scan, checking for superuser privileges."""
