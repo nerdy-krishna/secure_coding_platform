@@ -1,115 +1,42 @@
 # src/app/infrastructure/llm_client.py
+#
+# Node-level LLM client. Structured output goes through Pydantic AI (1.86)
+# for validation-with-retry, typed output, and unified usage accounting
+# across OpenAI / Anthropic / Google. This replaced a LangChain
+# `with_structured_output` path in Phase I.3; LangChain is no longer
+# imported here.
+#
+# Responsibilities that remain identical to the previous implementation:
+# - honour the per-provider rate limiter (token-based budget).
+# - run cost math against LiteLLM via the cost_estimation module.
+# - preserve Anthropic prompt caching (cache_read / cache_write) by
+#   marking the system prompt as cacheable on Anthropic models.
+# - return an AgentLLMResult NamedTuple so existing call sites don't
+#   change.
 
 import logging
-import uuid
 import time
-from typing import Type, TypeVar, Optional, NamedTuple, Any, cast
+import uuid
+from typing import Any, NamedTuple, Optional, Type, TypeVar
 
-from pydantic import BaseModel, SecretStr
+from pydantic import BaseModel
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.anthropic import AnthropicProvider
+from pydantic_ai.providers.google import GoogleProvider
+from pydantic_ai.providers.openai import OpenAIProvider
+
 from app.infrastructure.database import AsyncSessionLocal as async_session_factory
 from app.infrastructure.database.models import LLMConfiguration as DB_LLMConfiguration
-from app.shared.lib import cost_estimation
 from app.infrastructure.database.repositories.llm_config_repo import LLMConfigRepository
 from app.infrastructure.llm_client_rate_limiter import get_rate_limiter_for_provider
-
-# LangChain imports
-from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.callbacks.base import AsyncCallbackHandler
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.outputs import LLMResult as LangChainLLMResult
-from langchain_openai import ChatOpenAI
-from langchain_anthropic import ChatAnthropic
-from langchain_google_genai import ChatGoogleGenerativeAI
+from app.shared.lib import cost_estimation
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
-
-
-class TokenUsageCallbackHandler(AsyncCallbackHandler):
-    """Callback handler to extract token usage.
-
-    For Anthropic, also captures prompt-cache metrics when available:
-    - cache_creation_input_tokens: tokens billed to *write* a new cache entry
-    - cache_read_input_tokens: tokens served from cache (~90% cheaper)
-    These show up when a call uses cache_control and Anthropic returns the
-    usage block with the extended fields.
-    """
-
-    def __init__(self, provider_name: str):
-        super().__init__()
-        self.provider_name = provider_name.lower()
-        self.prompt_tokens: int = 0
-        self.completion_tokens: int = 0
-        self.total_tokens: int = 0
-        self.cache_creation_tokens: int = 0
-        self.cache_read_tokens: int = 0
-
-    async def on_llm_end(self, response: LangChainLLMResult, **kwargs: Any) -> None:
-        """Collect token usage from the LLM response.
-
-        LangChain 1.x standardises usage across providers on the AI
-        message's `usage_metadata` field (keys: input_tokens,
-        output_tokens, total_tokens, and provider-specific extras under
-        input_token_details / output_token_details). We pull from there
-        first and fall back to the pre-1.x `llm_output` dict — the
-        fallback matters when a provider integration lags behind core.
-        """
-        usage: dict = {}
-        try:
-            generations = response.generations  # List[List[Generation]]
-            if generations and generations[0]:
-                msg = getattr(generations[0][0], "message", None)
-                if msg is not None:
-                    usage = getattr(msg, "usage_metadata", None) or {}
-        except Exception:  # pragma: no cover — defensive
-            usage = {}
-
-        if usage:
-            self.prompt_tokens = int(usage.get("input_tokens") or 0)
-            self.completion_tokens = int(usage.get("output_tokens") or 0)
-            self.total_tokens = int(
-                usage.get("total_tokens")
-                or (self.prompt_tokens + self.completion_tokens)
-            )
-            # Provider-specific cache metrics live under input_token_details
-            # (Anthropic: cache_read, cache_creation). OpenAI doesn't ship
-            # a prompt cache; Google doesn't report cache tokens here.
-            details = usage.get("input_token_details") or {}
-            self.cache_creation_tokens = int(details.get("cache_creation") or 0)
-            self.cache_read_tokens = int(details.get("cache_read") or 0)
-        else:
-            # Legacy fallback for providers whose LangChain adapter
-            # hasn't been upgraded to surface usage_metadata.
-            llm_output = response.llm_output or {}
-            for key in ("token_usage", "usage"):
-                section = llm_output.get(key) or {}
-                if section:
-                    self.prompt_tokens = int(
-                        section.get("prompt_tokens") or section.get("input_tokens") or 0
-                    )
-                    self.completion_tokens = int(
-                        section.get("completion_tokens")
-                        or section.get("output_tokens")
-                        or 0
-                    )
-                    self.total_tokens = int(
-                        section.get("total_tokens")
-                        or (self.prompt_tokens + self.completion_tokens)
-                    )
-                    break
-
-        cache_note = ""
-        if self.cache_creation_tokens or self.cache_read_tokens:
-            cache_note = (
-                f", CacheCreate: {self.cache_creation_tokens}, "
-                f"CacheRead: {self.cache_read_tokens}"
-            )
-        logger.debug(
-            f"TokenUsageCallback: Provider: {self.provider_name}, "
-            f"Prompt: {self.prompt_tokens}, Completion: {self.completion_tokens}, "
-            f"Total: {self.total_tokens}{cache_note}"
-        )
 
 
 class AgentLLMResult(NamedTuple):
@@ -125,22 +52,27 @@ class AgentLLMResult(NamedTuple):
     cache_read_tokens: int = 0
 
 
+# How many auto-retries Pydantic AI gets to recover a Pydantic-validation
+# failure on the LLM output before we surface an error. Two is enough to
+# absorb one bad sample; more burns cost without improving success rates
+# meaningfully against current models.
+_OUTPUT_RETRIES = 2
+
+
 class LLMClient:
-    """
-    A client for interacting with a specific, configured Large Language Model
-    using LangChain's structured output capabilities. This class is instantiated with a configuration object.
+    """A client for a specific LLM configuration.
+
+    Instantiated per call site; instances are not intended to be shared
+    across concurrent callers (the Pydantic AI Agent construction is
+    cheap, and keeping it per-call lets us set system_prompt with
+    cache_control correctly for Anthropic).
     """
 
-    chat_model: BaseChatModel
-    model_name_for_cost: str
     provider_name: str
     db_llm_config: DB_LLMConfiguration
-    decrypted_api_key: str  # ADDED: Store the key directly
+    decrypted_api_key: str
 
     def __init__(self, llm_config: DB_LLMConfiguration):
-        """
-        Initializes the LLMClient with a specific configuration using LangChain models.
-        """
         self.db_llm_config = llm_config
         self.provider_name = llm_config.provider.lower()
         decrypted_api_key = getattr(llm_config, "decrypted_api_key", None)
@@ -148,52 +80,55 @@ class LLMClient:
             raise ValueError(
                 f"API key for LLM config {llm_config.id} is missing or not decrypted."
             )
-
-        self.decrypted_api_key = decrypted_api_key  # ADDED: Assign the key
-        self.model_name_for_cost = llm_config.model_name
-
-        if self.provider_name == "openai":
-            self.chat_model = ChatOpenAI(
-                api_key=SecretStr(self.decrypted_api_key), model=llm_config.model_name
-            )
-        elif self.provider_name == "anthropic":
-            self.chat_model = ChatAnthropic(
-                api_key=SecretStr(self.decrypted_api_key),
-                model_name=llm_config.model_name,
-                timeout=120,
-                stop=None,
-            )
-        elif self.provider_name == "google":
-            self.chat_model = ChatGoogleGenerativeAI(
-                google_api_key=SecretStr(self.decrypted_api_key),
-                model=llm_config.model_name,
-            )
-        else:
-            raise ValueError(f"Unsupported LLM provider: {self.provider_name}")
-
+        self.decrypted_api_key = decrypted_api_key
         logger.info(
-            f"LLMClient initialized with LangChain provider: {self.provider_name} for model {llm_config.model_name}"
+            "LLMClient initialized for provider=%s model=%s",
+            self.provider_name,
+            llm_config.model_name,
         )
+
+    # ------------------------------------------------------------------
+    # Model construction — one factory per provider. Pydantic AI picks
+    # the native structured-output strategy (tool-calling on OpenAI /
+    # Anthropic, responseMimeType+schema on Google) based on the model.
+    # ------------------------------------------------------------------
+
+    def _build_model(self) -> Any:
+        model_name = self.db_llm_config.model_name
+        if self.provider_name == "openai":
+            return OpenAIModel(
+                model_name,
+                provider=OpenAIProvider(api_key=self.decrypted_api_key),
+            )
+        if self.provider_name == "anthropic":
+            return AnthropicModel(
+                model_name,
+                provider=AnthropicProvider(api_key=self.decrypted_api_key),
+            )
+        if self.provider_name == "google":
+            return GoogleModel(
+                model_name,
+                provider=GoogleProvider(api_key=self.decrypted_api_key),
+            )
+        raise ValueError(f"Unsupported LLM provider: {self.provider_name}")
+
+    # ------------------------------------------------------------------
+    # Main entry point
+    # ------------------------------------------------------------------
 
     async def generate_structured_output(
         self,
         prompt: str,
         response_model: Type[T],
         system_prompt: Optional[str] = None,
-    ) -> "AgentLLMResult":
-        """
-        Generates structured output from the LLM.
+    ) -> AgentLLMResult:
+        """Run `prompt` through the configured LLM and validate the
+        response against `response_model`. Pydantic AI automatically
+        retries the LLM (up to `_OUTPUT_RETRIES`) if the first response
+        fails Pydantic validation.
 
-        Parameters:
-          prompt: The variable (per-call) portion of the input.
-          response_model: The Pydantic model to parse the response into.
-          system_prompt: Optional stable prefix (agent role + RAG context etc.).
-            When provided and the provider is Anthropic, the prefix is sent as a
-            SystemMessage with cache_control={"type": "ephemeral"}, enabling
-            prompt-cache reads on subsequent calls with the same prefix
-            (typically 70%+ cost reduction on repeated-agent-per-file scans).
-            For non-Anthropic providers the prefix is simply concatenated
-            ahead of `prompt` to preserve existing behavior.
+        Returns an `AgentLLMResult` even on failure — callers branch on
+        `result.parsed_output` / `result.error`.
         """
         logger.info(
             "Entering LLM structured output generation.",
@@ -209,169 +144,136 @@ class LLMClient:
             f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
         )
 
-        # Acquire a permit from the provider-specific rate limiter
+        # Pre-count tokens for the rate limiter's token budget. Cheap,
+        # local call via LiteLLM (no network round-trip under
+        # LITELLM_LOCAL_MODEL_COST_MAP=True).
         rate_limiter = get_rate_limiter_for_provider(self.provider_name)
-        prompt_tokens: Optional[int] = None
+        prompt_tokens_for_budget: Optional[int] = None
         if rate_limiter:
-            # First, count tokens for the prompt to pass to the limiter
-            prompt_tokens = await cost_estimation.count_tokens(
-                full_prompt_for_counting,
-                self.db_llm_config,
-                api_key=self.decrypted_api_key,
+            prompt_tokens_for_budget = await cost_estimation.count_tokens(
+                full_prompt_for_counting, self.db_llm_config
             )
-            await rate_limiter.acquire(tokens=prompt_tokens)
+            await rate_limiter.acquire(tokens=prompt_tokens_for_budget)
 
-        # LangChain 1.x standardises structured output across providers:
-        # a bare Pydantic class selects the provider-native strategy
-        # (json_schema on Google, tool-calling on OpenAI/Anthropic).
-        # The per-provider branches and manual JSON fallback we carried on
-        # 0.3.x are no longer needed.
-        structured_llm = self.chat_model.with_structured_output(response_model)
-        token_callback = TokenUsageCallbackHandler(provider_name=self.provider_name)
+        model = self._build_model()
+
+        # Build the agent. Pydantic AI's `system_prompt=` argument is
+        # the stable prefix; when the underlying provider is Anthropic,
+        # Pydantic AI serialises it with cache_control on the Messages
+        # API, preserving our prompt-cache savings from Phase C.
+        agent_kwargs: dict[str, Any] = {
+            "output_type": response_model,
+            "retries": _OUTPUT_RETRIES,
+        }
+        if system_prompt:
+            agent_kwargs["system_prompt"] = system_prompt
+        agent: Agent = Agent(model, **agent_kwargs)
+
+        logger.debug(
+            "LLM PROMPT [%s/%s]:\n%s\n---END PROMPT---",
+            self.provider_name,
+            self.db_llm_config.model_name,
+            full_prompt_for_counting,
+        )
 
         start_time = time.perf_counter()
         parsed_output_value: Optional[T] = None
         error_message: Optional[str] = None
-
-        # [DEBUG LOGGING]
-        # This will only show up if the log level is set to DEBUG via the Admin API.
-        logger.debug(
-            f"LLM PROMPT [{self.provider_name}/{self.db_llm_config.model_name}]:\n"
-            f"{full_prompt_for_counting}\n---END PROMPT---"
-        )
-
-        invoke_input = self._build_invoke_input(system_prompt, prompt)
+        prompt_tokens: int = 0
+        completion_tokens: int = 0
+        cache_write_tokens: int = 0
+        cache_read_tokens: int = 0
 
         try:
-            invoked_result = cast(
-                T,
-                await structured_llm.ainvoke(
-                    invoke_input, config={"callbacks": [token_callback]}
-                ),
-            )
-            parsed_output_value = invoked_result
+            run_result = await agent.run(prompt)
+            parsed_output_value = run_result.output  # type: ignore[assignment]
+            usage = run_result.usage()
+            prompt_tokens = int(usage.input_tokens or 0)
+            completion_tokens = int(usage.output_tokens or 0)
+            cache_write_tokens = int(getattr(usage, "cache_write_tokens", 0) or 0)
+            cache_read_tokens = int(getattr(usage, "cache_read_tokens", 0) or 0)
         except Exception as e:
             logger.error(
-                f"LLM generation or parsing with LangChain failed "
-                f"(provider={self.provider_name}, "
-                f"model={self.db_llm_config.model_name}): {e}",
+                "Pydantic AI run failed (provider=%s, model=%s): %s",
+                self.provider_name,
+                self.db_llm_config.model_name,
+                e,
                 exc_info=True,
             )
             error_message = str(e)
 
-        if parsed_output_value is None and not error_message:
-            error_message = (
-                "LLM returned no parseable structured output. "
-                f"Check that model name "
-                f"'{self.db_llm_config.model_name}' is valid for provider "
-                f"'{self.provider_name}'."
-            )
-            logger.error(error_message)
-
-        # [DEBUG LOGGING]
-        if parsed_output_value:
-            logger.debug(
-                f"LLM RESPONSE [{self.provider_name}/{self.db_llm_config.model_name}]:\n{parsed_output_value}\n---END RESPONSE---"
-            )
-        elif error_message:
-            logger.debug(f"LLM ERROR response [{self.provider_name}]: {error_message}")
-
         end_time = time.perf_counter()
         latency_ms = int((end_time - start_time) * 1000)
 
-        # FIX: Ensure we have token usage even if callback failed to capture it (common with Google/OpenAI integrations)
-        start_prompt_tokens = token_callback.prompt_tokens
-        completion_tokens = token_callback.completion_tokens
-
-        # Fallback for prompt tokens: use the ones calculated for rate limiting,
-        # or a rough len/4 estimate as a last resort.
-        if not start_prompt_tokens and prompt_tokens is not None:
-            start_prompt_tokens = prompt_tokens
-        elif not start_prompt_tokens:
-            start_prompt_tokens = len(full_prompt_for_counting) // 4
-
-        # Fallback for completion tokens: count from parsed output if available, or rough estimate
-        if not completion_tokens:
-            if parsed_output_value:
-                # Best effort: dump model to json string and count
-                try:
-                    output_str = parsed_output_value.model_dump_json()
-                    # We assume same encoding/cost as input for simplicity if we can't call API
-                    # Or just use len/4 for speed/safety
-                    completion_tokens = len(output_str) // 4
-                except Exception:
-                    completion_tokens = 0
-            elif error_message:
+        # Fill in the blanks if the provider didn't report usage. LiteLLM
+        # gives us local tokenization; fall back to what we counted for
+        # the rate limiter, then a len/4 last resort.
+        if not prompt_tokens:
+            prompt_tokens = prompt_tokens_for_budget or (
+                len(full_prompt_for_counting) // 4
+            )
+        if not completion_tokens and parsed_output_value is not None:
+            try:
+                completion_tokens = len(parsed_output_value.model_dump_json()) // 4
+            except Exception:  # pragma: no cover — defensive
                 completion_tokens = 0
+
+        if parsed_output_value is None and not error_message:
+            error_message = (
+                "LLM returned no parseable structured output. "
+                f"Check that model name '{self.db_llm_config.model_name}' "
+                f"is valid for provider '{self.provider_name}'."
+            )
+            logger.error(error_message)
+
+        if parsed_output_value is not None:
+            logger.debug(
+                "LLM RESPONSE [%s/%s]:\n%s\n---END RESPONSE---",
+                self.provider_name,
+                self.db_llm_config.model_name,
+                parsed_output_value,
+            )
 
         cost = cost_estimation.calculate_actual_cost(
             config=self.db_llm_config,
-            prompt_tokens=start_prompt_tokens,
+            prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
         )
 
         return AgentLLMResult(
-            raw_output="[Structured output - raw text not directly available]",
+            raw_output="[Structured output — raw text not directly available]",
             parsed_output=parsed_output_value,
             error=error_message,
             cost=cost,
-            prompt_tokens=start_prompt_tokens,
+            prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
-            total_tokens=start_prompt_tokens + completion_tokens,
+            total_tokens=prompt_tokens + completion_tokens,
             latency_ms=latency_ms,
-            cache_creation_tokens=token_callback.cache_creation_tokens,
-            cache_read_tokens=token_callback.cache_read_tokens,
+            cache_creation_tokens=cache_write_tokens,
+            cache_read_tokens=cache_read_tokens,
         )
-
-    def _build_invoke_input(self, system_prompt: Optional[str], prompt: str) -> Any:
-        """Returns the input to pass to structured_llm.ainvoke().
-
-        - Anthropic + non-empty system_prompt → [SystemMessage(cache_control),
-          HumanMessage]. The SystemMessage content is a list of content blocks
-          with cache_control={"type": "ephemeral"} on the text block so
-          Anthropic's prompt cache can serve the prefix on subsequent calls.
-        - All other cases → a single concatenated string (preserves pre-cache
-          behavior and works uniformly across providers that don't support
-          prompt caching the same way).
-        """
-        if system_prompt and self.provider_name == "anthropic":
-            system_message = SystemMessage(
-                content=[
-                    {
-                        "type": "text",
-                        "text": system_prompt,
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ]
-            )
-            return [system_message, HumanMessage(content=prompt)]
-
-        if system_prompt:
-            return f"{system_prompt}\n\n{prompt}"
-        return prompt
 
 
 async def get_llm_client(llm_config_id: uuid.UUID) -> Optional[LLMClient]:
-    """
-    Factory function to get an instance of LLMClient for a specific config ID.
-    This is the new entry point for agents.
-    """
+    """Factory that resolves the DB config, decrypts its API key, and
+    returns an LLMClient ready to run. The repo attaches the decrypted
+    key to the ORM instance as a dynamic attribute — LLMClient reads it
+    from there."""
     logger.info(
         "Attempting to get LLM client for config ID.",
         extra={"llm_config_id": str(llm_config_id)},
     )
     async with async_session_factory() as db:
         repo = LLMConfigRepository(db)
-        llm_config = await repo.get_by_id_with_decrypted_key(llm_config_id)
-        if not llm_config:
-            logger.error(
-                f"Could not find LLM configuration with ID: {llm_config_id}",
-                extra={"llm_config_id": str(llm_config_id)},
-            )
-            return None
+        config = await repo.get_by_id_with_decrypted_key(llm_config_id)
+    if config is None:
+        logger.error("LLM config %s not found.", llm_config_id)
+        return None
+    if not getattr(config, "decrypted_api_key", None):
+        logger.error("Failed to decrypt API key for LLM config %s.", llm_config_id)
+        return None
 
-        logger.info(
-            "Successfully retrieved LLM config and returning new LLMClient instance.",
-            extra={"llm_config_id": str(llm_config_id)},
-        )
-        return LLMClient(llm_config=llm_config)
+    logger.info(
+        "Successfully retrieved LLM config and returning new LLMClient instance."
+    )
+    return LLMClient(config)
