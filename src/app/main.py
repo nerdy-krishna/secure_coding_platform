@@ -229,12 +229,31 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Error during publisher shutdown: {e}")
 
 
+# --- FastMCP sub-app (Phase I.4) ---
+# FastMCP requires its own lifespan for session initialisation. Compose it
+# with ours via a combined context manager so FastAPI's lifespan kwarg sees
+# a single entrypoint.
+from app.api.mcp.server import mcp as _sccap_mcp_server  # noqa: E402
+
+_mcp_app = _sccap_mcp_server.http_app(path="/")
+
+
+@asynccontextmanager
+async def _combined_lifespan(app: FastAPI):
+    async with lifespan(app):
+        async with _mcp_app.lifespan(app):
+            yield
+
+
 app = FastAPI(
     title="SCCAP API",
     version="0.1.0",
     description="API for SCCAP — the Secure Coding & Compliance Automation Platform. Provides analysis, remediation, and compliance features.",
-    lifespan=lifespan,
+    lifespan=_combined_lifespan,
 )
+# Mount the MCP sub-app. MCP clients connect to /mcp; the REST API keeps
+# its /api/v1/* routes.
+app.mount("/mcp", _mcp_app)
 
 
 @app.middleware("http")
