@@ -1,23 +1,21 @@
 // secure-code-ui/src/pages/analysis/ProjectsPage.tsx
 //
-// SCCAP projects grid. Port of the design bundle's Projects.jsx, wired
-// to the real backend (/projects). Each card shows the project name,
-// latest scan status, a derived risk score, and aggregate finding chips
-// from the most recent terminal scan.
-//
-// "Risk score" is derived on the client since the backend doesn't
-// expose a per-project rollup yet — we compute it from the most recent
-// scan's severity counts (summary.severity_counts when available; falls
-// back to status-only placeholders otherwise). Proper aggregation lives
-// with the /dashboard/stats endpoint flagged for a later pass.
+// SCCAP projects grid. Each card shows the project name, latest scan
+// status, and a per-project rollup served by `GET /projects` — the
+// risk score, severity bar, and "fixes ready" counter all come from
+// `project.stats`, which scan_service populates by aggregating findings
+// from the latest terminal scan (H.4).
 
-import React, { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import React, { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { scanService } from "../../shared/api/scanService";
-import { Icon } from "../../shared/ui/Icon";
+import type {
+  ProjectHistoryItem,
+  ScanHistoryItem,
+} from "../../shared/types/api";
 import { SevBar } from "../../shared/ui/DashboardPrimitives";
-import type { ProjectHistoryItem, ScanHistoryItem } from "../../shared/types/api";
+import { Icon } from "../../shared/ui/Icon";
 
 const TERMINAL_OK = new Set(["COMPLETED", "REMEDIATION_COMPLETED"]);
 
@@ -34,32 +32,22 @@ function formatWhen(iso: string | null | undefined): string {
   return new Date(iso).toLocaleDateString();
 }
 
-function riskColor(risk: number): string {
-  if (risk >= 80) return "var(--critical)";
-  if (risk >= 60) return "var(--high)";
-  if (risk >= 40) return "var(--medium)";
+// Inverted from dashboard: the RiskRing reads "higher is better"; the
+// progress bar on the card reads "higher is worse". Convert here so a
+// posture score of 100 shows an empty bar.
+function exposureColor(exposure: number): string {
+  if (exposure >= 75) return "var(--critical)";
+  if (exposure >= 50) return "var(--high)";
+  if (exposure >= 25) return "var(--medium)";
   return "var(--success)";
 }
 
-function latestTerminalScan(p: ProjectHistoryItem): ScanHistoryItem | null {
+function latestScan(p: ProjectHistoryItem): ScanHistoryItem | null {
   const sorted = [...p.scans].sort(
-    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+    (a, b) =>
+      new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
   );
   return sorted.find((s) => TERMINAL_OK.has(s.status)) ?? sorted[0] ?? null;
-}
-
-// Heuristic risk score until the backend exposes a per-project rollup.
-// Based on the latest terminal scan's status: active fails elevate risk;
-// clean completes reduce it.
-function deriveRisk(p: ProjectHistoryItem): number {
-  const scan = latestTerminalScan(p);
-  if (!scan) return 0;
-  if (scan.status === "FAILED") return 75;
-  if (scan.status === "CANCELLED" || scan.status === "EXPIRED") return 40;
-  // COMPLETED / REMEDIATION_COMPLETED — assume moderate until we have
-  // finding counts aggregated. Keep this low so the UI doesn't fake
-  // alarm; real scores land with the stats endpoint.
-  return 25;
 }
 
 const ProjectsPage: React.FC = () => {
@@ -141,7 +129,14 @@ const ProjectsPage: React.FC = () => {
             textAlign: "center",
           }}
         >
-          <div style={{ color: "var(--fg)", fontSize: 16, fontWeight: 500, marginBottom: 6 }}>
+          <div
+            style={{
+              color: "var(--fg)",
+              fontSize: 16,
+              fontWeight: 500,
+              marginBottom: 6,
+            }}
+          >
             No projects yet
           </div>
           <div
@@ -165,9 +160,17 @@ const ProjectsPage: React.FC = () => {
           }}
         >
           {projects.map((p) => {
-            const risk = deriveRisk(p);
-            const color = riskColor(risk);
-            const latest = latestTerminalScan(p);
+            const latest = latestScan(p);
+            const stats = p.stats;
+            const exposure = stats ? 100 - stats.risk_score : 0;
+            const color = exposureColor(exposure);
+            const totalFindings = stats
+              ? stats.open_findings.critical +
+                stats.open_findings.high +
+                stats.open_findings.medium +
+                stats.open_findings.low +
+                stats.open_findings.informational
+              : 0;
             return (
               <div
                 key={p.id}
@@ -221,9 +224,7 @@ const ProjectsPage: React.FC = () => {
                       </div>
                     </div>
                   </div>
-                  <div
-                    style={{ fontSize: 11, color: "var(--fg-subtle)" }}
-                  >
+                  <div style={{ fontSize: 11, color: "var(--fg-subtle)" }}>
                     {p.scans.length} scan{p.scans.length === 1 ? "" : "s"}
                   </div>
                 </div>
@@ -237,20 +238,26 @@ const ProjectsPage: React.FC = () => {
                     marginBottom: 6,
                   }}
                 >
-                  <span>Risk score</span>
+                  <span>Posture score</span>
                   <span style={{ fontWeight: 600, color }}>
-                    {latest ? risk : "—"}
+                    {stats ? stats.risk_score : "—"}
                   </span>
                 </div>
                 <div className="sccap-progress" style={{ marginBottom: 12 }}>
                   <span
                     style={{
-                      width: `${latest ? risk : 0}%`,
+                      width: stats ? `${exposure}%` : "0%",
                       background: color,
                     }}
                   />
                 </div>
-                <SevBar />
+                <SevBar
+                  crit={stats?.open_findings.critical}
+                  high={stats?.open_findings.high}
+                  med={stats?.open_findings.medium}
+                  low={stats?.open_findings.low}
+                  info={stats?.open_findings.informational}
+                />
                 <div
                   style={{
                     display: "flex",
@@ -267,13 +274,13 @@ const ProjectsPage: React.FC = () => {
                       : formatWhen(p.updated_at)}
                   </span>
                   <span>
-                    {latest
-                      ? TERMINAL_OK.has(latest.status)
-                        ? "completed"
-                        : latest.status === "FAILED"
+                    {stats
+                      ? `${totalFindings} open · ${stats.fixes_ready} fix${stats.fixes_ready === 1 ? "" : "es"} ready`
+                      : latest
+                        ? latest.status === "FAILED"
                           ? "last failed"
-                          : "in progress"
-                      : "no scans"}
+                          : "no stats yet"
+                        : "no scans"}
                   </span>
                 </div>
               </div>

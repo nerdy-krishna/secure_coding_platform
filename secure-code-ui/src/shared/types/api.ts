@@ -273,6 +273,20 @@ export interface PaginatedScanHistoryResponse {
   total: number;
 }
 
+export interface ProjectOpenFindings {
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+  informational: number;
+}
+
+export interface ProjectStats {
+  risk_score: number;
+  open_findings: ProjectOpenFindings;
+  fixes_ready: number;
+}
+
 export interface ProjectHistoryItem {
   id: UUID;
   name: string;
@@ -280,6 +294,7 @@ export interface ProjectHistoryItem {
   created_at: string;
   updated_at: string;
   scans: ScanHistoryItem[];
+  stats: ProjectStats | null;
 }
 
 export interface PaginatedProjectHistoryResponse {

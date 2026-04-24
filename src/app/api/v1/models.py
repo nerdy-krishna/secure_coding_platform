@@ -540,6 +540,28 @@ class PaginatedScanHistoryResponse(BaseModel):
     total: int
 
 
+class ProjectOpenFindings(BaseModel):
+    critical: int = 0
+    high: int = 0
+    medium: int = 0
+    low: int = 0
+    informational: int = 0
+
+
+class ProjectStats(BaseModel):
+    """Per-project rollup derived from the latest terminal scan.
+
+    Populated by `scan_service.get_paginated_projects`. `risk_score`
+    uses the same weighted-findings heuristic as the dashboard so
+    numbers stay consistent across pages. `None`-safe: absent when the
+    project has never had a terminal scan.
+    """
+
+    risk_score: int = 100
+    open_findings: ProjectOpenFindings = ProjectOpenFindings()
+    fixes_ready: int = 0
+
+
 class ProjectHistoryItem(BaseModel):
     id: uuid.UUID
     name: str
@@ -547,6 +569,7 @@ class ProjectHistoryItem(BaseModel):
     created_at: datetime
     updated_at: datetime
     scans: List[ScanHistoryItem] = []
+    stats: Optional[ProjectStats] = None
 
     class Config:
         from_attributes = True
