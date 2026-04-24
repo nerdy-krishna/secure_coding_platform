@@ -391,9 +391,7 @@ class ScanRepository:
         stmt = (
             select(db_models.Project)
             .where(
-                self._scope_column(
-                    db_models.Project.user_id, user_id, visible_user_ids
-                )
+                self._scope_column(db_models.Project.user_id, user_id, visible_user_ids)
             )
             .where(db_models.Project.name.ilike(f"%{name_query}%"))
             .order_by(db_models.Project.name)
@@ -414,9 +412,7 @@ class ScanRepository:
             select(func.count(db_models.Scan.id))
             .join(db_models.Scan.project)
             .where(
-                self._scope_column(
-                    db_models.Scan.user_id, user_id, visible_user_ids
-                )
+                self._scope_column(db_models.Scan.user_id, user_id, visible_user_ids)
             )
         )
         if search:
@@ -454,9 +450,7 @@ class ScanRepository:
                 selectinload(db_models.Scan.project),
             )
             .where(
-                self._scope_column(
-                    db_models.Scan.user_id, user_id, visible_user_ids
-                )
+                self._scope_column(db_models.Scan.user_id, user_id, visible_user_ids)
             )
         )
         if search:
@@ -498,9 +492,7 @@ class ScanRepository:
                 selectinload(db_models.Project.scans).joinedload(db_models.Scan.user)
             )
             .where(
-                self._scope_column(
-                    db_models.Project.user_id, user_id, visible_user_ids
-                )
+                self._scope_column(db_models.Project.user_id, user_id, visible_user_ids)
             )
         )
         if search:
@@ -519,9 +511,7 @@ class ScanRepository:
     ) -> int:
         """Counts the total number of projects the caller can see."""
         stmt = select(func.count(db_models.Project.id)).where(
-            self._scope_column(
-                db_models.Project.user_id, user_id, visible_user_ids
-            )
+            self._scope_column(db_models.Project.user_id, user_id, visible_user_ids)
         )
         if search:
             stmt = stmt.filter(db_models.Project.name.ilike(f"%{search}%"))

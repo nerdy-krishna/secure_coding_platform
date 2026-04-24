@@ -78,9 +78,7 @@ class UserGroupRepository:
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
-    async def get_group(
-        self, group_id: uuid.UUID
-    ) -> Optional[db_models.UserGroup]:
+    async def get_group(self, group_id: uuid.UUID) -> Optional[db_models.UserGroup]:
         stmt = (
             select(db_models.UserGroup)
             .options(selectinload(db_models.UserGroup.memberships))
@@ -152,9 +150,7 @@ class UserGroupRepository:
         result = await self.db.execute(stmt)
         return {row[0] for row in result.all()}
 
-    async def list_groups_for_user(
-        self, user_id: int
-    ) -> List[db_models.UserGroup]:
+    async def list_groups_for_user(self, user_id: int) -> List[db_models.UserGroup]:
         stmt = (
             select(db_models.UserGroup)
             .join(
