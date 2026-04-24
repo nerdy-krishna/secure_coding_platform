@@ -39,14 +39,12 @@ const ADMIN_ITEM: NavItem = {
 };
 
 const ROLE_LABELS: Record<SccapRole, string> = {
-  dev: "Individual Dev",
-  enterprise: "AppSec Lead",
+  user: "User",
   admin: "Admin",
 };
 
 const ROLE_INITIALS: Record<SccapRole, string> = {
-  dev: "DV",
-  enterprise: "EL",
+  user: "US",
   admin: "AD",
 };
 
@@ -323,7 +321,7 @@ const RoleMenu: React.FC<RoleMenuProps> = ({ role, setRole, email }) => {
           >
             View as (preview)
           </div>
-          {(["dev", "enterprise", "admin"] as SccapRole[]).map((r) => (
+          {(["user", "admin"] as SccapRole[]).map((r) => (
             <button
               key={r}
               role="menuitemradio"

@@ -20,7 +20,9 @@ import React, {
 
 export type SccapTheme = "light" | "dark";
 export type SccapVariant = "A" | "B";
-export type SccapRole = "dev" | "enterprise" | "admin";
+// H.3 collapsed roles to user + admin. Legacy `dev` / `enterprise`
+// values in localStorage are migrated on read (see readRole).
+export type SccapRole = "user" | "admin";
 
 interface ThemeContextValue {
   theme: SccapTheme;
@@ -52,6 +54,14 @@ function readStored<T extends string>(key: string, fallback: T, valid: readonly 
   return valid.includes(raw as T) ? (raw as T) : fallback;
 }
 
+function readRole(): SccapRole {
+  if (typeof window === "undefined") return "user";
+  const raw = window.localStorage.getItem(STORAGE_KEYS.role);
+  // Migrate legacy values from the pre-H.3 three-role era.
+  if (raw === "dev" || raw === "enterprise") return "user";
+  return raw === "admin" ? "admin" : "user";
+}
+
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
@@ -65,13 +75,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({
     if (typeof window === "undefined") return "";
     return window.localStorage.getItem(STORAGE_KEYS.accent) || "";
   });
-  const [role, setRoleState] = useState<SccapRole>(() =>
-    readStored<SccapRole>(STORAGE_KEYS.role, "dev", [
-      "dev",
-      "enterprise",
-      "admin",
-    ]),
-  );
+  const [role, setRoleState] = useState<SccapRole>(() => readRole());
 
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEYS.role, role);

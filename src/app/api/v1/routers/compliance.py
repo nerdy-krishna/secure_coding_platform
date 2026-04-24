@@ -13,6 +13,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.v1.dependencies import get_visible_user_ids
 from app.core.services.compliance_service import (
     ComplianceService,
     get_compliance_service,
@@ -25,18 +26,6 @@ from app.infrastructure.rag.rag_client import RAGService, get_rag_service
 router = APIRouter(prefix="/compliance", tags=["Compliance"])
 
 
-def _visible_user_ids(user: db_models.User) -> Optional[List[int]]:
-    """Superusers see everything; regular users see their own scans only.
-
-    H.2 will replace this with a helper that expands the list using
-    user_group_memberships. Keeping the stub here makes the swap a
-    one-line edit per consumer.
-    """
-    if user.is_superuser:
-        return None
-    return [user.id]
-
-
 def _service(
     db: AsyncSession = Depends(get_db),
     rag: Optional[RAGService] = Depends(get_rag_service),
@@ -46,16 +35,18 @@ def _service(
 
 @router.get("/stats")
 async def list_framework_stats(
-    user: db_models.User = Depends(current_active_user),
+    _user: db_models.User = Depends(current_active_user),
+    visible_user_ids: Optional[List[int]] = Depends(get_visible_user_ids),
     service: ComplianceService = Depends(_service),
 ):
     """Per-framework doc/findings/score rollup.
 
     Always returns the 3 default frameworks (asvs, proactive_controls,
     cheatsheets) even when no documents are ingested. Custom frameworks
-    from the `frameworks` table follow.
+    from the `frameworks` table follow. Scope (own-scans vs group peers
+    vs admin-everything) comes from H.2's `visible_user_ids` helper.
     """
-    return await service.get_stats(_visible_user_ids(user))
+    return await service.get_stats(visible_user_ids)
 
 
 @router.get("/frameworks/{framework_name}/controls")
