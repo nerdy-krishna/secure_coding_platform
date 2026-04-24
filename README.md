@@ -1,38 +1,102 @@
 # SCCAP — Secure Coding & Compliance Automation Platform
 
-An open-source, AI-powered tool that helps developers and security teams audit code for vulnerabilities and apply intelligent remediations automatically. SCCAP's "Audit-First, Remediate-Intelligently" approach ensures full control and visibility throughout the security analysis process.
+An open-source, AI-powered platform that helps developers and security
+teams audit code for vulnerabilities and apply intelligent
+remediations. SCCAP follows an **"Audit-First, Remediate-Intelligently"**
+approach: every scan runs a cheap preliminary pass, surfaces an
+explicit cost estimate, and waits for your approval before spending on
+the deep analysis. Remediation is a separate, opt-in step.
 
 ## Key Features
 
-* **Comprehensive Code Auditing**: Submit your code by uploading files, providing a Git repository URL, or uploading a project archive (`.zip`, `.tar.gz`). The system performs a deep analysis to identify security vulnerabilities.
-* **Intelligent, AI-Powered Remediation**: Go beyond just finding issues. Select vulnerabilities and let the platform's multi-agent system generate precise code fixes.
-* **Transparent Cost Estimation**: The platform provides a detailed cost estimate for the full, in-depth vulnerability scan, allowing for approval of the major analysis cost upfront. A small, initial analysis is performed using an AI model to understand the code structure and determine which security specialists are needed. The main, intensive scan only proceeds after your explicit approval of the provided estimate.
-* **Selective Scanning**: Use the interactive file tree to include or exclude specific files and folders from the analysis, saving time and reducing costs by focusing only on relevant code.
-* **Downloadable Fixes**: Once remediation is complete, download the entire fixed codebase as a convenient zip archive.
-* **In-Depth Reporting**:
-    * **Executive Summary**: Get a high-level, downloadable PDF summary of the security posture, perfect for stakeholders.
-    * **Detailed Findings**: Explore each vulnerability with details on CWE, severity, and remediation advice.
-    * **Risk Score**: Understand the project's security risk at a glance with a calculated risk score.
-* **Multi-Provider LLM Support**: Choose from a range of Large Language Model providers, including OpenAI, Google, and Anthropic, for analysis needs.
-* **Proactive Security Advisor**: Engage with a built-in chat to get proactive guidance and ask security-related questions about the project.
-* **Test-Validated Remediation (Coming Soon)**: The remediation process will soon integrate with existing test suites to ensure that automated fixes do not break the application's functionality.
+### For developers and security users
+- **Live dashboard** — risk ring, severity breakdown, 14-day scan
+  trend, fixes-ready counter, and monthly LLM spend, all driven by real
+  data (no placeholders). Admins see a platform-wide snapshot variant.
+- **Versatile submission** — upload individual files, pick a Git
+  repository URL, or drop in a `.zip` / `.tar.gz` archive. The
+  selective-files tree lets you exclude what you don't want analyzed.
+- **Two-phase, user-approved scan** — the API publishes a job, the
+  worker runs a cheap *audit* pass to estimate cost, pauses the
+  LangGraph workflow with a native `interrupt()`, and waits for the UI
+  to approve before the expensive deep analysis runs.
+- **Intelligent remediation** — pick findings, let the multi-agent
+  system generate code fixes, and download the patched codebase as a
+  zip. Remediation runs incrementally with a merge agent to resolve
+  file conflicts.
+- **Projects page with per-project stats** — every card shows the
+  latest terminal scan's risk score, severity bar, and fixes-ready
+  count, no client-side heuristics.
+- **Global search** — one TopNav combobox searches projects, scans,
+  and findings simultaneously; scoped to what each user is allowed to
+  see.
+- **Security Advisor with a live context rail** — framework-scoped
+  chat against your RAG-ingested guidelines, with a right-hand rail
+  that surfaces the knowledge sources, referenced findings, and files
+  most likely discussed.
+- **Compliance page** — per-framework coverage card for each of the 3
+  default OWASP frameworks (ASVS, Proactive Controls, Cheatsheets)
+  plus any custom frameworks, with an AI-computed posture score.
+- **Executive Summary PDF + SARIF** — download a stakeholder-ready
+  PDF summary or raw SARIF report for any completed scan.
+- **Multi-provider LLM support** — OpenAI, Anthropic, and Google
+  configured per slot (utility / fast / reasoning) with encrypted API
+  keys stored server-side.
 
-## How It Works: A Simplified Workflow
+### For security admins
+- **User Groups + scoped visibility** — an admin creates groups and
+  adds users by email; a regular user sees their own scans plus any
+  scan owned by a peer they share a group with. Admins see everything.
+- **First-run setup wizard** — the first registered user becomes
+  superuser and is routed through `/setup` to configure LLMs, SMTP,
+  and system settings before the app unlocks for everyone else.
+- **Admin console** — LLM configurations, user groups, users,
+  frameworks (including CSV / git-URL RAG ingestion), agents, prompt
+  templates, system config, SMTP, and runtime logs. A shared Admin
+  sub-nav keeps every surface one click apart.
+- **Encrypted secrets** — every LLM API key and SMTP password is
+  Fernet-encrypted at rest with the installation's `ENCRYPTION_KEY`.
 
-1.  **Submit**: Upload your code and select the files you want to scan.
-2.  **Estimate**: The platform analyzes the code to provide a cost estimate for the audit.
-3.  **Approve**: Review the cost and approve the scan to proceed.
-4.  **Analyze**: AI agents perform a parallel audit to identify vulnerabilities.
-5.  **Review**: Examine the detailed findings and the executive summary report.
-6.  **Remediate**: Select vulnerabilities for automatic fixing.
-7.  **Download**: Download the patched codebase.
+### Integrations and automation
+- **MCP server** — the scan + advisor workflow is exposed as MCP tools
+  (`sccap_submit_scan`, `sccap_get_scan_status`,
+  `sccap_get_scan_result`, `sccap_approve_scan`, `sccap_apply_fixes`,
+  `sccap_ask_advisor`) at `/mcp`, reusing JWT auth so Claude Code,
+  Cursor, or other agentic clients can drive the platform remotely.
+- **LiteLLM-backed cost ledger** — token counting and cost estimation
+  go through LiteLLM's community-maintained model price map, with an
+  admin override per `LLMConfiguration` row for bespoke endpoints.
+  Offline-pinnable via `LITELLM_LOCAL_MODEL_COST_MAP=True`.
+- **Pydantic AI structured output** — every agent returns a validated
+  Pydantic model; malformed outputs trigger a typed retry loop inside
+  the model call instead of a fragile regex fallback.
+- **Observability** — every request gets an `X-Correlation-ID`
+  attached to all logs; the stack ships Fluentd → Loki → Grafana
+  dashboards out of the box.
+
+## How It Works
+
+1. **Submit** code (upload, Git URL, or archive) and pick frameworks +
+   LLM slots.
+2. **Estimate** — a cheap audit pass builds a repo map + dependency
+   graph and produces a cost estimate. The scan pauses at
+   `PENDING_COST_APPROVAL`.
+3. **Approve** (or cancel) in the UI. The worker resumes the same
+   LangGraph thread from the checkpoint.
+4. **Analyze** — triaged specialized agents run in parallel (five at a
+   time under `CONCURRENT_LLM_LIMIT`) in topological dependency order.
+5. **Review** findings in the Results page or download the Executive
+   Summary PDF / SARIF.
+6. **Remediate** — select findings, apply fixes incrementally with a
+   merge agent to resolve conflicts, then download the patched tree.
+
+The full worker graph and state transitions live in
+[`.agent/scanning_flow.md`](.agent/scanning_flow.md).
 
 ## Installation
 
-### Automatic Setup (Recommended)
-We provide automated scripts to set up the environment, build containers, and initialize the database.
+### Automatic setup (recommended)
 
-**macOS / Linux:**
 ```bash
 git clone https://github.com/nerdy-krishna/ai-secure-coding-compliance-platform.git
 cd ai-secure-coding-compliance-platform
@@ -40,19 +104,49 @@ chmod +x setup.sh
 ./setup.sh
 ```
 
-**Windows:**
-Double-click `setup.bat` or run it from the command line.
+The interactive script checks prerequisites, generates secrets, writes
+`.env`, builds + starts the compose stack, runs Alembic migrations, and
+installs the UI dependencies. On Windows, run `setup.bat` from the
+project root.
 
-### Manual Setup
-For detailed manual installation instructions, please refer to the [Installation Guide](docs/docs/getting-started/installation.md).
+### Manual setup
+
+See the [Installation Guide](docs/docs/getting-started/installation.md)
+for the step-by-step path, including VPS-specific notes and
+troubleshooting.
 
 ## Getting Started
 
-1.  **Register**: Create an account on the platform (the first user registered becomes the Superuser).
-2.  **Configure Platform via UI**: Navigate to the **Admin Dashboard** (available to the superuser). Here you must configure:
-    *   **LLM Settings**: Add your API keys, select models, and set token costs for providers like OpenAI, Google, or Anthropic.
-    *   **SMTP Settings**: Configure your email server for notifications and password resets.
-    *   **System Settings**: Manage general application configurations.
-3.  **Submit Code**: Once configured, go to the "Submit Code" page.
-4.  **Analyze**: Choose your submission method, select from the configured AI models, and start the analysis.
-5.  **Approve & Review**: Follow the on-screen prompts to approve the cost and review your report.
+1. **Open the app** at the URL the setup script printed (default
+   `http://localhost`). The first account you register becomes
+   superuser and is routed to `/setup`.
+2. **Finish setup** — add at least one LLM configuration, optional
+   SMTP, and any system settings you need. The `/setup` wizard blocks
+   the rest of the app until this is done.
+3. **Create user groups (optional)** — under *Admin → Groups*, grant
+   teams of users visibility into each other's scans.
+4. **Submit a scan** from *Submit*, approve the cost estimate, and
+   review findings when analysis completes.
+5. **Ask the Advisor** — start a conversation from *Advisor*,
+   optionally scoped to a project so the context rail surfaces the
+   relevant findings and files.
+
+## Stack
+
+Python 3.12 + FastAPI + Poetry · SQLAlchemy async + Alembic ·
+LangGraph 1.x + LangChain 1.x · LiteLLM · Pydantic AI · FastMCP ·
+fastapi-users (JWT Bearer) · Postgres 16 · RabbitMQ · ChromaDB
+(bundled ONNX embedder) · Fluentd → Loki → Grafana · React 18 + Vite
++ TypeScript · Ant Design · TanStack Query · React Router v7.
+
+Full breakdown in
+[`docs/docs/overview/technology-stack.md`](docs/docs/overview/technology-stack.md).
+
+## Contributing
+
+See [`docs/docs/development/contributing.md`](docs/docs/development/contributing.md).
+Issues and PRs welcome.
+
+## License
+
+Open source. See `LICENSE` in the repo root.

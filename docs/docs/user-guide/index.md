@@ -5,18 +5,30 @@ title: User Guide Overview
 
 # User Guide
 
-This section contains guides for users of the SCCAP.
+Walkthroughs for the SCCAP UI, organized by page. Every scan-related
+page respects **visibility scope**: regular users see their own
+scans plus any scan owned by a user they share a group with; admins
+see everything.
 
-## Core Features
-*   [**Submitting Code**](./code-analysis/submitting-code.md): Learn how to upload files or connect repositories.
-*   [**Multi-Framework Scanning**](./code-analysis/multi-framework-scanning.md): Understand how to select and apply different standards.
-*   [**Understanding Results**](./code-analysis/understanding-results.md): Navigate the analysis findings.
-*   [**Managing Findings**](./code-analysis/managing-findings.md): Accept remediations and dismiss false positives.
-*   [**Reporting**](./reporting.md): Generate executive summaries.
+## For developers + users
 
-## Admin Configurations
-For platform administrators and superusers, settings are centrally managed via the **Admin Dashboard**:
-*   **System Settings**: Manage global parameters like session timeouts, file limits, and logging.
-*   **User Management**: An interface for creating, editing, and managing platform users.
-*   **SMTP Settings**: Configure mail servers dynamically for application notifications.
-*   **LLM Configuration**: Manage AI providers and their API keys securely.
+- [**Dashboard**](./dashboard-overview.md) — live risk ring, severity
+  bar, 14-day scan trend, fixes-ready, monthly spend.
+- **Submit + analyze code**
+  - [Submitting Code](./code-analysis/submitting-code.md)
+  - [Multi-Framework Scanning](./code-analysis/multi-framework-scanning.md)
+  - [Understanding Results](./code-analysis/understanding-results.md)
+  - [Managing Findings + Remediation](./code-analysis/managing-findings.md)
+- **Security Advisor (chat)**
+  - [Guideline-backed Q&A](./chat-interfaces/guideline-provision.md)
+  - [Secure Code Generation](./chat-interfaces/secure-code-generation.md)
+- [**Reporting**](./reporting.md) — Executive Summary PDF + SARIF + impact report.
+- [Unit-test integration](./unit-test-integration.md) — roadmap note.
+
+## For admins
+
+All admin surfaces are superuser-gated server-side. A single
+`AdminSubNav` strip in the `DashboardLayout` makes every admin page
+one click apart. See the
+[Platform Features → Admin console](../overview/features.md#admin-console)
+section for the full index.

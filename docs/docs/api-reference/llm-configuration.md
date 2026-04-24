@@ -5,13 +5,35 @@ title: LLM Configuration
 
 # LLM Configuration API
 
-These endpoints are used to manage the LLM provider configurations for the platform.
+These endpoints manage the LLM provider configurations used for scans
+and chat. Provider API keys are **Fernet-encrypted at rest** using the
+installation's `ENCRYPTION_KEY`.
 
 **Base URL:** `/api/v1/admin/llm-configs`
 
 :::danger Permissions
-All endpoints in this section require **Superuser** authentication.
+Create / delete endpoints require **Superuser** authentication. The
+list endpoint is open to any authenticated user (so the submit UI can
+offer a slot picker).
 :::
+
+## Pricing: LiteLLM + admin override
+
+Token counting and cost estimation for every LLM call run through
+LiteLLM. The `input_cost_per_million` / `output_cost_per_million`
+fields on a configuration are **overrides**, not required values:
+
+- **Leave them zero** (default) and SCCAP calls
+  `litellm.cost_per_token(model=model_name, ...)` against the
+  community-maintained model price map. Offline-pinnable with
+  `LITELLM_LOCAL_MODEL_COST_MAP=True`.
+- **Set them to non-zero** to override LiteLLM for bespoke endpoints
+  (Azure, private deployments, negotiated rates). SCCAP treats the
+  override as authoritative for both pre-call estimation and
+  post-call actuals.
+
+See [Architecture → LLM Integration](../architecture/llm-integration.md)
+for the full data flow.
 
 ## Create LLM Configuration
 

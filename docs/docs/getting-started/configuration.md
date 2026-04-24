@@ -67,7 +67,16 @@ ENCRYPTION_KEY=your-super-secret-generated-key-goes-here
 | `RABBITMQ_HOST` | RabbitMQ host (internal) | `rabbitmq` |
 | `RABBITMQ_PORT` | AMQP port | `5672` |
 | `RABBITMQ_MANAGEMENT_PORT` | Port for RabbitMQ UI | `15672` |
-| `RABBITMQ_SUBMISSION_QUEUE` | Queue name for analysis tasks | `code_analysis_queue` |
+
+The worker subscribes to three queues (names are controlled by
+`src/app/config/config.py`; most deployments leave them at the
+defaults):
+
+| Queue | Default name | Purpose |
+| ----- | ------------ | ------- |
+| `RABBITMQ_SUBMISSION_QUEUE` | `code_submission_queue` | New scan submissions (worker runs the audit pass and pauses at cost approval) |
+| `RABBITMQ_APPROVAL_QUEUE` | `analysis_approved_queue` | User approved the cost estimate; worker resumes the paused LangGraph thread |
+| `RABBITMQ_REMEDIATION_QUEUE` | `remediation_trigger_queue` | User requested fixes; worker runs incremental remediation |
 
 ---
 
@@ -81,19 +90,41 @@ ENCRYPTION_KEY=your-super-secret-generated-key-goes-here
 
 ---
 
+## 💸 LiteLLM (Token counting + cost estimation)
+
+| Variable | Description | Example | Notes |
+| -------- | ----------- | ------- | ----- |
+| `LITELLM_LOCAL_MODEL_COST_MAP` | Pin LiteLLM to its bundled model-price map instead of fetching it at runtime. | `True` | Recommended. Keeps scan-cost calculations offline. |
+
+Every LLM interaction is priced through `litellm.token_counter(...)` +
+`litellm.cost_per_token(...)`. The `llm_configurations` table lets
+admins provide an override (non-zero `input_cost_per_million` /
+`output_cost_per_million`) for bespoke endpoints (Azure, private
+deployments); otherwise LiteLLM's community-maintained price map is
+used. See
+[Architecture → LLM Integration](../architecture/llm-integration.md)
+for the full data flow.
+
+---
+
 ## 🤖 Dynamic UI Configuration (Major Change)
 
-> **LLM API keys and SMTP Settings are no longer configured via the `.env` file.**
+> **LLM API keys and SMTP Settings are not stored in `.env`.**
 
-The platform now includes a secure **Admin Dashboard** for dynamic configuration.
+The platform includes a secure **Admin Dashboard** for dynamic
+configuration. After launching the app and logging in as the
+**superuser** (the first registered user), you are routed to
+`/setup` to:
 
-After launching the app and logging in as a **superuser** (the first configured user), navigate to the Admin interface to:
+- Add/remove LLM providers (OpenAI, Google, Anthropic, etc.) and
+  securely enter API keys — encrypted at rest with your
+  `ENCRYPTION_KEY`.
+- Configure **SMTP Settings** for password-reset emails.
+- Manage **System Settings** such as log verbosity, CORS origins, and
+  the LLM optimization mode.
 
-- Add/remove LLM providers (e.g., OpenAI, Google, Anthropic) and securely enter API keys (encrypted with your `ENCRYPTION_KEY`).
-- Configure **SMTP Settings** for sending email notifications and password resets.
-- Manage **System Settings** such as log verbosity and database cleanup policies.
-
-This approach ensures greater **security** and **flexibility** — and keeps secrets out of source-controlled config files.
+This keeps secrets out of source-controlled config files and lets
+admins rotate credentials without redeploying.
 
 ---
 
