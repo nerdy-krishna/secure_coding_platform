@@ -110,11 +110,17 @@ for the canonical version.
    state is checkpointed).
 4. User approves: API publishes to `analysis_approved_queue`; worker
    resumes the same thread with `Command(resume=payload)`.
-5. Deep analysis: `triage_agents` →
-   `dependency_aware_analysis_orchestrator` (topological order,
-   per-file chunking + triaged specialized agents, concurrent under
-   `CONCURRENT_LLM_LIMIT=5`) → `correlate_findings` → `save_results`
-   → `run_impact_reporting` → `save_final_report`.
-6. For `REMEDIATE` scans the orchestrator applies fixes incrementally
-   and resolves conflicts via a merge agent, then writes a
-   `POST_REMEDIATION` snapshot.
+5. Single-pass parallel analysis: `analyze_files_parallel` runs every
+   relevant agent against every file from the `ORIGINAL_SUBMISSION`
+   snapshot in parallel, bounded by a single
+   `asyncio.Semaphore(CONCURRENT_LLM_LIMIT=5)` over the union of
+   file × chunk × agent calls. Per-file agent triage is inline
+   (extension-based routing); per-file dependency context is still
+   injected from the repository map.
+6. `correlate_findings` (group by file/CWE/line, merge agent
+   corroborations) → `consolidate_and_patch` (REMEDIATE-only:
+   merges per-file fixes via the merge agent, tree-sitter
+   syntax-verifies, builds the `POST_REMEDIATION` snapshot) →
+   `save_results` → `save_final_report` (writes the coarse 0–10
+   severity-bucket `risk_score` + the `summary` JSON, sets
+   `COMPLETED` / `REMEDIATION_COMPLETED`) → END.

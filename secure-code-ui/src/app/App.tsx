@@ -21,7 +21,6 @@ import SMTPSettingsTab from "../pages/admin/SMTPSettingsTab";
 import AgentManagementPage from "../pages/admin/AgentManagementPage";
 import FrameworkManagementPage from "../pages/admin/FrameworkManagementPage";
 import PromptManagementPage from "../pages/admin/PromptManagementPage";
-import ExecutiveSummaryPage from "../pages/analysis/ExecutiveSummaryPage";
 import LlmLogViewerPage from "../pages/analysis/LlmLogViewerPage";
 import ProjectsPage from "../pages/analysis/ProjectsPage";
 import ResultsPage from "../pages/analysis/ResultsPage";
@@ -150,10 +149,6 @@ function AppContent() {
           />
           <Route path="/analysis/results" element={<ProjectsPage />} />
           <Route path="/analysis/results/:scanId" element={<ResultsPage />} />
-          <Route
-            path="/scans/:scanId/executive-summary"
-            element={<ExecutiveSummaryPage />}
-          />
           <Route
             path="/scans/:scanId/llm-logs"
             element={<LlmLogViewerPage />}

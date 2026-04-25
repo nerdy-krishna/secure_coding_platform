@@ -37,8 +37,6 @@ the deep analysis. Remediation is a separate, opt-in step.
 - **Compliance page** — per-framework coverage card for each of the 3
   default OWASP frameworks (ASVS, Proactive Controls, Cheatsheets)
   plus any custom frameworks, with an AI-computed posture score.
-- **Executive Summary PDF + SARIF** — download a stakeholder-ready
-  PDF summary or raw SARIF report for any completed scan.
 - **Multi-provider LLM support** — OpenAI, Anthropic, and Google
   configured per slot (utility / fast / reasoning) with encrypted API
   keys stored server-side.
@@ -85,8 +83,7 @@ the deep analysis. Remediation is a separate, opt-in step.
    LangGraph thread from the checkpoint.
 4. **Analyze** — triaged specialized agents run in parallel (five at a
    time under `CONCURRENT_LLM_LIMIT`) in topological dependency order.
-5. **Review** findings in the Results page or download the Executive
-   Summary PDF / SARIF.
+5. **Review** findings in the Results page.
 6. **Remediate** — select findings, apply fixes incrementally with a
    merge agent to resolve conflicts, then download the patched tree.
 

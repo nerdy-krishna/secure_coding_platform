@@ -35,6 +35,12 @@ admins see everything.
 - Framework multi-select (3 defaults plus any admin-added custom
   framework).
 
+The deep analysis runs in a single parallel pass: every relevant
+agent sees every file from the original submission concurrently
+(bounded by `CONCURRENT_LLM_LIMIT=5`). Per-file dependency context
+is still injected from the repository map so agents have visibility
+into imports.
+
 ## Projects
 
 - Grid of projects owned by any user in the caller's visibility set.

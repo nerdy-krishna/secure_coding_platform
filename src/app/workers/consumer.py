@@ -229,8 +229,6 @@ async def _build_initial_state(
         "findings": [],
         "proposed_fixes": None,
         "agent_results": None,
-        "impact_report": None,
-        "sarif_report": None,
         "error_message": None,
     }
 

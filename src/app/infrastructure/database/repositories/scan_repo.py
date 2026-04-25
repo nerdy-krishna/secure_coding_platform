@@ -297,12 +297,10 @@ class ScanRepository:
         self,
         scan_id: uuid.UUID,
         status: str,
-        impact_report: Optional[Dict[str, Any]],
-        sarif_report: Optional[Dict[str, Any]],
         summary: Optional[Dict[str, Any]],
         risk_score: Optional[int],
     ):
-        """Saves the final analysis reports, sets the completion timestamp, and updates the status."""
+        """Saves the final summary + risk score, sets the completion timestamp, and updates the status."""
         logger.info(
             "Saving final reports and status to DB.",
             extra={"scan_id": str(scan_id), "new_status": status},
@@ -312,8 +310,6 @@ class ScanRepository:
             "status": status,
             "completed_at": completed_at_aware,
             "risk_score": risk_score,
-            "impact_report": impact_report,
-            "sarif_report": sarif_report,
             "summary": summary,
         }
         stmt = (

@@ -27,10 +27,6 @@ from app.infrastructure.database.models import CweOwaspMapping
 from app.infrastructure.agents.generic_specialized_agent import (
     build_generic_specialized_agent_graph,
 )
-from app.infrastructure.agents.impact_reporting_agent import (
-    ImpactReportingAgentState,
-    build_impact_reporting_agent_graph,
-)
 from app.infrastructure.database import models as db_models
 from app.infrastructure.database.repositories.llm_config_repo import LLMConfigRepository
 from app.infrastructure.database.repositories.scan_repo import ScanRepository
@@ -67,7 +63,6 @@ from app.shared.lib.scan_status import (  # noqa: E402
     STATUS_ANALYZING_CONTEXT,
     STATUS_COMPLETED,
     STATUS_FAILED,
-    STATUS_GENERATING_REPORTS,
     STATUS_PENDING_APPROVAL,
     STATUS_QUEUED_FOR_SCAN,
     STATUS_REMEDIATION_COMPLETED,
@@ -102,8 +97,6 @@ class WorkerState(TypedDict):
     # pairs before correlation; the correlated findings live in `findings`.
     proposed_fixes: Optional[List[FixResult]]
     agent_results: Optional[List[Dict[str, Any]]]
-    impact_report: Optional[Dict[str, Any]]
-    sarif_report: Optional[Dict[str, Any]]
     error_message: Optional[str]
 
 
@@ -960,40 +953,8 @@ async def save_results_node(state: WorkerState) -> Dict[str, Any]:
     return {}
 
 
-async def run_impact_reporting(state: WorkerState) -> Dict[str, Any]:
-    scan_id = state["scan_id"]
-    logger.info(f"Entering node to run ImpactReportingAgent for scan {scan_id}.")
-    await ScanRepository(AsyncSessionLocal()).update_status(
-        scan_id, STATUS_GENERATING_REPORTS
-    )
-    reporting_input_state: ImpactReportingAgentState = {
-        "scan_id": scan_id,
-        "llm_config_id": state.get("reasoning_llm_config_id"),
-        "findings": state.get("findings", []),
-        "impact_report": None,
-        "sarif_report": None,
-        "error": None,
-    }
-    report_output_state = await build_impact_reporting_agent_graph().ainvoke(
-        reporting_input_state
-    )
-    if report_output_state.get("error"):
-        return {
-            "error_message": f"ImpactReportingAgent failed: {report_output_state['error']}"
-        }
-    return {
-        "impact_report": report_output_state.get("impact_report"),
-        "sarif_report": report_output_state.get("sarif_report"),
-    }
-
-
 async def save_final_report_node(state: WorkerState) -> Dict[str, Any]:
-    scan_id, impact_report, sarif_report, findings = (
-        state["scan_id"],
-        state.get("impact_report"),
-        state.get("sarif_report"),
-        state.get("findings", []),
-    )
+    scan_id, findings = state["scan_id"], state.get("findings", [])
     logger.info(f"Saving final reports and risk score for scan {scan_id}.")
     severity_map = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0, "INFORMATIONAL": 0}
     for f in findings:
@@ -1028,8 +989,6 @@ async def save_final_report_node(state: WorkerState) -> Dict[str, Any]:
     await ScanRepository(AsyncSessionLocal()).save_final_reports_and_status(
         scan_id=scan_id,
         status=final_status,
-        impact_report=impact_report,
-        sarif_report=sarif_report,
         summary=summary_data,
         risk_score=final_risk_score,
     )
@@ -1056,7 +1015,6 @@ workflow.add_node("analyze_files_parallel", analyze_files_parallel_node)
 workflow.add_node("correlate_findings", correlate_findings_node)
 workflow.add_node("consolidate_and_patch", consolidate_and_patch_node)
 workflow.add_node("save_results", save_results_node)
-workflow.add_node("run_impact_reporting", run_impact_reporting)
 workflow.add_node("save_final_report", save_final_report_node)
 workflow.add_node("handle_error", handle_error_node)
 

@@ -15,11 +15,6 @@ from app.shared.lib.archive import extract_archive_to_files, is_archive_filename
 from app.shared.lib.files import get_language_from_filename
 from app.api.v1 import models as api_models
 from app.infrastructure.database import models as db_models
-from app.core import schemas as agent_schemas
-from app.shared.lib.reporting import (
-    create_executive_summary_html,
-    generate_pdf_from_html,
-)
 from app.shared.lib.scan_status import (
     ACTIVE_SCAN_STATUSES,
     COMPLETED_SCAN_STATUSES,
@@ -376,13 +371,11 @@ class SubmissionService:
                 detail="Scan not found or not authorized.",
             )
 
-        # --- ADD THIS LOGGING BLOCK ---
         logger.debug(
             f"[DEBUG] Fetched scan from DB. Findings loaded: {len(scan.findings)}. "
-            f"Impact report loaded: {bool(scan.impact_report)}. Summary loaded: {bool(scan.summary)}.",
+            f"Summary loaded: {bool(scan.summary)}.",
             extra={"scan_id": str(scan_id)},
         )
-        # --- END LOGGING BLOCK ---
 
         original_code_map = {}
         fixed_code_map = {}
@@ -477,8 +470,6 @@ class SubmissionService:
 
         return api_models.AnalysisResultDetailResponse(
             status=scan.status,
-            impact_report=scan.impact_report,
-            sarif_report=scan.sarif_report,
             summary_report=summary_report_response,
             original_code_map=original_code_map or None,
             fixed_code_map=fixed_code_map or None,
@@ -553,8 +544,6 @@ class SubmissionService:
                 completed_at=scan.completed_at,
                 cost_details=scan.cost_details,
                 events=[api_models.ScanEventItem.from_orm(e) for e in scan.events],
-                has_sarif_report=bool(scan.sarif_report),
-                has_impact_report=bool(scan.impact_report),
             )
             for scan in scans_raw
         ]
@@ -573,23 +562,6 @@ class SubmissionService:
             visible_user_ids=visible_user_ids,
         )
         return [p.name for p in projects]
-
-    async def get_sarif_for_scan(
-        self, scan_id: uuid.UUID, user: db_models.User
-    ) -> Dict[str, Any]:
-        """Retrieves just the SARIF report for a given scan, ensuring user has access."""
-        scan = await self.repo.get_scan(scan_id)
-        if not scan or (scan.user_id != user.id and not user.is_superuser):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Scan not found or not authorized.",
-            )
-        if not scan.sarif_report:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="SARIF report not available for this scan.",
-            )
-        return scan.sarif_report
 
     async def get_llm_interactions_for_scan(
         self, scan_id: uuid.UUID, user: db_models.User
@@ -639,8 +611,6 @@ class SubmissionService:
                     completed_at=s.completed_at,
                     cost_details=s.cost_details,
                     events=[api_models.ScanEventItem.from_orm(e) for e in s.events],
-                    has_sarif_report=bool(s.sarif_report),
-                    has_impact_report=bool(s.impact_report),
                 )
                 for s in scans_raw
             ]
@@ -875,67 +845,3 @@ class SubmissionService:
         logger.info(
             f"Selective fixes applied for scan {scan_id}. Status set to REMEDIATION_COMPLETED."
         )
-
-    async def generate_executive_summary_pdf(
-        self, scan_id: uuid.UUID, user: db_models.User
-    ) -> Optional[bytes]:
-        """Generates a PDF byte stream for the executive summary report."""
-        scan = await self.repo.get_scan_with_details(scan_id)
-
-        if not scan or (scan.user_id != user.id and not user.is_superuser):
-            logger.warning(
-                f"User {user.id} attempted to access PDF for unauthorized scan {scan_id}."
-            )
-            return None
-
-        if not scan.impact_report or not scan.summary:
-            logger.warning(
-                f"PDF generation failed: Scan {scan_id} is missing impact or summary report data."
-            )
-            return None
-
-        # Re-construct Pydantic models from the JSON data for type safety
-        impact_report_data = scan.impact_report or {}
-        impact_report_model = agent_schemas.ImpactReport(
-            executive_summary=impact_report_data.get("executive_summary", "N/A"),
-            vulnerability_overview=impact_report_data.get(
-                "vulnerability_overview", "N/A"
-            ),
-            high_risk_findings_summary=impact_report_data.get(
-                "high_risk_findings_summary", []
-            ),
-            remediation_strategy=impact_report_data.get("remediation_strategy", "N/A"),
-            vulnerability_categories=impact_report_data.get(
-                "vulnerability_categories", []
-            ),
-            estimated_remediation_effort=impact_report_data.get(
-                "estimated_remediation_effort", "N/A"
-            ),
-            required_architectural_changes=impact_report_data.get(
-                "required_architectural_changes", []
-            ),
-        )
-
-        # Build the summary report model from all necessary sources
-        summary_data_from_db = scan.summary or {}
-        summary_report_model = api_models.SummaryReportResponse(
-            submission_id=scan.id,
-            project_id=scan.project_id,
-            project_name=scan.project.name,
-            scan_type=scan.scan_type,
-            analysis_timestamp=scan.completed_at,
-            selected_frameworks=scan.frameworks or [],
-            summary=summary_data_from_db.get("summary", {}),
-            overall_risk_score=summary_data_from_db.get("overall_risk_score", {}),
-            # This is a bit of a hack for PDF generation, we don't need the files here
-            files_analyzed=[],
-        )
-
-        # Generate the HTML and then the PDF
-        html_content = create_executive_summary_html(
-            impact_report_model, summary_report_model
-        )
-        pdf_bytes = generate_pdf_from_html(html_content)
-
-        logger.info(f"Successfully generated PDF for scan {scan_id}.")
-        return pdf_bytes

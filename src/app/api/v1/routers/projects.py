@@ -1,6 +1,6 @@
 import logging
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 from fastapi import (
     APIRouter,
@@ -383,29 +383,6 @@ async def apply_fixes(
     }
 
 
-@router.get("/scans/{scan_id}/executive-summary/download", response_class=Response)
-async def download_executive_summary(
-    scan_id: uuid.UUID,
-    user: db_models.User = Depends(current_active_user),
-    service: SubmissionService = Depends(get_scan_service),
-):
-    """Generates and downloads the executive summary as a PDF."""
-    pdf_bytes = await service.generate_executive_summary_pdf(scan_id, user)
-    if not pdf_bytes:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Report data not found or you do not have permission to access it.",
-        )
-
-    return Response(
-        content=pdf_bytes,
-        media_type="application/pdf",
-        headers={
-            "Content-Disposition": f"attachment; filename=executive-summary-{scan_id}.pdf"
-        },
-    )
-
-
 @router.get(
     "/scans/{scan_id}/result", response_model=api_models.AnalysisResultDetailResponse
 )
@@ -447,16 +424,6 @@ async def get_scan_history_for_project(
     return await service.get_paginated_scans_for_project(
         project_id, user.id, skip, limit
     )
-
-
-@router.get("/scans/{scan_id}/sarif", response_model=Dict[str, Any])
-async def download_sarif_report(
-    scan_id: uuid.UUID,
-    user: db_models.User = Depends(current_active_user),
-    service: SubmissionService = Depends(get_scan_service),
-):
-    """Downloads the SARIF report for a specific scan."""
-    return await service.get_sarif_for_scan(scan_id, user)
 
 
 @router.get(

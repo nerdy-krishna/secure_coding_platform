@@ -14,65 +14,85 @@ clean step-level retries, and structured parallelism.
 ## Top-level graph
 
 `src/app/infrastructure/workflows/worker_graph.py` defines the scan
-`StateGraph`. The main branches keyed on `scan.status`:
+`StateGraph`. The wired flow is:
 
-1. `QUEUED` → audit-and-estimate path
-2. `QUEUED_FOR_SCAN` → deep-analysis path (resumed after approval)
-3. `REMEDIATION_TRIGGERED` → remediation path
+```
+retrieve_and_prepare_data
+  → estimate_cost            (interrupt → resume via Command)
+  → analyze_files_parallel
+  → correlate_findings
+  → consolidate_and_patch    (no-op for AUDIT / SUGGEST)
+  → save_results
+  → save_final_report → END
+```
 
-### Audit path
+`handle_error` is reachable from every node via `should_continue`
+conditional edges and sets status `FAILED`.
+
+### Audit pass
 
 `retrieve_and_prepare_data` → builds the `RepositoryMappingEngine` +
 `ContextBundlingEngine` dependency graph → `estimate_cost` computes
-projected token + dollar cost and sets status to
-`PENDING_COST_APPROVAL` → calls `interrupt()` → graph pauses with
-full state in the checkpointer. The API remains free to poll
-`/scans/{id}` or stream `/scans/{id}/stream` for status changes.
+projected token + dollar cost via LiteLLM, sets status to
+`PENDING_COST_APPROVAL`, and calls `interrupt()`. The graph pauses
+with full state in the checkpointer; the UI polls `/scans/{id}` or
+streams `/scans/{id}/stream` for status changes.
 
-### Deep analysis path
+### Single-pass parallel analysis
 
-`triage_agents` decides which specialized agents to run →
-`dependency_aware_analysis_orchestrator` walks the dependency graph in
-topological order. For each file it:
+When the user approves, the worker resumes the **same** thread with
+`Command(resume=...)` and execution falls through to
+`analyze_files_parallel`. Key properties:
 
-1. Chunks the file with `shared/analysis_tools/chunker.py` (semantic
-   split; keeps function + class bodies intact).
-2. Fans out chunks to the **triaged specialized agents** — the
-   orchestrator bounds concurrency with a semaphore keyed on
-   `CONCURRENT_LLM_LIMIT` (default 5) so LLM rate limits aren't
-   blown during large scans.
-3. Collects per-chunk findings, dedupes, correlates cross-file
-   references, and streams results back into the graph state.
+- **No topological ordering, no cross-file patch propagation.** Every
+  agent sees the original code from the `ORIGINAL_SUBMISSION`
+  snapshot.
+- **Per-file agent triage is inline** via
+  `resolve_agents_for_file(file_path, all_relevant_agents)` —
+  extension-based routing, not a separate LLM triage node.
+- **Per-file dependency context** is injected from the repository
+  map: `build_dep_summary(file_path)` reads symbol signatures from
+  successors in the dependency graph and prefixes each chunk with a
+  `# --- [DEPENDENCY CONTEXT] ---` block.
+- **Concurrency** is a single `asyncio.Semaphore(CONCURRENT_LLM_LIMIT)`
+  (default 5) over the union of file × chunk × agent calls.
+- **No mid-graph DB writes.** Findings + `proposed_fixes` flow through
+  state to `consolidate_and_patch` and `save_results`.
 
-`correlate_findings` → `save_results` → `run_impact_reporting` →
-`save_final_report` wraps up.
+### Correlation + remediation
 
-### Remediation path
+`correlate_findings` groups duplicate findings by
+`(file_path, CWE, line_number)` and merges agent corroborations.
+`consolidate_and_patch` is REMEDIATE-only: groups `proposed_fixes`
+by file, resolves line-range conflicts via `_run_merge_agent`,
+tree-sitter syntax-verifies the patched content, and builds
+`final_file_map` for the `POST_REMEDIATION` snapshot. AUDIT is a
+no-op; SUGGEST keeps the embedded `fixes` field on each finding but
+doesn't build a snapshot.
 
-Runs for `REMEDIATE`-type scans. The orchestrator applies fixes
-**incrementally** (one finding at a time, not a big-bang patch) and
-runs a dedicated merge agent to resolve conflicts when multiple fixes
-touch the same file. The final patched tree is written as a
-`POST_REMEDIATION` snapshot so users can diff against the
-`ORIGINAL_SUBMISSION`.
+`save_results` persists everything; `save_final_report` writes the
+coarse 0–10 severity-bucket `risk_score` and the `summary` JSON, and
+sets the final status (`COMPLETED` or `REMEDIATION_COMPLETED`).
 
 ## Specialized agents
 
-Specialized agents live under `src/app/infrastructure/agents/`. The
-important ones:
+Specialized agents live under `src/app/infrastructure/agents/`:
 
 - **`generic_specialized_agent`** — parameterized per finding type;
-  the workhorse called by the orchestrator. Takes a chunk + a
-  finding-type prompt template, calls the LLM, returns a validated
-  Pydantic model.
-- **`impact_reporting_agent`** — takes the full list of findings and
-  produces the executive summary's impact analysis (for the PDF +
-  Admin views).
+  the workhorse called by `analyze_files_parallel`. Takes a chunk +
+  a finding-type prompt template, calls the LLM, returns a
+  validated Pydantic model.
 - **`chat_agent`** — one-shot LLM call used by the Advisor. Runs RAG
   retrieval scoped to the session's `frameworks`, injects the docs
   into the prompt, and returns a response + usage metadata.
 - **`symbol_map_agent`** — builds the repo-map symbol index used by
   `ContextBundlingEngine`.
+
+Impact-summary and SARIF generation were removed in the
+2026-04-26 cleanup (the impact-reporting node was registered but
+never wired into the graph). Re-introducing them is a future
+work item; the existing `save_final_report` is the right insertion
+point for an additional reporting node.
 
 ## Structured output with Pydantic AI
 

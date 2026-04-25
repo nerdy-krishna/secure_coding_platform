@@ -251,8 +251,8 @@ async def sccap_get_scan_status(scan_id: str) -> Dict[str, Any]:
 
 @mcp.tool
 async def sccap_get_scan_result(scan_id: str) -> Dict[str, Any]:
-    """Fetch the final findings + optional SARIF/impact report for a
-    completed scan. Returns an error dict if the scan is still running."""
+    """Fetch the final findings + summary for a completed scan. Returns
+    an error dict if the scan is still running."""
     async with AsyncSessionLocal() as session:
         user = await _current_user(session)
         scan_service = _build_scan_service(ScanRepository(session))

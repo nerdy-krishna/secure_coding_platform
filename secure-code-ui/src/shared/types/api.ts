@@ -223,22 +223,10 @@ export interface SummaryReport {
   overall_risk_score?: OverallRiskScore;
 }
 
-export interface ImpactReport {
-  executive_summary: string;
-  vulnerability_overview: string;
-  high_risk_findings_summary: string[];
-  remediation_strategy: string;
-  vulnerability_categories: string[];
-  estimated_remediation_effort: string;
-  required_architectural_changes: string[];
-}
-
 export interface ScanResultResponse {
   scan_id: string;
   status: string;
   summary_report?: SummaryReport;
-  impact_report?: ImpactReport;
-  sarif_report?: { [key: string]: JsonValue };
   original_code_map?: { [filePath: string]: string };
   fixed_code_map?: { [filePath: string]: string };
 }
@@ -263,8 +251,6 @@ export interface ScanHistoryItem {
   completed_at: string | null;
   cost_details: CostDetails | null;
   events: ScanEventItem[];
-  has_sarif_report: boolean;
-  has_impact_report: boolean;
   llm_interactions?: LLMInteractionResponse[];
 }
 

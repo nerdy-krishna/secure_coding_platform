@@ -13,9 +13,10 @@ findings, decide what to remediate, and export downstream artifacts.
 
 - **Header** — scan ID, project name, final status, created/completed
   timestamps, cost (sum of `llm_interactions.cost` for this scan),
-  primary download CTAs (PDF, SARIF).
-- **Summary strip** — total findings grouped by severity; posture
-  score using the same weighted-findings heuristic as the Dashboard.
+  and a link to the LLM-interactions log.
+- **Summary strip** — total findings grouped by severity; coarse
+  0–10 risk score on the scan row (separate from the Dashboard /
+  Compliance weighted-findings posture).
 - **Per-file panels** — every analyzed file gets a collapsible
   section. Expand to see chunk-level findings in context, with:
   - Title + severity chip
@@ -34,25 +35,15 @@ Informational) and a confidence (High / Medium / Low). The risk
 score uses severity weights; the UI surfaces confidence inline so
 reviewers can prioritize triage.
 
-## Impact report
+## Reports that aren't shipped today
 
-The Impact tab on the Results page renders the
-`impact_reporting_agent` output: a narrative summary + recommended
-priority order, suitable for dropping into a PR review.
-
-## SARIF
-
-The SARIF tab renders the raw SARIF 2.1 document, and the "Download
-SARIF" button exports it for use in VS Code, Azure DevOps, or GitHub
-Advanced Security. The same data powers the finding list; SARIF is
-just a portable serialization.
-
-## Executive summary
-
-"Download Executive Summary" renders the stakeholder-ready PDF
-(`create_executive_summary_html` → `generate_pdf_from_html`). It's
-designed for sharing with non-developers and deliberately omits
-per-chunk reasoning.
+Earlier versions of SCCAP rendered an Impact tab (narrative summary
+from the `impact_reporting_agent`), exported a SARIF 2.1 document,
+and offered an Executive Summary PDF download. **All three were
+removed in the 2026-04-26 cleanup** — the impact-reporting node
+was registered but never wired into the graph, so the surfaces
+were rendering empty. They'll come back as a future feature.
+For now the Results page is the authoritative view of every scan.
 
 ## Related links
 

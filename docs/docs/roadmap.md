@@ -11,6 +11,12 @@ push on the platform.
 
 ## Near-term
 
+- **Re-introduce impact reporting + SARIF export** — the
+  `impact_reporting_agent` and SARIF generator were removed in the
+  2026-04-26 cleanup because the orchestrator node was registered
+  but never wired into the graph. Re-introducing both with a clean
+  insertion point between `save_results` and `save_final_report` is
+  on the list once we have a clear use-case driving the design.
 - **Test-validated remediation** — detect the project's test
   runner, apply each selected fix, run existing tests against the
   patched code, and roll back fixes that break tests. Replaces the
