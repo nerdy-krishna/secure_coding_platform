@@ -4,10 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Stack
 
-- **Backend:** Python 3.12, FastAPI, Poetry, SQLAlchemy (async) + Alembic, LangGraph, `fastapi-users` (JWT Bearer)
+- **Backend:** Python 3.12, FastAPI, Poetry, SQLAlchemy (async) + Alembic, **LangGraph 1.x + LangChain 1.x**, **LiteLLM** (cost / token), **Pydantic AI** (structured output retry), **FastMCP** (`/mcp` tool surface), `fastapi-users` (JWT Bearer)
 - **Worker:** separate container, consumes RabbitMQ via `pika` (blocking) and invokes the LangGraph workflow with an `AsyncPostgresSaver` checkpointer
 - **Frontend:** React 18 + Vite + TypeScript, Ant Design, TanStack Query, React Router v7 (`secure-code-ui/`)
-- **Infra:** Postgres 16, RabbitMQ, ChromaDB (RAG), Fluentd → Loki → Grafana, optional Let's Encrypt via certbot
+- **Infra:** Postgres 16, RabbitMQ, ChromaDB (RAG, bundled ONNX embedder — no `sentence-transformers`), Fluentd → Loki → Grafana, optional Let's Encrypt via certbot
 
 ## Common commands
 
@@ -20,18 +20,21 @@ docker compose up -d --build                   # rebuild + start all services
 docker compose logs -f app worker              # tail backend + worker
 
 # Migrations (Alembic reads ALEMBIC_DATABASE_URL from .env; prepend_sys_path=src)
+# Note: env.py drives migrations via create_async_engine(), so the URL must use
+# postgresql+asyncpg:// even though the Alembic CLI itself is sync.
 docker compose exec app alembic upgrade head
 docker compose exec app alembic revision --autogenerate -m "msg"
 docker compose exec app alembic downgrade -1
 
-# Tests (pytest + pytest-asyncio; Playwright test in tests/ hits the running UI at http://localhost)
-docker compose exec app poetry run pytest
-docker compose exec app poetry run pytest tests/test_ui_setup.py::test_setup_flow -v
+# Tests (pytest + pytest-asyncio; rollback-per-test isolation via tests/conftest.py)
+docker compose exec app pytest                                  # full suite (excludes Playwright e2e by default)
+docker compose exec app pytest tests/test_compliance_service.py -v
+docker compose exec app pytest tests/test_ui_setup.py::test_setup_flow -v   # Playwright; needs full stack
 
-# Lint / format (dev deps: ruff, black, mypy)
-docker compose exec app poetry run ruff check src
-docker compose exec app poetry run black src
-docker compose exec app poetry run mypy src
+# Lint / format / type-check (run from host with python3, or use the container)
+python3 -m ruff check src
+python3 -m black src
+python3 -m mypy src
 
 # Frontend (run from secure-code-ui/)
 npm run dev        # Vite dev server on :5173 (add origin to ALLOWED_ORIGINS or CORS is blocked post-setup)
@@ -45,37 +48,52 @@ npm run lint       # eslint .
 
 The scan flow is deliberately **"audit-first, remediate-intelligently"** — the worker pauses mid-workflow for explicit cost approval. The full flow is documented in `.agent/scanning_flow.md`; the short version:
 
-1. UI `POST /api/v1/scans` → `projects.py` router → `core/services/scan_service.py` dedupes files by hash, creates `Scan` + `ORIGINAL_SUBMISSION` snapshot, publishes `{scan_id}` to `code_submission_queue`.
+1. UI `POST /api/v1/scans` → `projects.py` router → `core/services/scan_service.py` dedupes files by hash, creates `Scan` + `ORIGINAL_SUBMISSION` snapshot, **inserts a `scan_outbox` row in the same transaction** (the outbox sweeper publishes to `code_submission_queue` so the API never publishes inline).
 2. `workers/consumer.py` picks up the message, builds a `WorkerState`, and calls the compiled LangGraph (`infrastructure/workflows/worker_graph.py`) with a Postgres checkpointer keyed on `scan_id`.
-3. Graph path A (`QUEUED`): `retrieve_and_prepare_data` → builds `RepositoryMappingEngine` + `ContextBundlingEngine` dep graph → `estimate_cost` → status `PENDING_COST_APPROVAL` → **graph ENDs**.
-4. User `POST /scans/{id}/approve` → publishes to `analysis_approved_queue` → worker re-enters the same thread_id → graph path B (`QUEUED_FOR_SCAN`): `triage_agents` → `dependency_aware_analysis_orchestrator` (topological order, per-file chunking + triaged specialized agents run in parallel under `CONCURRENT_LLM_LIMIT=5`) → `correlate_findings` → `save_results` → `run_impact_reporting` → `save_final_report`.
+3. Audit path: `retrieve_and_prepare_data` → `RepositoryMappingEngine` + `ContextBundlingEngine` dep graph → `estimate_cost` (tokens via `litellm.token_counter`, price via `litellm.cost_per_token` with per-config admin override) → status `PENDING_COST_APPROVAL` → **native `interrupt()`** — graph pauses with full state in the checkpointer (I.1).
+4. User `POST /scans/{id}/approve` → publishes to `analysis_approved_queue` → worker resumes the **same** LangGraph thread with `Command(resume=payload)` → deep-analysis path: `triage_agents` → `dependency_aware_analysis_orchestrator` (topological order, per-file chunking + triaged specialized agents in parallel under `CONCURRENT_LLM_LIMIT=5`) → `correlate_findings` → `save_results` → `run_impact_reporting` → `save_final_report`.
 5. For `REMEDIATE` scans the orchestrator applies fixes incrementally and resolves conflicts via a merge agent, then writes a `POST_REMEDIATION` snapshot.
 
-Status strings live at the top of `worker_graph.py`. Queue names live in `config/config.py` (`RABBITMQ_SUBMISSION_QUEUE`, `RABBITMQ_APPROVAL_QUEUE`, `RABBITMQ_REMEDIATION_QUEUE`).
+Status strings live in `src/app/shared/lib/scan_status.py`. Queue names in `config/config.py`: `RABBITMQ_SUBMISSION_QUEUE`, `RABBITMQ_APPROVAL_QUEUE`, `RABBITMQ_REMEDIATION_QUEUE`.
 
 ### Backend layout (`src/app/`)
 
-- `api/v1/routers/` — FastAPI routers; wired up in `main.py`. Admin endpoints are split by concern (`admin_agents`, `admin_frameworks`, `admin_prompts`, `admin_rag`, `admin_config`, `admin_users`, `llm_config`).
-- `core/services/` — orchestration layer (scan, chat, admin, security standards, RAG preprocessor). Routers should delegate here rather than touching repos directly.
-- `infrastructure/database/repositories/` — one repo per aggregate (scan, chat, user, framework, agent, prompt_template, llm_config, rag_job, system_config).
-- `infrastructure/agents/` — LangGraph sub-graphs: `generic_specialized_agent` (the per-finding-type analyzer), `impact_reporting_agent`, `chat_agent`, `symbol_map_agent`.
+- `api/v1/routers/` — FastAPI routers; wired up in `main.py`.
+  - User-facing: `projects.py`, `chat.py`, `compliance.py`, `dashboard.py`, `search.py`, `setup.py`, `refresh.py`.
+  - Admin: `admin_agents`, `admin_frameworks`, `admin_prompts`, `admin_rag`, `admin_config`, `admin_users`, `admin_groups` (H.2), `admin_seed`, `admin_logs`, `admin`/`llm_config`.
+- `api/mcp/server.py` — FastMCP server mounted at `/mcp`. Reuses JWT auth via a custom `TokenVerifier`. Tool surface: `sccap_submit_scan`, `sccap_get_scan_status`, `sccap_get_scan_result`, `sccap_approve_scan`, `sccap_apply_fixes`, `sccap_ask_advisor`.
+- `api/v1/dependencies.py` — shared FastAPI deps. `get_visible_user_ids` is the H.2 scope helper (returns `None` for admins, `[user.id, ...peers]` for regular users); every list endpoint that could leak data takes it.
+- `core/services/` — orchestration layer (scan, chat, admin, compliance, dashboard, search, security standards, RAG preprocessor, default seed). Routers delegate here rather than touching repos directly.
+- `infrastructure/database/repositories/` — one repo per aggregate: `scan`, `scan_outbox`, `chat`, `user`, `framework`, `agent`, `prompt_template`, `llm_config`, `rag_job`, `system_config`, `user_group_repo`.
+- `infrastructure/agents/` — LangGraph sub-graphs: `generic_specialized_agent` (the per-finding-type analyzer), `impact_reporting_agent`, `chat_agent`, `symbol_map_agent`. Structured output goes through `llm_client.generate_structured_output` which wraps Pydantic AI for per-call validation retry (I.3).
 - `infrastructure/workflows/worker_graph.py` — top-level LangGraph StateGraph; any change to nodes/edges must be reflected in `.agent/scanning_flow.md`.
+- `infrastructure/messaging/outbox_sweeper.py` — background task on the API that reads unpublished `scan_outbox` rows and publishes them to RabbitMQ with backoff. Closes the API-commit-then-publish-fail race.
 - `shared/analysis_tools/` — `chunker.py` (semantic), `context_bundler.py` (dep graph), `repository_map.py` (tree-sitter symbol index).
-- `core/config_cache.py` — `SystemConfigCache` is a process-local singleton populated at startup from `system_config` rows. It drives the dynamic CORS middleware, log level, and SMTP settings. When editing `system_config` at runtime, also update the cache or the change won't take effect until restart.
+- `shared/lib/scan_scope.py` — `visible_user_ids(user, repo)` returns `None` (admin) or `[user.id, ...peers]` (regular user).
+- `shared/lib/cost_estimation.py` — LiteLLM-backed `count_tokens`, `estimate_cost_for_prompt`, `calculate_actual_cost`. Per-`LLMConfiguration` `input_cost_per_million` / `output_cost_per_million` overrides take precedence; zero falls back to the LiteLLM price map.
+- `core/config_cache.py` — `SystemConfigCache` is a process-local singleton populated at startup from `system_config` rows. Drives the dynamic CORS middleware, log level, and SMTP settings. When editing `system_config` at runtime, also update the cache or the change won't take effect until restart.
 
-### Auth & setup mode
+### Auth, setup, and visibility scope
 
 - First-run bootstrapping: `api/v1/routers/setup.py` owns `/api/v1/setup/*`. Until setup completes, `SystemConfigCache.is_setup_completed()` is false and the `DynamicCORSMiddleware` in `main.py` allows all origins. Once complete, allowed origins come from `security.allowed_origins` in the DB plus the `ALLOWED_ORIGINS` env var.
-- Auth is `fastapi-users` with a JWT `BearerTransport`. There is a custom `/api/v1/auth/refresh` endpoint in `routers/refresh.py` (fastapi-users doesn't ship one for Bearer).
-- The **first registered user becomes superuser**; superuser-only routes live under `/admin/*` both on the API and UI (`SuperuserRoutesWithLayout` in `secure-code-ui/src/app/App.tsx`).
+- Auth is `fastapi-users` with a JWT `BearerTransport`. Custom `/api/v1/auth/refresh` lives in `routers/refresh.py` (fastapi-users doesn't ship one for Bearer).
+- The **first registered user becomes superuser**; superuser-only routes live under `/admin/*` both on the API and UI.
+- **Visibility scope (H.2):** every list endpoint takes `visible_user_ids = Depends(get_visible_user_ids)`. Admins see everything (`None`); regular users see their own data plus peers from `user_group_memberships` (`[user.id, ...peers]`). Repositories translate this via `_scope_column(col, user_id, visible_user_ids)`.
 
 ### Frontend layout (`secure-code-ui/src/`)
 
-Feature-sliced: `app/` (providers + routes), `pages/` (route views grouped by area: `auth`, `setup`, `account`, `admin`, `analysis`, `chat`, `submission`), `features/` (feature-scoped components), `shared/api/` (one service module per backend domain — all traffic goes through `apiClient.ts`), `widgets/` (layouts). The entire app is gated on `isSetupCompleted` — all four route guards in `App.tsx` redirect to `/setup` when false.
+Feature-sliced: `app/` (providers + routes), `pages/` (route views grouped by area: `auth`, `setup`, `account`, `admin`, `analysis`, `chat`, `compliance`, `submission`), `features/` (feature-scoped components), `shared/api/` (one service module per backend domain — all traffic goes through `apiClient.ts`), `widgets/` (layouts). The entire app is gated on `isSetupCompleted` — all four route guards in `App.tsx` redirect to `/setup` when false.
+
+- **Roles** (H.3): `SccapRole = "user" | "admin"`. Legacy `dev` / `enterprise` localStorage values are migrated to `user` on read. The Tweaks role toggle is cosmetic only — `DashboardPage` routes off the real `user.is_superuser` to pick `UserDashboard` vs. `AdminSnapshot`.
+- **TopNav** carries the global search combobox (`SearchCombobox.tsx`) — 250 ms debounce, TanStack Query, three sections (projects / scans / findings), arrow + Enter + Escape keyboard nav.
+- **AdminSubNav** (`widgets/AdminSubNav.tsx`) is rendered by `DashboardLayout` on `/admin/*` and `/account/settings/llm`. It's the only way to navigate between admin surfaces, since the TopNav has a single Admin link.
 
 ## Repository conventions
 
 - `.agent/` is load-bearing operational docs. Per `.agent/agent_instructions.md`, keep `.agent/project_structure.md` and `.agent/scanning_flow.md` in sync when files move or the scan pipeline changes.
 - Alembic filenames are timestamp-slugged via `file_template` in `alembic.ini` — let Alembic generate the name, don't hand-craft it. `prepend_sys_path = src` means `env.py` imports `app.infrastructure.database.models` directly.
-- Every request gets an `X-Correlation-ID` (see `correlation_id_middleware` in `main.py`); log from `logging.getLogger(__name__)` and the ID is attached automatically via `correlation_id_var`.
-- Secrets (API keys, SMTP passwords, LLM provider creds) are encrypted with the Fernet key in `ENCRYPTION_KEY` before being stored in `llm_configurations` / `system_config`. Don't write them plaintext.
+- Every request gets an `X-Correlation-ID` (see `correlation_id_middleware` in `main.py`); log from `logging.getLogger(__name__)` and the ID is attached automatically via `correlation_id_var`. The same id rides the worker message envelope so logs stitch across services.
+- Secrets (LLM API keys, SMTP passwords) are Fernet-encrypted with `ENCRYPTION_KEY` before being stored in `llm_configurations` / `system_config`. Don't write them plaintext. `.env.example` deliberately does **not** include `OPENAI_API_KEY` / `GOOGLE_API_KEY` placeholders (H.0.2).
+- `LITELLM_LOCAL_MODEL_COST_MAP=True` keeps cost lookups offline; recommended for restricted-egress deployments.
+- Tests use `tests/conftest.py` fixtures with SAVEPOINT-per-test rollback (H.0.3). `pyproject.toml` has `addopts = "--ignore=tests/test_ui_setup.py"` so the Playwright e2e is opt-in. CI runs the rest against a Postgres 16 service container.
+- New endpoints that list user-owned data: take `visible_user_ids = Depends(get_visible_user_ids)` and forward it through the service layer to the repository — never re-implement scope checks inline.
