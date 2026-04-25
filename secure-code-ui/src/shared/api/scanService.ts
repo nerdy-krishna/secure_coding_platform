@@ -1,6 +1,5 @@
 import {
   type GitRepoPreviewRequest,
-  type JsonValue,
   type LLMInteractionResponse,
   type PaginatedProjectHistoryResponse,
   type PaginatedScanHistoryResponse,
@@ -99,14 +98,6 @@ export const scanService = {
         status: status === 'All' ? undefined : status,
       }
     });
-    return response.data;
-  },
-
-  /**
-   * Fetches the SARIF report for a specific scan.
-   */
-  downloadSarifReport: async (scanId: string): Promise<JsonValue> => {
-    const response = await apiClient.get(`/scans/${scanId}/sarif`);
     return response.data;
   },
 

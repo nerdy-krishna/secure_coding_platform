@@ -69,31 +69,60 @@ pointer-heavy summary.
     `CANCELLED`; the checkpointer state is left in place so admins
     can inspect it.
 
-### 6. Deep analysis (LangGraph path B)
+### 6. Single-pass parallel analysis
 
-`triage_agents` → `dependency_aware_analysis_orchestrator`:
+`analyze_files_parallel`:
 
-- Walks files in topological order so downstream dependents see
-  upstream context that's already been analyzed.
-- For each file: semantic chunk → fan out to triaged specialized
-  agents → collect + dedupe findings → correlate cross-file.
-- Concurrency is bounded by a semaphore on `CONCURRENT_LLM_LIMIT`
-  (default 5) so provider rate limits are respected on large
-  codebases.
+- Every relevant agent runs against every file from the
+  `ORIGINAL_SUBMISSION` snapshot in parallel — **no topological
+  ordering, no cross-file patch propagation**. The dependency graph
+  is still consulted to inject per-file dependency context
+  (symbol signatures from successors) into each chunk's prompt.
+- Per-file agent triage happens inline via
+  `resolve_agents_for_file(file_path, all_relevant_agents)` —
+  extension-based routing.
+- Files larger than `CHUNK_ONLY_IF_LARGER_THAN` (~150 000 chars) are
+  split with `semantic_chunker`; small files run as a single chunk.
+- Concurrency is bounded by a single
+  `asyncio.Semaphore(CONCURRENT_LLM_LIMIT=5)` over the union of
+  file × chunk × agent calls.
+- No mid-graph DB writes. Findings + `proposed_fixes` flow through
+  state to `consolidate_and_patch` and `save_results`.
 
-`correlate_findings` → `save_results` → `run_impact_reporting` →
-`save_final_report`. Final scan status is either `COMPLETED` or —
-if this is a remediation-scoped scan — `REMEDIATION_COMPLETED`.
+`correlate_findings` groups duplicates by
+`(file_path, CWE, line_number)` and merges agent corroborations.
 
-### 7. Remediation (optional)
+### 7. Remediation (REMEDIATE only)
 
-For `REMEDIATE` scans the orchestrator applies fixes **incrementally**:
+`consolidate_and_patch` runs after `correlate_findings`:
 
-- Each finding's suggested fix is applied to a working copy.
-- A dedicated merge agent resolves conflicts when multiple fixes
-  touch the same file.
-- The patched tree is written as a `POST_REMEDIATION` snapshot so
-  users can diff against the `ORIGINAL_SUBMISSION`.
+- Groups `proposed_fixes` by file.
+- Detects line-range conflicts and runs `_run_merge_agent` to
+  resolve overlaps.
+- Tree-sitter syntax-verifies the patched content
+  (`_verify_syntax_with_treesitter`).
+- Builds `final_file_map` for the `POST_REMEDIATION` snapshot saved
+  by `save_results_node`, so users can diff against the
+  `ORIGINAL_SUBMISSION`.
+
+For AUDIT it's a no-op. For SUGGEST the correlated findings keep
+their embedded `fixes` field (so the UI shows suggested fixes) but
+no `POST_REMEDIATION` snapshot is built.
+
+### 8. Final report
+
+`save_final_report`:
+
+- Computes a coarse 0–10 `risk_score` from the highest non-zero
+  severity bucket (`CRITICAL → 9+`, `HIGH → 7+`, `MEDIUM → 4+`,
+  `LOW → 1+`).
+- Persists the `summary` JSON.
+- Sets final status `COMPLETED` or `REMEDIATION_COMPLETED`.
+
+Note: this `Scan.risk_score` is **not** the same as the Dashboard /
+Compliance posture score. The dashboard uses a weighted-findings
+heuristic (`critical*15 + high*6 + medium*2 + low*1`, clamped to
+[5, 100]) across the visibility scope.
 
 ## Chat (Advisor) flow
 
@@ -140,4 +169,7 @@ Canonical values live at the top of
 `COMPLETED`, `REMEDIATION_COMPLETED`, `FAILED`, `CANCELLED`.
 
 `ACTIVE_SCAN_STATUSES` and `COMPLETED_SCAN_STATUSES` tuples are
-exported for the filters used across services.
+exported for the filters used across services. (The
+`GENERATING_REPORTS` constant is preserved for tuple membership +
+future re-introduction of an impact / SARIF reporting node, but no
+node sets that status today.)

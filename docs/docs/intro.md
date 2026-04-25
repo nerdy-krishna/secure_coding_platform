@@ -27,7 +27,6 @@ knowledge bases. The platform is organized around three surfaces:
 * **Per-project stats on the Projects page** — each card shows the latest terminal scan's risk score, severity bar, and fixes-ready count, no client-side heuristics.
 * **Global search** — one TopNav combobox across projects, scans, and findings, always scoped to what the current user is allowed to see.
 * **Security Advisor with live context rail** — framework-scoped chat backed by RAG retrieval, with a right-hand rail that surfaces the knowledge sources, referenced findings, and files most likely discussed.
-* **Executive Summary PDF + SARIF downloads** for any completed scan.
 
 ### For security admins
 

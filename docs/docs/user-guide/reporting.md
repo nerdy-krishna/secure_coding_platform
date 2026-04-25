@@ -5,40 +5,21 @@ title: Reporting
 
 # Reporting
 
-Every completed scan produces three downloadable artifacts. You can
-grab them from the Results page header or (for external tooling)
-hit the API endpoints directly.
+Every completed scan produces structured outputs you can read in
+the UI and (in the case of remediation) download.
 
-## Executive Summary PDF
+## Findings + summary (UI)
 
-A stakeholder-ready summary rendered from
-`create_executive_summary_html` then converted via
-`generate_pdf_from_html`. Includes:
+The [Results page](./code-analysis/understanding-results.md) is the
+canonical view. It shows:
 
-- Platform + project metadata
-- Posture score + severity breakdown
-- Top findings with short, non-technical descriptions
-- Recommended priority order (from the `impact_reporting_agent`)
-
-**Download**: Results page header → **Download Executive Summary**.
-**API**: `GET /api/v1/scans/{scan_id}/executive-summary/download`.
-
-## SARIF 2.1
-
-The raw Static Analysis Results Interchange Format document the
-scan produced. Portable across VS Code, Azure DevOps, GitHub
-Advanced Security, and most security-tooling pipelines.
-
-**Download**: Results page → **SARIF** tab → **Download SARIF**.
-**API**: `GET /api/v1/scans/{scan_id}/sarif`.
-
-## Impact report
-
-A narrative summary produced by the `impact_reporting_agent`
-covering what each cluster of findings means for the application,
-which areas should be fixed first, and the business risk
-implications. Available inline on the Results page under the
-**Impact** tab.
+- Header: scan ID, project, status, created / completed timestamps,
+  per-scan cost (sum of `llm_interactions.cost`).
+- Summary strip: total findings grouped by severity + a coarse
+  0–10 risk score.
+- Per-file panels: every analyzed file gets a collapsible section
+  with chunk-level findings, severity, CWE id, suggested fix (when
+  the agent produced one), and external references.
 
 ## Raw findings (JSON)
 
@@ -64,3 +45,13 @@ Every LLM call made during a scan writes an `llm_interactions` row
 Admins can inspect the full trail from
 **Admin → Scans → LLM Interactions** or via
 `GET /api/v1/scans/{scan_id}/llm-interactions`.
+
+## Removed in the 2026-04-26 cleanup
+
+Earlier versions of SCCAP exported a SARIF 2.1 document and offered
+an Executive Summary PDF download backed by an
+`impact_reporting_agent`. The agent's node was registered in the
+graph but never wired in, so neither artifact was actually being
+produced. The endpoints + UI surfaces have been removed for now;
+they'll come back as a focused feature when we have time to wire
+the reporting node properly.

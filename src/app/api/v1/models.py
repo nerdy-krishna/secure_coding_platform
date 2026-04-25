@@ -492,8 +492,6 @@ class SummaryReportResponse(BaseModel):
 
 class AnalysisResultDetailResponse(BaseModel):
     status: str
-    impact_report: Optional[Dict[str, Any]] = None
-    sarif_report: Optional[Dict[str, Any]] = None
     summary_report: Optional[SummaryReportResponse] = None
     text_report: Optional[str] = None
     original_code_map: Optional[Dict[str, str]] = None
@@ -528,8 +526,6 @@ class ScanHistoryItem(BaseModel):
     completed_at: Optional[datetime] = None
     cost_details: Optional[Dict[str, Any]] = None
     events: List[ScanEventItem] = []
-    has_sarif_report: bool = False
-    has_impact_report: bool = False
 
     class Config:
         from_attributes = True

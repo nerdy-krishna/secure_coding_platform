@@ -11,12 +11,11 @@
 // The detail pane renders description, remediation, compliance chips,
 // and (when a fix suggestion exists) a side-by-side diff using the
 // design's `.diff` / `.diff-row` utilities. Actions: SARIF download,
-// navigate to executive summary + LLM logs, apply selective fix.
+// navigate to LLM logs, apply selective fix.
 
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
-import { saveAs } from "file-saver";
 import { scanService } from "../../shared/api/scanService";
 import { Icon } from "../../shared/ui/Icon";
 import { SevBar } from "../../shared/ui/DashboardPrimitives";
@@ -127,19 +126,6 @@ const ResultsPage: React.FC = () => {
   const selected =
     filtered.find((f) => f.id === selectedFindingId) ?? filtered[0] ?? null;
 
-  const downloadSarif = useCallback(async () => {
-    if (!scanId) return;
-    try {
-      const sarif = await scanService.downloadSarifReport(scanId);
-      const blob = new Blob([JSON.stringify(sarif, null, 2)], {
-        type: "application/json",
-      });
-      saveAs(blob, `sccap-${scanId.slice(0, 8)}.sarif.json`);
-    } catch (err) {
-      const e = err as { message?: string };
-      toast.error(e.message || "SARIF download failed");
-    }
-  }, [scanId, toast]);
 
   if (isLoading) {
     return (
@@ -252,19 +238,6 @@ const ResultsPage: React.FC = () => {
             </div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <button
-              className="sccap-btn sccap-btn-sm"
-              onClick={downloadSarif}
-              disabled={!data.sarif_report}
-            >
-              <Icon.Download size={13} /> SARIF
-            </button>
-            <button
-              className="sccap-btn sccap-btn-sm"
-              onClick={() => navigate(`/scans/${scanId}/executive-summary`)}
-            >
-              <Icon.File size={13} /> Executive summary
-            </button>
             <button
               className="sccap-btn sccap-btn-sm"
               onClick={() => navigate(`/scans/${scanId}/llm-logs`)}
