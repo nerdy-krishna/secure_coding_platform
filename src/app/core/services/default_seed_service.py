@@ -70,7 +70,42 @@ FRAMEWORKS_DATA: List[Dict[str, str]] = [
         "name": "cheatsheets",
         "description": "OWASP Cheatsheets Series.",
     },
+    {
+        "name": "llm_top10",
+        "description": (
+            "OWASP Top 10 for Large Language Model Applications (2025). "
+            "Covers LLM01 Prompt Injection, LLM02 Sensitive Information "
+            "Disclosure, LLM03 Supply Chain, LLM04 Data and Model "
+            "Poisoning, LLM05 Improper Output Handling, LLM06 Excessive "
+            "Agency, LLM07 System Prompt Leakage, LLM08 Vector and "
+            "Embedding Weaknesses, LLM09 Misinformation, LLM10 Unbounded "
+            "Consumption. Select this for AI / LLM-integrated apps."
+        ),
+    },
+    {
+        "name": "agentic_top10",
+        "description": (
+            "OWASP Top 10 for Agentic AI Applications (2026). Covers "
+            "AGENT01 Memory Poisoning, AGENT02 Tool Misuse, AGENT03 "
+            "Privilege Compromise, AGENT04 Resource Overload, AGENT05 "
+            "Cascading Hallucination Attacks, AGENT06 Intent Breaking & "
+            "Goal Manipulation, AGENT07 Misaligned & Deceptive Behaviors, "
+            "AGENT08 Repudiation & Untraceability, AGENT09 Identity "
+            "Spoofing & Impersonation, AGENT10 Overwhelming Human-in-the-"
+            "Loop. Select this for autonomous-agent / multi-agent / MCP "
+            "apps."
+        ),
+    },
 ]
+
+
+# Names of the OWASP-AppSec frameworks (ASVS / Proactive Controls /
+# Cheatsheets). Every legacy agent is mapped to all three; the new
+# LLM / Agentic agents are NOT — they only attach to their respective
+# AI-focused frameworks. This keeps a customer who selects `asvs`
+# from accidentally pulling LLM-prompt-injection RAG context into a
+# server-side-template-injection scan.
+_APPSEC_FRAMEWORK_NAMES = ["asvs", "proactive_controls", "cheatsheets"]
 
 
 AGENT_DEFINITIONS: List[Dict[str, Any]] = [
@@ -340,6 +375,55 @@ AGENT_DEFINITIONS: List[Dict[str, Any]] = [
             "metadata_filter": {"control_family": ["Cloud and Container"]},
         },
     },
+    {
+        "name": "LLMSecurityAgent",
+        "description": (
+            "Audits LLM-integrated apps against OWASP LLM Top 10 (2025): "
+            "prompt injection, sensitive-information disclosure, supply "
+            "chain (model/dataset provenance), data and model poisoning, "
+            "improper output handling, excessive agency, system-prompt "
+            "leakage, vector/embedding weaknesses, misinformation, and "
+            "unbounded consumption (token / cost / context-window DoS)."
+        ),
+        "domain_query": {
+            "keywords": (
+                "prompt injection, jailbreak, system prompt leakage, "
+                "sensitive information disclosure, model poisoning, "
+                "training data leakage, output handling, excessive "
+                "agency, vector embedding weakness, RAG injection, "
+                "indirect prompt injection, LLM denial of service, "
+                "unbounded token consumption, hallucination misinformation"
+            ),
+            "metadata_filter": {"control_family": ["LLM Security"]},
+        },
+        "applicable_frameworks": ["llm_top10"],
+    },
+    {
+        "name": "AgenticSecurityAgent",
+        "description": (
+            "Audits autonomous / multi-agent / MCP apps against OWASP "
+            "Top 10 for Agentic AI (2026): memory poisoning, tool "
+            "misuse, privilege compromise, resource overload, cascading "
+            "hallucination, intent breaking and goal manipulation, "
+            "misaligned/deceptive behaviors, repudiation and "
+            "untraceability, identity spoofing/impersonation, and "
+            "human-in-the-loop overwhelm."
+        ),
+        "domain_query": {
+            "keywords": (
+                "agent memory poisoning, tool misuse, privilege "
+                "compromise, agent resource overload, cascading "
+                "hallucination, intent breaking, goal manipulation, "
+                "deceptive agent behavior, repudiation, untraceable "
+                "agent action, identity spoofing, agent impersonation, "
+                "human in the loop overwhelm, MCP server, agent "
+                "permissions, agent identity, agent authorization, "
+                "tool authorization"
+            ),
+            "metadata_filter": {"control_family": ["Agentic Security"]},
+        },
+        "applicable_frameworks": ["agentic_top10"],
+    },
 ]
 
 
@@ -498,7 +582,14 @@ async def seed_defaults(
     for agent_def in AGENT_DEFINITIONS:
         if agent_def["name"] in existing_agent_names:
             continue
-        await agent_repo.create_agent(api_models.AgentCreate(**agent_def))
+        # `applicable_frameworks` is a seed-time concept consumed by the
+        # mapping-refresh block below — it's not a DB column, so strip
+        # it before passing the dict to `AgentCreate` (which would
+        # otherwise reject the unknown field).
+        agent_payload = {
+            k: v for k, v in agent_def.items() if k != "applicable_frameworks"
+        }
+        await agent_repo.create_agent(api_models.AgentCreate(**agent_payload))
         agents_added += 1
 
     templates_added = 0
@@ -513,20 +604,42 @@ async def seed_defaults(
     # Framework↔agent mapping refresh. Always re-applies — cheap and keeps
     # the default roster consistent after this seed runs (including when
     # force_reset wasn't needed).
+    #
+    # Selective mapping (added with §3.11): each agent's
+    # `applicable_frameworks` field declares which frameworks it
+    # belongs to. Legacy AppSec agents (no field set) attach to
+    # `_APPSEC_FRAMEWORK_NAMES`; the new `LLMSecurityAgent` /
+    # `AgenticSecurityAgent` attach only to their respective AI
+    # frameworks. Selecting `asvs` no longer pulls LLM-prompt-injection
+    # RAG context into a server-side scan and vice versa.
     mappings_refreshed = 0
     fw_rows = await session.execute(
         select(db_models.Framework).where(db_models.Framework.name.in_(target_fw_names))
     )
-    agent_id_rows = await session.execute(
-        select(db_models.Agent.id).where(
-            db_models.Agent.name.in_([a["name"] for a in AGENT_DEFINITIONS])
-        )
-    )
-    agent_ids = [row[0] for row in agent_id_rows.all()]
-    if agent_ids:
-        for fw in fw_rows.scalars().all():
-            await framework_repo.update_agent_mappings_for_framework(fw.id, agent_ids)
-            mappings_refreshed += 1
+    agent_name_to_id = {
+        row[0]: row[1]
+        for row in (
+            await session.execute(
+                select(db_models.Agent.name, db_models.Agent.id).where(
+                    db_models.Agent.name.in_([a["name"] for a in AGENT_DEFINITIONS])
+                )
+            )
+        ).all()
+    }
+    # Build {framework_name: [agent_id, ...]} from the seed declarations.
+    fw_to_agent_ids: Dict[str, List[int]] = {fw["name"]: [] for fw in FRAMEWORKS_DATA}
+    for agent_def in AGENT_DEFINITIONS:
+        applicable = agent_def.get("applicable_frameworks") or _APPSEC_FRAMEWORK_NAMES
+        agent_id = agent_name_to_id.get(agent_def["name"])
+        if agent_id is None:
+            continue
+        for fw_name in applicable:
+            if fw_name in fw_to_agent_ids:
+                fw_to_agent_ids[fw_name].append(agent_id)
+    for fw in fw_rows.scalars().all():
+        ids_for_fw = fw_to_agent_ids.get(fw.name, [])
+        await framework_repo.update_agent_mappings_for_framework(fw.id, ids_for_fw)
+        mappings_refreshed += 1
 
     return SeedResult(
         frameworks_added=frameworks_added,

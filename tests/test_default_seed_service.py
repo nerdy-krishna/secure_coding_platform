@@ -45,6 +45,49 @@ async def test_seed_defaults_is_idempotent(db_session):
 
 
 @pytest.mark.asyncio
+async def test_seed_attaches_llm_agents_only_to_ai_frameworks(db_session):
+    """§3.11 selective mapping: `LLMSecurityAgent` must attach ONLY to
+    `llm_top10`, `AgenticSecurityAgent` must attach ONLY to
+    `agentic_top10`, and they must NOT pollute the legacy AppSec
+    frameworks (asvs / proactive_controls / cheatsheets). Legacy
+    agents must still attach to all three AppSec frameworks."""
+    from sqlalchemy.orm import selectinload
+
+    await seed_defaults(db_session, force_reset=True)
+
+    # Re-fetch with eager-loaded agents per framework.
+    rows = await db_session.execute(
+        select(db_models.Framework).options(
+            selectinload(db_models.Framework.agents)
+        )
+    )
+    fws_by_name = {fw.name: fw for fw in rows.scalars().all()}
+
+    asvs_agent_names = {a.name for a in fws_by_name["asvs"].agents}
+    llm_agent_names = {a.name for a in fws_by_name["llm_top10"].agents}
+    agentic_agent_names = {a.name for a in fws_by_name["agentic_top10"].agents}
+
+    # AI agents are NOT attached to ASVS.
+    assert "LLMSecurityAgent" not in asvs_agent_names
+    assert "AgenticSecurityAgent" not in asvs_agent_names
+
+    # LLMSecurityAgent attached only to llm_top10.
+    assert "LLMSecurityAgent" in llm_agent_names
+    assert "AgenticSecurityAgent" not in llm_agent_names
+
+    # AgenticSecurityAgent attached only to agentic_top10.
+    assert "AgenticSecurityAgent" in agentic_agent_names
+    assert "LLMSecurityAgent" not in agentic_agent_names
+
+    # Legacy AppSec agents still attached to ASVS.
+    assert "AccessControlAgent" in asvs_agent_names
+    assert "AuthenticationAgent" in asvs_agent_names
+    # Legacy agents NOT attached to the AI frameworks.
+    assert "AccessControlAgent" not in llm_agent_names
+    assert "AccessControlAgent" not in agentic_agent_names
+
+
+@pytest.mark.asyncio
 async def test_seed_if_empty_no_ops_on_populated_db(db_session):
     # Ensure something exists so the "empty DB" branch doesn't fire.
     await seed_defaults(db_session, force_reset=False)
