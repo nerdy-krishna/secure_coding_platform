@@ -59,7 +59,7 @@ fastmcp = "^3.2.4"
 # default (LANGFUSE_ENABLED=false). See `app.infrastructure.observability`.
 langfuse = "^3"
 networkx = "^3.5"
-pandas = "^2.3.0"
+pandas = ">=2.3,<4.0"
 passlib = {extras = ["bcrypt"], version = ">=1.7.4,<2.0.0"}
 psycopg = {extras = ["binary"], version = "^3.2.9"}
 # Vector store + embedder. fastembed (Qdrant-maintained, MIT) provides
