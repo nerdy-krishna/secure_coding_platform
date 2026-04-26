@@ -132,11 +132,14 @@ human workflows where agentic automation is a bad fit.
 
 ## Troubleshooting
 
-### Alembic fails with "psycopg2 is not async"
+### Alembic fails to connect to the database
 
 Check `ALEMBIC_DATABASE_URL` in `.env`. `alembic/env.py` drives
 migrations through `create_async_engine()`, so the URL must use
-`postgresql+asyncpg://…` even though Alembic's own CLI is sync.
+`postgresql+asyncpg://…` (the async driver from `psycopg[binary]`).
+Even though Alembic's own CLI is sync, the engine inside `env.py`
+is async, so a `postgresql://` or sync-driver URL will fail at
+connect time.
 
 ### My scan SSE stream returns 401
 
