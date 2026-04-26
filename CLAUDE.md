@@ -119,7 +119,7 @@ Lifespan eager-builds the singleton at API startup (wrapped in try/except so a Q
 
 **Bootstrap on a fresh deploy:** Qdrant collections start empty. Operators populate RAG content via the existing admin UI flows (`POST /api/v1/admin/rag/preprocess/...` for ASVS/proactive_controls/cheatsheets CSVs, etc.). Scans against an empty RAG path still complete — agents produce findings without RAG citations until content is ingested.
 
-**Migration from PR1 dual-write:** the embedder is byte-equivalent so existing PR1-seeded Qdrant collections remain valid; no rebuild required. The `chroma_data` Docker volume is now orphaned — remove via `docker volume rm sccap_chroma_data` after pulling.
+**Migration from PR1 dual-write:** the embedder is byte-equivalent so existing PR1-seeded Qdrant collections remain valid; no rebuild required. The `chroma_data` Docker volume is now orphaned — remove via `docker volume rm sccap_chroma_data` after pulling. **`setup.sh` auto-generates `QDRANT_API_KEY` on fresh installs** and replaces the `change-me-qdrant-key` placeholder in any pre-existing `.env` (operators upgrading from PR1 don't need to rotate the key manually); it also strips a retired `RAG_VECTOR_STORE=…` line if present.
 
 ## Evaluations (Promptfoo)
 
