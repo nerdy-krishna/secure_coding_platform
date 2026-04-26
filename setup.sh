@@ -41,6 +41,7 @@ if [ ! -f .env ]; then
     ENCRYPTION_KEY=$(python3 scripts/generate_secrets.py fernet)
     POSTGRES_PASSWORD=$(python3 scripts/generate_secrets.py random)
     RABBITMQ_DEFAULT_PASS=$(python3 scripts/generate_secrets.py random)
+    QDRANT_API_KEY=$(python3 scripts/generate_secrets.py random)
 
     # Use sed based on OS (macOS sed requires empty extension for -i)
     if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -48,17 +49,46 @@ if [ ! -f .env ]; then
         sed -i '' "s/ENCRYPTION_KEY=.*$/ENCRYPTION_KEY=$ENCRYPTION_KEY/" .env
         sed -i '' "s/POSTGRES_PASSWORD=postgres/POSTGRES_PASSWORD=$POSTGRES_PASSWORD/" .env
         sed -i '' "s/RABBITMQ_DEFAULT_PASS=password/RABBITMQ_DEFAULT_PASS=$RABBITMQ_DEFAULT_PASS/" .env
+        sed -i '' "s|QDRANT_API_KEY=change-me-qdrant-key|QDRANT_API_KEY=$QDRANT_API_KEY|" .env
     else
         sed -i "s/SECRET_KEY=supersecretkey1234567890/SECRET_KEY=$SECRET_KEY/" .env
         sed -i "s/ENCRYPTION_KEY=.*$/ENCRYPTION_KEY=$ENCRYPTION_KEY/" .env
         sed -i "s/POSTGRES_PASSWORD=postgres/POSTGRES_PASSWORD=$POSTGRES_PASSWORD/" .env
         sed -i "s/RABBITMQ_DEFAULT_PASS=password/RABBITMQ_DEFAULT_PASS=$RABBITMQ_DEFAULT_PASS/" .env
+        sed -i "s|QDRANT_API_KEY=change-me-qdrant-key|QDRANT_API_KEY=$QDRANT_API_KEY|" .env
     fi
-    
-    echo "[+] .env created and configured with new secrets."
+
     echo "[+] .env created and configured with new secrets."
 else
     echo "[!] .env already exists. Preserving existing secrets."
+
+    # Upgrade fix-up: if QDRANT_API_KEY is the placeholder we shipped
+    # in .env.example, generate a real one in place. Lets operators
+    # who pulled the Chroma → Qdrant migration commit (ADR-008) come
+    # up cleanly without a manual key-rotation step. Leaves any
+    # already-rotated value alone.
+    if grep -q '^QDRANT_API_KEY=change-me-qdrant-key$' .env; then
+        echo " -> Replacing placeholder QDRANT_API_KEY with a generated value..."
+        QDRANT_API_KEY=$(python3 scripts/generate_secrets.py random)
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            sed -i '' "s|QDRANT_API_KEY=change-me-qdrant-key|QDRANT_API_KEY=$QDRANT_API_KEY|" .env
+        else
+            sed -i "s|QDRANT_API_KEY=change-me-qdrant-key|QDRANT_API_KEY=$QDRANT_API_KEY|" .env
+        fi
+        echo "[+] QDRANT_API_KEY rotated."
+    fi
+
+    # Upgrade fix-up: ADR-008 retired RAG_VECTOR_STORE; Settings now
+    # rejects unknown values via extra="ignore" but the lifespan
+    # WARN can be silenced by removing the line outright.
+    if grep -q '^RAG_VECTOR_STORE=' .env; then
+        echo " -> Removing retired RAG_VECTOR_STORE entry (ADR-008)..."
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            sed -i '' '/^RAG_VECTOR_STORE=/d' .env
+        else
+            sed -i '/^RAG_VECTOR_STORE=/d' .env
+        fi
+    fi
 fi
 
 # 2.5. Deployment Configuration Prompt
