@@ -36,6 +36,7 @@ from langgraph.types import Command
 
 from app.config.config import settings
 from app.config.logging_config import LOGGING_CONFIG, correlation_id_var
+from app.infrastructure.observability import flush_langfuse, get_langchain_handler
 from app.infrastructure.workflows.worker_graph import (
     WorkerState,
     close_workflow_resources,
@@ -127,7 +128,15 @@ async def _run_workflow_for_scan(
 
     try:
         worker_workflow = await get_workflow()
+        # Anchor the per-scan parent trace in Langfuse. Handler reads
+        # `correlation_id_var` (already set in `_build_initial_state`)
+        # so the trace_id stitches with Loki logs by X-Correlation-ID.
+        # Returns None when Langfuse is disabled — config stays
+        # callbacks-free and execution is unaffected.
+        lc_handler = get_langchain_handler()
         config: RunnableConfig = {"configurable": {"thread_id": scan_id_str_log}}
+        if lc_handler is not None:
+            config["callbacks"] = [lc_handler]
         workflow_input: Any
         if resume_payload is not None:
             workflow_input = Command(resume=resume_payload)
@@ -381,6 +390,11 @@ async def _async_main() -> None:
             await close_workflow_resources()
         except Exception as e:
             logger.error(f"WORKER: Error during workflow resource cleanup: {e}")
+        # Flush any buffered Langfuse spans before the worker exits.
+        try:
+            flush_langfuse()
+        except Exception as e:
+            logger.warning(f"WORKER: Error during Langfuse flush: {e}")
         logger.info("WORKER: Consumer has fully shut down.")
 
 

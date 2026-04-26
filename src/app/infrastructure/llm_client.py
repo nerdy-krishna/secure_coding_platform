@@ -32,6 +32,7 @@ from app.infrastructure.database import AsyncSessionLocal as async_session_facto
 from app.infrastructure.database.models import LLMConfiguration as DB_LLMConfiguration
 from app.infrastructure.database.repositories.llm_config_repo import LLMConfigRepository
 from app.infrastructure.llm_client_rate_limiter import get_rate_limiter_for_provider
+from app.infrastructure.observability import get_langfuse, mask
 from app.shared.lib import cost_estimation
 
 logger = logging.getLogger(__name__)
@@ -184,6 +185,29 @@ class LLMClient:
         cache_write_tokens: int = 0
         cache_read_tokens: int = 0
 
+        # Langfuse cost reporting is owned by THIS span (recorded onto
+        # `cost_details` after the call). Cost source of truth remains
+        # `cost_estimation.calculate_actual_cost`. Do NOT enable
+        # `litellm.success_callback=["langfuse"]` — that would emit a
+        # second cost record per call and diverge from Scan.actual_cost.
+        # Threat-model gate G6.
+        langfuse_client = get_langfuse()
+        span_ctx = (
+            langfuse_client.start_as_current_span(
+                name=f"llm.{self.provider_name}.{self.db_llm_config.model_name}",
+                input=mask(full_prompt_for_counting),
+            )
+            if langfuse_client is not None
+            else None
+        )
+        span = None
+        if span_ctx is not None:
+            try:
+                span = span_ctx.__enter__()
+            except Exception as e:
+                logger.warning("Langfuse span open failed: %s", e)
+                span_ctx = None
+
         try:
             run_result = await agent.run(prompt)
             parsed_output_value = run_result.output  # type: ignore[assignment]
@@ -239,6 +263,33 @@ class LLMClient:
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
         )
+
+        # Stamp output / usage / cost onto the Langfuse span and close
+        # it. All Langfuse interactions wrapped in try/except so a flush
+        # error never bubbles into the LLM call path (G5 fail-open).
+        if span is not None and span_ctx is not None:
+            try:
+                span.update(
+                    output=(
+                        mask(parsed_output_value.model_dump_json())
+                        if parsed_output_value is not None
+                        else mask(error_message or "")
+                    ),
+                    model=self.db_llm_config.model_name,
+                    usage_details={
+                        "input": prompt_tokens,
+                        "output": completion_tokens,
+                        "cache_read_input": cache_read_tokens,
+                        "cache_creation_input": cache_write_tokens,
+                    },
+                    cost_details={"total": cost} if cost is not None else None,
+                )
+            except Exception as e:
+                logger.warning("Langfuse span.update failed: %s", e)
+            try:
+                span_ctx.__exit__(None, None, None)
+            except Exception as e:
+                logger.warning("Langfuse span exit failed: %s", e)
 
         return AgentLLMResult(
             raw_output="[Structured output — raw text not directly available]",
