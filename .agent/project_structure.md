@@ -26,6 +26,8 @@
 │       ├── shared/         # Utility Libraries
 │       ├── workers/        # Consumer (RabbitMQ)
 │       └── main.py         # App Entry Point
+├── evals/                  # Promptfoo eval harness (mock + live CI)
+├── scripts/                # Repo-root operator scripts (e.g. extract_eval_prompts.py)
 ├── poetry.lock             # Backend Lock File
 └── pyproject.toml          # Backend Project Config
 ```
@@ -37,6 +39,7 @@
 - **pyproject.toml**: Python backend dependencies and configuration.
 - **alembic.ini**: Database migration configuration.
 - **.env**: Environment variables for secrets and service configuration.
+- **evals/**: Promptfoo regression suite (`promptfoo-eval-framework` run, 2026-04-26). One `agents/<agent>/promptfooconfig.yaml` per covered agent + a sandboxed `providers/mock.js` for free PR runs. Extracted prompt files (`agents/*/prompts/*.txt`) come from `default_seed_service.py` via `scripts/extract_eval_prompts.py` — CI runs `--check` on every PR. Live runs (`workflow_dispatch.mode=live`) hit `gpt-4o-mini` via `secrets.OPENAI_API_KEY`. Warn-only gate today; flip to hard-block in a follow-up. The OWASP LLM/Agentic Top-10 redteam pack is intentionally deferred — see `evals/README.md`.
 
 ### Backend (`src/app`)
 - **main.py**: FastAPI application entry point, middleware, and router inclusion.
@@ -59,7 +62,7 @@
     - **repositories/**: Data access layer.
 - **workers/**:
     - **consumer.py**: Async RabbitMQ consumer (`aio-pika` `connect_robust`, single asyncio event loop). Subscribes to submission / approval / remediation queues with `prefetch_count=1`, runs an idempotency precheck, and `await`s the LangGraph workflow inline (no thread bridge). ACK on success; explicit `reject(requeue=False)` + DB status `FAILED` on poison/error.
-- **scripts/**: Operator-only admin scripts. NOT importable by routers / MCP tools (CI grep-check at `tests/test_scripts_isolation.py` enforces). Run via `docker compose exec app python -m app.scripts.<module>`. Includes `backfill_findings_source.py` (sets `findings.source = 'agent'` for legacy LLM-emitted rows).
+- **scripts/**: Operator-only admin scripts. NOT importable by routers / MCP tools (CI grep-check at `tests/test_scripts_isolation.py` enforces). Run via `docker compose exec app python -m app.scripts.<module>`. Includes `backfill_findings_source.py` (sets `findings.source = 'agent'` for legacy LLM-emitted rows). The repo-root `scripts/extract_eval_prompts.py` (different directory — top-level `scripts/`, not `app.scripts`) materialises the canonical prompt templates into `evals/agents/*/prompts/*.txt`; CI runs it in `--check` mode on every PR (drift gate).
 - **shared/**:
     - **lib/**: Utility modules — `cost_estimation.py` (LiteLLM token + price), `scan_scope.py` (visibility-scope helper), `scan_status.py` (worker status constants), `risk_score.py` (unified CVSS-weighted risk aggregate shared by worker / dashboard / compliance), `agent_routing.py`, `files.py`, `git`, `encryption`.
 

@@ -104,6 +104,16 @@ Feature-sliced: `app/` (providers + routes), `pages/` (route views grouped by ar
 - Tests use `tests/conftest.py` fixtures with SAVEPOINT-per-test rollback (H.0.3). `pyproject.toml` has `addopts = "--ignore=tests/test_ui_setup.py"` so the Playwright e2e is opt-in. CI runs the rest against a Postgres 16 service container.
 - New endpoints that list user-owned data: take `visible_user_ids = Depends(get_visible_user_ids)` and forward it through the service layer to the repository — never re-implement scope checks inline.
 
+## Evaluations (Promptfoo)
+
+Prompt regressions for the agents are guarded by a Promptfoo eval suite under `evals/`. Run locally with `cd evals && npm ci && npm test` — the default provider is a deterministic JS mock (free, no LLM calls). The CI workflow at `.github/workflows/evals.yml` runs the same suite on every PR that touches `evals/**`, the canonical prompt seed (`src/app/core/services/default_seed_service.py`), or the agent modules. The CI gate is **warn-only** for now — the workflow uploads results as a build artifact but does NOT block merges; we'll flip to hard-block once we have ~2 weeks of stable baseline.
+
+Prompt strings live in the seed (`default_seed_service._AUDIT_TEMPLATE` / `_REMEDIATION_TEMPLATE` / `_CHAT_TEMPLATE`) and are extracted into `evals/agents/*/prompts/*.txt` by `scripts/extract_eval_prompts.py`. CI runs `--check` on every PR; the build fails if the committed eval prompts drift from the canonical seed. Never hand-edit the extracted `.txt` files — re-run `--write` and commit instead.
+
+Live evals against a real LLM (currently `gpt-4o-mini` via `OPENAI_API_KEY` in repo secrets) are opt-in only — they fire only on `workflow_dispatch` with `mode: live`. Cost is ~1–2¢ per click. PRs from forks cannot reach the secret because the live job is gated to manual dispatch (no `pull_request_target` is used).
+
+**Coverage gap, explicit:** the eval suite catches **functional** regressions (prompt still produces the expected JSON shape and detects obvious vulnerabilities). It does **not** cover OWASP LLM Top-10 / Agentic Top-10 prompt-injection or jailbreak attacks — that's the redteam pack, deferred to a separate `/sccap` run. "We have evals" ≠ "we have injection coverage."
+
 ## Langfuse auth boundary (operators)
 
 Langfuse runs its own NextAuth user model — **independent** of SCCAP fastapi-users JWT. Practical implications (threat-model G8 / threat #5):
