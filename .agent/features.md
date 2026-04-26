@@ -52,6 +52,12 @@ This file tracks new feature requests and technical implementation plans.
 
 ---
 
+## [COMPLETED] 4. Admin Configuration Dashboard
+
+**Shipped:** routers under `src/app/api/v1/routers/admin_*.py` + `llm_config.py`; UI under `secure-code-ui/src/pages/admin/` (SystemConfigTab, AgentManagementPage, FrameworkManagementPage, PromptManagementPage, UserManagement) plus `features/admin-settings/components/LLMSettingsPage.tsx`; runtime cache invalidation in `admin_config.py:91-103` keeps `SystemConfigCache` in sync after PUTs.
+
+**Original spec for reference below:**
+
 ## 4. **Admin Configuration Dashboard**:
     - **System Configuration**: Manage core system settings, including:
         - **CORS Configuration**: Enable/disable Cross-Origin Resource Sharing and configure allowed origins (optional, disabled by default).
@@ -76,6 +82,12 @@ This file tracks new feature requests and technical implementation plans.
   
 ---
 
+## [COMPLETED] 5. User Management & RBAC
+
+**Shipped:** `admin_users.py` CRUD + `fastapi-users` `current_active_user` (rejects `is_active=False`) + `current_superuser` route guard (`infrastructure/auth/core.py:23-24`); UI at `pages/admin/UserManagement.tsx` with role-aware route guards in `App.tsx`. The H.3 design simplified roles to a single `is_superuser` boolean (admin/user) rather than the spec's `enum: ADMIN, USER`; semantically equivalent.
+
+**Original spec for reference below:**
+
 ## 5. User Management & RBAC
 **Goal:** Admin controls user access. Regular users can run scans but cannot modify system config.
 
@@ -96,6 +108,17 @@ This file tracks new feature requests and technical implementation plans.
   - Role-based UI elements (hide "Settings" logs for non-admins).
 
 ---
+
+## [COMPLETED] 6. Desktop Notifications
+
+**Shipped:** `useNotificationPermission` hook (`secure-code-ui/src/shared/hooks/useNotificationPermission.ts`) + TopNav opt-in button (visible only when `supported && permission === "default" && !dismissed`) + `ScanRunningPage` terminal-status `useEffect` firing `new Notification("SCCAP — Scan finished", { body, tag: scan_id })` once per scan (deduped via `notifiedRef`). Generic body per privacy review (no findings count, no severity, no file paths). Service Worker / Web Push API deferred per spec MVP.
+
+**Security-review follow-ups (Low; UX residue, not security):**
+- **F1 (close-features-4-6)** — clear `notifications_dismissed` localStorage flag when `permission` transitions back to `"granted"`; today the flag stays stale across browser-level re-enables.
+- **F2 (close-features-4-6)** — `notifiedRef` is per-page-instance; navigating away from `ScanRunningPage` and back to a terminal scan re-fires the notification once. `tag` dedupe at the browser level prevents stacking; persist notified-set in `sessionStorage` if observed in practice.
+- **F3 (close-features-4-6)** — by-design: granting permission while the fallback toast already fired means no desktop notification for that one scan (toast only). Next scan notifies normally.
+
+**Original spec for reference below:**
 
 ## 6. Desktop Notifications
 **Goal:** Alert users when long-running scans complete, even if the tab is backgrounded.

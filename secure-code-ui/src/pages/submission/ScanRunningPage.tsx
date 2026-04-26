@@ -11,6 +11,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { scanService } from "../../shared/api/scanService";
+import { useNotificationPermission } from "../../shared/hooks/useNotificationPermission";
 import { Icon } from "../../shared/ui/Icon";
 import { SectionHead } from "../../shared/ui/DashboardPrimitives";
 import { useToast } from "../../shared/ui/Toast";
@@ -72,6 +73,7 @@ const ScanRunningPage: React.FC = () => {
   const { scanId } = useParams<{ scanId: string }>();
   const navigate = useNavigate();
   const toast = useToast();
+  const notificationPerm = useNotificationPermission();
   const [status, setStatus] = useState<string>("QUEUED");
   const [seenStages, setSeenStages] = useState<Set<string>>(new Set());
   const [events, setEvents] = useState<ScanEventMsg[]>([]);
@@ -79,6 +81,9 @@ const ScanRunningPage: React.FC = () => {
   const [approving, setApproving] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const esRef = useRef<EventSource | null>(null);
+  // N3: dedupe — only one notification per scan_id per page lifetime,
+  // even if SSE reconnects after the `done` event.
+  const notifiedRef = useRef<Record<string, boolean>>({});
 
   // Open the SSE stream on mount; close on unmount or when status goes terminal.
   useEffect(() => {
@@ -159,6 +164,47 @@ const ScanRunningPage: React.FC = () => {
       return () => clearTimeout(t);
     }
   }, [status, scanId, navigate]);
+
+  // §6 desktop notification on terminal status. Lives in its own
+  // effect so it picks up the latest `notificationPerm` state (the
+  // SSE listener captures stale values at registration time).
+  // Threat-model mitigations:
+  //   N1 — generic body, no findings count / severity / file paths
+  //   N3 — `tag: scan_id` + `notifiedRef` dedupes per-scan
+  useEffect(() => {
+    if (!scanId) return;
+    if (!TERMINAL_STATUSES.has(status)) return;
+    if (notifiedRef.current[scanId]) return;
+
+    if (
+      notificationPerm.supported &&
+      notificationPerm.permission === "granted"
+    ) {
+      try {
+        new Notification("SCCAP — Scan finished", {
+          body: "Scan finished",
+          tag: scanId,
+        });
+      } catch {
+        // Notification constructor can throw on iOS Safari etc.
+        // Fail silently — the in-app redirect still happens.
+      }
+      notifiedRef.current[scanId] = true;
+    } else if (notificationPerm.supported && !notificationPerm.dismissed) {
+      // Fallback nudge — once per scan only.
+      toast.info(
+        "Scan finished — turn on desktop notifications from the top bar to get pings next time.",
+      );
+      notifiedRef.current[scanId] = true;
+    }
+  }, [
+    status,
+    scanId,
+    notificationPerm.supported,
+    notificationPerm.permission,
+    notificationPerm.dismissed,
+    toast,
+  ]);
 
   const progress = useMemo(
     () => progressFromStages(seenStages, status),

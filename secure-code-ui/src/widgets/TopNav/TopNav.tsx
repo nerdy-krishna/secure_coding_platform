@@ -7,8 +7,10 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../../shared/hooks/useAuth";
+import { useNotificationPermission } from "../../shared/hooks/useNotificationPermission";
 import { useTheme, type SccapRole } from "../../app/providers/ThemeProvider";
 import { Icon } from "../../shared/ui/Icon";
+import { useToast } from "../../shared/ui/Toast";
 import { SearchCombobox } from "./SearchCombobox";
 
 interface NavItem {
@@ -144,15 +146,7 @@ export const TopNav: React.FC = () => {
           >
             <Icon.Settings size={16} />
           </button>
-          <button
-            className="sccap-btn sccap-btn-icon sccap-btn-ghost"
-            style={{ position: "relative" }}
-            title="Notifications"
-            aria-label="Notifications"
-          >
-            <Icon.Bell size={16} />
-            <span className="notif-dot" />
-          </button>
+          <NotificationOptInButton />
           <button
             className="sccap-btn sccap-btn-icon sccap-btn-ghost"
             onClick={toggleTheme}
@@ -165,6 +159,67 @@ export const TopNav: React.FC = () => {
         </div>
       </div>
     </header>
+  );
+};
+
+const NotificationOptInButton: React.FC = () => {
+  // Browser desktop notifications opt-in (features.md §6).
+  // Per the close-features-4-6 threat model:
+  //   N2 — `request()` is invoked ONLY from this click handler, never
+  //   in a useEffect. The button hides itself once the user is in a
+  //   non-default state (granted / denied / dismissed) so we don't nag.
+  const { supported, permission, dismissed, request, dismiss } =
+    useNotificationPermission();
+  const toast = useToast();
+
+  if (!supported) return null;
+
+  // Granted: show a quiet "on" indicator (no action). Denied / dismissed:
+  // hide the opt-in entirely. Default: show the opt-in pair.
+  if (permission === "granted") {
+    return (
+      <button
+        className="sccap-btn sccap-btn-icon sccap-btn-ghost"
+        title="Desktop notifications are on"
+        aria-label="Desktop notifications enabled"
+        disabled
+      >
+        <Icon.Bell size={16} />
+      </button>
+    );
+  }
+  if (permission === "denied" || dismissed) return null;
+
+  const handleEnable = async () => {
+    const result = await request();
+    if (result === "granted") {
+      toast.success("Desktop notifications on");
+    } else if (result === "denied") {
+      toast.warn("Notifications blocked — re-enable in browser site settings");
+    }
+  };
+
+  return (
+    <div style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+      <button
+        className="sccap-btn sccap-btn-ghost"
+        onClick={handleEnable}
+        title="Get a desktop notification when scans finish"
+        style={{ padding: "4px 10px", fontSize: 12, gap: 6 }}
+      >
+        <Icon.Bell size={14} />
+        <span>Enable notifications</span>
+      </button>
+      <button
+        className="sccap-btn sccap-btn-icon sccap-btn-ghost"
+        onClick={dismiss}
+        title="No thanks (don't ask again)"
+        aria-label="Dismiss notifications opt-in"
+        style={{ fontSize: 11 }}
+      >
+        ✕
+      </button>
+    </div>
   );
 };
 
