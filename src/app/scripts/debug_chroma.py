@@ -10,8 +10,25 @@ logging.basicConfig(
 )
 
 
+def _warn_if_dual_write_active() -> None:
+    """If RAG_VECTOR_STORE != "chroma", this script touches Chroma only
+    and Qdrant will drift out of sync. Threat-model G12 — banner the
+    operator so they go through the admin RAG rebuild path instead."""
+    flag = os.getenv("RAG_VECTOR_STORE", "chroma")
+    if flag != "chroma":
+        logging.warning(
+            "RAG_VECTOR_STORE=%s but this script writes ChromaDB only. "
+            "Qdrant will NOT be updated by this script — use the admin "
+            "POST /api/v1/admin/rag/rebuild endpoint to re-ingest both "
+            "stores in lockstep. This script is left in place for PR1 "
+            "and will be rewritten against the factory in PR3.",
+            flag,
+        )
+
+
 def run_test():
     """Attempts to connect to ChromaDB and fetch some data."""
+    _warn_if_dual_write_active()
     try:
         # --- 1. Define Connection Settings ---
         host = os.getenv("CHROMA_HOST", "vector_db")

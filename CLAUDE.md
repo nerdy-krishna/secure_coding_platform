@@ -104,6 +104,16 @@ Feature-sliced: `app/` (providers + routes), `pages/` (route views grouped by ar
 - Tests use `tests/conftest.py` fixtures with SAVEPOINT-per-test rollback (H.0.3). `pyproject.toml` has `addopts = "--ignore=tests/test_ui_setup.py"` so the Playwright e2e is opt-in. CI runs the rest against a Postgres 16 service container.
 - New endpoints that list user-owned data: take `visible_user_ids = Depends(get_visible_user_ids)` and forward it through the service layer to the repository — never re-implement scope checks inline.
 
+## RAG vector store (Chroma → Qdrant migration, in flight)
+
+The RAG layer is mid-migration from ChromaDB to Qdrant via a 3-PR program.
+
+- **PR1 (shipped):** A `VectorStore` Protocol lives in `src/app/infrastructure/rag/base.py` with concrete `ChromaStore` and `QdrantStore` impls. The embedder is lifted into `src/app/infrastructure/rag/embedder.py` (single ONNX `all-MiniLM-L6-v2` source for both stores). `get_vector_store()` in `factory.py` picks the impl per the `RAG_VECTOR_STORE` env flag (`chroma` / `dual` / `qdrant`); default is `chroma`, which keeps existing deployments on the current path. In `dual` mode, writes go to both stores and reads stay on Chroma; Qdrant write failures log WARN with `correlation_id` and continue (Chroma is the read source so writes there fail-hard).
+- **PR2 (planned):** Flip reads to Qdrant. Operator MUST first run `POST /api/v1/admin/rag/rebuild` against `RAG_VECTOR_STORE=dual` so Qdrant is populated; only then is it safe to flip to `qdrant`. The `dual` flag value is deprecated after this run.
+- **PR3 (planned):** Drop the `chromadb` dependency, the `vector_db` compose service, and the `chroma_data` volume. Make `QDRANT_API_KEY` mandatory in `Settings`. Rewrite `src/app/scripts/debug_chroma.py` and `populate_cwe_data.py` against the factory; today they touch Chroma directly and log a WARN banner when `RAG_VECTOR_STORE != "chroma"` so an operator running them in dual-write mode notices that Qdrant will drift.
+
+`infrastructure/rag/qdrant_store.py` carries the Chroma-`where` → Qdrant-`Filter` translator (covers `$eq` / `$ne` / `$in` / `$and` / `$or`), which is the bug-prone part of the migration; `tests/test_rag_qdrant_filter_translator.py` pins it. The Qdrant container is SHA-pinned, attached to `scpnetwork` only, with no host port — operators use `docker compose exec qdrant ...` for diagnostics. Optional `QDRANT_API_KEY` in env hardens it further (PR3 makes it required).
+
 ## Evaluations (Promptfoo)
 
 Prompt regressions for the agents are guarded by a Promptfoo eval suite under `evals/`. Run locally with `cd evals && npm ci && npm test` — the default provider is a deterministic JS mock (free, no LLM calls). The CI workflow at `.github/workflows/evals.yml` runs the same suite on every PR that touches `evals/**`, the canonical prompt seed (`src/app/core/services/default_seed_service.py`), or the agent modules. The CI gate is **warn-only** for now — the workflow uploads results as a build artifact but does NOT block merges; we'll flip to hard-block once we have ~2 weeks of stable baseline.

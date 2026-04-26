@@ -125,6 +125,28 @@ class Settings(BaseSettings):
         default=2 * 60 * 60, description="Max seconds a single scan workflow may run."
     )
 
+    # --- RAG vector store (PR1 of Chroma → Qdrant migration) ---
+    # Default `chroma` keeps existing deployments on the current path.
+    # `dual` writes to both Chroma and Qdrant (reads stay on Chroma).
+    # `qdrant` is reachable only after PR2 flips reads; the field
+    # accepts it now so config validation matches what PR2 ships.
+    RAG_VECTOR_STORE: str = Field(
+        default="chroma",
+        description="One of: chroma | dual | qdrant.",
+    )
+    QDRANT_HOST: str = "qdrant"
+    QDRANT_PORT: int = 6333
+    QDRANT_API_KEY: Optional[SecretStr] = None
+
+    @field_validator("RAG_VECTOR_STORE")
+    def _validate_rag_vector_store(cls, v: str) -> str:
+        allowed = {"chroma", "dual", "qdrant"}
+        if v not in allowed:
+            raise ValueError(
+                f"RAG_VECTOR_STORE must be one of {sorted(allowed)}; got {v!r}."
+            )
+        return v
+
     # --- Observability (Langfuse v3, optional) ---
     # Disabled by default; opt in by setting LANGFUSE_ENABLED=true plus the
     # public/secret keys minted from the self-hosted Langfuse UI. When

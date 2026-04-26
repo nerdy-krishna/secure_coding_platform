@@ -63,6 +63,10 @@ networkx = "^3.5"
 pandas = "^2.3.0"
 passlib = {extras = ["bcrypt"], version = ">=1.7.4,<2.0.0"}
 psycopg = {extras = ["binary"], version = "^3.2.9"}
+# PR1 of the Chroma → Qdrant migration. Used by
+# `app.infrastructure.rag.qdrant_store`; only loaded when
+# `RAG_VECTOR_STORE` is `dual` or `qdrant`. PR3 will drop chromadb.
+qdrant-client = "~1.17"
 pydantic = ">=2.12,<3.0.0"  # pydantic-ai 1.86 requires >=2.12
 pydantic-settings = "^2.9.1"
 python = "~3.12"
