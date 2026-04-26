@@ -196,14 +196,16 @@ This file tracks new feature requests and technical implementation plans.
 - D1 admin findings list endpoint (`GET /api/v1/admin/findings`) with source filter + cursor pagination, doubly scoped by `current_superuser` + `visible_user_ids`.
 - D2 per-source counter row on the scan results page.
 
-**Filed forward (NOT in §3.1 scope; new follow-ups):**
-- New LLM-emitted findings should set `source="agent"` at write time (this run only backfilled history).
-- Custom Semgrep rule packs beyond `p/security-audit`.
-- Per-tenant `.gitleaksignore` allow-list table.
-- Wall-clock benchmarking to justify per-scanner concurrency split.
-- Race-window cleanup for `findings.source IS NULL` rows arriving after the backfill runs.
-- Renovate/Dependabot integration that auto-PRs SHA bumps for the now-pinned actions.
-- **F1 (security-review Low)** — `datetime.utcnow()` in `admin_findings.py:110` is deprecated in Python 3.12; switch to `datetime.now(datetime.timezone.utc)` for consistency with the rest of the codebase.
-- **F2 (security-review Low)** — `_resolve_binary` resolves at module import time; document or move to lazy resolution so `*_BINARY` env vars set after import are honored.
-- **F3 (security-review Low)** — `ScanRepository.count_findings_by_source` does not take `visible_user_ids`. Today's single caller authorizes upstream, but adding a defensive scope filter would harden against future callers.
-- **F4 (security-review Low)** — Semgrep rule-pack URL is server-rendered; document the SHA-pin bump procedure in `.agent/devsecops_playbook.md` so operators know how to update on Semgrep upstream changes.
+**Closed in `feature7-cleanup` run (2026-04-27):**
+- ✅ **F1** — `datetime.utcnow()` → `datetime.now(timezone.utc)` in `admin_findings.py`.
+- ✅ **F2** — `_resolve_binary` is now `@functools.cache`d + accessed via `_<scanner>_binary()` lazy functions; `*_BINARY` env-vars set in `.env` (loaded after module import by `dotenv`) are now honored.
+- ✅ **F3** — `ScanRepository.count_findings_by_source` accepts a defensive `visible_user_ids` kwarg.
+- ✅ **F4** — Semgrep rule-pack SHA-pin bump procedure documented in `.agent/devsecops_playbook.md` § "Operational runbooks".
+- ✅ **B1** — LLM-emitted findings now stamp `source="agent"` at write time in `generic_specialized_agent._build_finding_object`.
+- ✅ **B2** — `.github/renovate.json` adds custom-managers regex coverage for Dockerfile-pinned scanner binaries (Bandit / Semgrep / Gitleaks / OSV-Scanner). Complements the existing `dependabot.yml` (which already handles pip / npm / github-actions).
+- ✅ **B3** — `findings_source_sweeper` runs hourly on the API container as a defense-in-depth catch for any `findings.source IS NULL` rows that land after the initial backfill. No-op in steady state.
+
+**Filed forward (NOT in §3.1 scope; deferred to dedicated runs):**
+- Custom Semgrep rule packs beyond `p/security-audit` — needs DB schema + admin UI + worker integration.
+- Per-tenant `.gitleaksignore` allow-list table — needs DB schema + admin UI + worker integration.
+- Wall-clock benchmarking to justify per-scanner concurrency split — research task.

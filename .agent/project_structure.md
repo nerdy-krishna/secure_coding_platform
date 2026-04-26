@@ -165,3 +165,32 @@
 When `LANGFUSE_ENABLED=true`, every LLM call from both tiers becomes a child span under a per-scan parent trace in Langfuse. The parent trace `id` equals the `X-Correlation-ID` (= `correlation_id_var.get()`) so logs in Loki and traces in Langfuse cross-reference cleanly. SCCAP `cost_estimation.calculate_actual_cost` remains the authoritative cost source; LiteLLM's Langfuse `success_callback` is intentionally NOT enabled to avoid double-counting.
 
 > The Fast LLM tier was removed in 2026-04-26 (`/sccap remove-fast-llm-tier`) — the slot was reserved but never wired. If a third tier is needed in future (e.g. dedicated triage / dep-summarization model), ship as a new feature with a fresh migration + admin UI.
+
+## Operational runbooks
+
+### Bumping the bundled Semgrep rule pack (Feature-7 F4)
+
+The Docker build downloads `p/security-audit` from `semgrep.dev` during image build and SHA-256-pins the result. This pin protects against a compromised Semgrep registry serving a tampered rule pack mid-deploy. Rotate procedure when upstream publishes new rules:
+
+1. **Run the registry fetch in a clean shell** to capture the new bytes:
+   ```sh
+   curl -fsSL -o /tmp/security-audit.yml "https://semgrep.dev/c/p/security-audit"
+   ```
+2. **Compute the new digest:**
+   ```sh
+   sha256sum /tmp/security-audit.yml
+   ```
+3. **Skim the diff** between the previous pack content and the new one for sanity. Look for surprise rules that match attacker-controlled patterns or anything that seems out of place.
+4. **Update `Dockerfile`** — the curl command + the SHA-256 string in the `sha256sum --check --strict` line (search for `security-audit.yml` in the Dockerfile).
+5. **Rebuild the image locally** to confirm the new pin verifies:
+   ```sh
+   docker compose build --no-cache app
+   ```
+6. **Smoke test** by submitting a scan with a Python file containing a known Semgrep finding (e.g. an `eval(user_input)` line); confirm the prescan still fires the expected rule.
+7. Commit the Dockerfile change as `chore(supply-chain): bump Semgrep p/security-audit to <date>` so the pin bump is explicit in git history.
+
+The Bandit / Gitleaks / OSV-Scanner binaries follow the same pin pattern in the Dockerfile (search for `sha256sum --check`); use the same procedure when rotating those. `.github/renovate.json` (Feature-7 B2) auto-PRs the URL+SHA bumps for the binary releases; the rule-pack URL has no version segment so its rotation stays manual.
+
+### Defensive `findings.source` backfill (Feature-7 B3)
+
+The `infrastructure/messaging/findings_source_sweeper.py` runs hourly on the API container and updates any `findings WHERE source IS NULL` rows to `source='agent'`. With the LLM agent stamping `source="agent"` at write time (Feature-7 B1), this should be a no-op in steady state — bounded UPDATE per pass (5000 rows max), zero cost when the table is clean (the precheck COUNT short-circuits before the UPDATE). Defensive against any future code path that inserts a finding without setting `source`.

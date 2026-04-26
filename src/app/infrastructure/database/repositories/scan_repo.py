@@ -365,12 +365,25 @@ class ScanRepository:
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
-    async def count_findings_by_source(self, scan_id: uuid.UUID) -> Dict[str, int]:
+    async def count_findings_by_source(
+        self,
+        scan_id: uuid.UUID,
+        *,
+        visible_user_ids: Optional[List[int]] = None,
+    ) -> Dict[str, int]:
         """Per-source finding counts for a single scan.
 
         Used by the per-source counter (Group D2) on the scan results
         page. NULL `source` is bucketed as ``"agent"`` (legacy
         LLM-emitted findings before the source backfill ran).
+
+        `visible_user_ids` (defensive scope per Feature-7 F3): admins
+        pass `None` (no filter); regular users pass `[user.id, ...peers]`
+        and the query will only count findings whose owning scan is
+        visible. Today's only caller (`ScanQueryService.get_scan_result`)
+        already authorizes upstream so the filter is a no-op there;
+        the kwarg hardens future callers against accidental cross-tenant
+        leakage.
         """
         bucket = sa.func.coalesce(db_models.Finding.source, "agent")
         stmt = (
@@ -378,6 +391,10 @@ class ScanRepository:
             .where(db_models.Finding.scan_id == scan_id)
             .group_by(bucket)
         )
+        if visible_user_ids is not None:
+            stmt = stmt.join(
+                db_models.Scan, db_models.Scan.id == db_models.Finding.scan_id
+            ).where(db_models.Scan.user_id.in_(visible_user_ids))
         rows = (await self.db.execute(stmt)).all()
         return {str(source): int(count) for source, count in rows}
 

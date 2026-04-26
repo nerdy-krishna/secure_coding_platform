@@ -28,6 +28,7 @@ responsive while Bandit walks the AST.
 from __future__ import annotations
 
 import asyncio
+import functools
 import html
 import json
 import logging
@@ -45,12 +46,21 @@ from app.core.schemas import VulnerabilityFinding
 logger = logging.getLogger(__name__)
 
 
+@functools.cache
 def _resolve_binary(env_var: str, name: str, fallback: Optional[str] = None) -> str:
     """Locate a scanner binary via env override → PATH → hardcoded fallback.
 
     Lets local dev outside Docker iterate without a fixed venv layout
     (set ``BANDIT_BINARY=/usr/local/bin/bandit`` etc.), while production
     images keep the same hardcoded fallback they always had.
+
+    Cached on `(env_var, name, fallback)` so the lookup happens once
+    per (binary, fallback) tuple — but lazily, on first call. Module-
+    import time used to resolve eagerly, which meant `*_BINARY` env
+    vars set in `.env` (loaded after module import by `load_dotenv()`
+    in worker startup) were silently ignored. Lazy + cached hits the
+    sweet spot: env honored on first scanner call, no per-invocation
+    PATH walk.
     """
     return (
         os.environ.get(env_var)
@@ -59,7 +69,11 @@ def _resolve_binary(env_var: str, name: str, fallback: Optional[str] = None) -> 
     )
 
 
-BANDIT_BINARY = _resolve_binary("BANDIT_BINARY", "bandit")
+def _bandit_binary() -> str:
+    """Lazy accessor for the Bandit binary path. See `_resolve_binary`."""
+    return _resolve_binary("BANDIT_BINARY", "bandit")
+
+
 BANDIT_TIMEOUT_SECONDS = 120
 DESCRIPTION_MAX_CHARS = 200
 
@@ -158,7 +172,7 @@ def _invoke_bandit_sync(staged_dir: Path) -> "subprocess.CompletedProcess[str]":
     """
     return subprocess.run(  # noqa: S603 - args are a literal list, not user-supplied
         [
-            BANDIT_BINARY,
+            _bandit_binary(),
             "-r",
             "-f",
             "json",
@@ -225,7 +239,7 @@ async def run_bandit(
         return [_timeout_finding(staged_dir)]
     except FileNotFoundError:
         logger.error(
-            "scanner=bandit binary not found at %s; skipping prescan", BANDIT_BINARY
+            "scanner=bandit binary not found at %s; skipping prescan", _bandit_binary()
         )
         return []
     except Exception as exc:  # pragma: no cover - defensive, should not happen
