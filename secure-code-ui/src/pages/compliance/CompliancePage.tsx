@@ -598,6 +598,32 @@ const CompliancePage: React.FC = () => {
     }
   };
 
+  const handleUploadLLMTop10 = async (file: File) => {
+    setIngestLoading("llm_top10");
+    try {
+      const res = await ragService.ingestLLMTop10(file);
+      toast.success(res.message);
+      refreshAfterAdminAction();
+    } catch (error) {
+      toast.error(`LLM Top-10 ingestion failed: ${axiosErrorDetail(error)}`);
+    } finally {
+      setIngestLoading(null);
+    }
+  };
+
+  const handleUploadAgenticTop10 = async (file: File) => {
+    setIngestLoading("agentic_top10");
+    try {
+      const res = await ragService.ingestAgenticTop10(file);
+      toast.success(res.message);
+      refreshAfterAdminAction();
+    } catch (error) {
+      toast.error(`Agentic Top-10 ingestion failed: ${axiosErrorDetail(error)}`);
+    } finally {
+      setIngestLoading(null);
+    }
+  };
+
   const handleFetchProactive = async () => {
     setIngestLoading("proactive");
     try {
@@ -644,30 +670,31 @@ const CompliancePage: React.FC = () => {
   };
 
   // ---------- Admin card actions ----------
+  // Helper: map a framework name to the action that opens its ingest UI.
+  // Both Edit and Ingest go through the same path — the OWASP-AppSec
+  // frameworks have a CSV / GitHub-URL UX; the AI frameworks (§3.11)
+  // accept a JSON upload (canonical samples in `data/owasp/*.json`);
+  // custom frameworks open the ingestion modal.
+  const triggerIngestForFramework = (name: string) => {
+    if (name === "asvs") {
+      document.getElementById("hidden-asvs-input")?.click();
+    } else if (name === "proactive_controls") {
+      setProactiveOpen(true);
+    } else if (name === "cheatsheets") {
+      setCheatsheetOpen(true);
+    } else if (name === "llm_top10") {
+      document.getElementById("hidden-llm-top10-input")?.click();
+    } else if (name === "agentic_top10") {
+      document.getElementById("hidden-agentic-top10-input")?.click();
+    } else {
+      handleOpenIngestionModal(name, true);
+    }
+  };
+
   const adminActions = (stats: ComplianceFrameworkStats) => ({
     onView: () => setViewName(stats.name),
-    onEdit: () => {
-      if (stats.name === "asvs") {
-        document.getElementById("hidden-asvs-input")?.click();
-      } else if (stats.name === "proactive_controls") {
-        setProactiveOpen(true);
-      } else if (stats.name === "cheatsheets") {
-        setCheatsheetOpen(true);
-      } else {
-        handleOpenIngestionModal(stats.name, true);
-      }
-    },
-    onIngest: () => {
-      if (stats.name === "asvs") {
-        document.getElementById("hidden-asvs-input")?.click();
-      } else if (stats.name === "proactive_controls") {
-        setProactiveOpen(true);
-      } else if (stats.name === "cheatsheets") {
-        setCheatsheetOpen(true);
-      } else {
-        handleOpenIngestionModal(stats.name, true);
-      }
-    },
+    onEdit: () => triggerIngestForFramework(stats.name),
+    onIngest: () => triggerIngestForFramework(stats.name),
     onDelete: () => {
       const isCustom = stats.framework_type === "custom";
       // Find the custom framework ID from the frameworkService cache if needed.
@@ -1133,6 +1160,28 @@ const CompliancePage: React.FC = () => {
             onChange={(e) => {
               const file = e.target.files?.[0];
               if (file) handleUploadASVS(file);
+              e.target.value = "";
+            }}
+          />
+          <input
+            type="file"
+            id="hidden-llm-top10-input"
+            accept=".json,application/json"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) handleUploadLLMTop10(file);
+              e.target.value = "";
+            }}
+          />
+          <input
+            type="file"
+            id="hidden-agentic-top10-input"
+            accept=".json,application/json"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) handleUploadAgenticTop10(file);
               e.target.value = "";
             }}
           />

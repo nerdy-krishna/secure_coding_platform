@@ -136,14 +136,21 @@ This file tracks new feature requests and technical implementation plans.
 
 ## 10. OWASP LLM Top-10 + Agentic Top-10 frameworks (§3.11)
 
-**Status:** ✅ COMPLETE as of `tier1-and-llm-frameworks` run (2026-04-27).
+**Status:** ✅ COMPLETE as of `llm-agentic-rag-content` run (2026-04-27).
 
-**What shipped:**
-- Two new frameworks seeded in `default_seed_service.FRAMEWORKS_DATA`: `llm_top10` (OWASP Top 10 for LLM Applications, 2025) and `agentic_top10` (OWASP Top 10 for Agentic AI Applications, 2026). Customers selecting either gets the AI-focused agent roster instead of the AppSec one.
-- Two new agents in `AGENT_DEFINITIONS`: `LLMSecurityAgent` (prompt injection, sensitive-info disclosure, model poisoning, output handling, excessive agency, system-prompt leakage, vector/embedding weaknesses, misinformation, unbounded consumption) and `AgenticSecurityAgent` (memory poisoning, tool misuse, privilege compromise, resource overload, cascading hallucination, intent breaking, deceptive behavior, repudiation, identity spoofing, human-in-the-loop overwhelm).
-- **Selective framework→agent mapping** added to the seed: each agent declares an optional `applicable_frameworks` field. Legacy AppSec agents (no field set) attach to the three OWASP AppSec frameworks; the new `LLMSecurityAgent` attaches only to `llm_top10` and `AgenticSecurityAgent` only to `agentic_top10`. Selecting `asvs` no longer pulls LLM-prompt-injection RAG context into a server-side scan and vice versa. Pinned by a regression test.
+**What shipped (seed + selective mapping; commit `97d8388`):**
+- Two new frameworks seeded in `default_seed_service.FRAMEWORKS_DATA`: `llm_top10` (OWASP Top 10 for LLM Applications, 2025) and `agentic_top10` (OWASP Top 10 for Agentic AI Applications, 2026).
+- Two new agents in `AGENT_DEFINITIONS`: `LLMSecurityAgent` and `AgenticSecurityAgent` covering all 10 entries of each Top-10.
+- **Selective framework→agent mapping**: each agent declares an optional `applicable_frameworks` field. Legacy AppSec agents (no field set) attach to the three OWASP AppSec frameworks; the new AI agents attach only to their respective AI framework. Selecting `asvs` no longer pulls LLM-prompt-injection RAG context into a server-side scan and vice versa. Pinned by a regression test.
 - `SubmitPage` framework selector dynamically fetches from the backend, so the new frameworks appear automatically in the UI with no frontend changes.
-- **Out of scope (filed forward):** RAG content for LLM/Agentic Top-10 is not yet seeded — the frameworks are selectable but the agents will produce findings without RAG citations until operators ingest content via `POST /admin/rag/preprocess/...` for each new control_family. Compliance page hardcoded ingest buttons still cover only the 3 AppSec frameworks; AI-framework ingest UI is filed as a follow-up.
+
+**What shipped (RAG content + ingest UI; commit `<this run>`):**
+- Starter content authored under `data/owasp/{llm_top10_2025,agentic_top10_2026}.json` — 10 entries per framework with vulnerability-pattern + secure-pattern descriptions and a Python vulnerable/secure code example each. Each entry's CWE references are included. Operators can refine the content against the canonical OWASP source before relying on it for compliance reporting.
+- New `SecurityStandardsService.ingest_owasp_top10_json` shared method handles both Top-10s — validates the upload's `framework` and `control_family` fields against the slot, formats each entry into the doc-text shape the agent's RAG-context extractor expects (`**Vulnerability Pattern (..):**`, `[[PYTHON PATTERNS]]` blocks with `Vulnerable: ` / `Secure: ` code fences), and writes documents tagged with `framework_name`, `control_family`, `scan_ready=True` so the agents' `metadata_filter` retrieves only the right framework's entries during a scan.
+- Two new `standard_type` slugs on `POST /admin/rag/ingest/standards/{type}`: `llm-top10` and `agentic-top10`, both accepting a JSON file upload.
+- Compliance page (`CompliancePage.tsx`) gets two new hidden file inputs (`hidden-llm-top10-input`, `hidden-agentic-top10-input`) and dispatches Ingest / Edit clicks for the AI frameworks to those inputs via a new `triggerIngestForFramework` helper. Two new ragService methods (`ingestLLMTop10`, `ingestAgenticTop10`) wrap the API calls.
+- `data/` directory is now mounted into the `app` container (read-only) so the ingest tests can validate the canonical starter-content files.
+- 7 new tests pin: doc-text formatting matches the agent's regex anchors (silent-failure trap), wrong-framework JSON is rejected with HTTP 400, wrong-control-family is rejected, non-JSON upload is rejected, empty entries is rejected, and the canonical `data/owasp/*.json` files ingest cleanly end-to-end.
 
 ---
 

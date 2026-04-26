@@ -436,10 +436,15 @@ async def ingest_security_standard(
     """
     Ingests a security standard into the RAG knowledge base.
 
-    - **standard_type**: 'asvs', 'proactive-controls', 'cheatsheets'
+    - **standard_type**: 'asvs', 'proactive-controls', 'cheatsheets',
+      'llm-top10', 'agentic-top10'.
     - **asvs**: Requires 'file' (CSV).
     - **proactive-controls**: Requires 'url' (GitHub Repo URL).
     - **cheatsheets**: Requires 'url' (GitHub Repo URL).
+    - **llm-top10**: Requires 'file' (JSON in the shape of
+      `data/owasp/llm_top10_2025.json`).
+    - **agentic-top10**: Requires 'file' (JSON in the shape of
+      `data/owasp/agentic_top10_2026.json`).
     """
     try:
         if standard_type == "asvs":
@@ -469,6 +474,32 @@ async def ingest_security_standard(
                 )
             return await standards_service.ingest_cheatsheets_github(
                 url, user_id=user.id
+            )
+
+        elif standard_type == "llm-top10":
+            if not file:
+                raise HTTPException(
+                    status_code=400,
+                    detail="OWASP LLM Top-10 requires a JSON file upload.",
+                )
+            return await standards_service.ingest_owasp_top10_json(
+                file,
+                framework_name="llm_top10",
+                expected_control_family="LLM Security",
+                user_id=user.id,
+            )
+
+        elif standard_type == "agentic-top10":
+            if not file:
+                raise HTTPException(
+                    status_code=400,
+                    detail="OWASP Agentic Top-10 requires a JSON file upload.",
+                )
+            return await standards_service.ingest_owasp_top10_json(
+                file,
+                framework_name="agentic_top10",
+                expected_control_family="Agentic Security",
+                user_id=user.id,
             )
 
         else:

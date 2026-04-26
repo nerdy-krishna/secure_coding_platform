@@ -155,6 +155,34 @@ export const ragService = {
     return response.data;
   },
 
+  /**
+   * Ingest the OWASP LLM Top-10 (2025) JSON file. Format documented at
+   * `data/owasp/llm_top10_2025.json` in the SCCAP repo. (§3.11)
+   */
+  ingestLLMTop10: async (file: File): Promise<{ message: string; count: number }> => {
+    const formData = new FormData();
+    formData.append("file", file);
+    const response = await apiClient.post<{ message: string; count: number }>(
+      "/admin/rag/ingest/standards/llm-top10",
+      formData,
+    );
+    return response.data;
+  },
+
+  /**
+   * Ingest the OWASP Top-10 for Agentic AI (2026) JSON file. Format documented
+   * at `data/owasp/agentic_top10_2026.json` in the SCCAP repo. (§3.11)
+   */
+  ingestAgenticTop10: async (file: File): Promise<{ message: string; count: number }> => {
+    const formData = new FormData();
+    formData.append("file", file);
+    const response = await apiClient.post<{ message: string; count: number }>(
+      "/admin/rag/ingest/standards/agentic-top10",
+      formData,
+    );
+    return response.data;
+  },
+
   getStats: async (): Promise<Record<string, number>> => {
     const response = await apiClient.get<Record<string, number>>("/admin/rag/ingest/stats");
     return response.data;
