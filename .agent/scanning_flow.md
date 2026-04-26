@@ -109,7 +109,7 @@ They also select:
 
 ## Phase 5 — LangGraph Worker Workflow
 
-**File:** `src/app/infrastructure/workflows/worker_graph.py`
+**Files:** `src/app/infrastructure/workflows/worker_graph.py` (StateGraph wiring + routing + `get_workflow()` + back-compat re-exports), `src/app/infrastructure/workflows/state.py` (`WorkerState` / `RelevantAgent` TypedDicts), `src/app/infrastructure/workflows/nodes/*.py` (node implementations: `retrieve.py`, `prescan.py`, `cost.py`, `analyze.py`, `correlate.py`, `consolidate.py`, `results.py`, `error.py`). The string names registered via `workflow.add_node(...)` are part of the LangGraph checkpointer's on-disk contract — in-flight scans key off them.
 
 Compiled as a **LangGraph `StateGraph`** with an `AsyncPostgresSaver` checkpointer keyed on `scan_id`. The wired graph today is:
 

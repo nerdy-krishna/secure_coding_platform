@@ -1,0 +1,57 @@
+"""Shared TypedDicts for the worker LangGraph workflow.
+
+Hoisted out of `worker_graph.py` so the per-node modules under
+`workflows/nodes/` can import the state types without creating an
+import cycle through `worker_graph.py` itself (G1 from the
+split-worker-graph threat model).
+
+Both `WorkerState` and `RelevantAgent` are re-exported from
+`worker_graph.py` for back-compat — historic callers (e.g.
+`workers/consumer.py`, the LangGraph checkpointer) keep importing
+from the original location.
+"""
+
+from __future__ import annotations
+
+import uuid
+from typing import Any, Dict, List, Optional, TypedDict
+
+from app.core.schemas import FixResult, VulnerabilityFinding
+
+
+class RelevantAgent(TypedDict):
+    name: str
+    description: str
+    domain_query: Dict[str, Any]
+
+
+class WorkerState(TypedDict):
+    """The two-tier (utility + reasoning) state for the worker workflow."""
+
+    scan_id: uuid.UUID
+    scan_type: str
+    current_scan_status: Optional[str]
+    utility_llm_config_id: Optional[uuid.UUID]
+    reasoning_llm_config_id: Optional[uuid.UUID]
+    files: Optional[Dict[str, str]]
+    initial_file_map: Optional[Dict[str, str]]
+    final_file_map: Optional[Dict[str, str]]
+    repository_map: Optional[Any]
+    dependency_graph: Optional[Any]
+    all_relevant_agents: Dict[str, RelevantAgent]
+    live_codebase: Optional[Dict[str, str]]
+    findings: List[VulnerabilityFinding]
+    # Raw per-agent fix proposals collected by analyze_files_parallel_node and
+    # consumed by consolidate_and_patch_node. Carries (finding, suggestion)
+    # pairs before correlation; the correlated findings live in `findings`.
+    proposed_fixes: Optional[List[FixResult]]
+    agent_results: Optional[List[Dict[str, Any]]]
+    # CycloneDX SBOM produced by `osv_runner` during the deterministic
+    # prescan. Persisted to `Scan.bom_cyclonedx` on completion. May be
+    # None when OSV is unavailable. (ADR-009 / §3.6.)
+    bom_cyclonedx: Optional[Dict[str, Any]]
+    # Decision payload returned by the prescan-approval interrupt;
+    # carries `approved: bool` and `override_critical_secret: bool`.
+    # Populated only between the interrupt return and the next route.
+    prescan_approval: Optional[Dict[str, Any]]
+    error_message: Optional[str]
