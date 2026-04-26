@@ -66,7 +66,8 @@ LOGGING_CONFIG = {
             "propagate": False,
         },
         "sqlalchemy": {"handlers": ["default"], "level": "WARNING", "propagate": False},
-        "pika": {"handlers": ["default"], "level": "WARNING", "propagate": False},
+        "aio_pika": {"handlers": ["default"], "level": "WARNING", "propagate": False},
+        "aiormq": {"handlers": ["default"], "level": "WARNING", "propagate": False},
         "py.warnings": {
             "handlers": ["default"],
             "level": "WARNING",

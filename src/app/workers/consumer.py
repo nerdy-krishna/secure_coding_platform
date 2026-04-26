@@ -51,8 +51,6 @@ from app.shared.lib.scan_status import (
 logging.config.dictConfig(LOGGING_CONFIG)
 logging.captureWarnings(True)
 logger = logging.getLogger(__name__)
-logging.getLogger("aio_pika").setLevel(logging.WARNING)
-logging.getLogger("aiormq").setLevel(logging.WARNING)
 
 load_dotenv()
 
