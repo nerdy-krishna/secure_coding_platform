@@ -250,12 +250,40 @@ async def lifespan(app: FastAPI):
         name="prescan-approval-sweeper",
     )
 
+    # --- Start the scan-progress LISTEN/NOTIFY bus (§3.10a) ---
+    # Replaces the per-SSE-client 1 Hz Postgres poll with a single
+    # LISTEN connection per app process that fans out scan-status /
+    # scan-event notifications to in-process queues. SSE handlers
+    # subscribe + await rather than poll.
+    from app.infrastructure.messaging.scan_progress_notifier import (
+        ScanProgressBus,
+        set_scan_progress_bus,
+    )
+
+    progress_bus = ScanProgressBus()
+    try:
+        await progress_bus.start()
+        set_scan_progress_bus(progress_bus)
+    except Exception as e:
+        logger.warning(
+            "scan_progress: bus failed to start: %s; SSE handlers will "
+            "fall back to polling.",
+            e,
+        )
+        progress_bus = None
+
     yield
 
     # This code runs on shutdown
     logger.info("Application shutdown.")
     sweeper_stop.set()
     prescan_sweeper_stop.set()
+    if progress_bus is not None:
+        try:
+            await progress_bus.stop()
+        except Exception as e:
+            logger.warning(f"scan_progress: bus shutdown error: {e}")
+    set_scan_progress_bus(None)
     try:
         await asyncio.wait_for(sweeper_task, timeout=5)
     except asyncio.TimeoutError:
