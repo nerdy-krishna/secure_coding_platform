@@ -174,3 +174,33 @@ async def test_run_osv_parses_findings_and_bom(tmp_path) -> None:
     assert f.severity == "High"
     assert "requests" in f.title
     assert f.confidence == "High"
+
+
+def test_redact_stderr_scrubs_github_pat() -> None:
+    """Phase-9 follow-up: OSV stderr may carry github tokens when
+    scanning lockfiles that point at private remotes. The runner must
+    scrub them before they reach the WARN-level log."""
+    from app.infrastructure.scanners.osv_runner import _redact_stderr
+
+    raw = (
+        "fetching https://x-access-token:ghs_aaaaaaaaaaaaaaaaaaaa@github.com/x/y.git: "
+        "https://user:hunter2123secret@example.com/repo: "
+        "leaked github_pat_11A12345_AAAAAAAAAAAAAAAAAAAAAA"
+    )
+    out = _redact_stderr(raw)
+    assert "ghs_" not in out
+    assert "hunter2123secret" not in out
+    assert "github_pat_11A12345" not in out
+    # Hosts should remain visible for triage.
+    assert "github.com" in out
+    assert "example.com" in out
+    assert "***REDACTED***" in out
+
+
+def test_redact_stderr_passthrough_clean_text() -> None:
+    """Stderr that contains no secret-shaped substrings is returned
+    unchanged (no false positives on benign error messages)."""
+    from app.infrastructure.scanners.osv_runner import _redact_stderr
+
+    benign = "warning: package npm:foo@1.0.0 has 3 known vulnerabilities (PyPI)."
+    assert _redact_stderr(benign) == benign
