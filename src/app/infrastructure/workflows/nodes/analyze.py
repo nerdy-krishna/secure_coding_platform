@@ -202,6 +202,35 @@ async def analyze_files_parallel_node(state: WorkerState) -> Dict[str, Any]:
                 # objects; collect them directly for the terminal consolidation.
                 file_fixes.extend(r.get("fixes", []))
 
+        # §3.10b: emit a `FILE_ANALYZED` ScanEvent so the SSE stream
+        # can surface per-file progress mid-scan. The event carries
+        # the file path and the count of agent-emitted findings; the
+        # frontend ScanRunningPage uses these to render a per-file
+        # progress widget without waiting for the whole scan to
+        # complete. Wrapped in try/except so a logging-side error
+        # never aborts the scan flow.
+        try:
+            from app.infrastructure.database import (
+                AsyncSessionLocal as _AsyncSessionLocal,
+            )
+            from app.infrastructure.database.repositories.scan_repo import (
+                ScanRepository as _ScanRepository,
+            )
+
+            async with _AsyncSessionLocal() as _db:
+                await _ScanRepository(_db).create_scan_event(
+                    scan_id=scan_id,
+                    stage_name="FILE_ANALYZED",
+                    status="COMPLETED",
+                    details={
+                        "file_path": file_path,
+                        "findings_count": len(file_findings),
+                        "fixes_count": len(file_fixes),
+                    },
+                )
+        except Exception as e:
+            logger.warning(f"FILE_ANALYZED event emit failed for {file_path}: {e}")
+
         return {"findings": file_findings, "fixes": file_fixes}
 
     # All files analyzed in parallel. Concurrency across files is bounded

@@ -25,6 +25,24 @@ interface ScanEventMsg {
   stage_name: string;
   status: string; // "COMPLETED" / "STARTED" / "FAILED" for the event itself
   timestamp: string | null;
+  // §3.10b — per-event payload. Carries `{file_path, findings_count,
+  // fixes_count}` for `FILE_ANALYZED` events; null for legacy stage
+  // events (QUEUED / ANALYZING_CONTEXT / etc.).
+  details?: {
+    file_path?: string;
+    findings_count?: number;
+    fixes_count?: number;
+  } | null;
+}
+
+// One row in the per-file analysis log surfaced by §3.10b. Keyed by
+// file_path so the same file showing up twice (e.g. multi-chunk
+// analysis) collapses to a single row with the latest counts.
+interface FileProgressItem {
+  file_path: string;
+  findings_count: number;
+  fixes_count: number;
+  timestamp: string | null;
 }
 
 interface ScanStateMsg {
@@ -87,6 +105,12 @@ const ScanRunningPage: React.FC = () => {
   const [status, setStatus] = useState<string>("QUEUED");
   const [seenStages, setSeenStages] = useState<Set<string>>(new Set());
   const [events, setEvents] = useState<ScanEventMsg[]>([]);
+  // §3.10b — per-file analysis progress, keyed by file_path so a file
+  // showing up multiple times collapses to one row. Renders below the
+  // pipeline stages while RUNNING_AGENTS is active.
+  const [fileProgress, setFileProgress] = useState<
+    Record<string, FileProgressItem>
+  >({});
   const [streamError, setStreamError] = useState<string | null>(null);
   const [approving, setApproving] = useState(false);
   const [cancelling, setCancelling] = useState(false);
@@ -137,6 +161,25 @@ const ScanRunningPage: React.FC = () => {
             next.add(payload.stage_name);
             return next;
           });
+        }
+        // §3.10b — fold FILE_ANALYZED events into the per-file progress
+        // map. Each FILE_ANALYZED carries `{file_path, findings_count,
+        // fixes_count}` in `details`; rendered as a list below the
+        // stage indicator while the scan is running.
+        if (
+          payload.stage_name === "FILE_ANALYZED" &&
+          payload.details?.file_path
+        ) {
+          const filePath = payload.details.file_path;
+          setFileProgress((prev) => ({
+            ...prev,
+            [filePath]: {
+              file_path: filePath,
+              findings_count: payload.details?.findings_count ?? 0,
+              fixes_count: payload.details?.fixes_count ?? 0,
+              timestamp: payload.timestamp,
+            },
+          }));
         }
       } catch {
         // noop
@@ -611,6 +654,92 @@ const ScanRunningPage: React.FC = () => {
             <div style={{ color: "var(--fg)", fontSize: 13 }}>
               Check the worker logs for details, or try resubmitting the same
               source. The scan record is preserved under the Projects list.
+            </div>
+          </div>
+        )}
+
+        {/* §3.10b — per-file progress, only while there's something to show. */}
+        {Object.keys(fileProgress).length > 0 && (
+          <div className="surface" style={{ padding: 18 }}>
+            <SectionHead
+              title={
+                <>
+                  <Icon.File size={14} /> Files analyzed (live)
+                </>
+              }
+            />
+            <div
+              style={{
+                fontSize: 12,
+                color: "var(--fg-muted)",
+                marginBottom: 8,
+              }}
+            >
+              {Object.keys(fileProgress).length} file
+              {Object.keys(fileProgress).length === 1 ? "" : "s"} processed
+              {(() => {
+                const totalFindings = Object.values(fileProgress).reduce(
+                  (s, f) => s + f.findings_count,
+                  0,
+                );
+                const totalFixes = Object.values(fileProgress).reduce(
+                  (s, f) => s + f.fixes_count,
+                  0,
+                );
+                return ` — ${totalFindings} finding${totalFindings === 1 ? "" : "s"}, ${totalFixes} fix${totalFixes === 1 ? "" : "es"}`;
+              })()}
+            </div>
+            <div
+              style={{
+                maxHeight: 200,
+                overflow: "auto",
+                display: "grid",
+                gap: 4,
+                fontSize: 12,
+                fontFamily: "var(--font-mono)",
+              }}
+            >
+              {Object.values(fileProgress)
+                .sort((a, b) =>
+                  (b.timestamp ?? "").localeCompare(a.timestamp ?? ""),
+                )
+                .map((f) => (
+                  <div
+                    key={f.file_path}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 12,
+                      padding: "4px 0",
+                      borderBottom: "1px solid var(--border)",
+                    }}
+                  >
+                    <span
+                      style={{
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        color: "var(--fg)",
+                      }}
+                      title={f.file_path}
+                    >
+                      {f.file_path}
+                    </span>
+                    <span
+                      style={{
+                        color:
+                          f.findings_count > 0
+                            ? "var(--high)"
+                            : "var(--fg-muted)",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {f.findings_count} finding
+                      {f.findings_count === 1 ? "" : "s"}
+                      {f.fixes_count > 0 && ` · ${f.fixes_count} fix${f.fixes_count === 1 ? "" : "es"}`}
+                    </span>
+                  </div>
+                ))}
             </div>
           </div>
         )}

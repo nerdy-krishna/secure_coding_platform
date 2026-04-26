@@ -200,9 +200,19 @@ class ScanRepository:
         await self.db.commit()
 
     async def create_scan_event(
-        self, scan_id: uuid.UUID, stage_name: str, status: str = "STARTED"
+        self,
+        scan_id: uuid.UUID,
+        stage_name: str,
+        status: str = "STARTED",
+        details: Optional[Dict[str, Any]] = None,
     ):
-        """Adds a new event to the scan's timeline."""
+        """Adds a new event to the scan's timeline.
+
+        `details` (§3.10b) carries per-event context — e.g.
+        `FILE_ANALYZED` events ride with `{file_path, findings_count}`
+        so the SSE stream can render per-file progress mid-scan.
+        Null for legacy stage events that have no extra context.
+        """
         from app.infrastructure.messaging.scan_progress_notifier import (
             KIND_EVENT,
             notify_scan_progress,
@@ -212,7 +222,7 @@ class ScanRepository:
             f"Adding timeline event '{stage_name}:{status}' for scan {scan_id}"
         )
         event = db_models.ScanEvent(
-            scan_id=scan_id, stage_name=stage_name, status=status
+            scan_id=scan_id, stage_name=stage_name, status=status, details=details
         )
         self.db.add(event)
         # Notify within the same transaction (§3.10a).

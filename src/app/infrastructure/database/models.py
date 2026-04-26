@@ -121,6 +121,12 @@ class ScanEvent(Base):
     timestamp: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    # Optional per-event payload, surfaced over the SSE stream as the
+    # `details` field. Used by §3.10b to carry per-file analysis
+    # progress (`stage_name="FILE_ANALYZED"`,
+    # `details={"file_path": ..., "findings_count": ...}`). Null for
+    # legacy stage events that have no extra context.
+    details: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
 
     scan: Mapped["Scan"] = relationship(back_populates="events")
 

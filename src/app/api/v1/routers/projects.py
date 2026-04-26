@@ -393,6 +393,10 @@ async def stream_scan_progress(
                         "stage_name": e.stage_name,
                         "status": e.status,
                         "timestamp": e.timestamp.isoformat() if e.timestamp else None,
+                        # §3.10b: per-event payload (e.g. file_path +
+                        # findings_count for `FILE_ANALYZED`). None for
+                        # legacy stage events.
+                        "details": e.details,
                     }
                     yield (
                         f"event: scan_event\n"
