@@ -94,13 +94,12 @@ class RelevantAgent(TypedDict):
 
 
 class WorkerState(TypedDict):
-    """The updated, three-tier state for the workflow."""
+    """The two-tier (utility + reasoning) state for the worker workflow."""
 
     scan_id: uuid.UUID
     scan_type: str
     current_scan_status: Optional[str]
     utility_llm_config_id: Optional[uuid.UUID]
-    fast_llm_config_id: Optional[uuid.UUID]
     reasoning_llm_config_id: Optional[uuid.UUID]
     files: Optional[Dict[str, str]]
     initial_file_map: Optional[Dict[str, str]]
@@ -203,7 +202,6 @@ async def retrieve_and_prepare_data_node(state: WorkerState) -> Dict[str, Any]:
                 "scan_type": scan.scan_type,
                 "current_scan_status": current_status,
                 "utility_llm_config_id": scan.utility_llm_config_id,
-                "fast_llm_config_id": scan.fast_llm_config_id,
                 "reasoning_llm_config_id": scan.reasoning_llm_config_id,
                 "files": files,
                 "initial_file_map": original_snapshot.file_map,

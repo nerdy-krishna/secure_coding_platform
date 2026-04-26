@@ -49,7 +49,6 @@ class SubmissionService:
         scan_type: str,
         correlation_id: str,
         utility_llm_config_id: uuid.UUID,
-        fast_llm_config_id: uuid.UUID,
         reasoning_llm_config_id: uuid.UUID,
         frameworks: List[str],
         repo_url: Optional[str] = None,
@@ -95,7 +94,6 @@ class SubmissionService:
             user_id=user_id,
             scan_type=scan_type,
             utility_llm_config_id=utility_llm_config_id,
-            fast_llm_config_id=fast_llm_config_id,
             reasoning_llm_config_id=reasoning_llm_config_id,
             frameworks=frameworks,
         )

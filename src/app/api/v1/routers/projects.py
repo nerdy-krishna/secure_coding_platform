@@ -147,7 +147,6 @@ async def create_scan(
     project_name: str = Form(...),
     scan_type: str = Form(...),
     utility_llm_config_id: Optional[uuid.UUID] = Form(None),
-    fast_llm_config_id: Optional[uuid.UUID] = Form(None),
     reasoning_llm_config_id: Optional[uuid.UUID] = Form(None),
     frameworks: str = Form(...),  # Received as a string, will be processed in service
     repo_url: Optional[str] = Form(None),
@@ -159,13 +158,11 @@ async def create_scan(
 
     # Resolve any missing llm_config_id slots to a fallback config. Supports
     # the fresh-setup case where the admin has only configured one LLM — we
-    # reuse it across utility/fast/reasoning slots instead of forcing the
-    # user to configure three. Once multiple configs exist the submit UI
-    # can let the user pick per slot.
+    # reuse it across utility/reasoning slots instead of forcing the user
+    # to configure two. Once multiple configs exist the submit UI can let
+    # the user pick per slot.
     missing_slots = [
-        s
-        for s in (utility_llm_config_id, fast_llm_config_id, reasoning_llm_config_id)
-        if s is None
+        s for s in (utility_llm_config_id, reasoning_llm_config_id) if s is None
     ]
     if missing_slots:
         available = await llm_repo.get_all(skip=0, limit=1)
@@ -179,7 +176,6 @@ async def create_scan(
             )
         fallback_id = available[0].id
         utility_llm_config_id = utility_llm_config_id or fallback_id
-        fast_llm_config_id = fast_llm_config_id or fallback_id
         reasoning_llm_config_id = reasoning_llm_config_id or fallback_id
 
     common_args = {
@@ -188,7 +184,6 @@ async def create_scan(
         "correlation_id": correlation_id_var.get(),
         "scan_type": scan_type,
         "utility_llm_config_id": utility_llm_config_id,
-        "fast_llm_config_id": fast_llm_config_id,
         "reasoning_llm_config_id": reasoning_llm_config_id,
         "frameworks": [fw.strip() for fw in frameworks.split(",")],
         "selected_files": selected_files_list,

@@ -50,7 +50,6 @@ def _state_with(findings: List[VulnerabilityFinding]) -> Dict[str, Any]:
         "scan_type": "AUDIT",
         "current_scan_status": "RUNNING_AGENTS",
         "utility_llm_config_id": None,
-        "fast_llm_config_id": None,
         "reasoning_llm_config_id": None,
         "files": None,
         "initial_file_map": None,

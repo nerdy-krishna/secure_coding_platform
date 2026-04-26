@@ -1331,8 +1331,6 @@ export interface components {
             scan_type: string;
             /** Utility Llm Config Id */
             utility_llm_config_id?: string | null;
-            /** Fast Llm Config Id */
-            fast_llm_config_id?: string | null;
             /** Reasoning Llm Config Id */
             reasoning_llm_config_id?: string | null;
             /** Frameworks */

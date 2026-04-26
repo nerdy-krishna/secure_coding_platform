@@ -150,7 +150,6 @@ export interface SubmissionFormValues {
   scan_type: ScanType;
   repo_url?: string;
   utility_llm_config_id: string;
-  fast_llm_config_id: string;
   reasoning_llm_config_id: string;
   frameworks: string[];
 }
