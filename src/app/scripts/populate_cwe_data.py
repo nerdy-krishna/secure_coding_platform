@@ -26,6 +26,18 @@ async def main():
     """
     Main function to load the processed JSON and ingest it into the SQL and RAG databases.
     """
+    # Threat-model G12 — banner the operator if they're running this
+    # in dual-write mode. The script writes to Chroma only; Qdrant
+    # will drift unless they go through admin RAG rebuild.
+    if settings.RAG_VECTOR_STORE != "chroma":
+        logging.warning(
+            "RAG_VECTOR_STORE=%s but this script writes ChromaDB only. "
+            "Qdrant will NOT be updated by this script — use the admin "
+            "POST /api/v1/admin/rag/rebuild endpoint instead. This "
+            "script will be rewritten against the factory in PR3.",
+            settings.RAG_VECTOR_STORE,
+        )
+
     logging.info("Starting data ingestion process...")
 
     # 1. Load the processed JSON data

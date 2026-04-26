@@ -112,6 +112,32 @@ services:
       retries: 3
       start_period: 30s
 
+  # ------------------------------------------------------------------
+  # Qdrant — second vector store, alongside Chroma during PR1 of the
+  # Chroma → Qdrant migration. Default `RAG_VECTOR_STORE=chroma` makes
+  # this container idle until an operator opts into `dual` or `qdrant`
+  # mode. SHA-pinned (threat-model G1); no host port (G2) — operators
+  # use `docker compose exec qdrant ...` for diagnostics. PR2 flips
+  # reads; PR3 drops Chroma + this comment along with it.
+  # ------------------------------------------------------------------
+  qdrant:
+    image: qdrant/qdrant@sha256:94728574965d17c6485dd361aa3c0818b325b9016dac5ea6afec7b4b2700865f
+    container_name: sccap_qdrant
+    environment:
+      # Optional: set QDRANT_API_KEY in .env to require an API key on
+      # every request. Network-internal default is no-auth (PR3 will
+      # make this mandatory).
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-}
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - scpnetwork
+
   worker:
     build:
       context: .
@@ -387,6 +413,7 @@ volumes:
   langfuse_clickhouse_data:
   langfuse_redis_data:
   langfuse_minio_data:
+  qdrant_data:
 
 
 networks:
