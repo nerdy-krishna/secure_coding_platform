@@ -3,6 +3,7 @@ import {
   type LLMInteractionResponse,
   type PaginatedProjectHistoryResponse,
   type PaginatedScanHistoryResponse,
+  type PrescanReviewResponse,
   type ScanResponse,
   type ScanResultResponse
 } from "../types/api";
@@ -119,10 +120,48 @@ export const scanService = {
   },
 
   /**
-   * Sends an approval request for a scan pending cost confirmation.
+   * Fetches deterministic-scanner findings for the prescan-approval card.
+   *
+   * Only valid while the scan is at PENDING_PRESCAN_APPROVAL (gate) or
+   * already in one of the prescan-terminal states (BLOCKED_PRE_LLM /
+   * BLOCKED_USER_DECLINE). Other statuses return 400. ADR-009 / G6.
    */
-  approveScan: async (scanId: string): Promise<{ message: string }> => {
-    const response = await apiClient.post<{ message: string }>(`/scans/${scanId}/approve`);
+  getPrescanReview: async (scanId: string): Promise<PrescanReviewResponse> => {
+    const response = await apiClient.get<PrescanReviewResponse>(
+      `/scans/${scanId}/prescan-findings`,
+    );
+    return response.data;
+  },
+
+  /**
+   * Resume a scan paused at one of the worker-graph interrupt points.
+   *
+   * Two interrupt points exist (ADR-009): the new prescan-approval
+   * gate (status PENDING_PRESCAN_APPROVAL) and the existing cost-
+   * approval gate (status PENDING_COST_APPROVAL). The body's `kind`
+   * field discriminates; missing body defaults to `cost_approval`
+   * for backward-compat with older callers.
+   */
+  approveScan: async (
+    scanId: string,
+    payload?: {
+      kind?: "prescan_approval" | "cost_approval";
+      approved?: boolean;
+      override_critical_secret?: boolean;
+    },
+  ): Promise<{ message: string }> => {
+    const body =
+      payload && (payload.kind || payload.approved !== undefined || payload.override_critical_secret !== undefined)
+        ? {
+            kind: payload.kind ?? "cost_approval",
+            approved: payload.approved ?? true,
+            override_critical_secret: payload.override_critical_secret ?? false,
+          }
+        : undefined;
+    const response = await apiClient.post<{ message: string }>(
+      `/scans/${scanId}/approve`,
+      body,
+    );
     return response.data;
   },
 

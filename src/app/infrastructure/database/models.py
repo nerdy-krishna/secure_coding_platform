@@ -84,6 +84,12 @@ class Scan(Base):
     dependency_graph: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB)
     context_bundles: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSONB)
     summary: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB)
+    # CycloneDX SBOM emitted by OSV-Scanner during the deterministic
+    # pre-pass (ADR-009 / §3.6). Hard-capped at 5 MB by `osv_runner`;
+    # may carry `_truncated: true` and `_original_size_bytes` sentinels
+    # if the BOM exceeded the cap. Nullable for scans run before the
+    # column existed and for scans where OSV is unavailable.
+    bom_cyclonedx: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -184,6 +190,7 @@ class Finding(Base):
     cwe: Mapped[Optional[str]] = mapped_column(String(50))
     confidence: Mapped[Optional[str]] = mapped_column(String(50))
     source: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
+    cve_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     corroborating_agents: Mapped[Optional[List[str]]] = mapped_column(JSONB)
     cvss_score: Mapped[Optional[float]] = mapped_column(DECIMAL(3, 1))
     cvss_vector: Mapped[Optional[str]] = mapped_column(String(100))

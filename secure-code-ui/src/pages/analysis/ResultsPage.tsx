@@ -17,6 +17,7 @@ import React, { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { scanService } from "../../shared/api/scanService";
+import { isSafeHttpUrl } from "../../shared/lib/safeUrl";
 import { Icon } from "../../shared/ui/Icon";
 import { SevBar } from "../../shared/ui/DashboardPrimitives";
 import { useToast } from "../../shared/ui/Toast";
@@ -898,21 +899,38 @@ const FindingDetail: React.FC<{
               References
             </h4>
             <div style={{ display: "grid", gap: 4 }}>
-              {f.references.map((r, i) => (
-                <a
-                  key={i}
-                  href={r}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{
-                    color: "var(--primary)",
-                    fontSize: 12.5,
-                    wordBreak: "break-all",
-                  }}
-                >
-                  <Icon.Link size={11} /> {r}
-                </a>
-              ))}
+              {f.references.map((r, i) =>
+                isSafeHttpUrl(r) ? (
+                  <a
+                    key={i}
+                    href={r}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      color: "var(--primary)",
+                      fontSize: 12.5,
+                      wordBreak: "break-all",
+                    }}
+                  >
+                    <Icon.Link size={11} /> {r}
+                  </a>
+                ) : (
+                  // Reference came in with a non-http(s) scheme (e.g.
+                  // `javascript:` from a tampered upstream advisory) —
+                  // render as plain text instead of a clickable link.
+                  <span
+                    key={i}
+                    title="Unsafe URL scheme — rendered as plain text"
+                    style={{
+                      color: "var(--fg-muted)",
+                      fontSize: 12.5,
+                      wordBreak: "break-all",
+                    }}
+                  >
+                    <Icon.Link size={11} /> {r}
+                  </span>
+                ),
+              )}
             </div>
           </div>
         )}

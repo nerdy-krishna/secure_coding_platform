@@ -10,8 +10,11 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { CriticalSecretOverrideModal } from "../../features/prescan-approval/CriticalSecretOverrideModal";
+import { PrescanReviewCard } from "../../features/prescan-approval/PrescanReviewCard";
 import { scanService } from "../../shared/api/scanService";
 import { useNotificationPermission } from "../../shared/hooks/useNotificationPermission";
+import type { PrescanReviewResponse } from "../../shared/types/api";
 import { Icon } from "../../shared/ui/Icon";
 import { SectionHead } from "../../shared/ui/DashboardPrimitives";
 import { useToast } from "../../shared/ui/Toast";
@@ -54,11 +57,18 @@ const TERMINAL_STATUSES = new Set([
   "CANCELLED",
   "EXPIRED",
   "BLOCKED_PRE_LLM",
+  "BLOCKED_USER_DECLINE",
 ]);
 
 function progressFromStages(seenStages: Set<string>, currentStatus: string): number {
   if (currentStatus === "COMPLETED" || currentStatus === "REMEDIATION_COMPLETED") return 100;
-  if (currentStatus === "FAILED" || currentStatus === "CANCELLED" || currentStatus === "BLOCKED_PRE_LLM") return 100;
+  if (
+    currentStatus === "FAILED" ||
+    currentStatus === "CANCELLED" ||
+    currentStatus === "BLOCKED_PRE_LLM" ||
+    currentStatus === "BLOCKED_USER_DECLINE"
+  )
+    return 100;
   // Count how many known stages we've seen as a proportion of total.
   const known = KNOWN_STAGES.filter((s) => seenStages.has(s.key)).length;
   // Ensure we don't show 100% while still running.
@@ -80,6 +90,13 @@ const ScanRunningPage: React.FC = () => {
   const [streamError, setStreamError] = useState<string | null>(null);
   const [approving, setApproving] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [prescanReview, setPrescanReview] = useState<PrescanReviewResponse | null>(
+    null,
+  );
+  const [prescanLoading, setPrescanLoading] = useState(false);
+  const [overrideOpen, setOverrideOpen] = useState(false);
+  const [declining, setDeclining] = useState(false);
+  const lastFetchedStatusRef = useRef<string | null>(null);
   const esRef = useRef<EventSource | null>(null);
   // N3: dedupe — only one notification per scan_id per page lifetime,
   // even if SSE reconnects after the `done` event.
@@ -212,8 +229,47 @@ const ScanRunningPage: React.FC = () => {
   );
 
   const isPendingApproval = status === "PENDING_COST_APPROVAL";
+  const isPendingPrescan = status === "PENDING_PRESCAN_APPROVAL";
   const isTerminal = TERMINAL_STATUSES.has(status);
-  const isFailed = status === "FAILED" || status === "CANCELLED" || status === "EXPIRED";
+  const isFailed =
+    status === "FAILED" ||
+    status === "CANCELLED" ||
+    status === "EXPIRED" ||
+    status === "BLOCKED_PRE_LLM" ||
+    status === "BLOCKED_USER_DECLINE";
+
+  // Fetch the prescan review whenever the scan enters the prescan-
+  // approval gate or one of its terminal states. Re-fetches on every
+  // distinct entry so a refresh / reconnect lands the latest data.
+  useEffect(() => {
+    if (!scanId) return;
+    const reviewable =
+      status === "PENDING_PRESCAN_APPROVAL" ||
+      status === "BLOCKED_PRE_LLM" ||
+      status === "BLOCKED_USER_DECLINE";
+    if (!reviewable) {
+      lastFetchedStatusRef.current = null;
+      return;
+    }
+    if (lastFetchedStatusRef.current === status) return;
+    lastFetchedStatusRef.current = status;
+    let cancelled = false;
+    setPrescanLoading(true);
+    scanService
+      .getPrescanReview(scanId)
+      .then((data) => {
+        if (!cancelled) setPrescanReview(data);
+      })
+      .catch((err: { message?: string }) => {
+        if (!cancelled) toast.error(err.message || "Failed to load prescan findings");
+      })
+      .finally(() => {
+        if (!cancelled) setPrescanLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [scanId, status, toast]);
 
   const handleApprove = useCallback(async () => {
     if (!scanId) return;
@@ -226,6 +282,58 @@ const ScanRunningPage: React.FC = () => {
       toast.error(e.message || "Failed to approve scan");
     } finally {
       setApproving(false);
+    }
+  }, [scanId, toast]);
+
+  const submitPrescanApproval = useCallback(
+    async (override: boolean) => {
+      if (!scanId) return;
+      setApproving(true);
+      try {
+        await scanService.approveScan(scanId, {
+          kind: "prescan_approval",
+          approved: true,
+          override_critical_secret: override,
+        });
+        toast.success(
+          override
+            ? "Override recorded. Continuing to LLM analysis."
+            : "Continuing to LLM analysis.",
+        );
+        setOverrideOpen(false);
+      } catch (err) {
+        const e = err as { message?: string };
+        toast.error(e.message || "Failed to continue scan");
+      } finally {
+        setApproving(false);
+      }
+    },
+    [scanId, toast],
+  );
+
+  const handlePrescanContinue = useCallback(() => {
+    if (prescanReview?.has_critical_secret) {
+      setOverrideOpen(true);
+      return;
+    }
+    void submitPrescanApproval(false);
+  }, [prescanReview, submitPrescanApproval]);
+
+  const handlePrescanStop = useCallback(async () => {
+    if (!scanId) return;
+    setDeclining(true);
+    try {
+      await scanService.approveScan(scanId, {
+        kind: "prescan_approval",
+        approved: false,
+        override_critical_secret: false,
+      });
+      toast.info("Scan stopped before LLM analysis.");
+    } catch (err) {
+      const e = err as { message?: string };
+      toast.error(e.message || "Failed to stop scan");
+    } finally {
+      setDeclining(false);
     }
   }, [scanId, toast]);
 
@@ -269,13 +377,19 @@ const ScanRunningPage: React.FC = () => {
             · {fmtStatus(status)}
           </div>
           <h1 style={{ color: "var(--fg)" }}>
-            {isPendingApproval
-              ? "Ready to run — approve the estimated cost"
-              : status === "COMPLETED" || status === "REMEDIATION_COMPLETED"
-                ? "Scan complete — redirecting to results…"
-                : isFailed
-                  ? "Scan did not complete"
-                  : "Analyzing your code"}
+            {isPendingPrescan
+              ? "Pre-LLM scan complete — review before continuing"
+              : isPendingApproval
+                ? "Ready to run — approve the estimated cost"
+                : status === "COMPLETED" || status === "REMEDIATION_COMPLETED"
+                  ? "Scan complete — redirecting to results…"
+                  : status === "BLOCKED_PRE_LLM"
+                    ? "Scan stopped — Critical secret detected"
+                    : status === "BLOCKED_USER_DECLINE"
+                      ? "Scan stopped at your request"
+                      : isFailed
+                        ? "Scan did not complete"
+                        : "Analyzing your code"}
           </h1>
           <div style={{ color: "var(--fg-muted)", marginTop: 4 }}>
             You can leave this page — the scan continues in the background and
@@ -395,6 +509,43 @@ const ScanRunningPage: React.FC = () => {
             })}
           </div>
         </div>
+
+        {/* prescan-approval gate (ADR-009 / G6) — render the review
+            card while the scan is paused at PENDING_PRESCAN_APPROVAL,
+            and also after a terminal decline so the operator can audit
+            the findings that drove the block. */}
+        {(isPendingPrescan ||
+          status === "BLOCKED_PRE_LLM" ||
+          status === "BLOCKED_USER_DECLINE") && (
+          <>
+            {prescanLoading && !prescanReview && (
+              <div
+                className="sccap-card"
+                style={{ color: "var(--fg-muted)", fontSize: 13 }}
+              >
+                Loading prescan findings…
+              </div>
+            )}
+            {prescanReview && (
+              <PrescanReviewCard
+                findings={prescanReview.findings}
+                hasCriticalSecret={prescanReview.has_critical_secret}
+                approving={approving}
+                declining={declining}
+                onContinue={handlePrescanContinue}
+                onStop={handlePrescanStop}
+                readOnly={!isPendingPrescan}
+              />
+            )}
+          </>
+        )}
+
+        <CriticalSecretOverrideModal
+          open={overrideOpen}
+          submitting={approving}
+          onCancel={() => setOverrideOpen(false)}
+          onConfirm={() => void submitPrescanApproval(true)}
+        />
 
         {/* pending-approval banner + actions */}
         {isPendingApproval && (

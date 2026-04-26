@@ -234,6 +234,28 @@ export interface ScanResultResponse {
   source_counts?: { [source: string]: number };
 }
 
+// --- Prescan-approval gate (ADR-009 / G6). One row per deterministic-
+// scanner finding produced before the LLM phase; rendered on the
+// scan-status page when status === "PENDING_PRESCAN_APPROVAL".
+export interface PrescanFindingItem {
+  id: number;
+  file_path: string;
+  line_number?: number | null;
+  title: string;
+  description?: string | null;
+  severity?: string | null;
+  source?: string | null;
+  cwe?: string | null;
+  cve_id?: string | null;
+}
+
+export interface PrescanReviewResponse {
+  scan_id: string;
+  status: string;
+  findings: PrescanFindingItem[];
+  has_critical_secret: boolean;
+}
+
 export interface CostDetails {
   input_cost: number;
   predicted_output_cost: number;

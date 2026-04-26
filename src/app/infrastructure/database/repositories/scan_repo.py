@@ -177,6 +177,17 @@ class ScanRepository:
         await self.db.execute(stmt)
         await self.db.commit()
 
+    async def update_bom_cyclonedx(self, scan_id: uuid.UUID, bom: dict) -> None:
+        """Persist the CycloneDX SBOM produced by OSV-Scanner during the
+        deterministic pre-pass. ADR-009 / §3.6."""
+        stmt = (
+            update(db_models.Scan)
+            .where(db_models.Scan.id == scan_id)
+            .values(bom_cyclonedx=bom)
+        )
+        await self.db.execute(stmt)
+        await self.db.commit()
+
     async def create_scan_event(
         self, scan_id: uuid.UUID, stage_name: str, status: str = "STARTED"
     ):
@@ -255,6 +266,23 @@ class ScanRepository:
         stmt = select(db_models.Finding).where(
             db_models.Finding.scan_id == scan_id,
             db_models.Finding.file_path == file_path,
+        )
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_findings_for_scan(
+        self, scan_id: uuid.UUID
+    ) -> List[db_models.Finding]:
+        """All findings for a scan, ordered by severity then id (ADR-009 G6).
+
+        Used by the prescan-approval card on the scan-status page to
+        render the deterministic findings before the operator clears
+        the LLM gate.
+        """
+        stmt = (
+            select(db_models.Finding)
+            .where(db_models.Finding.scan_id == scan_id)
+            .order_by(db_models.Finding.id.asc())
         )
         result = await self.db.execute(stmt)
         return list(result.scalars().all())

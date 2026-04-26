@@ -161,6 +161,19 @@ RUN set -eux; \
     /opt/semgrep-venv/bin/pip install --no-cache-dir "semgrep==1.95.0"; \
     ln -s /opt/semgrep-venv/bin/semgrep /usr/local/bin/semgrep
 
+# --- OSV-Scanner v2.3.5 ---
+# https://github.com/google/osv-scanner/releases/tag/v2.3.5
+# Single Go binary; SHA256-pinned. The runner at
+# `app.infrastructure.scanners.osv_runner` invokes this via
+# subprocess for §3.6 / ADR-009 dependency-CVE detection + CycloneDX
+# BOM emission. The vulnerability DB is pre-warmed below so air-gapped
+# / restricted-egress deployments don't reach api.osv.dev at runtime.
+RUN set -eux; \
+    curl -fsSL -o /usr/local/bin/osv-scanner \
+        "https://github.com/google/osv-scanner/releases/download/v2.3.5/osv-scanner_linux_amd64"; \
+    echo "bb30c580afe5e757d3e959f4afd08a4795ea505ef84c46962b9a738aa573b41b  /usr/local/bin/osv-scanner" | sha256sum --check --strict; \
+    chmod 0755 /usr/local/bin/osv-scanner
+
 USER appuser
 
 COPY --chown=appuser:appuser --from=worker-builder /app/.venv /app/.venv
@@ -170,5 +183,16 @@ COPY --chown=appuser:appuser ./src /app/src
 # performs the bulk of the embedder work during scans; baking the
 # cache here keeps first-scan latency consistent.
 RUN python -c "from fastembed import TextEmbedding; TextEmbedding('sentence-transformers/all-MiniLM-L6-v2').embed(['warmup'])"
+
+# Pre-warm the OSV-Scanner vulnerability DB so first-scan latency is
+# consistent and air-gapped deployments don't reach api.osv.dev at
+# runtime. The empty-dir invocation triggers a DB sync; the cache
+# lands at $HOME/.cache/osv-scanner. Failures are tolerated so a
+# transient build-time network hiccup doesn't break the image —
+# runtime will then re-sync on first scan if needed.
+RUN set -eux; \
+    mkdir -p /tmp/osv-warmup; \
+    osv-scanner scan source --recursive /tmp/osv-warmup 2>/dev/null || true; \
+    rmdir /tmp/osv-warmup || true
 
 CMD ["python", "-m", "app.workers.consumer"]

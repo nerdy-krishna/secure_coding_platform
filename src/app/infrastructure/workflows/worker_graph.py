@@ -47,6 +47,7 @@ from app.shared.lib import cost_estimation
 from app.shared.lib.risk_score import compute_cvss_aggregate
 from app.infrastructure.scanners.bandit_runner import run_bandit
 from app.infrastructure.scanners.gitleaks_runner import run_gitleaks
+from app.infrastructure.scanners.osv_runner import run_osv
 from app.infrastructure.scanners.registry import (
     MINIFIED_BYTE_LIMIT,
     is_minified,
@@ -79,9 +80,11 @@ CHUNK_ONLY_IF_LARGER_THAN = 150_000
 from app.shared.lib.scan_status import (  # noqa: E402
     STATUS_ANALYZING_CONTEXT,
     STATUS_BLOCKED_PRE_LLM,
+    STATUS_BLOCKED_USER_DECLINE,
     STATUS_COMPLETED,
     STATUS_FAILED,
     STATUS_PENDING_APPROVAL,
+    STATUS_PENDING_PRESCAN_APPROVAL,
     STATUS_QUEUED_FOR_SCAN,
     STATUS_REMEDIATION_COMPLETED,
 )
@@ -114,6 +117,14 @@ class WorkerState(TypedDict):
     # pairs before correlation; the correlated findings live in `findings`.
     proposed_fixes: Optional[List[FixResult]]
     agent_results: Optional[List[Dict[str, Any]]]
+    # CycloneDX SBOM produced by `osv_runner` during the deterministic
+    # prescan. Persisted to `Scan.bom_cyclonedx` on completion. May be
+    # None when OSV is unavailable. (ADR-009 / §3.6.)
+    bom_cyclonedx: Optional[Dict[str, Any]]
+    # Decision payload returned by the prescan-approval interrupt;
+    # carries `approved: bool` and `override_critical_secret: bool`.
+    # Populated only between the interrupt return and the next route.
+    prescan_approval: Optional[Dict[str, Any]]
     error_message: Optional[str]
 
 
@@ -426,12 +437,14 @@ async def deterministic_prescan_node(state: WorkerState) -> Dict[str, Any]:
         )
         return {}
 
-    # Single shared semaphore covers all three scanner subprocesses in
+    # Single shared semaphore covers all SAST scanner subprocesses in
     # this prescan invocation (N9). Each scanner walks the staged tree
-    # itself, so we get three subprocess.run calls total per scan, not
-    # per file.
+    # itself, so we get one subprocess.run call per scanner per scan,
+    # not per file. OSV-Scanner (ADR-009) joins as the fourth scanner;
+    # it returns a (findings, bom) tuple instead of just findings.
     semaphore = asyncio.Semaphore(CONCURRENT_SCANNER_LIMIT)
     prescan_findings: List[VulnerabilityFinding] = []
+    bom_cyclonedx: Optional[Dict[str, Any]] = None
     try:
         with stage_files(eligible) as (staged_dir, original_paths):
 
@@ -443,9 +456,12 @@ async def deterministic_prescan_node(state: WorkerState) -> Dict[str, Any]:
                 _gated(lambda: run_bandit(staged_dir, original_paths)),
                 _gated(lambda: run_semgrep(staged_dir, original_paths)),
                 _gated(lambda: run_gitleaks(staged_dir, original_paths)),
+                _gated(lambda: run_osv(staged_dir, original_paths, scan_id=scan_id)),
             ]
             results = await asyncio.gather(*scanner_tasks, return_exceptions=True)
-            for scanner_name, result in zip(("bandit", "semgrep", "gitleaks"), results):
+            for scanner_name, result in zip(
+                ("bandit", "semgrep", "gitleaks", "osv"), results
+            ):
                 if isinstance(result, BaseException):
                     # Per-scanner failure is non-fatal (N15-style at the
                     # per-scanner level) — log + skip + continue with the
@@ -457,12 +473,19 @@ async def deterministic_prescan_node(state: WorkerState) -> Dict[str, Any]:
                         result,
                     )
                     continue
-                prescan_findings.extend(result)
+                if scanner_name == "osv":
+                    # OSV returns (findings, bom_cyclonedx_dict).
+                    osv_findings, bom = result
+                    prescan_findings.extend(osv_findings)
+                    bom_cyclonedx = bom
+                else:
+                    prescan_findings.extend(result)
         logger.info(
-            "deterministic_prescan: scan_id=%s eligible_files=%d findings=%d",
+            "deterministic_prescan: scan_id=%s eligible_files=%d findings=%d bom=%s",
             scan_id,
             len(eligible),
             len(prescan_findings),
+            "present" if bom_cyclonedx else "absent",
         )
     except Exception as exc:  # noqa: BLE001
         # N15: prescan-fail policy — never block the LLM analysis on a
@@ -474,22 +497,39 @@ async def deterministic_prescan_node(state: WorkerState) -> Dict[str, Any]:
             scan_id,
             exc,
         )
-        return {"findings": []}
+        return {"findings": [], "bom_cyclonedx": None}
 
-    return {"findings": prescan_findings}
+    # Persist the BOM column eagerly so it survives the upcoming
+    # interrupt(); LangGraph state writes happen via the checkpointer
+    # but the BOM is bulk JSONB and we want it on the Scan row for
+    # admin / compliance lookups even if the scan never resumes.
+    if bom_cyclonedx is not None:
+        try:
+            async with AsyncSessionLocal() as db:
+                await ScanRepository(db).update_bom_cyclonedx(scan_id, bom_cyclonedx)
+        except Exception as e:
+            logger.warning(
+                "deterministic_prescan: failed to persist BOM scan_id=%s err=%s",
+                scan_id,
+                e,
+            )
+
+    return {"findings": prescan_findings, "bom_cyclonedx": bom_cyclonedx}
 
 
 async def blocked_pre_llm_node(state: WorkerState) -> Dict[str, Any]:
-    """Terminal node reached when the SAST pre-pass found a Critical
-    secret (Gitleaks). Persists the triggering finding and sets the
-    scan status to ``BLOCKED_PRE_LLM`` BEFORE any LLM call is made.
+    """Terminal node reached when the operator declines an override on
+    a Critical Gitleaks finding (i.e. clicked Continue on the prescan-
+    approval card with a Critical secret present, then clicked No on
+    the override modal). Pre-ADR-009 this was an auto-route from
+    `_route_after_prescan`; now it is reachable only via user-decline-
+    of-override. Persists the triggering finding and sets the scan
+    status to ``BLOCKED_PRE_LLM``.
 
-    MUST NOT call ``interrupt()`` — this is a terminal route, not a
-    pause. The user-facing scan detail surfaces a generic
-    "Scan blocked: critical secret detected" message; the triggering
-    finding (with redacted description) is persisted so the admin
-    findings list (`/admin/findings?source=gitleaks`) can surface
-    what triggered the block.
+    Also runs the LangGraph checkpointer-thread cleanup so this scan's
+    paused state doesn't leak ~50 KB per declined attempt (M5 / G7).
+
+    MUST NOT call ``interrupt()`` — this is a terminal route.
     """
     scan_id = state["scan_id"]
     findings = state.get("findings") or []
@@ -522,6 +562,87 @@ async def blocked_pre_llm_node(state: WorkerState) -> Dict[str, Any]:
             await repo.save_findings(scan_id, findings)
         await repo.update_status(scan_id, STATUS_BLOCKED_PRE_LLM)
     return {}
+
+
+async def user_decline_node(state: WorkerState) -> Dict[str, Any]:
+    """Terminal node reached when the operator clicks Stop on the
+    prescan-approval card (regardless of finding severity). Distinct
+    from `blocked_pre_llm_node` so the operator can distinguish
+    "I rejected the secret" from "I just don't want to pay for an LLM
+    scan right now".
+
+    Persists the deterministic findings produced by the pre-pass so
+    the operator can review them on the scan-results page even though
+    no LLM augmentation ran. ADR-009 / G7.
+    """
+    scan_id = state["scan_id"]
+    findings = state.get("findings") or []
+    logger.info(
+        "user_decline: scan_id=%s findings=%d (operator chose Stop on prescan card)",
+        scan_id,
+        len(findings),
+    )
+    async with AsyncSessionLocal() as db:
+        repo = ScanRepository(db)
+        if findings:
+            await repo.save_findings(scan_id, findings)
+        await repo.update_status(scan_id, STATUS_BLOCKED_USER_DECLINE)
+    return {}
+
+
+async def pending_prescan_approval_node(state: WorkerState) -> Dict[str, Any]:
+    """Pause point for human review of the deterministic-prescan output.
+
+    Replaces the pre-ADR-009 Critical-Gitleaks auto-block with a user-
+    driven approval gate that fires whenever ``findings`` is non-empty
+    after the deterministic pre-pass. The graph state is serialized
+    into the Postgres checkpointer (LangGraph native interrupt); on
+    resume, the payload (``approved`` + ``override_critical_secret``)
+    drives the next route.
+
+    Persists the deterministic findings BEFORE pausing so the scan-
+    running page can render them while the worker is parked.
+    """
+    scan_id = state["scan_id"]
+    findings = state.get("findings") or []
+    has_critical_secret = any(
+        getattr(f, "source", None) == "gitleaks"
+        and (f.severity or "").lower() == "critical"
+        for f in findings
+    )
+
+    # Persist findings + status BEFORE the interrupt so the SSE stream
+    # and the prescan-approval card have everything they need while
+    # the worker thread is parked at `interrupt()`.
+    async with AsyncSessionLocal() as db:
+        repo = ScanRepository(db)
+        if findings:
+            await repo.save_findings(scan_id, findings)
+        await repo.update_status(scan_id, STATUS_PENDING_PRESCAN_APPROVAL)
+
+    logger.info(
+        "pending_prescan_approval: scan_id=%s findings=%d critical_secret=%s — pausing for operator",
+        scan_id,
+        len(findings),
+        has_critical_secret,
+    )
+
+    # Native LangGraph human-in-the-loop gate. The resume payload from
+    # `Command(resume={"kind": "prescan_approval", ...})` lands as the
+    # return value here.
+    approval_payload = interrupt(
+        {
+            "scan_id": str(scan_id),
+            "findings_count": len(findings),
+            "has_critical_secret": has_critical_secret,
+        }
+    )
+    logger.info(
+        "pending_prescan_approval: scan_id=%s resumed payload=%s",
+        scan_id,
+        approval_payload,
+    )
+    return {"prescan_approval": approval_payload or {}}
 
 
 async def estimate_cost_node(state: WorkerState) -> Dict[str, Any]:
@@ -1194,7 +1315,9 @@ workflow = StateGraph(WorkerState)
 # Define all nodes
 workflow.add_node("retrieve_and_prepare_data", retrieve_and_prepare_data_node)
 workflow.add_node("deterministic_prescan", deterministic_prescan_node)
+workflow.add_node("pending_prescan_approval", pending_prescan_approval_node)
 workflow.add_node("blocked_pre_llm", blocked_pre_llm_node)
+workflow.add_node("user_decline", user_decline_node)
 workflow.add_node("estimate_cost", estimate_cost_node)
 workflow.add_node("analyze_files_parallel", analyze_files_parallel_node)
 workflow.add_node("correlate_findings", correlate_findings_node)
@@ -1217,25 +1340,52 @@ def _route_after_retrieve(state: WorkerState) -> str:
 
 
 def _route_after_prescan(state: WorkerState) -> str:
-    """Route after the deterministic SAST pre-pass.
+    """Route after the deterministic SAST pre-pass (ADR-009).
 
-    - Critical secret found by Gitleaks → terminal `blocked_pre_llm`
-      (do NOT call `interrupt()`; the user pays nothing and the secret
-      never reaches the LLM provider).
     - Hard prescan failure → `handle_error` (rare; per N15 the prescan
-      node already swallows scanner crashes and returns `findings=[]`,
-      so this branch only fires on something catastrophic upstream).
-    - Otherwise → cost-approval gate at `estimate_cost`.
+      node already swallows scanner crashes and returns `findings=[]`).
+    - Findings non-empty → pause at `pending_prescan_approval` for
+      operator review (replaces the pre-ADR-009 Critical-Gitleaks
+      auto-block — that path now fires only on user-decline-of-override
+      after the human has seen the finding).
+    - Findings empty → cost-approval gate at `estimate_cost`.
     """
     if state.get("error_message"):
         return "handle_error"
     findings = state.get("findings") or []
-    for finding in findings:
-        if (
-            getattr(finding, "source", None) == "gitleaks"
-            and (finding.severity or "").lower() == "critical"
-        ):
-            return "blocked_pre_llm"
+    if findings:
+        return "pending_prescan_approval"
+    return "estimate_cost"
+
+
+def _route_after_prescan_approval(state: WorkerState) -> str:
+    """Route after the prescan-approval interrupt resumes (ADR-009).
+
+    Reads the approval payload (returned by `interrupt()` and stamped
+    into ``state.prescan_approval`` by `pending_prescan_approval_node`)
+    plus the findings-state and dispatches:
+
+    - ``approved=False`` → terminal `user_decline` (operator clicked
+      Stop on the prescan card).
+    - ``approved=True`` AND any Critical Gitleaks finding present
+      AND ``override_critical_secret=False`` → terminal
+      `blocked_pre_llm` (operator declined the override modal).
+    - Otherwise → continue to the cost-approval gate at
+      `estimate_cost`.
+    """
+    if state.get("error_message"):
+        return "handle_error"
+    payload = state.get("prescan_approval") or {}
+    if not payload.get("approved", False):
+        return "user_decline"
+    findings = state.get("findings") or []
+    has_critical_secret = any(
+        getattr(f, "source", None) == "gitleaks"
+        and (f.severity or "").lower() == "critical"
+        for f in findings
+    )
+    if has_critical_secret and not payload.get("override_critical_secret", False):
+        return "blocked_pre_llm"
     return "estimate_cost"
 
 
@@ -1252,11 +1402,26 @@ workflow.add_conditional_edges(
     _route_after_prescan,
     {
         "estimate_cost": "estimate_cost",
+        "pending_prescan_approval": "pending_prescan_approval",
+        "handle_error": "handle_error",
+    },
+)
+# pending_prescan_approval calls interrupt(); the graph pauses there,
+# the checkpointer flushes state, and the worker yields. On approval,
+# the worker calls ainvoke(Command(resume=...)) and the post-resume
+# router decides where to go next.
+workflow.add_conditional_edges(
+    "pending_prescan_approval",
+    _route_after_prescan_approval,
+    {
+        "estimate_cost": "estimate_cost",
         "blocked_pre_llm": "blocked_pre_llm",
+        "user_decline": "user_decline",
         "handle_error": "handle_error",
     },
 )
 workflow.add_edge("blocked_pre_llm", END)
+workflow.add_edge("user_decline", END)
 
 # estimate_cost_node calls interrupt(); the graph pauses there, persists
 # state in the checkpointer, and yields. On approval, the worker calls

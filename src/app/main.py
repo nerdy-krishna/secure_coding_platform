@@ -236,11 +236,26 @@ async def lifespan(app: FastAPI):
         run_outbox_sweeper(sweeper_stop), name="outbox-sweeper"
     )
 
+    # --- Start the prescan-approval auto-decline sweeper (ADR-009) ---
+    # Transitions scans stuck in PENDING_PRESCAN_APPROVAL > 24h to
+    # BLOCKED_USER_DECLINE. Runs on the API container since the worker
+    # is the producer of the stuck state.
+    from app.infrastructure.messaging.prescan_approval_sweeper import (
+        run_prescan_approval_sweeper,
+    )
+
+    prescan_sweeper_stop = asyncio.Event()
+    prescan_sweeper_task = asyncio.create_task(
+        run_prescan_approval_sweeper(prescan_sweeper_stop),
+        name="prescan-approval-sweeper",
+    )
+
     yield
 
     # This code runs on shutdown
     logger.info("Application shutdown.")
     sweeper_stop.set()
+    prescan_sweeper_stop.set()
     try:
         await asyncio.wait_for(sweeper_task, timeout=5)
     except asyncio.TimeoutError:
@@ -248,6 +263,13 @@ async def lifespan(app: FastAPI):
         sweeper_task.cancel()
     except Exception as e:
         logger.warning(f"Outbox sweeper shutdown error: {e}")
+    try:
+        await asyncio.wait_for(prescan_sweeper_task, timeout=5)
+    except asyncio.TimeoutError:
+        logger.warning("Prescan-approval sweeper did not stop within 5s; cancelling.")
+        prescan_sweeper_task.cancel()
+    except Exception as e:
+        logger.warning(f"Prescan-approval sweeper shutdown error: {e}")
 
     from app.infrastructure.messaging.publisher import close_publisher
 

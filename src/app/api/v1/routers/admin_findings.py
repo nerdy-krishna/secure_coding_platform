@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin/findings", tags=["Admin: Findings"])
 
 
-SourceFilter = Literal["bandit", "semgrep", "gitleaks", "agent"]
+SourceFilter = Literal["bandit", "semgrep", "gitleaks", "osv", "agent"]
 
 
 class AdminFindingItem(BaseModel):

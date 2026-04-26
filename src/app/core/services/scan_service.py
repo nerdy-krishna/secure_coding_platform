@@ -21,6 +21,7 @@ from app.shared.lib.scan_status import (
     STATUS_CANCELLED,
     STATUS_COMPLETED,
     STATUS_PENDING_APPROVAL,
+    STATUS_PENDING_PRESCAN_APPROVAL,
     STATUS_QUEUED_FOR_SCAN,
     STATUS_REMEDIATION_COMPLETED,
 )
@@ -200,33 +201,112 @@ class SubmissionService:
             raise HTTPException(status_code=404, detail="Scan not found")
         return scan
 
-    async def approve_scan(self, scan_id: uuid.UUID, user: db_models.User) -> None:
-        """Approves a scan that is pending cost approval, queueing it for analysis."""
+    async def approve_scan(
+        self,
+        scan_id: uuid.UUID,
+        user: db_models.User,
+        request: Optional[Any] = None,
+    ) -> None:
+        """Approve / decline a scan paused at a worker-graph interrupt.
+
+        Two interrupt points (ADR-009): prescan-approval and cost-
+        approval. ``request.kind`` discriminates; the consumer
+        re-validates kind against the scan's pause point before
+        invoking LangGraph (defense in depth).
+
+        For prescan-approval with ``approved=True`` and
+        ``override_critical_secret=True`` AND any Critical Gitleaks
+        finding present, this method writes a
+        ``PRESCAN_OVERRIDE_CRITICAL_SECRET`` scan_event so the
+        decision is auditable (M10).
+        """
+        # Late import to avoid circulars (api.v1.models imports schemas
+        # that pull this module transitively).
+        from app.api.v1.models import ApprovalRequest
+
+        if request is None:
+            request = ApprovalRequest()
+
         logger.info(
             "Attempting to approve scan.",
-            extra={"scan_id": str(scan_id), "user_id": user.id},
+            extra={
+                "scan_id": str(scan_id),
+                "user_id": user.id,
+                "kind": request.kind,
+                "approved": request.approved,
+            },
         )
         scan = await self.get_scan_status(scan_id)
         if scan.user_id != user.id and not user.is_superuser:
             raise HTTPException(
                 status_code=403, detail="Not authorized to approve this scan"
             )
-        if scan.status != STATUS_PENDING_APPROVAL:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Scan is not pending approval. Current status: {scan.status}",
+
+        # Validate kind against current pause point. Keeps a
+        # `kind="cost_approval"` payload from accidentally (or
+        # adversarially) advancing past a `PENDING_PRESCAN_APPROVAL`
+        # gate. (M1 / G4 — also re-checked in the worker consumer.)
+        if request.kind == "prescan_approval":
+            if scan.status != STATUS_PENDING_PRESCAN_APPROVAL:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Approval kind 'prescan_approval' requires status "
+                        f"PENDING_PRESCAN_APPROVAL; current status: {scan.status}"
+                    ),
+                )
+        elif request.kind == "cost_approval":
+            if scan.status != STATUS_PENDING_APPROVAL:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Approval kind 'cost_approval' requires status "
+                        f"PENDING_COST_APPROVAL; current status: {scan.status}"
+                    ),
+                )
+
+        # Audit trail for the override path (M10): if the operator is
+        # honoring an override on a Critical Gitleaks finding, persist
+        # a scan_event so the decision is auditable.
+        if (
+            request.kind == "prescan_approval"
+            and request.approved
+            and request.override_critical_secret
+        ):
+            await self.repo.create_scan_event(
+                scan_id=scan_id,
+                stage_name="PRESCAN_OVERRIDE_CRITICAL_SECRET",
+                status="COMPLETED",
             )
 
-        # Persist an outbox row so the approval message is retried even if
-        # RabbitMQ is momentarily unavailable. Same guarantee as the initial
-        # submission flow in _process_and_launch_scan. The consumer
-        # translates this message into a LangGraph Command(resume=...)
-        # against the paused interrupt() in estimate_cost_node.
-        await self.repo.update_status(scan_id, STATUS_QUEUED_FOR_SCAN)
-        await self.repo.create_scan_event(
-            scan_id=scan_id, stage_name="QUEUED_FOR_SCAN", status="COMPLETED"
-        )
-        approval_payload = {"scan_id": str(scan_id), "action": "resume_analysis"}
+        # Audit trail for the decline path: operator chose Stop on the
+        # prescan card. The worker then routes to `user_decline_node`
+        # which sets STATUS_BLOCKED_USER_DECLINE.
+        if request.kind == "prescan_approval" and not request.approved:
+            await self.repo.create_scan_event(
+                scan_id=scan_id,
+                stage_name="PRESCAN_USER_DECLINED",
+                status="COMPLETED",
+            )
+
+        # For cost_approval and prescan_approval-approve, the next
+        # worker phase actually progresses so transitioning to
+        # QUEUED_FOR_SCAN is a reasonable intermediate. For
+        # prescan_approval-decline, leave the status as
+        # PENDING_PRESCAN_APPROVAL — the worker's user_decline_node
+        # will set BLOCKED_USER_DECLINE within milliseconds of resume.
+        if not (request.kind == "prescan_approval" and not request.approved):
+            await self.repo.update_status(scan_id, STATUS_QUEUED_FOR_SCAN)
+            await self.repo.create_scan_event(
+                scan_id=scan_id, stage_name="QUEUED_FOR_SCAN", status="COMPLETED"
+            )
+        approval_payload = {
+            "scan_id": str(scan_id),
+            "action": "resume_analysis",
+            "kind": request.kind,
+            "approved": request.approved,
+            "override_critical_secret": request.override_critical_secret,
+        }
         outbox_row = await self.outbox.enqueue(
             scan_id=scan_id,
             queue_name=settings.RABBITMQ_APPROVAL_QUEUE,
@@ -240,7 +320,7 @@ class SubmissionService:
             await self.outbox.mark_published(outbox_row.id)
             logger.info(
                 "Scan approved and queued for processing.",
-                extra={"scan_id": str(scan_id)},
+                extra={"scan_id": str(scan_id), "kind": request.kind},
             )
         else:
             await self.outbox.record_failed_attempt(outbox_row.id)
@@ -249,6 +329,56 @@ class SubmissionService:
                 "sweeper will retry.",
                 extra={"scan_id": str(scan_id)},
             )
+
+    async def get_prescan_review(
+        self, scan_id: uuid.UUID, user: db_models.User
+    ) -> "api_models.PrescanReviewResponse":
+        """Findings + override-flag for the prescan-approval card (G6).
+
+        Allowed only when the scan is at the prescan-approval gate or
+        already in one of the two terminal blocked states (so the user
+        can audit the post-decision state on the same screen). Other
+        statuses 400.
+        """
+        from app.api.v1 import models as api_models  # local import — avoid circ
+        from app.shared.lib.scan_status import (
+            STATUS_BLOCKED_PRE_LLM,
+            STATUS_BLOCKED_USER_DECLINE,
+        )
+
+        scan = await self.repo.get_scan(scan_id)
+        if not scan or (scan.user_id != user.id and not user.is_superuser):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Scan not found or not authorized.",
+            )
+
+        review_statuses = {
+            STATUS_PENDING_PRESCAN_APPROVAL,
+            STATUS_BLOCKED_PRE_LLM,
+            STATUS_BLOCKED_USER_DECLINE,
+        }
+        if scan.status not in review_statuses:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Prescan review only available while scan is at "
+                    "PENDING_PRESCAN_APPROVAL or in a prescan-blocked "
+                    f"state; current status: {scan.status}"
+                ),
+            )
+
+        rows = await self.repo.get_findings_for_scan(scan_id)
+        items = [api_models.PrescanFindingItem.model_validate(r) for r in rows]
+        has_critical_secret = any(
+            (r.source == "gitleaks") and (r.severity == "Critical") for r in rows
+        )
+        return api_models.PrescanReviewResponse(
+            scan_id=scan_id,
+            status=scan.status,
+            findings=items,
+            has_critical_secret=has_critical_secret,
+        )
 
     async def cancel_scan(self, scan_id: uuid.UUID, user: db_models.User) -> None:
         """Cancels a scan, typically one that is pending approval."""

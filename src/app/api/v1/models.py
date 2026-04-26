@@ -3,7 +3,29 @@
 from datetime import datetime
 import uuid
 from pydantic import UUID4, BaseModel, Field, field_validator
-from typing import List, Optional, Dict, Any
+from typing import List, Literal, Optional, Dict, Any
+
+
+class ApprovalRequest(BaseModel):
+    """Body for `POST /api/v1/scans/{id}/approve`.
+
+    Two pause points exist in the worker graph (ADR-009): the new
+    prescan-approval interrupt (`STATUS_PENDING_PRESCAN_APPROVAL`) and
+    the existing cost-approval interrupt (`STATUS_PENDING_COST_APPROVAL`).
+    The `kind` field discriminates which one is being resumed; the
+    consumer also validates `kind` against the scan's current pause
+    point before handing the payload to LangGraph (G4 / M1).
+
+    Backward-compatibility: `kind` defaults to `"cost_approval"` for
+    one release. Callers that haven't been upgraded keep working;
+    `scan_service.approve_scan` emits a one-time WARN-log when the
+    default is taken.
+    """
+
+    kind: Literal["prescan_approval", "cost_approval"] = "cost_approval"
+    approved: bool = True
+    override_critical_secret: bool = False
+
 
 # === LLM Configuration Schemas (UPDATED) ===
 
@@ -510,6 +532,44 @@ class ScanResponse(BaseModel):
     scan_id: uuid.UUID
     project_id: uuid.UUID
     message: str
+
+
+class PrescanFindingItem(BaseModel):
+    """One row in the prescan-approval review card (ADR-009 / G6).
+
+    Mirrors the deterministic-scanner subset of `Finding` rows the
+    worker has already persisted by the time the graph hits the
+    prescan-approval interrupt. Only the columns the operator needs
+    to decide whether to proceed to the LLM phase.
+    """
+
+    id: int
+    file_path: str
+    line_number: Optional[int] = None
+    title: str
+    description: Optional[str] = None
+    severity: Optional[str] = None
+    source: Optional[str] = None
+    cwe: Optional[str] = None
+    cve_id: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class PrescanReviewResponse(BaseModel):
+    """Payload for `GET /scans/{scan_id}/prescan-findings` (ADR-009 / G6).
+
+    `has_critical_secret` is true iff at least one Gitleaks finding
+    with severity Critical exists. The frontend uses this to decide
+    whether to show the override modal when the operator clicks
+    Continue.
+    """
+
+    scan_id: uuid.UUID
+    status: str
+    findings: List[PrescanFindingItem] = []
+    has_critical_secret: bool = False
 
 
 class ScanEventItem(BaseModel):

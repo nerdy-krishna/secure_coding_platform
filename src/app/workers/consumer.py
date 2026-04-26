@@ -43,10 +43,16 @@ from app.infrastructure.workflows.worker_graph import (
     get_workflow,
 )
 from app.shared.lib.scan_status import (
+    STATUS_BLOCKED_PRE_LLM,
+    STATUS_BLOCKED_USER_DECLINE,
+    STATUS_CANCELLED,
+    STATUS_COMPLETED,
     STATUS_FAILED,
     STATUS_PENDING_APPROVAL,
+    STATUS_PENDING_PRESCAN_APPROVAL,
     STATUS_QUEUED,
     STATUS_QUEUED_FOR_SCAN,
+    STATUS_REMEDIATION_COMPLETED,
 )
 
 logging.config.dictConfig(LOGGING_CONFIG)
@@ -55,13 +61,80 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
+# Scan statuses for which the LangGraph checkpointer thread should be
+# deleted post-workflow. Keeps the `checkpoints` table from
+# accumulating ~50 KB per declined / blocked / completed scan
+# indefinitely (M5 / G7 from ADR-009 threat model).
+_TERMINAL_STATUSES_FOR_CLEANUP = frozenset(
+    {
+        STATUS_COMPLETED,
+        STATUS_REMEDIATION_COMPLETED,
+        STATUS_FAILED,
+        STATUS_CANCELLED,
+        STATUS_BLOCKED_PRE_LLM,
+        STATUS_BLOCKED_USER_DECLINE,
+    }
+)
+
+
+async def _maybe_cleanup_checkpointer_thread(scan_id_str: str) -> None:
+    """Delete the LangGraph checkpointer thread for ``scan_id`` if the
+    scan has reached a terminal status. Safe to call after every
+    workflow run; no-op when the scan is mid-flight.
+    """
+    try:
+        from app.infrastructure.database import AsyncSessionLocal
+        from app.infrastructure.database.repositories.scan_repo import (
+            ScanRepository,
+        )
+
+        async with AsyncSessionLocal() as db:
+            try:
+                scan = await ScanRepository(db).get_scan(uuid.UUID(scan_id_str))
+            except ValueError:
+                return
+        if scan is None or scan.status not in _TERMINAL_STATUSES_FOR_CLEANUP:
+            return
+        wf = await get_workflow()
+        ckp = getattr(wf, "checkpointer", None)
+        if ckp is None or not hasattr(ckp, "adelete_thread"):
+            return
+        await ckp.adelete_thread(thread_id=scan_id_str)
+        logger.info(
+            "WORKFLOW: Cleaned up checkpointer thread for terminal scan %s "
+            "(status=%s).",
+            scan_id_str,
+            scan.status,
+        )
+    except Exception as e:
+        logger.warning(
+            "WORKFLOW: checkpointer thread cleanup failed for %s: %s "
+            "(non-fatal — sweeper will retry on next pass).",
+            scan_id_str,
+            e,
+        )
+
+
 # Scan statuses the workflow knows how to handle. Any other status received
 # by the worker means the scan is either already in-flight on another worker,
 # has already completed, or was cancelled — all duplicate-delivery cases that
 # we should ACK without re-invoking the graph.
 _WORKFLOW_ENTRY_STATUSES = frozenset(
-    {STATUS_QUEUED, STATUS_QUEUED_FOR_SCAN, STATUS_PENDING_APPROVAL}
+    {
+        STATUS_QUEUED,
+        STATUS_QUEUED_FOR_SCAN,
+        STATUS_PENDING_APPROVAL,
+        STATUS_PENDING_PRESCAN_APPROVAL,
+    }
 )
+
+# Maps the resume payload's `kind` discriminator to the expected scan
+# status at the worker-graph pause point. Defends against an approval
+# message arriving for a scan that's at the wrong gate (M1 / G4).
+_KIND_TO_EXPECTED_STATUS = {
+    "prescan_approval": STATUS_PENDING_PRESCAN_APPROVAL,
+    "cost_approval": STATUS_PENDING_APPROVAL,
+}
 
 # Reconnect backoff for the outer consume loop. aio_pika's robust connection
 # handles per-op retries; this catches the "broker down for minutes" case
@@ -125,6 +198,87 @@ async def _run_workflow_for_scan(
 
     success = False
     timed_out = False
+
+    # Resume-payload kind validation (M1 / G4 from ADR-009 threat model).
+    # Two interrupt points exist (`pending_prescan_approval` +
+    # `estimate_cost`); a payload with the wrong `kind` for the scan's
+    # current pause point would otherwise silently advance the graph
+    # past a security gate.
+    #
+    # The authoritative gate is `scan_service.approve_scan` — it validates
+    # `kind` against the scan's status BEFORE writing the outbox row and
+    # transitioning the DB to `QUEUED_FOR_SCAN`. The consumer-side check
+    # below is best-effort defense-in-depth against a directly-injected
+    # queue message (no API call). We therefore enforce strict equality
+    # ONLY when the scan is still parked at one of the known gate
+    # statuses — meaning either the API hasn't run yet (impossible —
+    # nothing else publishes here) or the scan has been rolled back. For
+    # the normal post-API state (`QUEUED_FOR_SCAN`) we pass through;
+    # LangGraph rejects the resume cleanly if the thread isn't actually
+    # paused. Any other status (terminal, mid-flight) means duplicate
+    # delivery — ACK as no-op.
+    if resume_payload is not None:
+        payload_kind = resume_payload.get("kind", "cost_approval")
+        expected_status = _KIND_TO_EXPECTED_STATUS.get(payload_kind)
+        if expected_status is not None:
+            try:
+                from app.infrastructure.database import AsyncSessionLocal
+                from app.infrastructure.database.repositories.scan_repo import (
+                    ScanRepository,
+                )
+
+                async with AsyncSessionLocal() as db:
+                    current = await ScanRepository(db).get_scan(scan_id_uuid)
+                if current is None:
+                    logger.warning(
+                        "WORKFLOW: Resume for unknown scan %s; ACKing as noop.",
+                        scan_id_str_log,
+                    )
+                    return True
+
+                gate_statuses = (
+                    STATUS_PENDING_PRESCAN_APPROVAL,
+                    STATUS_PENDING_APPROVAL,
+                )
+                if current.status in gate_statuses:
+                    if current.status != expected_status:
+                        logger.warning(
+                            "WORKFLOW: Resume kind=%s does not match scan "
+                            "status %s (expected %s) for %s; rejecting payload.",
+                            payload_kind,
+                            current.status,
+                            expected_status,
+                            scan_id_str_log,
+                        )
+                        return False
+                elif current.status == STATUS_QUEUED_FOR_SCAN:
+                    # Normal post-API transitional state: API has already
+                    # validated kind against the gate, persisted the
+                    # transition, and now we're consuming the message it
+                    # published. Pass through.
+                    pass
+                else:
+                    # Terminal or mid-flight scan — duplicate delivery.
+                    logger.info(
+                        "WORKFLOW: Resume for scan %s in status %s "
+                        "(non-gate, non-transitional); ACKing as noop.",
+                        scan_id_str_log,
+                        current.status,
+                    )
+                    return True
+            except Exception as e:
+                # Fail-closed: a DB hiccup at precheck must not let an
+                # un-validated kind through to `Command(resume=...)`.
+                # NACK without requeue → the API has already persisted
+                # the gate; the operator can re-click Continue/Stop on
+                # next page-load. (Medium finding from Phase 9 review.)
+                logger.warning(
+                    "WORKFLOW: kind-validation precheck failed for %s: %s. "
+                    "Rejecting payload (fail-closed).",
+                    scan_id_str_log,
+                    e,
+                )
+                return False
 
     try:
         worker_workflow = await get_workflow()
@@ -191,6 +345,11 @@ async def _run_workflow_for_scan(
                 f"WORKFLOW: FAILED TO UPDATE STATUS IN DB for SID: {scan_id_str_log}. "
                 f"Error: {db_err}"
             )
+
+    # Best-effort checkpointer-thread cleanup for any scan now in a
+    # terminal state. Runs after the FAILED-on-crash status update so
+    # crash paths also get cleaned up. (M5 / G7.)
+    await _maybe_cleanup_checkpointer_thread(scan_id_str_log)
 
     return success
 
@@ -278,9 +437,18 @@ async def _handle_message(message: AbstractIncomingMessage) -> None:
                 body = json.loads(message.body.decode("utf-8"))
             except Exception:
                 body = {}
+            # Forward the discriminator + decision verbatim. The kind
+            # validation in `_run_workflow_for_scan` re-checks against
+            # the scan's current pause status before resume; the worker
+            # graph's `_route_after_prescan_approval` then uses
+            # `approved` and `override_critical_secret` to pick the
+            # next node. Defaults preserve backward compat with the
+            # legacy cost-approval message shape (no `kind` field).
             resume_payload = {
                 "scan_id": str(initial_state["scan_id"]),
-                "approved": True,
+                "kind": body.get("kind", "cost_approval"),
+                "approved": body.get("approved", True),
+                "override_critical_secret": body.get("override_critical_secret", False),
                 "approver_user_id": body.get("user_id"),
             }
 
