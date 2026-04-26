@@ -165,6 +165,7 @@
 - **Action**: Calculates final Risk Score and updates Scan status to `COMPLETED` or `REMEDIATION_COMPLETED`.
 
 ### 5. LLM Roles Summary
-- **Utility LLM**: Used in `triage_agents_node` for routing.
-- **Fast LLM**: Currently reserved for future optimization (e.g., initial summarization).
-- **Reasoning LLM**: Used in `generic_specialized_agent.py` (Analysis), `worker_graph.py` (Conflict Merging), and `impact_reporting_agent.py` (Executive Summary).
+- **Utility LLM**: Used for symbol-mapping / lightweight calls (`SymbolMapAgent` and similar). Configured per-scan via `Scan.utility_llm_config_id`.
+- **Reasoning LLM**: Used in `generic_specialized_agent.py` (Analysis), `worker_graph.py` (Conflict Merging via `_run_merge_agent`). Configured per-scan via `Scan.reasoning_llm_config_id`.
+
+> The Fast LLM tier was removed in 2026-04-26 (`/sccap remove-fast-llm-tier`) — the slot was reserved but never wired. If a third tier is needed in future (e.g. dedicated triage / dep-summarization model), ship as a new feature with a fresh migration + admin UI.

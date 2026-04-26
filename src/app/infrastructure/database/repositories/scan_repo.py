@@ -50,7 +50,6 @@ class ScanRepository:
         user_id: int,
         scan_type: str,
         utility_llm_config_id: uuid.UUID,
-        fast_llm_config_id: uuid.UUID,
         reasoning_llm_config_id: uuid.UUID,
         frameworks: List[str],
     ) -> db_models.Scan:
@@ -64,7 +63,6 @@ class ScanRepository:
             scan_type=scan_type,
             status=STATUS_QUEUED,
             utility_llm_config_id=utility_llm_config_id,
-            fast_llm_config_id=fast_llm_config_id,
             reasoning_llm_config_id=reasoning_llm_config_id,
             frameworks=frameworks,
         )

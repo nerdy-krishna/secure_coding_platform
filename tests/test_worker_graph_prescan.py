@@ -38,7 +38,6 @@ def _state(**overrides: Any) -> Dict[str, Any]:
         "scan_type": "AUDIT",
         "current_scan_status": "RUNNING_AGENTS",
         "utility_llm_config_id": None,
-        "fast_llm_config_id": None,
         "reasoning_llm_config_id": None,
         "files": {},
         "initial_file_map": None,

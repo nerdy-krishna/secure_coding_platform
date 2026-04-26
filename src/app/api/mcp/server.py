@@ -197,7 +197,6 @@ async def sccap_submit_scan(payload: SubmitScanInput) -> Dict[str, Any]:
             scan_type=payload.scan_type,
             correlation_id=str(uuid.uuid4()),
             utility_llm_config_id=llm_cfg_id,
-            fast_llm_config_id=llm_cfg_id,
             reasoning_llm_config_id=llm_cfg_id,
             frameworks=payload.frameworks,
         )
