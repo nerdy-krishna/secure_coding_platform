@@ -58,6 +58,7 @@
     - **repositories/**: Data access layer.
 - **workers/**:
     - **consumer.py**: RabbitMQ consumer for synchronous scan processing.
+- **scripts/**: Operator-only admin scripts. NOT importable by routers / MCP tools (CI grep-check at `tests/test_scripts_isolation.py` enforces). Run via `docker compose exec app python -m app.scripts.<module>`. Includes `backfill_findings_source.py` (sets `findings.source = 'agent'` for legacy LLM-emitted rows).
 - **shared/**:
     - **lib/**: Utility modules — `cost_estimation.py` (LiteLLM token + price), `scan_scope.py` (visibility-scope helper), `scan_status.py` (worker status constants), `risk_score.py` (unified CVSS-weighted risk aggregate shared by worker / dashboard / compliance), `agent_routing.py`, `files.py`, `git`, `encryption`.
 
