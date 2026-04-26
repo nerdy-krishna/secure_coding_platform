@@ -31,6 +31,8 @@ import asyncio
 import html
 import json
 import logging
+import os
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -43,7 +45,21 @@ from app.core.schemas import VulnerabilityFinding
 logger = logging.getLogger(__name__)
 
 
-BANDIT_BINARY = "/app/.venv/bin/bandit"
+def _resolve_binary(env_var: str, name: str, fallback: Optional[str] = None) -> str:
+    """Locate a scanner binary via env override → PATH → hardcoded fallback.
+
+    Lets local dev outside Docker iterate without a fixed venv layout
+    (set ``BANDIT_BINARY=/usr/local/bin/bandit`` etc.), while production
+    images keep the same hardcoded fallback they always had.
+    """
+    return (
+        os.environ.get(env_var)
+        or shutil.which(name)
+        or (fallback if fallback is not None else f"/app/.venv/bin/{name}")
+    )
+
+
+BANDIT_BINARY = _resolve_binary("BANDIT_BINARY", "bandit")
 BANDIT_TIMEOUT_SECONDS = 120
 DESCRIPTION_MAX_CHARS = 200
 

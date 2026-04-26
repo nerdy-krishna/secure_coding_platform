@@ -54,7 +54,7 @@
     - **db/**: Database connection and session management.
     - **llm/**: Clients for LLM providers (OpenAI, Anthropic, etc.).
     - **agents/**: LangChain agents for specific tasks (Analysis, Remediation).
-    - **scanners/**: Deterministic SAST wrappers invoked by the worker graph's `deterministic_prescan_node` — `staging.py` (sandbox the file tree), `bandit_runner.py` (Bandit subprocess + Pydantic-allowlisted output), `registry.py` (per-file scanner routing). Reserved slots for Semgrep + Gitleaks follow-ups.
+    - **scanners/**: Deterministic SAST wrappers invoked by the worker graph's `deterministic_prescan_node` — `staging.py` (sandbox the file tree, sanitize basenames), `bandit_runner.py` (Bandit subprocess + Pydantic-allowlisted output), `semgrep_runner.py` (Semgrep CE multi-language coverage with bundled `p/security-audit` rule pack), `gitleaks_runner.py` (secret-scan with strict `RuleID/File/StartLine/Description` allowlist + `--redact`), `registry.py` (per-file routing + minified-bundle detection). All three runners share `_resolve_binary` for env-var / PATH / hardcoded-fallback discovery. Critical Gitleaks findings short-circuit the graph to `blocked_pre_llm` terminal node before any LLM call.
     - **repositories/**: Data access layer.
 - **workers/**:
     - **consumer.py**: RabbitMQ consumer for synchronous scan processing.

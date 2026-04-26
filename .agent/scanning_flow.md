@@ -107,16 +107,17 @@ Compiled as a **LangGraph `StateGraph`** with an `AsyncPostgresSaver` checkpoint
 
 ```
 retrieve_and_prepare_data
-  → deterministic_prescan    (Bandit subprocess — no interrupt)
-  → estimate_cost            (interrupt → resume via Command)
-  → analyze_files_parallel
-  → correlate_findings
-  → consolidate_and_patch    (no-op for AUDIT / SUGGEST)
-  → save_results
-  → save_final_report → END
+  → deterministic_prescan        (Bandit + Semgrep + Gitleaks subprocesses — no interrupt)
+      → blocked_pre_llm → END    (terminal: Critical Gitleaks finding short-circuits LLM cost)
+      → estimate_cost            (interrupt → resume via Command)
+        → analyze_files_parallel
+        → correlate_findings
+        → consolidate_and_patch  (no-op for AUDIT / SUGGEST)
+        → save_results
+        → save_final_report → END
 ```
 
-`handle_error` is reachable from every node via the `should_continue` conditional edges and sets status `FAILED`.
+`handle_error` is reachable from every node via the `should_continue` conditional edges and sets status `FAILED`. `blocked_pre_llm` is reachable only from `deterministic_prescan` and sets status `BLOCKED_PRE_LLM` — the user pays no LLM cost and the secret never leaves the worker.
 
 ### Node 1 — `retrieve_and_prepare_data`
 
@@ -132,13 +133,24 @@ retrieve_and_prepare_data
 
 Deterministic SAST pre-pass that runs **before** the cost-approval interrupt and seeds `WorkerState.findings` with high-confidence ground-truth findings the LLM agents can corroborate.
 
-- Wraps user-supplied files (`state["files"]`) into a fresh `tempfile.mkdtemp()` sandbox via `app.infrastructure.scanners.staging.stage_files`. Basenames are sanitized (strip `..`, leading `/`, leading `-` to neutralize argv injection) so attacker-controlled paths can never reach the scanner argv.
-- Routes per-file via `app.infrastructure.scanners.registry.scanners_for_file` — currently `bandit` for `.py` / `.pyi` only. Semgrep + Gitleaks slots are reserved for follow-up runs.
-- Invokes `bandit -r -f json --quiet -- <staged_dir>` via `subprocess.run([..., shell=False, check=False, timeout=120])`. Output is parsed through a Pydantic `BanditReport` (M5 / M7 boundary — only allowlisted fields survive). Each result becomes a `VulnerabilityFinding(source="bandit", confidence="High")` with HTML-escaped, 200-char-capped `description` so attacker-influenced text cannot smuggle prompt-injection into downstream LLM agents.
-- Files larger than `PRESCAN_FILE_BYTE_LIMIT` (1 MiB) are skipped to bound CPU; bandit subprocess has a 120 s `timeout`; per-scanner concurrency is capped at `CONCURRENT_SCANNER_LIMIT=5`.
-- **MUST NOT call `interrupt()`.** The cost-approval pause stays at `estimate_cost_node`. On unexpected failure, the node returns `{"error_message": ...}` and the graph routes to `handle_error`.
-- Findings are NOT persisted in this node; they live on state and are saved at `save_results_node` (single save site). `analyze_files_parallel` extends rather than replaces `state["findings"]`, and `correlate_findings_node` dedupes scanner-flagged + LLM-flagged overlaps by `(file_path, cwe, line_number)`.
-- Provenance is recorded on the new `findings.source` column (NULL for legacy / LLM-agent rows; `"bandit"` / `"semgrep"` / `"gitleaks"` for scanner findings).
+- Wraps user-supplied files (`state["files"]`) into a fresh `tempfile.mkdtemp()` sandbox via `app.infrastructure.scanners.staging.stage_files`. Basenames are sanitized (strip `..`, leading `/`, leading `-` to neutralize argv injection, leading `.` to neutralize config-file hijack like `.semgrepignore` / `.gitleaks.toml`) so attacker-controlled paths can never reach the scanner argv.
+- Routes per-file via `app.infrastructure.scanners.registry.scanners_for_file`:
+  - **Bandit** for Python (`.py`, `.pyi`).
+  - **Semgrep CE** for the multi-language subset its bundled `p/security-audit` pack covers (`.py`, `.js`, `.ts`, `.jsx`, `.tsx`, `.java`, `.go`, `.rb`, `.php`, `.cs`, `.c`, `.cpp`, `.h`, etc.).
+  - **Gitleaks** for any text-shaped file (source + common config / docs).
+- Each scanner walks the staged tree itself; the prescan node fans out three subprocess invocations under a single shared `asyncio.Semaphore(CONCURRENT_SCANNER_LIMIT=5)` (N9). Per-scanner failure is non-fatal — the other two scanners' findings still flow through.
+- **Subprocess hardening (M1, N1–N3):** every invocation is `subprocess.run([...], shell=False, check=False, timeout=120)`; arguments are a literal list with `--` separator before user-derived paths; configs are pinned to bundled paths (`/app/scanners/configs/semgrep/security-audit.yml`, `/app/scanners/configs/gitleaks.toml`) so user-tree configs cannot redirect behavior; Semgrep gets `--metrics=off --disable-version-check --no-git-ignore`; Gitleaks gets `--redact --no-git`.
+- **Output (M5 / M7 / N1):** parsed through strict Pydantic allowlists. Gitleaks's allowlist is the tightest — only `RuleID`, `File`, `StartLine`, `Description` cross the boundary; `Match`, `Secret`, `Fingerprint`, `Commit`, `Author`, `Email` are silently dropped even if present. Every `VulnerabilityFinding.description` is `html.escape()`d and capped at 200 chars before reaching any LLM prompt.
+- **Resource caps (M6 / N2):** files larger than `PRESCAN_FILE_BYTE_LIMIT` (1 MiB) are skipped; minified web bundles (`*.min.js`, `*.bundle.js`, `*.min.css`) get a tighter `MINIFIED_BYTE_LIMIT` (256 KiB) to dodge Semgrep's parse pathology. Per-scanner 120 s subprocess timeout.
+- **Critical-secret short-circuit (A3 / N4):** any Gitleaks finding (severity = Critical by construction) routes the graph from `_route_after_prescan` to the terminal `blocked_pre_llm` node instead of to `estimate_cost`. The user pays no LLM cost; the secret never leaves the worker.
+- **Failure policy (N15):** unexpected prescan crash → log WARN with `correlation_id` + `findings: []` continuation; the graph proceeds to `estimate_cost` so the LLM analysis still runs. Scanner stdout is NEVER embedded in `Scan.error_message`.
+- **MUST NOT call `interrupt()`** (M8 / N5). The cost-approval pause stays at `estimate_cost_node`. The blocked node is a terminal route, not a pause.
+- Findings ride through state to `save_results_node` (single save site). `analyze_files_parallel` extends rather than replaces `state["findings"]`; `correlate_findings_node` dedupes scanner + LLM overlaps by `(file_path, cwe, line_number)`.
+- Provenance via `findings.source` column: `"bandit"` / `"semgrep"` / `"gitleaks"` for scanner findings; `NULL` for legacy LLM-agent rows; `"agent"` for new LLM rows once the backfill admin script runs.
+
+### Node 1.5b — `blocked_pre_llm` (terminal)
+
+Reached when `_route_after_prescan` finds a Critical Gitleaks finding on `state["findings"]`. Persists the triggering Finding via `ScanRepository.save_findings`; sets `Scan.status = STATUS_BLOCKED_PRE_LLM`; logs WARN with `scan_id`, scanner, rule, file, line for admin investigation via `/admin/findings?source=gitleaks`. Returns `{}`. Routes to `END`.
 
 ### Node 2 — `estimate_cost`
 
