@@ -577,6 +577,10 @@ class ScanEventItem(BaseModel):
     stage_name: str
     status: str
     timestamp: datetime
+    # §3.10b: optional per-event payload. For `FILE_ANALYZED` events
+    # this carries `{file_path, findings_count, fixes_count}`. NULL
+    # for legacy stage events.
+    details: Optional[Dict[str, Any]] = None
 
     class Config:
         from_attributes = True
