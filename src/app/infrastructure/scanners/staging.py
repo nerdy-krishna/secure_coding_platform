@@ -52,9 +52,18 @@ def _sanitize_component(part: str) -> str:
 def _safe_relative_path(rel_path: str) -> Path:
     """Convert an attacker-controlled relative path into a safe staged
     `Path` (no leading separator, no `..`, sanitized components).
+
+    NUL-byte handling (N13): on POSIX, ``Path("foo\x00bar")`` itself
+    raises ``ValueError`` since Python 3.10. Wrap the parts walk so a
+    malformed path falls back to the ``unnamed`` slug — the file is
+    still scannable, and the rest of the scan is not aborted.
     """
-    parts = []
-    for raw in Path(rel_path).parts:
+    parts: list[str] = []
+    try:
+        raw_parts = Path(rel_path).parts
+    except (ValueError, OSError):
+        return Path("unnamed")
+    for raw in raw_parts:
         # `Path.parts` already collapses double slashes; we still need
         # to drop drive letters and the absolute-path marker.
         if raw in ("/", "\\"):

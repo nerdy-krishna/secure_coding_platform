@@ -62,8 +62,13 @@ async def test_prescan_returns_empty_when_no_files():
     assert result == {}
 
 
-async def test_prescan_skips_non_python_files():
-    state = _state(files={"app/main.go": "package main\n"})
+async def test_prescan_skips_files_no_scanner_routes_to():
+    """A file extension that maps to no scanner (e.g. a binary
+    extension or an unknown one) is silently skipped. Note: most
+    text-shaped files now route to Gitleaks even when Bandit/Semgrep
+    don't apply, so we use an obviously non-text extension here.
+    """
+    state = _state(files={"asset.bin": "binary blob"})
     result = await worker_graph.deterministic_prescan_node(state)
     assert result == {}
 
@@ -97,15 +102,38 @@ async def test_prescan_returns_findings_with_source_bandit_for_real_python(monke
     assert all(f.confidence == "High" for f in findings)
 
 
-async def test_prescan_returns_error_message_on_unexpected_failure(monkeypatch):
-    async def _explode(*_args, **_kwargs):
-        raise RuntimeError("kaboom")
+async def test_prescan_failure_continues_to_estimate_cost(monkeypatch, caplog):
+    """N15 (sast-prescan-followups) — the prescan-fail policy now logs
+    a WARN and returns ``{"findings": []}`` so the LLM analysis still
+    runs. It MUST NOT route to handle_error or embed scanner stdout in
+    `Scan.error_message`.
+    """
+    import logging
 
-    monkeypatch.setattr(worker_graph, "run_bandit", _explode)
+    sentinel = "SECRET_SHAPED_STDOUT_DO_NOT_LEAK"
+
+    def _explode(*_args, **_kwargs):
+        raise RuntimeError(sentinel)
+
+    # Make stage_files() itself raise so the outer try/except in the
+    # node fires (the per-scanner try/except inside swallows runner
+    # crashes; the outer one is for the staging / setup path).
+    monkeypatch.setattr(worker_graph, "stage_files", _explode)
     state = _state(files={"x.py": "y = 1\n"})
+    # The app logger sets `propagate=False` once `logging_config.setup`
+    # has been called by an earlier DB-backed test, so caplog's
+    # root-handler can't see records. Flip propagate for the test.
+    app_logger = logging.getLogger("app")
+    monkeypatch.setattr(app_logger, "propagate", True)
+    caplog.set_level(logging.WARNING, logger="app.infrastructure.workflows.worker_graph")
     result = await worker_graph.deterministic_prescan_node(state)
-    assert "error_message" in result
-    assert "kaboom" in result["error_message"]
+    assert result == {"findings": []}, "must continue with empty findings, not error"
+    assert "error_message" not in result
+    # Sentinel from the exception must NOT have been re-raised; the
+    # WARN log mentions the failure but the orchestrator doesn't get
+    # `error_message` so the graph proceeds to estimate_cost.
+    msgs = "\n".join(r.getMessage() for r in caplog.records)
+    assert "prescan_failed" in msgs
 
 
 async def test_prescan_does_not_persist_findings_in_node(monkeypatch):

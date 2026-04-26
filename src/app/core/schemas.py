@@ -112,7 +112,7 @@ class AnalysisResult(BaseModel):
     remediations: List[RemediationResult] = Field(default_factory=list)
 
 
-class SpecializedAgentState(TypedDict):
+class SpecializedAgentState(TypedDict, total=False):
     """Represents the state of any specialized agent's workflow."""
 
     scan_id: uuid.UUID
@@ -124,6 +124,13 @@ class SpecializedAgentState(TypedDict):
     findings: List[VulnerabilityFinding]
     fixes: List[FixResult]
     error: Optional[str]
+    # Verified-findings prompt prefix (sast-prescan-followups B4):
+    # SAST scanner findings for the current file, injected into the
+    # agent prompt as an `<UNTRUSTED_SCANNER_FINDINGS>` block so the
+    # agent skips re-flagging obvious issues. Filtered upstream in
+    # `analyze_files_parallel_node` to findings whose `file_path`
+    # matches `filename`.
+    prescan_findings_for_file: Optional[List[VulnerabilityFinding]]
 
 
 class LLMInteraction(BaseModel):

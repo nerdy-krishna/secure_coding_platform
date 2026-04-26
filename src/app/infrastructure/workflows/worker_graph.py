@@ -848,6 +848,17 @@ async def analyze_files_parallel_node(state: WorkerState) -> Dict[str, Any]:
         file_findings: List[VulnerabilityFinding] = []
         file_fixes: List[FixResult] = []
 
+        # Verified-findings prompt prefix (B4): pass the per-file
+        # SAST scanner findings into the agent so it can avoid
+        # re-flagging issues the deterministic scanners already found.
+        prior_findings_all = state.get("findings") or []
+        per_file_scanner_findings = [
+            f
+            for f in prior_findings_all
+            if getattr(f, "source", None) in ("bandit", "semgrep", "gitleaks")
+            and f.file_path == file_path
+        ]
+
         for chunk in chunks:
             enriched_code = (
                 f"{dep_summary}{chunk['code']}" if dep_summary else chunk["code"]
@@ -868,6 +879,7 @@ async def analyze_files_parallel_node(state: WorkerState) -> Dict[str, Any]:
                     "findings": [],
                     "fixes": [],
                     "error": None,
+                    "prescan_findings_for_file": per_file_scanner_findings,
                 }
                 tasks.append(
                     run_agent_with_sem(
