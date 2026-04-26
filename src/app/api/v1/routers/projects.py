@@ -26,9 +26,15 @@ from app.infrastructure.auth.core import (
     current_superuser,
 )
 from app.config.logging_config import correlation_id_var
-from app.core.services.scan_service import SubmissionService
+from app.core.services.scan import (
+    ScanLifecycleService,
+    ScanQueryService,
+    ScanSubmissionService,
+)
 from app.api.v1.dependencies import (
-    get_scan_service,
+    get_scan_lifecycle_service,
+    get_scan_query_service,
+    get_scan_submission_service,
     get_llm_config_repository,
     get_visible_user_ids,
 )
@@ -43,7 +49,7 @@ logger = logging.getLogger(__name__)
 @router.get("/projects", response_model=api_models.PaginatedProjectHistoryResponse)
 async def get_all_projects(
     user: db_models.User = Depends(current_active_user),
-    service: SubmissionService = Depends(get_scan_service),
+    service: ScanQueryService = Depends(get_scan_query_service),
     visible_user_ids: Optional[List[int]] = Depends(get_visible_user_ids),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
@@ -66,7 +72,7 @@ class CreateProjectRequest(BaseModel):
 async def create_project(
     request: CreateProjectRequest,
     user: db_models.User = Depends(current_active_user),
-    service: SubmissionService = Depends(get_scan_service),
+    service: ScanQueryService = Depends(get_scan_query_service),
 ):
     """Creates a new empty project."""
     project = await service.repo.get_or_create_project(
@@ -86,7 +92,7 @@ async def create_project(
 async def search_projects_for_user(
     q: str = Query(..., min_length=1, max_length=100),
     user: db_models.User = Depends(current_active_user),
-    service: SubmissionService = Depends(get_scan_service),
+    service: ScanQueryService = Depends(get_scan_query_service),
     visible_user_ids: Optional[List[int]] = Depends(get_visible_user_ids),
 ):
     """Searches for projects by name visible to the caller (for autocomplete)."""
@@ -98,7 +104,7 @@ async def search_projects_for_user(
 @router.get("/scans/history", response_model=api_models.PaginatedScanHistoryResponse)
 async def get_user_scan_history(
     user: db_models.User = Depends(current_active_user),
-    service: SubmissionService = Depends(get_scan_service),
+    service: ScanQueryService = Depends(get_scan_query_service),
     visible_user_ids: Optional[List[int]] = Depends(get_visible_user_ids),
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=100),
@@ -141,7 +147,7 @@ async def preview_git_files(request: api_models.GitRepoPreviewRequest):
 
 @router.post("/scans", response_model=api_models.ScanResponse)
 async def create_scan(
-    service: SubmissionService = Depends(get_scan_service),
+    service: ScanSubmissionService = Depends(get_scan_submission_service),
     llm_repo: LLMConfigRepository = Depends(get_llm_config_repository),
     user: db_models.User = Depends(current_active_user),
     project_name: str = Form(...),
@@ -225,7 +231,7 @@ async def approve_scan_analysis(
     scan_id: uuid.UUID,
     request: Optional[api_models.ApprovalRequest] = None,
     user: db_models.User = Depends(current_active_user),
-    service: SubmissionService = Depends(get_scan_service),
+    service: ScanLifecycleService = Depends(get_scan_lifecycle_service),
 ):
     """Resume a scan paused at a worker-graph interrupt.
 
@@ -246,7 +252,7 @@ async def approve_scan_analysis(
 async def get_prescan_review(
     scan_id: uuid.UUID,
     user: db_models.User = Depends(current_active_user),
-    service: SubmissionService = Depends(get_scan_service),
+    service: ScanLifecycleService = Depends(get_scan_lifecycle_service),
 ):
     """Deterministic-scanner findings to render on the prescan-approval card.
 
@@ -263,7 +269,7 @@ async def get_prescan_review(
 async def cancel_scan_analysis(
     scan_id: uuid.UUID,
     user: db_models.User = Depends(current_active_user),
-    service: SubmissionService = Depends(get_scan_service),
+    service: ScanLifecycleService = Depends(get_scan_lifecycle_service),
 ):
     """Cancels a scan, typically one that is pending cost approval."""
     await service.cancel_scan(scan_id, user)
@@ -275,7 +281,7 @@ async def stream_scan_progress(
     scan_id: uuid.UUID,
     request: Request,
     user: db_models.User = Depends(current_active_user_sse),
-    service: SubmissionService = Depends(get_scan_service),
+    service: ScanQueryService = Depends(get_scan_query_service),
 ):
     """Server-Sent Events stream of a scan's progress.
 
@@ -399,7 +405,7 @@ async def apply_fixes(
     scan_id: uuid.UUID,
     request: SelectiveRemediationRequest,
     user: db_models.User = Depends(current_active_user),
-    service: SubmissionService = Depends(get_scan_service),
+    service: ScanLifecycleService = Depends(get_scan_lifecycle_service),
 ):
     """Triggers the application of selected fixes for a scan."""
     await service.apply_selective_fixes(scan_id, request.finding_ids, user)
@@ -414,7 +420,7 @@ async def apply_fixes(
 async def get_scan_result_details(
     scan_id: uuid.UUID,
     user: db_models.User = Depends(current_active_user),
-    service: SubmissionService = Depends(get_scan_service),
+    service: ScanQueryService = Depends(get_scan_query_service),
 ):
     """Retrieves the full, detailed result of a completed scan."""
     result = await service.get_scan_result(scan_id, user)
@@ -442,7 +448,7 @@ async def get_scan_result_details(
 async def get_scan_history_for_project(
     project_id: uuid.UUID,
     user: db_models.User = Depends(current_active_user),
-    service: SubmissionService = Depends(get_scan_service),
+    service: ScanQueryService = Depends(get_scan_query_service),
     skip: int = Query(0, ge=0),
     limit: int = Query(10, ge=1, le=100),
 ):
@@ -458,7 +464,7 @@ async def get_scan_history_for_project(
 async def get_llm_interactions_for_scan(
     scan_id: uuid.UUID,
     user: db_models.User = Depends(current_active_user),
-    service: SubmissionService = Depends(get_scan_service),
+    service: ScanQueryService = Depends(get_scan_query_service),
 ):
     """Retrieves all LLM interactions associated with a specific scan."""
     interactions_db = await service.get_llm_interactions_for_scan(scan_id, user)
@@ -471,7 +477,7 @@ async def get_llm_interactions_for_scan(
 async def delete_scan(
     scan_id: uuid.UUID,
     user: db_models.User = Depends(current_superuser),
-    service: SubmissionService = Depends(get_scan_service),
+    service: ScanQueryService = Depends(get_scan_query_service),
 ):
     """Deletes a single scan (superuser only)."""
     await service.delete_scan_by_id(scan_id, user)
@@ -482,7 +488,7 @@ async def delete_scan(
 async def delete_project(
     project_id: uuid.UUID,
     user: db_models.User = Depends(current_superuser),
-    service: SubmissionService = Depends(get_scan_service),
+    service: ScanQueryService = Depends(get_scan_query_service),
 ):
     """Delets a project and all its scans (superuser only)."""
     await service.delete_project_by_id(project_id, user)

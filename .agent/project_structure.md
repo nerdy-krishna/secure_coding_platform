@@ -106,8 +106,8 @@
   - **Action**: Receives form data (files, repo URL, config) and calls the service.
 
 ### 2. Service Layer & Queuing
-- **File**: `src/app/core/services/scan_service.py`
-  - **Function**: `_process_and_launch_scan` (called by `create_scan_from_*`)
+- **Files**: `src/app/core/services/scan/submission.py` (new-scan creation + outbox publish), `lifecycle.py` (approve/cancel/apply-fixes/decline + outbox publish for the approval queue), `query.py` (read paths + superuser-only deletes). Each service is wired via its own `Depends(get_scan_*_service)` factory in `api/v1/dependencies.py`.
+  - **Function**: `ScanSubmissionService._process_and_launch_scan` (called by `create_scan_from_*`)
   - **Action**:
     1.  Persists Project, Scan, and CodeSnapshot to DB via `ScanRepository.create_scan`, `ScanRepository.create_code_snapshot`.
     2.  Publishes a message to RabbitMQ (`settings.RABBITMQ_SUBMISSION_QUEUE`) containing the `scan_id`.

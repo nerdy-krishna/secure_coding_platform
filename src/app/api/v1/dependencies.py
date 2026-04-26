@@ -18,7 +18,11 @@ from app.infrastructure.database.repositories.user_group_repo import (
     UserGroupRepository,
 )
 from app.core.services.admin_service import AdminService
-from app.core.services.scan_service import SubmissionService as ScanService
+from app.core.services.scan import (
+    ScanLifecycleService,
+    ScanQueryService,
+    ScanSubmissionService,
+)
 from app.core.services.chat_service import ChatService
 from app.core.services.rag_preprocessor_service import RAGPreprocessorService
 from app.core.services.security_standards_service import SecurityStandardsService
@@ -98,10 +102,22 @@ def get_scan_repository(
     return ScanRepository(db)
 
 
-def get_scan_service(
+def get_scan_submission_service(
     repo: ScanRepository = Depends(get_scan_repository),
-) -> ScanService:
-    return ScanService(repo)
+) -> ScanSubmissionService:
+    return ScanSubmissionService(repo)
+
+
+def get_scan_lifecycle_service(
+    repo: ScanRepository = Depends(get_scan_repository),
+) -> ScanLifecycleService:
+    return ScanLifecycleService(repo)
+
+
+def get_scan_query_service(
+    repo: ScanRepository = Depends(get_scan_repository),
+) -> ScanQueryService:
+    return ScanQueryService(repo)
 
 
 def get_user_group_repository(

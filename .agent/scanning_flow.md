@@ -5,7 +5,7 @@
 ```mermaid
 flowchart TD
     A["Frontend\nSubmitCodePage.tsx"] -->|"POST /scans\n(FormData)"| B["API Router\nprojects.py"]
-    B -->|"Delegates to"| C["Scan Service\nscan_service.py"]
+    B -->|"Delegates to"| C["Scan Services\nscan/submission|lifecycle|query.py"]
     C -->|"1. Creates DB rows + outbox row"| D["Database\n(PostgreSQL)"]
     C -.->|"Best-effort inline publish"| E["RabbitMQ\ncode_submission_queue"]
     D -.->|"Outbox sweeper retries"| E
@@ -29,7 +29,7 @@ flowchart TD
       O --> Z2["END"]
     end
 
-    P["User Reviews Prescan / Approves Cost"] -->|"POST /scans/{id}/approve"| Q["scan_service.approve_scan"]
+    P["User Reviews Prescan / Approves Cost"] -->|"POST /scans/{id}/approve"| Q["ScanLifecycleService.approve_scan"]
     Q -->|"Publishes to"| R["RabbitMQ\nanalysis_approved_queue"]
     R -->|"Consumed by"| F
 ```
@@ -62,7 +62,7 @@ They also select:
 
 - Validates that **exactly one** submission method is provided
 - Parses `frameworks` and `selected_files` from comma-separated strings
-- Delegates to the appropriate `SubmissionService` method:
+- Delegates to the appropriate `ScanSubmissionService` method:
   - `create_scan_from_uploads()` for files
   - `create_scan_from_git()` for repos
   - `create_scan_from_archive()` for archives
@@ -72,9 +72,9 @@ They also select:
 
 ## Phase 3 — Backend Service
 
-**File:** `src/app/core/services/scan_service.py`
+**Files:** `src/app/core/services/scan/submission.py` (`ScanSubmissionService` — new scan creation), `lifecycle.py` (`ScanLifecycleService` — approve / cancel / apply-fixes / prescan-review), `query.py` (`ScanQueryService` — read paths + superuser-only deletes). Each service is DI-wired via its own `Depends(get_scan_*_service)` factory.
 
-### Core Processing (`_process_and_launch_scan`)
+### Core Processing (`ScanSubmissionService._process_and_launch_scan`)
 
 | Step | Action | Details |
 |------|--------|---------|
@@ -184,7 +184,7 @@ Reached from `_route_after_prescan_approval` when the operator approved but decl
 ### Approval bridge
 
 When the user approves (via `POST /scans/{id}/approve`):
-1. `scan_service.approve_scan` validates the scan is in `PENDING_COST_APPROVAL`
+1. `ScanLifecycleService.approve_scan` validates the scan is in `PENDING_COST_APPROVAL`
 2. Updates status to `QUEUED_FOR_SCAN`
 3. Publishes to `analysis_approved_queue`
 4. The worker invokes `ainvoke(Command(resume=payload), config={"configurable": {"thread_id": scan_id}})` — execution continues **inside** `estimate_cost` from where `interrupt()` paused, then falls straight through to `analyze_files_parallel`
