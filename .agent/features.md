@@ -132,3 +132,7 @@ This file tracks new feature requests and technical implementation plans.
 - Wall-clock benchmarking to justify per-scanner concurrency split.
 - Race-window cleanup for `findings.source IS NULL` rows arriving after the backfill runs.
 - Renovate/Dependabot integration that auto-PRs SHA bumps for the now-pinned actions.
+- **F1 (security-review Low)** — `datetime.utcnow()` in `admin_findings.py:110` is deprecated in Python 3.12; switch to `datetime.now(datetime.timezone.utc)` for consistency with the rest of the codebase.
+- **F2 (security-review Low)** — `_resolve_binary` resolves at module import time; document or move to lazy resolution so `*_BINARY` env vars set after import are honored.
+- **F3 (security-review Low)** — `ScanRepository.count_findings_by_source` does not take `visible_user_ids`. Today's single caller authorizes upstream, but adding a defensive scope filter would harden against future callers.
+- **F4 (security-review Low)** — Semgrep rule-pack URL is server-rendered; document the SHA-pin bump procedure in `.agent/devsecops_playbook.md` so operators know how to update on Semgrep upstream changes.
