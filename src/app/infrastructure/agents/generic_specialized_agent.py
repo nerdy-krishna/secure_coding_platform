@@ -241,6 +241,181 @@ async def _get_cwe_from_description(
     return None
 
 
+# --- Language detection helper (used by the per-doc pattern extractor) ---
+_LANGUAGE_MAP = {
+    ".py": "PYTHON",
+    ".js": "JAVASCRIPT",
+    ".ts": "TYPESCRIPT",
+    ".java": "JAVA",
+    ".cs": "C#",
+    ".go": "GO",
+    ".cpp": "C++",
+    ".c": "C",
+    ".php": "PHP",
+    ".rb": "RUBY",
+    ".rs": "RUST",
+    ".swift": "SWIFT",
+    ".kt": "KOTLIN",
+    ".sh": "BASH",
+    ".sql": "SQL",
+    ".tf": "TERRAFORM",
+}
+
+
+def _detect_target_lang(filename: str) -> str:
+    """Map a filename to the language tag used inside RAG `[[<LANG> PATTERNS]]` blocks."""
+    file_ext = "." + filename.split(".")[-1].lower() if "." in filename else ""
+    return _LANGUAGE_MAP.get(file_ext, "GENERIC")
+
+
+def _build_rag_filter(
+    metadata_filter: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Translate the agent's `domain_query.metadata_filter` into a
+    Chroma-style `$and`/`$or`/`$eq` where-clause.
+
+    Always anchors `scan_ready=True` so chat-only RAG docs (Proactive
+    Controls, Cheatsheets) are filtered out.
+    """
+    and_conditions: List[Dict[str, Any]] = [{"scan_ready": {"$eq": True}}]
+    if metadata_filter:
+        for key, value in metadata_filter.items():
+            if isinstance(value, list):
+                if len(value) == 1:
+                    and_conditions.append({key: {"$eq": value[0]}})
+                else:
+                    or_clauses = [{key: {"$eq": item}} for item in value]
+                    and_conditions.append({"$or": or_clauses})
+            else:
+                and_conditions.append({key: {"$eq": value}})
+    if len(and_conditions) > 1:
+        return {"$and": and_conditions}
+    return and_conditions[0]
+
+
+def _extract_patterns_from_doc(
+    doc: str, target_lang: str
+) -> tuple[Optional[str], Optional[str]]:
+    """Pull the (vulnerable, secure) pattern pair out of one RAG doc.
+
+    Prefers the language-specific block (`[[<LANG> PATTERNS]]`) when
+    available, falls back to the generic `**Vulnerability Pattern (..)`
+    / `**Secure Pattern (..)` headers.
+    """
+    vp_match = re.search(
+        r"\*\*Vulnerability Pattern \(.*?\):\*\*(.*?)(?=\*\*Secure Pattern|\[\[|\Z)",
+        doc,
+        re.DOTALL,
+    )
+    sp_match = re.search(
+        r"\*\*Secure Pattern \(.*?\):\*\*(.*?)(?=\[\[|\Z)", doc, re.DOTALL
+    )
+    gen_vp = vp_match.group(1).strip() if vp_match else ""
+    gen_sp = sp_match.group(1).strip() if sp_match else ""
+
+    lang_vp = ""
+    lang_sp = ""
+    if target_lang != "GENERIC":
+        lang_header = f"[[{target_lang} PATTERNS]]"
+        lang_match = re.search(
+            re.escape(lang_header) + r"(.*?)(?=\[\[|\Z)", doc, re.DOTALL
+        )
+        if lang_match:
+            lang_block = lang_match.group(1)
+            lvp = re.search(r"Vulnerable:\s*```(.*?)```", lang_block, re.DOTALL)
+            lsp = re.search(r"Secure:\s*```(.*?)```", lang_block, re.DOTALL)
+            if lvp:
+                lang_vp = lvp.group(1).strip()
+            if lsp:
+                lang_sp = lsp.group(1).strip()
+
+    final_vp = lang_vp if lang_vp else gen_vp
+    final_sp = lang_sp if lang_sp else gen_sp
+    return (final_vp or None, final_sp or None)
+
+
+def _build_rag_context(
+    agent_name: str,
+    domain_query: Dict[str, Any],
+    filename: str,
+) -> Optional[tuple[str, str]]:
+    """Run the RAG query for one agent and assemble the
+    `(vulnerability_patterns_str, secure_patterns_str)` strings the
+    prompt template expects. Returns None if the RAG service is
+    unavailable.
+    """
+    rag_service = get_rag_service()
+    if not rag_service:
+        return None
+
+    query_keywords = domain_query.get("keywords", "")
+    metadata_filter = domain_query.get("metadata_filter")
+    chroma_where_filter = _build_rag_filter(metadata_filter)
+
+    retrieved_guidelines = rag_service.query_guidelines(
+        query_texts=[query_keywords], n_results=10, where=chroma_where_filter
+    )
+    documents = retrieved_guidelines.get("documents", [[]])[0]
+    logger.info(
+        f"[{agent_name}] RAG query retrieved {len(documents)} documents for context."
+    )
+
+    target_lang = _detect_target_lang(filename)
+    vulnerability_patterns: List[str] = []
+    secure_patterns: List[str] = []
+    for doc in documents or []:
+        vp, sp = _extract_patterns_from_doc(doc, target_lang)
+        if vp:
+            vulnerability_patterns.append(vp)
+        if sp:
+            secure_patterns.append(sp)
+
+    vulnerability_patterns_str = (
+        "\n- ".join(vulnerability_patterns)
+        if vulnerability_patterns
+        else "No specific vulnerability patterns found."
+    )
+    secure_patterns_str = (
+        "\n- ".join(secure_patterns)
+        if secure_patterns
+        else "No specific secure patterns found."
+    )
+    return vulnerability_patterns_str, secure_patterns_str
+
+
+def _build_finding_object(
+    initial_finding: "InitialFinding",
+    cwe: Optional[str],
+    filename: str,
+    agent_name: str,
+) -> VulnerabilityFinding:
+    """Convert the LLM's initial finding into a `VulnerabilityFinding`
+    with CVSS-parsed score and the agent's name attached.
+    """
+    cvss_score = None
+    try:
+        cvss_score = cvss.CVSS3(initial_finding.cvss_vector).base_score
+    except Exception as e:
+        logger.warning(
+            f"[{agent_name}] Failed to parse CVSS vector "
+            f"'{initial_finding.cvss_vector}': {e}"
+        )
+    return VulnerabilityFinding(
+        cwe=cwe or "CWE-Unknown",
+        title=initial_finding.title,
+        description=initial_finding.description,
+        severity=initial_finding.severity,
+        line_number=initial_finding.line_number,
+        remediation=initial_finding.remediation,
+        confidence=initial_finding.confidence,
+        references=initial_finding.references,
+        file_path=filename,
+        agent_name=agent_name,
+        cvss_vector=initial_finding.cvss_vector,
+        cvss_score=float(cvss_score) if cvss_score is not None else None,
+    )
+
+
 async def analysis_node(
     state: SpecializedAgentState, config: Dict[str, Any]
 ) -> Dict[str, Any]:
@@ -274,128 +449,10 @@ async def analysis_node(
         extra={"scan_id": str(scan_id), "source_file_path": filename},
     )
 
-    rag_service = get_rag_service()
-    if not rag_service:
+    rag_context = _build_rag_context(agent_name, domain_query, filename)
+    if rag_context is None:
         return {"error": f"[{agent_name}] Failed to get RAG service."}
-
-    query_keywords = domain_query.get("keywords", "")
-    metadata_filter = domain_query.get("metadata_filter")
-
-    # Transform the filter for ChromaDB's '$in' or '$eq' operators
-    # Enforce that agents only see 'scan_ready' documents (e.g. ASVS, Custom)
-    # and not 'Chat Only' docs (e.g. Proactive Controls, Cheatsheets) unless explicitly requested?
-    # For now, we enforce scan_ready=True for all agents using this node.
-
-    # Base condition: scan_ready must be True
-    and_conditions: List[Dict[str, Any]] = [{"scan_ready": {"$eq": True}}]
-
-    if metadata_filter:
-        for key, value in metadata_filter.items():
-            if isinstance(value, list):
-                if len(value) == 1:
-                    # Use a simple $eq for single-item lists
-                    and_conditions.append({key: {"$eq": value[0]}})
-                else:
-                    # Build a list of $eq clauses for an $or operation
-                    or_clauses = [{key: {"$eq": item}} for item in value]
-                    and_conditions.append({"$or": or_clauses})
-            else:
-                # Handle non-list values as a simple equality check
-                and_conditions.append({key: {"$eq": value}})
-
-    # If we have multiple conditions, wrap them in an $and
-    if len(and_conditions) > 1:
-        chroma_where_filter = {"$and": and_conditions}
-    else:
-        # Should be just the scan_ready check
-        chroma_where_filter = and_conditions[0]
-
-    retrieved_guidelines = rag_service.query_guidelines(
-        query_texts=[query_keywords], n_results=10, where=chroma_where_filter
-    )
-    documents = retrieved_guidelines.get("documents", [[]])[0]
-    logger.info(
-        f"[{agent_name}] RAG query retrieved {len(documents)} documents for context."
-    )
-
-    # Determine language from filename
-    language_map = {
-        ".py": "PYTHON",
-        ".js": "JAVASCRIPT",
-        ".ts": "TYPESCRIPT",
-        ".java": "JAVA",
-        ".cs": "C#",
-        ".go": "GO",
-        ".cpp": "C++",
-        ".c": "C",
-        ".php": "PHP",
-        ".rb": "RUBY",
-        ".rs": "RUST",
-        ".swift": "SWIFT",
-        ".kt": "KOTLIN",
-        ".sh": "BASH",
-        ".sql": "SQL",
-        ".tf": "TERRAFORM",
-    }
-    file_ext = "." + filename.split(".")[-1].lower() if "." in filename else ""
-    target_lang = language_map.get(file_ext, "GENERIC")
-
-    vulnerability_patterns = []
-    secure_patterns = []
-    if documents:
-        for doc in documents:
-            # 1. Extract Generic Patterns (Handle old and new headers)
-            vp_match = re.search(
-                r"\*\*Vulnerability Pattern \(.*?\):\*\*(.*?)(?=\*\*Secure Pattern|\[\[|\Z)",
-                doc,
-                re.DOTALL,
-            )
-            sp_match = re.search(
-                r"\*\*Secure Pattern \(.*?\):\*\*(.*?)(?=\[\[|\Z)", doc, re.DOTALL
-            )
-
-            gen_vp = vp_match.group(1).strip() if vp_match else ""
-            gen_sp = sp_match.group(1).strip() if sp_match else ""
-
-            # 2. Extract Language-Specific Patterns
-            lang_vp = ""
-            lang_sp = ""
-            if target_lang != "GENERIC":
-                lang_header = f"[[{target_lang} PATTERNS]]"
-                lang_match = re.search(
-                    re.escape(lang_header) + r"(.*?)(?=\[\[|\Z)", doc, re.DOTALL
-                )
-                if lang_match:
-                    lang_block = lang_match.group(1)
-                    # Extract Vulnerable/Secure code blocks within the language section
-                    # Format: Vulnerable:\n```\n...\n```\nSecure:\n```\n...\n```
-                    lvp = re.search(r"Vulnerable:\s*```(.*?)```", lang_block, re.DOTALL)
-                    lsp = re.search(r"Secure:\s*```(.*?)```", lang_block, re.DOTALL)
-
-                    if lvp:
-                        lang_vp = lvp.group(1).strip()
-                    if lsp:
-                        lang_sp = lsp.group(1).strip()
-
-            # 3. Prioritize: Use Language specific if available, else Generic
-            final_vp = lang_vp if lang_vp else gen_vp
-            final_sp = lang_sp if lang_sp else gen_sp
-
-            if final_vp:
-                vulnerability_patterns.append(final_vp)
-            if final_sp:
-                secure_patterns.append(final_sp)
-
-    vulnerability_patterns_str = (
-        "\n- ".join(vulnerability_patterns)
-        if vulnerability_patterns
-        else "No specific vulnerability patterns found."
-    )
-    secure_patterns_str = (
-        "\n- ".join(secure_patterns)
-        if secure_patterns
-        else "No specific secure patterns found."
-    )
+    vulnerability_patterns_str, secure_patterns_str = rag_context
 
     # Pick the prompt variant matching the active LLM optimization mode.
     # Falls back to 'generic' inside the repo if no matching variant exists.
@@ -490,29 +547,7 @@ async def analysis_node(
 
     for initial_finding in initial_results.findings:
         cwe = await _get_cwe_from_description(llm_client, initial_finding)
-
-        cvss_score = None
-        try:
-            cvss_score = cvss.CVSS3(initial_finding.cvss_vector).base_score
-        except Exception as e:
-            logger.warning(
-                f"[{agent_name}] Failed to parse CVSS vector '{initial_finding.cvss_vector}': {e}"
-            )
-
-        finding_obj = VulnerabilityFinding(
-            cwe=cwe or "CWE-Unknown",
-            title=initial_finding.title,
-            description=initial_finding.description,
-            severity=initial_finding.severity,
-            line_number=initial_finding.line_number,
-            remediation=initial_finding.remediation,
-            confidence=initial_finding.confidence,
-            references=initial_finding.references,
-            file_path=filename,
-            agent_name=agent_name,
-            cvss_vector=initial_finding.cvss_vector,
-            cvss_score=float(cvss_score) if cvss_score is not None else None,
-        )
+        finding_obj = _build_finding_object(initial_finding, cwe, filename, agent_name)
 
         if workflow_mode == "remediate" and initial_finding.fix:
             # --- STRICT DIFF CHECK ---
