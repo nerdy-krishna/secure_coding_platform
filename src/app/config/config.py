@@ -1,5 +1,5 @@
 # src/app/config/config.py
-from pydantic import field_validator, Field
+from pydantic import SecretStr, field_validator, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List, Optional
 
@@ -124,6 +124,17 @@ class Settings(BaseSettings):
     SCAN_WORKFLOW_TIMEOUT_SECONDS: int = Field(
         default=2 * 60 * 60, description="Max seconds a single scan workflow may run."
     )
+
+    # --- Observability (Langfuse v3, optional) ---
+    # Disabled by default; opt in by setting LANGFUSE_ENABLED=true plus the
+    # public/secret keys minted from the self-hosted Langfuse UI. When
+    # disabled, all instrumentation short-circuits — zero overhead, zero
+    # network traffic. See `app.infrastructure.observability` and the run
+    # `langfuse-otel-observability`.
+    LANGFUSE_ENABLED: bool = False
+    LANGFUSE_HOST: str = "http://langfuse-web:3000"
+    LANGFUSE_PUBLIC_KEY: Optional[SecretStr] = None
+    LANGFUSE_SECRET_KEY: Optional[SecretStr] = None
 
 
 settings = Settings()  # type: ignore

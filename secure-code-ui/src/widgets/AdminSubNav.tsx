@@ -7,6 +7,8 @@
 import React from "react";
 import { Link, useLocation } from "react-router-dom";
 
+import { useAuth } from "../shared/hooks/useAuth";
+
 interface AdminLink {
   to: string;
   label: string;
@@ -24,8 +26,26 @@ const ADMIN_LINKS: AdminLink[] = [
   { to: "/account/settings/llm", label: "LLM configs" },
 ];
 
+const LANGFUSE_HOST = (import.meta.env.VITE_LANGFUSE_HOST as string | undefined) ?? "";
+
 export const AdminSubNav: React.FC = () => {
   const { pathname } = useLocation();
+  const { user } = useAuth();
+  const isSuperuser = !!user?.is_superuser;
+  // External link to the self-hosted Langfuse UI. Superuser-only because
+  // Langfuse traces span all tenants (no per-project isolation in the
+  // first iteration — see threat model #2).
+  const showLangfuse = isSuperuser && LANGFUSE_HOST.length > 0;
+  const itemStyle = (active: boolean): React.CSSProperties => ({
+    padding: "6px 12px",
+    borderRadius: 8,
+    fontSize: 12.5,
+    fontWeight: 500,
+    textDecoration: "none",
+    background: active ? "var(--bg-elev)" : "transparent",
+    color: active ? "var(--fg)" : "var(--fg-muted)",
+    boxShadow: active ? "var(--shadow-xs)" : "none",
+  });
   return (
     <div
       style={{
@@ -42,24 +62,23 @@ export const AdminSubNav: React.FC = () => {
       {ADMIN_LINKS.map((l) => {
         const active = pathname === l.to || pathname.startsWith(l.to + "/");
         return (
-          <Link
-            key={l.to}
-            to={l.to}
-            style={{
-              padding: "6px 12px",
-              borderRadius: 8,
-              fontSize: 12.5,
-              fontWeight: 500,
-              textDecoration: "none",
-              background: active ? "var(--bg-elev)" : "transparent",
-              color: active ? "var(--fg)" : "var(--fg-muted)",
-              boxShadow: active ? "var(--shadow-xs)" : "none",
-            }}
-          >
+          <Link key={l.to} to={l.to} style={itemStyle(active)}>
             {l.label}
           </Link>
         );
       })}
+      {showLangfuse ? (
+        <a
+          key="langfuse-external"
+          href={LANGFUSE_HOST}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={itemStyle(false)}
+          title="Open Langfuse trace UI in a new tab"
+        >
+          Langfuse ↗
+        </a>
+      ) : null}
     </div>
   );
 };

@@ -54,6 +54,11 @@ pydantic-ai = "^1.86.1"
 # the same FastAPI app; shares JWT auth with the REST API via a
 # custom TokenVerifier that reuses CustomCookieJWTStrategy.
 fastmcp = "^3.2.4"
+# Optional LLM observability via self-hosted Langfuse v3. SDK is OTel-
+# native; no separate `opentelemetry-*` deps are needed because the
+# Langfuse SDK ships its own OTel wiring. Disabled at runtime by
+# default (LANGFUSE_ENABLED=false). See `app.infrastructure.observability`.
+langfuse = "^3"
 networkx = "^3.5"
 pandas = "^2.3.0"
 passlib = {extras = ["bcrypt"], version = ">=1.7.4,<2.0.0"}

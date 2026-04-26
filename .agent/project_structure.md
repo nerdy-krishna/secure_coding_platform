@@ -55,6 +55,7 @@
     - **llm/**: Clients for LLM providers (OpenAI, Anthropic, etc.).
     - **agents/**: LangChain agents for specific tasks (Analysis, Remediation).
     - **scanners/**: Deterministic SAST wrappers invoked by the worker graph's `deterministic_prescan_node` — `staging.py` (sandbox the file tree, sanitize basenames), `bandit_runner.py` (Bandit subprocess + Pydantic-allowlisted output), `semgrep_runner.py` (Semgrep CE multi-language coverage with bundled `p/security-audit` rule pack), `gitleaks_runner.py` (secret-scan with strict `RuleID/File/StartLine/Description` allowlist + `--redact`), `registry.py` (per-file routing + minified-bundle detection). All three runners share `_resolve_binary` for env-var / PATH / hardcoded-fallback discovery. Critical Gitleaks findings short-circuit the graph to `blocked_pre_llm` terminal node before any LLM call.
+    - **observability/**: Optional Langfuse v3 instrumentation (`langfuse-otel-observability` run, 2026-04-26). `mask.py` redacts provider-key patterns / `keyword=value` lines / ≥20-char high-entropy bare strings before any payload reaches Langfuse. `langfuse_client.py` exposes `get_langfuse()`, `get_langchain_handler()`, and `flush_langfuse()` — all fail-open (return `None` / no-op when `LANGFUSE_ENABLED=false`, when keys are missing, or after a latched init failure). `LLMClient.generate_structured_output` wraps Pydantic AI `agent.run` in `start_as_current_span`; `workers/consumer.py` attaches the LangChain CallbackHandler at the parent-trace anchor. `trace_id` / `session_id` both equal `correlation_id_var.get()`.
     - **repositories/**: Data access layer.
 - **workers/**:
     - **consumer.py**: Async RabbitMQ consumer (`aio-pika` `connect_robust`, single asyncio event loop). Subscribes to submission / approval / remediation queues with `prefetch_count=1`, runs an idempotency precheck, and `await`s the LangGraph workflow inline (no thread bridge). ACK on success; explicit `reject(requeue=False)` + DB status `FAILED` on poison/error.
@@ -167,5 +168,7 @@
 ### 5. LLM Roles Summary
 - **Utility LLM**: Used for symbol-mapping / lightweight calls (`SymbolMapAgent` and similar). Configured per-scan via `Scan.utility_llm_config_id`.
 - **Reasoning LLM**: Used in `generic_specialized_agent.py` (Analysis), `worker_graph.py` (Conflict Merging via `_run_merge_agent`). Configured per-scan via `Scan.reasoning_llm_config_id`.
+
+When `LANGFUSE_ENABLED=true`, every LLM call from both tiers becomes a child span under a per-scan parent trace in Langfuse. The parent trace `id` equals the `X-Correlation-ID` (= `correlation_id_var.get()`) so logs in Loki and traces in Langfuse cross-reference cleanly. SCCAP `cost_estimation.calculate_actual_cost` remains the authoritative cost source; LiteLLM's Langfuse `success_callback` is intentionally NOT enabled to avoid double-counting.
 
 > The Fast LLM tier was removed in 2026-04-26 (`/sccap remove-fast-llm-tier`) — the slot was reserved but never wired. If a third tier is needed in future (e.g. dedicated triage / dep-summarization model), ship as a new feature with a fresh migration + admin UI.

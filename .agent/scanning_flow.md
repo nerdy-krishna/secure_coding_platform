@@ -87,6 +87,7 @@ They also select:
 
 **File:** `src/app/workers/consumer.py`
 
+- All node-level LLM calls are traced under a per-scan parent trace in **Langfuse** when `LANGFUSE_ENABLED=true` (`infrastructure/observability/`). Parent trace `id == X-Correlation-ID == correlation_id_var.get()` so Loki logs and Langfuse traces cross-reference. Path is fail-open — Langfuse outage never breaks a scan.
 - Runs in a separate Docker container with an **`aio-pika`** async RabbitMQ consumer (`aio_pika.connect_robust`, single asyncio event loop — no thread bridge, no blocking I/O)
 - Listens on three queues: `code_submission_queue`, `analysis_approved_queue`, `remediation_trigger_queue`, declared durable, `prefetch_count=1` (one scan at a time per worker)
 - On message receipt (`_handle_message` → `async with message.process(requeue=False, ignore_processed=True)`):

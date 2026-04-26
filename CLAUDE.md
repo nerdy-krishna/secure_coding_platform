@@ -8,6 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Worker:** separate container, consumes RabbitMQ via `aio-pika` (async, `connect_robust`) and invokes the LangGraph workflow with an `AsyncPostgresSaver` checkpointer on a single asyncio event loop
 - **Frontend:** React 18 + Vite + TypeScript, Ant Design, TanStack Query, React Router v7 (`secure-code-ui/`)
 - **Infra:** Postgres 16, RabbitMQ, ChromaDB (RAG, bundled ONNX embedder — no `sentence-transformers`), Fluentd → Loki → Grafana, optional Let's Encrypt via certbot
+- **Observability (optional):** self-hosted **Langfuse v3** (web + worker + own Postgres + ClickHouse + Redis + MinIO) for per-LLM-call traces. Disabled by default; opt in via `LANGFUSE_ENABLED=true`. SDK lives in `infrastructure/observability/`
 
 ## Common commands
 
@@ -76,6 +77,7 @@ The graph today does **not** generate impact-summary or SARIF reports — those 
 - `shared/lib/scan_scope.py` — `visible_user_ids(user, repo)` returns `None` (admin) or `[user.id, ...peers]` (regular user).
 - `shared/lib/cost_estimation.py` — LiteLLM-backed `count_tokens`, `estimate_cost_for_prompt`, `calculate_actual_cost`. Per-`LLMConfiguration` `input_cost_per_million` / `output_cost_per_million` overrides take precedence; zero falls back to the LiteLLM price map.
 - `core/config_cache.py` — `SystemConfigCache` is a process-local singleton populated at startup from `system_config` rows. Drives the dynamic CORS middleware, log level, and SMTP settings. When editing `system_config` at runtime, also update the cache or the change won't take effect until restart.
+- `infrastructure/observability/` — optional Langfuse v3 instrumentation. `mask.py` redacts secrets / high-entropy strings before any payload reaches Langfuse (G1, threats #2/#3). `langfuse_client.py` is a fail-open singleton — `get_langfuse()` / `get_langchain_handler()` return `None` when disabled or after init failure. Cost source of truth stays `cost_estimation.calculate_actual_cost`; LiteLLM `success_callback=["langfuse"]` is intentionally NOT enabled to avoid double-counting (G6). Two anchor points: `LLMClient.generate_structured_output` wraps Pydantic AI `agent.run` in `start_as_current_span`; `consumer.py:_run_workflow_for_scan` attaches the LangChain `CallbackHandler` to `RunnableConfig.callbacks` so every node becomes a child span. `trace_id` and `session_id` both equal `correlation_id_var.get()` so traces stitch with Loki by `X-Correlation-ID`.
 
 ### Auth, setup, and visibility scope
 
@@ -101,3 +103,12 @@ Feature-sliced: `app/` (providers + routes), `pages/` (route views grouped by ar
 - `LITELLM_LOCAL_MODEL_COST_MAP=True` keeps cost lookups offline; recommended for restricted-egress deployments.
 - Tests use `tests/conftest.py` fixtures with SAVEPOINT-per-test rollback (H.0.3). `pyproject.toml` has `addopts = "--ignore=tests/test_ui_setup.py"` so the Playwright e2e is opt-in. CI runs the rest against a Postgres 16 service container.
 - New endpoints that list user-owned data: take `visible_user_ids = Depends(get_visible_user_ids)` and forward it through the service layer to the repository — never re-implement scope checks inline.
+
+## Langfuse auth boundary (operators)
+
+Langfuse runs its own NextAuth user model — **independent** of SCCAP fastapi-users JWT. Practical implications (threat-model G8 / threat #5):
+
+- The SCCAP first-user bootstrap does NOT create a Langfuse user. Bring up `langfuse-web` once, then the seeded admin (`LANGFUSE_INIT_USER_EMAIL` / `LANGFUSE_INIT_USER_PASSWORD` from `.env`) invites people from the Langfuse UI.
+- Offboarding a SCCAP user (deactivating their `users` row) does NOT revoke their Langfuse session. **Manual de-invite required** in the Langfuse UI; run alongside the SCCAP deactivation.
+- `NEXTAUTH_SESSION_MAXAGE` (default 86400 = 24h) caps how long a stale session can read traces.
+- Langfuse traces span all SCCAP tenants in the first iteration — **anyone with Langfuse UI access can read the prompt + completion of every scan**. Restrict admin invites to SCCAP superusers operationally. Per-tenant Langfuse projects are filed as a follow-up.

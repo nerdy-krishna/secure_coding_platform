@@ -232,6 +232,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Error during publisher shutdown: {e}")
 
+    # Best-effort flush of any buffered Langfuse events. The helper is
+    # itself fail-open; a Langfuse outage at shutdown drops in-memory
+    # spans rather than blocking the API process from terminating.
+    from app.infrastructure.observability import flush_langfuse
+
+    try:
+        flush_langfuse()
+    except Exception as e:
+        logger.warning(f"Error during Langfuse flush: {e}")
+
 
 # --- FastMCP sub-app (Phase I.4) ---
 # FastMCP requires its own lifespan for session initialisation. Compose it
