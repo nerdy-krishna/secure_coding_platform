@@ -34,7 +34,11 @@ from fastapi_users.db import SQLAlchemyUserDatabase
 
 from app.config.config import settings
 from app.core.services.chat_service import ChatService
-from app.core.services.scan_service import SubmissionService
+from app.core.services.scan import (
+    ScanLifecycleService,
+    ScanQueryService,
+    ScanSubmissionService,
+)
 from app.infrastructure.auth.backend import get_custom_cookie_jwt_strategy
 from app.infrastructure.auth.manager import UserManager
 from app.infrastructure.database import models as db_models
@@ -148,8 +152,16 @@ async def _current_user(session: AsyncSession) -> db_models.User:
     return user
 
 
-def _build_scan_service(repo: ScanRepository) -> SubmissionService:
-    return SubmissionService(repo)
+def _build_submission_service(repo: ScanRepository) -> ScanSubmissionService:
+    return ScanSubmissionService(repo)
+
+
+def _build_lifecycle_service(repo: ScanRepository) -> ScanLifecycleService:
+    return ScanLifecycleService(repo)
+
+
+def _build_query_service(repo: ScanRepository) -> ScanQueryService:
+    return ScanQueryService(repo)
 
 
 def _build_chat_service(session: AsyncSession) -> ChatService:
@@ -188,7 +200,7 @@ async def sccap_submit_scan(payload: SubmitScanInput) -> Dict[str, Any]:
 
     async with AsyncSessionLocal() as session:
         user = await _current_user(session)
-        scan_service = _build_scan_service(ScanRepository(session))
+        scan_service = _build_submission_service(ScanRepository(session))
 
         llm_cfg_id = uuid.UUID(payload.utility_llm_config_id)
         common_kwargs: Dict[str, Any] = dict(
@@ -231,7 +243,7 @@ async def sccap_get_scan_status(scan_id: str) -> Dict[str, Any]:
     """Get the current status of a scan."""
     async with AsyncSessionLocal() as session:
         user = await _current_user(session)
-        scan_service = _build_scan_service(ScanRepository(session))
+        scan_service = _build_query_service(ScanRepository(session))
         scan = await scan_service.get_scan_status(uuid.UUID(scan_id))
         if scan.user_id != user.id and not user.is_superuser:
             raise PermissionError("Not authorized to view this scan.")
@@ -254,11 +266,17 @@ async def sccap_get_scan_result(scan_id: str) -> Dict[str, Any]:
     an error dict if the scan is still running."""
     async with AsyncSessionLocal() as session:
         user = await _current_user(session)
-        scan_service = _build_scan_service(ScanRepository(session))
+        scan_service = _build_query_service(ScanRepository(session))
         scan = await scan_service.get_scan_status(uuid.UUID(scan_id))
         if scan.user_id != user.id and not user.is_superuser:
             raise PermissionError("Not authorized to view this scan.")
-        result = await scan_service.get_scan_result(uuid.UUID(scan_id))
+        # `get_scan_result` requires a `user` positional arg for the
+        # ownership check. The pre-split MCP code omitted it (latent
+        # crash) — we restore the correct call signature here as part
+        # of the split. The auth check at line above already gates this
+        # tool to the scan owner / superuser, so the inline check
+        # inside `get_scan_result` is defense-in-depth.
+        result = await scan_service.get_scan_result(uuid.UUID(scan_id), user)
         # get_scan_result returns a pydantic model; expose as plain dict.
         return (
             result.model_dump(mode="json") if hasattr(result, "model_dump") else result
@@ -271,7 +289,7 @@ async def sccap_approve_scan(scan_id: str) -> Dict[str, Any]:
     via the Phase I.1 `interrupt() / Command(resume=...)` path."""
     async with AsyncSessionLocal() as session:
         user = await _current_user(session)
-        scan_service = _build_scan_service(ScanRepository(session))
+        scan_service = _build_lifecycle_service(ScanRepository(session))
         await scan_service.approve_scan(uuid.UUID(scan_id), user=user)
         return {"scan_id": scan_id, "approved": True}
 
@@ -285,7 +303,7 @@ async def sccap_apply_fixes(
     suggestions."""
     async with AsyncSessionLocal() as session:
         user = await _current_user(session)
-        scan_service = _build_scan_service(ScanRepository(session))
+        scan_service = _build_lifecycle_service(ScanRepository(session))
         applied = await scan_service.apply_selective_fixes(
             uuid.UUID(scan_id), finding_ids=finding_ids, user=user
         )
