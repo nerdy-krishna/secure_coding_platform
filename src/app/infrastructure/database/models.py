@@ -199,6 +199,15 @@ class Finding(Base):
     is_applied_in_remediation: Mapped[bool] = mapped_column(
         sa.Boolean, server_default="false", nullable=False
     )
+    # Patch verifier (§3.9 / 2026-04-27). NULL = no verification attempted
+    # (audit / suggest scans, scans before §3.9 shipped, or fixes that
+    # weren't applied). True = re-running Semgrep over the patched code
+    # no longer reports a finding for this rule at this file/line — the
+    # fix worked. False = same Semgrep rule still fires at the same
+    # location — fix didn't close the detection.
+    fix_verified: Mapped[Optional[bool]] = mapped_column(
+        sa.Boolean, nullable=True, default=None
+    )
 
     scan: Mapped["Scan"] = relationship(back_populates="findings")
 

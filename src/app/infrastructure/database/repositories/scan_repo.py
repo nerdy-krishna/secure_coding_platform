@@ -241,7 +241,16 @@ class ScanRepository:
     async def update_correlated_findings(
         self, findings: List[agent_schemas.VulnerabilityFinding]
     ):
-        """Updates existing findings with new correlation data (agents and confidence)."""
+        """Updates existing findings with correlation data + remediation flags.
+
+        Carries `corroborating_agents`, `confidence`, `is_applied_in_remediation`
+        (set by `consolidate_and_patch_node`), and `fix_verified` (set by
+        the §3.9 patch verifier) from the in-memory finding objects back
+        to the row that was originally inserted by the deterministic-
+        prescan node. Findings without an `id` are skipped — they were
+        produced by an LLM agent at analyze time and are inserted fresh
+        elsewhere.
+        """
         if not findings:
             return
 
@@ -253,6 +262,8 @@ class ScanRepository:
                     .values(
                         corroborating_agents=finding.corroborating_agents,
                         confidence=finding.confidence,
+                        is_applied_in_remediation=finding.is_applied_in_remediation,
+                        fix_verified=finding.fix_verified,
                     )
                 )
                 await self.db.execute(stmt)

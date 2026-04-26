@@ -311,6 +311,7 @@ class VulnerabilityFindingResponse(BaseModel):
     references: List[str]
     fixes: Optional[Dict[str, Any]] = None
     is_applied_in_remediation: bool = False
+    fix_verified: Optional[bool] = None
 
     @field_validator("fixes", mode="before")
     @classmethod

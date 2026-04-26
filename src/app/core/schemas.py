@@ -90,6 +90,16 @@ class VulnerabilityFinding(BaseModel):
         default=False,
         description="Flag indicating if this finding's fix was applied in a remediation scan.",
     )
+    fix_verified: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Patch-verifier result (§3.9). NULL for findings where verification "
+            "was not attempted (audit / suggest scans, scanner-only findings, "
+            "fixes that weren't applied). True when re-running Semgrep over the "
+            "patched code no longer reports a finding for this rule at this "
+            "file/line. False when the same Semgrep rule still fires."
+        ),
+    )
 
 
 class FixResult(BaseModel):

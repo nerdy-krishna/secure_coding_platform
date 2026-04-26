@@ -36,6 +36,12 @@ class WorkerState(TypedDict):
     files: Optional[Dict[str, str]]
     initial_file_map: Optional[Dict[str, str]]
     final_file_map: Optional[Dict[str, str]]
+    # Path → patched content map produced by `consolidate_and_patch_node`
+    # for files that actually had fixes applied. Consumed by the §3.9
+    # `verify_patches_node` so it can re-run Semgrep over the post-
+    # remediation content without round-tripping through the source-
+    # file repository. None for non-REMEDIATE scans.
+    patched_files: Optional[Dict[str, str]]
     repository_map: Optional[Any]
     dependency_graph: Optional[Any]
     all_relevant_agents: Dict[str, RelevantAgent]
