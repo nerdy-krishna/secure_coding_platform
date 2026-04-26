@@ -165,6 +165,14 @@ class ScanRepository:
 
     async def update_status(self, scan_id: uuid.UUID, status: str):
         """Updates the status of a single scan."""
+        # Local import — avoid pulling the messaging package + psycopg
+        # at module import time, which historically caused circulars
+        # during Alembic env.py setup.
+        from app.infrastructure.messaging.scan_progress_notifier import (
+            KIND_STATUS,
+            notify_scan_progress,
+        )
+
         logger.info(
             "Updating scan status in DB.",
             extra={"scan_id": str(scan_id), "new_status": status},
@@ -175,6 +183,9 @@ class ScanRepository:
             .values(status=status)
         )
         await self.db.execute(stmt)
+        # Emit the NOTIFY in the same transaction so it fires iff the
+        # status update commits (§3.10a).
+        await notify_scan_progress(self.db, scan_id=str(scan_id), kind=KIND_STATUS)
         await self.db.commit()
 
     async def update_bom_cyclonedx(self, scan_id: uuid.UUID, bom: dict) -> None:
@@ -192,6 +203,11 @@ class ScanRepository:
         self, scan_id: uuid.UUID, stage_name: str, status: str = "STARTED"
     ):
         """Adds a new event to the scan's timeline."""
+        from app.infrastructure.messaging.scan_progress_notifier import (
+            KIND_EVENT,
+            notify_scan_progress,
+        )
+
         logger.debug(
             f"Adding timeline event '{stage_name}:{status}' for scan {scan_id}"
         )
@@ -199,6 +215,8 @@ class ScanRepository:
             scan_id=scan_id, stage_name=stage_name, status=status
         )
         self.db.add(event)
+        # Notify within the same transaction (§3.10a).
+        await notify_scan_progress(self.db, scan_id=str(scan_id), kind=KIND_EVENT)
         await self.db.commit()
 
     async def save_llm_interaction(

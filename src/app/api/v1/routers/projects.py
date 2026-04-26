@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import uuid
 from typing import List, Optional
@@ -313,10 +314,36 @@ async def stream_scan_progress(
         "BLOCKED_PRE_LLM",
         "BLOCKED_USER_DECLINE",
     }
-    poll_interval_seconds = 1.0
+    # §3.10a: prefer LISTEN/NOTIFY-driven re-reads over a per-client
+    # 1 Hz Postgres poll. The bus dispatches a notification whenever
+    # `update_status` or `create_scan_event` commits in any process;
+    # this handler subscribes, awaits the next signal, then re-reads
+    # the scan to surface the change. Falls back to a slower poll
+    # (`fallback_interval_seconds`) when the bus is unavailable or the
+    # `queue.get()` times out — that wakeup acts as a heartbeat that
+    # also catches any notification we missed (e.g. dispatcher dropped
+    # one due to a backed-up subscriber queue).
+    fallback_interval_seconds = 5.0
     # Bound on the stream's lifetime as a safety net; the scan-workflow
     # timeout (default 2h) dominates in practice.
     max_stream_seconds = settings.SCAN_WORKFLOW_TIMEOUT_SECONDS
+
+    from app.infrastructure.messaging.scan_progress_notifier import (
+        get_scan_progress_bus,
+    )
+
+    bus = get_scan_progress_bus()
+    queue: Optional["asyncio.Queue[str]"] = None
+    if bus is not None:
+        try:
+            queue = await bus.subscribe(str(scan_id))
+        except Exception as e:
+            logger.warning(
+                "SSE: bus subscribe failed for scan %s: %s; falling back to polling.",
+                scan_id,
+                e,
+            )
+            queue = None
 
     async def event_generator():
         import asyncio as _asyncio
@@ -327,59 +354,81 @@ async def stream_scan_progress(
         last_event_id = 0
         last_status: Optional[str] = None
 
-        while True:
-            if await request.is_disconnected():
-                logger.info(
-                    "SSE: client disconnected, ending stream.",
-                    extra={"scan_id": str(scan_id), "user_id": user.id},
+        try:
+            while True:
+                if await request.is_disconnected():
+                    logger.info(
+                        "SSE: client disconnected, ending stream.",
+                        extra={"scan_id": str(scan_id), "user_id": user.id},
+                    )
+                    return
+                if _time.monotonic() - start > max_stream_seconds:
+                    yield (
+                        f"event: timeout\n"
+                        f"data: {_json.dumps({'scan_id': str(scan_id)})}\n\n"
+                    )
+                    return
+
+                scan = await service.get_scan_status(scan_id)
+
+                # Emit on status change (including the first tick).
+                if scan.status != last_status:
+                    last_status = scan.status
+                    payload = {
+                        "scan_id": str(scan_id),
+                        "status": scan.status,
+                    }
+                    yield (f"event: scan_state\n" f"data: {_json.dumps(payload)}\n\n")
+
+                # Emit any ScanEvents with id > last_event_id.
+                events = sorted(
+                    (e for e in (scan.events or []) if e.id > last_event_id),
+                    key=lambda e: e.id,
                 )
-                return
-            if _time.monotonic() - start > max_stream_seconds:
-                yield (
-                    f"event: timeout\n"
-                    f"data: {_json.dumps({'scan_id': str(scan_id)})}\n\n"
-                )
-                return
+                for e in events:
+                    last_event_id = e.id
+                    payload = {
+                        "scan_id": str(scan_id),
+                        "event_id": e.id,
+                        "stage_name": e.stage_name,
+                        "status": e.status,
+                        "timestamp": e.timestamp.isoformat() if e.timestamp else None,
+                    }
+                    yield (
+                        f"event: scan_event\n"
+                        f"id: {e.id}\n"
+                        f"data: {_json.dumps(payload)}\n\n"
+                    )
 
-            scan = await service.get_scan_status(scan_id)
+                if scan.status in terminal_statuses:
+                    yield (
+                        f"event: done\n"
+                        f"data: {_json.dumps({'scan_id': str(scan_id), 'status': scan.status})}\n\n"
+                    )
+                    return
 
-            # Emit on status change (including the first tick).
-            if scan.status != last_status:
-                last_status = scan.status
-                payload = {
-                    "scan_id": str(scan_id),
-                    "status": scan.status,
-                }
-                yield (f"event: scan_state\n" f"data: {_json.dumps(payload)}\n\n")
-
-            # Emit any ScanEvents with id > last_event_id.
-            events = sorted(
-                (e for e in (scan.events or []) if e.id > last_event_id),
-                key=lambda e: e.id,
-            )
-            for e in events:
-                last_event_id = e.id
-                payload = {
-                    "scan_id": str(scan_id),
-                    "event_id": e.id,
-                    "stage_name": e.stage_name,
-                    "status": e.status,
-                    "timestamp": e.timestamp.isoformat() if e.timestamp else None,
-                }
-                yield (
-                    f"event: scan_event\n"
-                    f"id: {e.id}\n"
-                    f"data: {_json.dumps(payload)}\n\n"
-                )
-
-            if scan.status in terminal_statuses:
-                yield (
-                    f"event: done\n"
-                    f"data: {_json.dumps({'scan_id': str(scan_id), 'status': scan.status})}\n\n"
-                )
-                return
-
-            await _asyncio.sleep(poll_interval_seconds)
+                if queue is not None:
+                    # Bus path: wait for a NOTIFY (status / event change).
+                    # Fallback to the heartbeat interval if the bus goes
+                    # quiet for too long — guards against lost notifications.
+                    try:
+                        await _asyncio.wait_for(
+                            queue.get(), timeout=fallback_interval_seconds
+                        )
+                    except _asyncio.TimeoutError:
+                        # Heartbeat tick — re-read on next loop iteration.
+                        pass
+                else:
+                    # Bus unavailable — degrade to legacy 1 Hz poll.
+                    await _asyncio.sleep(1.0)
+        finally:
+            # Always unsubscribe so the bus's per-scan subscriber set
+            # doesn't leak entries on client-disconnect / timeout.
+            if bus is not None and queue is not None:
+                try:
+                    await bus.unsubscribe(str(scan_id), queue)
+                except Exception:
+                    pass
 
     return StreamingResponse(
         event_generator(),
