@@ -30,7 +30,6 @@ async def _build_state() -> dict:
         "scan_id": uuid.uuid4(),
         "scan_type": "AUDIT",
         "current_scan_status": None,
-        "utility_llm_config_id": None,
         "reasoning_llm_config_id": None,
         "files": {},
         "initial_file_map": None,

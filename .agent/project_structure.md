@@ -159,12 +159,14 @@
 - **Action**: Computes the CVSS-weighted 0–10 `risk_score` via `app.shared.lib.risk_score.compute_cvss_aggregate`, persists `summary` JSON, sets final status `COMPLETED` / `REMEDIATION_COMPLETED`.
 
 ### 5. LLM Roles Summary
-- **Utility LLM**: Used for symbol-mapping / lightweight calls (`SymbolMapAgent` and similar). Configured per-scan via `Scan.utility_llm_config_id`.
-- **Reasoning LLM**: Used in `generic_specialized_agent.py` (Analysis), `worker_graph.py` (Conflict Merging via `_run_merge_agent`). Configured per-scan via `Scan.reasoning_llm_config_id`.
+- **Reasoning LLM**: The single tier used at scan time. Drives every LLM call: `generic_specialized_agent.analysis_node` (per-file × per-agent finding+fix), `consolidate_and_patch_node._run_merge_agent` (conflict merge), `estimate_cost_node` (token-counting basis). Configured per-scan via `Scan.reasoning_llm_config_id`.
 
-When `LANGFUSE_ENABLED=true`, every LLM call from both tiers becomes a child span under a per-scan parent trace in Langfuse. The parent trace `id` equals the `X-Correlation-ID` (= `correlation_id_var.get()`) so logs in Loki and traces in Langfuse cross-reference cleanly. SCCAP `cost_estimation.calculate_actual_cost` remains the authoritative cost source; LiteLLM's Langfuse `success_callback` is intentionally NOT enabled to avoid double-counting.
+When `LANGFUSE_ENABLED=true`, every reasoning-LLM call becomes a child span under a per-scan parent trace in Langfuse. The parent trace `id` equals the `X-Correlation-ID` (= `correlation_id_var.get()`) so logs in Loki and traces in Langfuse cross-reference cleanly. SCCAP `cost_estimation.calculate_actual_cost` remains the authoritative cost source; LiteLLM's Langfuse `success_callback` is intentionally NOT enabled to avoid double-counting.
 
-> The Fast LLM tier was removed in 2026-04-26 (`/sccap remove-fast-llm-tier`) — the slot was reserved but never wired. If a third tier is needed in future (e.g. dedicated triage / dep-summarization model), ship as a new feature with a fresh migration + admin UI.
+> The original 3-tier design (frontier / mid / fast) collapsed to one tier in two passes:
+> - **Fast tier** removed in `7a58714` (2026-04-26) — slot was reserved but never wired.
+> - **Utility tier** removed in `drop-utility-llm-tier` (2026-04-27) — same fate; every code path validated the column was present then routed to the reasoning tier anyway.
+> If multi-tier diversity is needed in future (e.g. dedicated triage / dep-summarization model), ship as a fresh feature with a real per-tier workload, not a reserved column.
 
 ## Operational runbooks
 

@@ -73,10 +73,6 @@ async def analyze_files_parallel_node(state: WorkerState) -> Dict[str, Any]:
     if not all_relevant_agents:
         return {"error_message": "Orchestrator is missing 'all_relevant_agents'."}
 
-    utility_llm_config_id = state.get("utility_llm_config_id")
-    if not utility_llm_config_id:
-        return {"error_message": "Orchestrator is missing 'utility_llm_config_id'."}
-
     reasoning_llm_id = state.get("reasoning_llm_config_id")
     if not reasoning_llm_id:
         return {"error_message": "Orchestrator is missing 'reasoning_llm_config_id'."}

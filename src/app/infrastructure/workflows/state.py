@@ -31,7 +31,6 @@ class WorkerState(TypedDict):
     scan_id: uuid.UUID
     scan_type: str
     current_scan_status: Optional[str]
-    utility_llm_config_id: Optional[uuid.UUID]
     reasoning_llm_config_id: Optional[uuid.UUID]
     files: Optional[Dict[str, str]]
     initial_file_map: Optional[Dict[str, str]]

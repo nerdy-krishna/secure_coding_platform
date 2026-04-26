@@ -174,7 +174,7 @@ const SubmitPage: React.FC = () => {
       const payload = new FormData();
       payload.append("project_name", projectName.trim());
       payload.append("scan_type", scanType);
-      payload.append("utility_llm_config_id", llmConfigId);
+      payload.append("reasoning_llm_config_id", llmConfigId);
       payload.append("frameworks", selectedFrameworks.join(","));
       if (mode === "upload") {
         for (const f of files) payload.append("files", f);

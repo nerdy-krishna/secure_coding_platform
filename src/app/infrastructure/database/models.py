@@ -72,9 +72,6 @@ class Scan(Base):
     status: Mapped[str] = mapped_column(
         String(50), nullable=False, default=STATUS_QUEUED
     )
-    utility_llm_config_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        ForeignKey("llm_configurations.id")
-    )
     reasoning_llm_config_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey("llm_configurations.id")
     )

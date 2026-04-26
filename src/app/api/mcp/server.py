@@ -114,8 +114,8 @@ class SubmitScanInput(BaseModel):
             "cheatsheets, or custom ones)."
         )
     )
-    utility_llm_config_id: str = Field(
-        description="UUID of the LLM configuration used for scans."
+    llm_config_id: str = Field(
+        description="UUID of the LLM configuration used for the scan's reasoning calls."
     )
     files: Optional[List[SubmitScanFile]] = Field(
         default=None,
@@ -202,13 +202,12 @@ async def sccap_submit_scan(payload: SubmitScanInput) -> Dict[str, Any]:
         user = await _current_user(session)
         scan_service = _build_submission_service(ScanRepository(session))
 
-        llm_cfg_id = uuid.UUID(payload.utility_llm_config_id)
+        llm_cfg_id = uuid.UUID(payload.llm_config_id)
         common_kwargs: Dict[str, Any] = dict(
             project_name=payload.project_name,
             user_id=user.id,
             scan_type=payload.scan_type,
             correlation_id=str(uuid.uuid4()),
-            utility_llm_config_id=llm_cfg_id,
             reasoning_llm_config_id=llm_cfg_id,
             frameworks=payload.frameworks,
         )

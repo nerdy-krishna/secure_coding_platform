@@ -153,7 +153,6 @@ async def create_scan(
     user: db_models.User = Depends(current_active_user),
     project_name: str = Form(...),
     scan_type: str = Form(...),
-    utility_llm_config_id: Optional[uuid.UUID] = Form(None),
     reasoning_llm_config_id: Optional[uuid.UUID] = Form(None),
     frameworks: str = Form(...),  # Received as a string, will be processed in service
     repo_url: Optional[str] = Form(None),
@@ -163,15 +162,11 @@ async def create_scan(
 ):
     selected_files_list = selected_files.split(",") if selected_files else None
 
-    # Resolve any missing llm_config_id slots to a fallback config. Supports
-    # the fresh-setup case where the admin has only configured one LLM — we
-    # reuse it across utility/reasoning slots instead of forcing the user
-    # to configure two. Once multiple configs exist the submit UI can let
-    # the user pick per slot.
-    missing_slots = [
-        s for s in (utility_llm_config_id, reasoning_llm_config_id) if s is None
-    ]
-    if missing_slots:
+    # Resolve a missing reasoning_llm_config_id to a fallback config.
+    # Supports the fresh-setup case where the admin has just configured
+    # one LLM — we use it without forcing the operator to specify it
+    # again on every submit.
+    if reasoning_llm_config_id is None:
         available = await llm_repo.get_all(skip=0, limit=1)
         if not available:
             raise HTTPException(
@@ -181,16 +176,13 @@ async def create_scan(
                     "under Admin → LLM Configurations before submitting a scan."
                 ),
             )
-        fallback_id = available[0].id
-        utility_llm_config_id = utility_llm_config_id or fallback_id
-        reasoning_llm_config_id = reasoning_llm_config_id or fallback_id
+        reasoning_llm_config_id = available[0].id
 
     common_args = {
         "project_name": project_name,
         "user_id": user.id,
         "correlation_id": correlation_id_var.get(),
         "scan_type": scan_type,
-        "utility_llm_config_id": utility_llm_config_id,
         "reasoning_llm_config_id": reasoning_llm_config_id,
         "frameworks": [fw.strip() for fw in frameworks.split(",")],
         "selected_files": selected_files_list,
