@@ -67,6 +67,46 @@ jobs:
         # it at PR time.
         run: poetry check --lock
 
+  bandit:
+    name: Bandit (Python SAST)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install bandit
+        run: pip install "bandit==1.7.9"
+      - name: bandit
+        run: bandit -r src -ll
+
+  pip-audit:
+    name: pip-audit (dependency CVE scan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Poetry + pip-audit
+        run: pip install "poetry==1.8.3" "pip-audit==2.7.3"
+      - name: Export dependency requirements
+        run: poetry export --without-hashes --format=requirements.txt --output=requirements-audit.txt
+      - name: pip-audit
+        run: pip-audit --strict --requirement requirements-audit.txt
+
+  gitleaks:
+    name: Gitleaks (secret scan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   build-backend-images:
     name: Docker build (api + worker)
     runs-on: ubuntu-latest

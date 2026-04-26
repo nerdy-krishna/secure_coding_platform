@@ -72,6 +72,10 @@ class VulnerabilityFinding(BaseModel):
         default=None,
         description="The suggested code fix, including original and new snippets.",
     )
+    source: Optional[str] = Field(
+        default=None,
+        description="Provenance: 'bandit' / 'semgrep' / 'gitleaks' for deterministic-scanner findings, None for LLM-agent findings.",
+    )
     agent_name: Optional[str] = Field(
         default=None, description="The name of the agent that generated the finding."
     )

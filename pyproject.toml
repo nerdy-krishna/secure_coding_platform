@@ -68,6 +68,10 @@ tiktoken = "^0.12.0"  # bumped for pydantic-ai-slim[openai] compat
 uvicorn = {extras = ["standard"], version = ">=0.35.0,<0.40.0"}
 python-multipart = "^0.0.20"
 cvss = "^3.4"
+# bandit ships in both API + worker images so the deterministic SAST
+# pre-pass node (`infrastructure/scanners/bandit_runner.py`) can invoke
+# `/app/.venv/bin/bandit` as a subprocess in the worker.
+bandit = "^1.7"
 
 
 # Worker-only deps: AST parsing (tree-sitter). The embedder was migrated
@@ -87,6 +91,10 @@ ruff = "^0.11.11"
 black = "^25.1.0"
 # black = "^24.4.2"
 mypy = "^1.10.0"
+# bandit lives in main deps because it's invoked at runtime by the SAST
+# pre-pass node; pip-audit + pre-commit stay in dev.
+pip-audit = "^2.7"
+pre-commit = "^3.7"
 
 # Test deps live in their own optional group so runtime images don't ship
 # them. Install with `poetry install --with test` locally or in CI.

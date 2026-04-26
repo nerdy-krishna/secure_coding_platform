@@ -107,6 +107,7 @@ Compiled as a **LangGraph `StateGraph`** with an `AsyncPostgresSaver` checkpoint
 
 ```
 retrieve_and_prepare_data
+  → deterministic_prescan    (Bandit subprocess — no interrupt)
   → estimate_cost            (interrupt → resume via Command)
   → analyze_files_parallel
   → correlate_findings
@@ -126,6 +127,18 @@ retrieve_and_prepare_data
 - Resolves the **relevant agents** for the selected frameworks into `all_relevant_agents`
 - Persists the repo map + dependency graph as scan artifacts
 - Updates status to `ANALYZING_CONTEXT`
+
+### Node 1.5 — `deterministic_prescan`
+
+Deterministic SAST pre-pass that runs **before** the cost-approval interrupt and seeds `WorkerState.findings` with high-confidence ground-truth findings the LLM agents can corroborate.
+
+- Wraps user-supplied files (`state["files"]`) into a fresh `tempfile.mkdtemp()` sandbox via `app.infrastructure.scanners.staging.stage_files`. Basenames are sanitized (strip `..`, leading `/`, leading `-` to neutralize argv injection) so attacker-controlled paths can never reach the scanner argv.
+- Routes per-file via `app.infrastructure.scanners.registry.scanners_for_file` — currently `bandit` for `.py` / `.pyi` only. Semgrep + Gitleaks slots are reserved for follow-up runs.
+- Invokes `bandit -r -f json --quiet -- <staged_dir>` via `subprocess.run([..., shell=False, check=False, timeout=120])`. Output is parsed through a Pydantic `BanditReport` (M5 / M7 boundary — only allowlisted fields survive). Each result becomes a `VulnerabilityFinding(source="bandit", confidence="High")` with HTML-escaped, 200-char-capped `description` so attacker-influenced text cannot smuggle prompt-injection into downstream LLM agents.
+- Files larger than `PRESCAN_FILE_BYTE_LIMIT` (1 MiB) are skipped to bound CPU; bandit subprocess has a 120 s `timeout`; per-scanner concurrency is capped at `CONCURRENT_SCANNER_LIMIT=5`.
+- **MUST NOT call `interrupt()`.** The cost-approval pause stays at `estimate_cost_node`. On unexpected failure, the node returns `{"error_message": ...}` and the graph routes to `handle_error`.
+- Findings are NOT persisted in this node; they live on state and are saved at `save_results_node` (single save site). `analyze_files_parallel` extends rather than replaces `state["findings"]`, and `correlate_findings_node` dedupes scanner-flagged + LLM-flagged overlaps by `(file_path, cwe, line_number)`.
+- Provenance is recorded on the new `findings.source` column (NULL for legacy / LLM-agent rows; `"bandit"` / `"semgrep"` / `"gitleaks"` for scanner findings).
 
 ### Node 2 — `estimate_cost`
 

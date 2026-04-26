@@ -1,0 +1,16 @@
+# gitleaks config — defaults plus an allowlist for committed example files
+# that intentionally contain placeholder-looking strings.
+
+title = "SCCAP gitleaks config"
+
+[extend]
+# Inherit the default gitleaks ruleset (AWS, GCP, Slack, GitHub PATs, etc.).
+useDefault = true
+
+[allowlist]
+description = "Allow placeholder strings in committed example/config files"
+paths = [
+    '''\.env\.example$''',
+    '''README\.md$''',
+    '''docs/.*''',
+]

@@ -168,9 +168,7 @@ def mock_llm_client(
         async def _get_client(_llm_config_id: uuid.UUID):
             return stub
 
-        monkeypatch.setattr(
-            "app.infrastructure.llm_client.get_llm_client", _get_client
-        )
+        monkeypatch.setattr("app.infrastructure.llm_client.get_llm_client", _get_client)
         return stub
 
     return _factory

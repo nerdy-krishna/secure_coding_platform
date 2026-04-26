@@ -45,10 +45,20 @@ from app.shared.lib.agent_routing import resolve_agents_for_file
 from app.shared.lib.files import get_language_from_filename
 from app.shared.lib import cost_estimation
 from app.shared.lib.risk_score import compute_cvss_aggregate
+from app.infrastructure.scanners.bandit_runner import run_bandit
+from app.infrastructure.scanners.registry import scanners_for_file
+from app.infrastructure.scanners.staging import stage_files
 
 logger = logging.getLogger(__name__)
 
 CONCURRENT_LLM_LIMIT = 5
+# Bounds parallel SAST scanner subprocess invocations in the
+# `deterministic_prescan_node`. Mirrors the LLM-side cap so a worker
+# busy with a large prescan cannot saturate the host.
+CONCURRENT_SCANNER_LIMIT = 5
+# Files larger than this are skipped during the prescan (M6 — defense
+# against pathological inputs that pin scanner CPU).
+PRESCAN_FILE_BYTE_LIMIT = 1024 * 1024
 # Files under this token size are passed whole to the analysis agents; only
 # truly huge files (lockfiles, generated bundles, etc.) fall through to the
 # semantic chunker. With 200k-context models + Anthropic prompt caching this
@@ -351,6 +361,94 @@ The `merged_code` field should contain ONLY the final, corrected code that will 
     )
     logger.info(f"Merge agent succeeded for {filename} with syntax-verified code.")
     return FixResult(finding=merged_finding, suggestion=merged_suggestion)
+
+
+async def deterministic_prescan_node(state: WorkerState) -> Dict[str, Any]:
+    """Deterministic SAST pre-pass.
+
+    Runs bundled SAST scanners (currently Bandit; Semgrep + Gitleaks
+    are deferred follow-ups) against the ORIGINAL_SUBMISSION snapshot
+    BEFORE the LLM-driven analysis. Findings flow into
+    ``WorkerState.findings`` with ``confidence="High"`` and
+    ``source="<scanner>"`` so they (a) seed the LLM agents with
+    high-confidence ground truth, (b) get deduped by
+    ``correlate_findings_node`` against any LLM-emitted overlap, and
+    (c) are persisted with provenance via ``Finding.source``.
+
+    Per the sast-prescan threat model:
+    - MUST NOT call ``interrupt()``; the cost-approval pause stays at
+      ``estimate_cost_node`` (M8).
+    - Pathological inputs are bounded by a per-file size cap and a
+      per-scanner timeout enforced inside the wrapper (M6).
+    - Files are staged into a ``tempfile`` sandbox with sanitized
+      basenames so user-controlled paths cannot drive scanner argv
+      or trigger config auto-discovery (M1, M2, M3).
+    - Scanner findings are persisted immediately so the checkpointer
+      doesn't have to round-trip a potentially large list across the
+      cost-approval interrupt.
+    """
+
+    scan_id = state["scan_id"]
+    files: Dict[str, str] = state.get("files") or {}
+    if not files:
+        logger.info("deterministic_prescan: no files for scan %s; skipping", scan_id)
+        return {}
+
+    # Per-file size cap (M6). Files we skip stay available to the LLM
+    # agents downstream — we just don't pay scanner CPU on them.
+    eligible: Dict[str, str] = {}
+    for path, content in files.items():
+        if not scanners_for_file(path):
+            continue
+        if len(content.encode("utf-8", "replace")) > PRESCAN_FILE_BYTE_LIMIT:
+            logger.info(
+                "deterministic_prescan: skipping oversize file scan_id=%s path=%s bytes=%d",
+                scan_id,
+                path,
+                len(content),
+            )
+            continue
+        eligible[path] = content
+
+    if not eligible:
+        logger.info(
+            "deterministic_prescan: no scanner-eligible files for scan %s; skipping",
+            scan_id,
+        )
+        return {}
+
+    semaphore = asyncio.Semaphore(CONCURRENT_SCANNER_LIMIT)
+    prescan_findings: List[VulnerabilityFinding] = []
+    try:
+        with stage_files(eligible) as (staged_dir, original_paths):
+            # Single Bandit invocation over the whole staged tree:
+            # Bandit walks recursively itself, which is cheaper than
+            # spawning a process per file. The semaphore is in place
+            # for when Semgrep / Gitleaks land and per-file invocation
+            # becomes the right pattern.
+            async with semaphore:
+                bandit_findings = await run_bandit(staged_dir, original_paths)
+            prescan_findings.extend(bandit_findings)
+        # Persistence is deferred to `save_results_node` (single save
+        # site for the whole scan); the findings stay on `state` and
+        # ride through `analyze_files_parallel` (which extends, not
+        # replaces) and `correlate_findings` (which dedupes against
+        # any LLM-emitted overlap by `(file_path, cwe, line_number)`).
+        logger.info(
+            "deterministic_prescan: scan_id=%s eligible_files=%d findings=%d",
+            scan_id,
+            len(eligible),
+            len(prescan_findings),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(
+            "deterministic_prescan: unexpected failure for scan %s: %s",
+            scan_id,
+            exc,
+        )
+        return {"error_message": f"Deterministic SAST pre-pass failed: {exc}"}
+
+    return {"findings": prescan_findings}
 
 
 async def estimate_cost_node(state: WorkerState) -> Dict[str, Any]:
@@ -733,13 +831,21 @@ async def analyze_files_parallel_node(state: WorkerState) -> Dict[str, Any]:
         all_scan_findings.extend(r.get("findings", []))
         all_proposed_fixes.extend(r.get("fixes", []))
 
+    # Carry forward any findings already on state (e.g. deterministic
+    # SAST findings from the prescan node) so they survive to
+    # `correlate_findings_node` (which dedupes by (file_path, cwe,
+    # line_number)) and on to `save_results_node`.
+    prior_findings = state.get("findings") or []
+
     logger.info(
         f"Single-pass analysis complete for scan {scan_id}: "
-        f"{len(all_scan_findings)} findings, {len(all_proposed_fixes)} proposed fixes."
+        f"{len(all_scan_findings)} agent findings, "
+        f"{len(prior_findings)} prior findings, "
+        f"{len(all_proposed_fixes)} proposed fixes."
     )
 
     return {
-        "findings": all_scan_findings,
+        "findings": prior_findings + all_scan_findings,
         "proposed_fixes": all_proposed_fixes,
     }
 
@@ -1002,6 +1108,7 @@ workflow = StateGraph(WorkerState)
 
 # Define all nodes
 workflow.add_node("retrieve_and_prepare_data", retrieve_and_prepare_data_node)
+workflow.add_node("deterministic_prescan", deterministic_prescan_node)
 workflow.add_node("estimate_cost", estimate_cost_node)
 workflow.add_node("analyze_files_parallel", analyze_files_parallel_node)
 workflow.add_node("correlate_findings", correlate_findings_node)
@@ -1019,13 +1126,26 @@ def should_continue(state: WorkerState) -> str:
 
 
 def _route_after_retrieve(state: WorkerState) -> str:
-    """Retrieval either fails early or proceeds to the cost-approval gate."""
+    """Retrieval either fails early or proceeds to the SAST pre-pass."""
+    return "handle_error" if state.get("error_message") else "deterministic_prescan"
+
+
+def _route_after_prescan(state: WorkerState) -> str:
+    """Deterministic SAST either fails (rare) or hands off to cost gate."""
     return "handle_error" if state.get("error_message") else "estimate_cost"
 
 
 workflow.add_conditional_edges(
     "retrieve_and_prepare_data",
     _route_after_retrieve,
+    {
+        "deterministic_prescan": "deterministic_prescan",
+        "handle_error": "handle_error",
+    },
+)
+workflow.add_conditional_edges(
+    "deterministic_prescan",
+    _route_after_prescan,
     {
         "estimate_cost": "estimate_cost",
         "handle_error": "handle_error",

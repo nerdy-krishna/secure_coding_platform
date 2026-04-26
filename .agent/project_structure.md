@@ -54,6 +54,7 @@
     - **db/**: Database connection and session management.
     - **llm/**: Clients for LLM providers (OpenAI, Anthropic, etc.).
     - **agents/**: LangChain agents for specific tasks (Analysis, Remediation).
+    - **scanners/**: Deterministic SAST wrappers invoked by the worker graph's `deterministic_prescan_node` — `staging.py` (sandbox the file tree), `bandit_runner.py` (Bandit subprocess + Pydantic-allowlisted output), `registry.py` (per-file scanner routing). Reserved slots for Semgrep + Gitleaks follow-ups.
     - **repositories/**: Data access layer.
 - **workers/**:
     - **consumer.py**: RabbitMQ consumer for synchronous scan processing.

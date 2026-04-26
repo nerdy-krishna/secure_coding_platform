@@ -186,6 +186,7 @@ class Finding(Base):
     remediation: Mapped[Optional[str]] = mapped_column(Text)
     cwe: Mapped[Optional[str]] = mapped_column(String(50))
     confidence: Mapped[Optional[str]] = mapped_column(String(50))
+    source: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
     corroborating_agents: Mapped[Optional[List[str]]] = mapped_column(JSONB)
     cvss_score: Mapped[Optional[float]] = mapped_column(DECIMAL(3, 1))
     cvss_vector: Mapped[Optional[str]] = mapped_column(String(100))

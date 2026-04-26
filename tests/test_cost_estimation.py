@@ -44,9 +44,9 @@ def test_count_tokens_in_plausible_range(provider, model, min_tokens, max_tokens
     where the tokenizer falls back to `len/4` silently."""
     cfg = _config(provider, model)
     tokens = asyncio.run(cost_estimation.count_tokens(SAMPLE_TEXT, cfg))
-    assert min_tokens <= tokens <= max_tokens, (
-        f"{provider}/{model}: got {tokens} tokens; expected {min_tokens}..{max_tokens}"
-    )
+    assert (
+        min_tokens <= tokens <= max_tokens
+    ), f"{provider}/{model}: got {tokens} tokens; expected {min_tokens}..{max_tokens}"
 
 
 def test_calculate_actual_cost_uses_litellm_map_when_override_absent():
@@ -74,4 +74,6 @@ def test_estimate_for_prompt_uses_predicted_output_ratio():
     # Default predicted ratio is 0.25 → 250 output tokens.
     assert est["predicted_output_tokens"] == 250
     assert est["total_input_tokens"] == 1_000
-    assert est["total_estimated_cost"] == est["input_cost"] + est["predicted_output_cost"]
+    assert (
+        est["total_estimated_cost"] == est["input_cost"] + est["predicted_output_cost"]
+    )
