@@ -12,16 +12,22 @@ no per-scan detail — that's what `/scans/history` is for.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 import sqlalchemy as sa
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.infrastructure.database import models as db_models
+from app.shared.lib.risk_score import (
+    MAX_FINDINGS,
+    compute_cvss_aggregate,
+    to_posture_score,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +41,20 @@ _SEVERITY_ALIASES: Dict[str, str] = {
     "medium": "medium",
     "low": "low",
 }
+
+
+@dataclass(frozen=True, slots=True)
+class _FindingRow:
+    """Narrow projection of `findings` consumed by `compute_cvss_aggregate`.
+
+    Selecting only these three columns keeps the row small (the
+    aggregator never reads description/title/file_path, which are
+    LLM-emitted from attacker-controlled code).
+    """
+
+    severity: Optional[str]
+    cvss_score: Optional[float]
+    cvss_vector: Optional[str]
 
 
 @dataclass
@@ -75,7 +95,11 @@ class DashboardService:
         scans_this_month, scans_trend, cost_this_month = await self._scan_activity(
             scope_filter
         )
-        risk_score = self._risk_score(open_findings)
+        rows = await self._findings_for_aggregate(scope_filter)
+        # Off-thread so a large finding set does not stall the FastAPI
+        # event loop while the cvss library iterates per-row.
+        aggregate = await asyncio.to_thread(compute_cvss_aggregate, rows)
+        risk_score = self._risk_score(aggregate)
 
         return DashboardStats(
             risk_score=risk_score,
@@ -121,6 +145,42 @@ class DashboardService:
             if key:
                 buckets[key] += int(count)
         return buckets
+
+    async def _findings_for_aggregate(
+        self, scope_filter: sa.ColumnElement[bool], limit: int = MAX_FINDINGS
+    ) -> List[_FindingRow]:
+        """Fetch the narrow projection that `compute_cvss_aggregate` reads.
+
+        Pulled severity-desc with a `LIMIT` so a tenant with millions of
+        findings cannot pin the API thread; the aggregator also caps at
+        `MAX_FINDINGS` defensively. Only `severity`, `cvss_score`, and
+        `cvss_vector` are selected — never description / file_path,
+        which are LLM-emitted from attacker-controlled code.
+        """
+        severity_rank = case(
+            (func.upper(db_models.Finding.severity) == "CRITICAL", 4),
+            (func.upper(db_models.Finding.severity) == "HIGH", 3),
+            (func.upper(db_models.Finding.severity) == "MEDIUM", 2),
+            (func.upper(db_models.Finding.severity) == "LOW", 1),
+            else_=0,
+        )
+        stmt = (
+            select(
+                db_models.Finding.severity,
+                db_models.Finding.cvss_score,
+                db_models.Finding.cvss_vector,
+            )
+            .join(db_models.Scan, db_models.Scan.id == db_models.Finding.scan_id)
+            .where(scope_filter)
+            .where(db_models.Finding.is_applied_in_remediation.is_(False))
+            .order_by(severity_rank.desc())
+            .limit(limit)
+        )
+        result = await self.db.execute(stmt)
+        return [
+            _FindingRow(severity=sev, cvss_score=score, cvss_vector=vec)
+            for sev, score, vec in result.all()
+        ]
 
     async def _fixes_ready(self, scope_filter: sa.ColumnElement[bool]) -> int:
         """Findings with an AI-suggested fix that hasn't been applied yet."""
@@ -186,17 +246,9 @@ class DashboardService:
         return scans_this_month, trend, cost_this_month
 
     @staticmethod
-    def _risk_score(open_findings: Dict[str, int]) -> int:
-        """Heuristic score: start at 100, penalize weighted open findings.
-
-        Weights favour critical + high so 3 criticals by themselves clearly
-        dominate a pile of low/info noise. Same heuristic as compliance: we
-        explicitly document it server-side so the UI doesn't re-invent it.
+    def _risk_score(aggregate: float) -> int:
+        """Map the unified 0.0-10.0 CVSS aggregate to the 0-100 posture
+        scale. JSON shape is unchanged — clients still see an integer in
+        ``[5, 100]`` where higher = healthier.
         """
-        weighted = (
-            open_findings.get("critical", 0) * 15
-            + open_findings.get("high", 0) * 6
-            + open_findings.get("medium", 0) * 2
-            + open_findings.get("low", 0) * 1
-        )
-        return max(5, 100 - min(95, weighted))
+        return to_posture_score(aggregate)

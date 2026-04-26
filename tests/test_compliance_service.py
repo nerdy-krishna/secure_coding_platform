@@ -80,8 +80,10 @@ async def test_open_findings_lower_the_score(db_session, seeded_user):
     asvs = next(r for r in stats if r["name"] == "asvs")
     assert asvs["findings_matched"] == 5
     assert asvs["open_findings"] == 5
-    # Score = 100 - min(95, open * 2) = 100 - 10 = 90
-    assert asvs["score"] == 90
+    # Findings have no cvss_vector / cvss_score, so the unified
+    # aggregator falls through to the HIGH severity-tier weight (7.5).
+    # to_posture_score(7.5) -> max(5, 100 - min(95, 75)) -> 25.
+    assert asvs["score"] == 25
 
 
 @pytest.mark.asyncio

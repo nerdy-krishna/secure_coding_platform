@@ -44,6 +44,7 @@ from app.shared.analysis_tools.chunker import semantic_chunker
 from app.shared.lib.agent_routing import resolve_agents_for_file
 from app.shared.lib.files import get_language_from_filename
 from app.shared.lib import cost_estimation
+from app.shared.lib.risk_score import compute_cvss_aggregate
 
 logger = logging.getLogger(__name__)
 
@@ -961,17 +962,8 @@ async def save_final_report_node(state: WorkerState) -> Dict[str, Any]:
         sev = (f.severity or "LOW").upper()
         if sev in severity_map:
             severity_map[sev] += 1
-    # Risk score calculation...
-    risk_score = 0
-    if severity_map["CRITICAL"] > 0:
-        risk_score = 9 + (severity_map["CRITICAL"] * 0.1)
-    elif severity_map["HIGH"] > 0:
-        risk_score = 7 + (severity_map["HIGH"] * 0.1)
-    elif severity_map["MEDIUM"] > 0:
-        risk_score = 4 + (severity_map["MEDIUM"] * 0.1)
-    elif severity_map["LOW"] > 0:
-        risk_score = 1 + (severity_map["LOW"] * 0.1)
-    final_risk_score = min(10, int(round(risk_score, 0)))
+    aggregate = compute_cvss_aggregate(findings, scan_id=scan_id)
+    final_risk_score = min(10, int(round(aggregate)))
 
     summary_data = {
         "summary": {
