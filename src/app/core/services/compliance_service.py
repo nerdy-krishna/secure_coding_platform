@@ -16,16 +16,22 @@ custom frameworks from the `frameworks` table follow.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.infrastructure.database import models as db_models
 from app.infrastructure.rag.rag_client import RAGService
+from app.shared.lib.risk_score import (
+    MAX_FINDINGS,
+    compute_cvss_aggregate,
+    to_posture_score,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -86,14 +92,26 @@ class FrameworkStats:
         }
 
 
-def _score_from_open(open_count: int) -> int:
-    """Heuristic: start at 100, subtract 2 per open finding, clamp at 5.
+@dataclass(frozen=True, slots=True)
+class _FindingRow:
+    """Narrow projection consumed by `compute_cvss_aggregate`.
 
-    Explicit and documented so the UI can surface it without pretending a
-    richer model exists. Real scoring lives in a dedicated service once
-    Finding→Control mapping is in place.
+    Only severity + CVSS fields are selected — never description /
+    file_path, which are LLM-emitted from attacker-controlled code.
     """
-    return max(5, 100 - min(95, open_count * 2))
+
+    severity: Optional[str]
+    cvss_score: Optional[float]
+    cvss_vector: Optional[str]
+
+
+def _score_from_aggregate(aggregate: float) -> int:
+    """Map the unified 0.0-10.0 CVSS aggregate to the 0-100 posture
+    scale. JSON shape is unchanged — clients still see an integer in
+    ``[5, 100]`` where higher = healthier. Frameworks with no findings
+    in scope return 100.
+    """
+    return to_posture_score(aggregate)
 
 
 class ComplianceService:
@@ -122,11 +140,19 @@ class ComplianceService:
                 logger.warning("RAG doc-count lookup failed: %s", e)
 
         # 2. Findings aggregates per framework in scope.
-        matched, open_counts, last_seen = await self._aggregate_findings(
+        matched, open_counts, last_seen, per_fw_rows = await self._aggregate_findings(
             visible_user_ids
         )
 
-        # 3. Custom frameworks from DB.
+        # 3. Per-framework CVSS aggregates. Off-thread so a tenant with
+        # thousands of findings cannot pin the FastAPI event loop while
+        # the cvss library iterates per-row.
+        scores: Dict[str, int] = {}
+        for fw_name, rows in per_fw_rows.items():
+            aggregate = await asyncio.to_thread(compute_cvss_aggregate, rows)
+            scores[fw_name] = _score_from_aggregate(aggregate)
+
+        # 4. Custom frameworks from DB.
         custom_rows = await self._list_custom_frameworks()
 
         out: List[FrameworkStats] = []
@@ -143,7 +169,7 @@ class ComplianceService:
                     doc_count=doc_count,
                     findings_matched=matched.get(name, 0),
                     open_findings=open_counts.get(name, 0),
-                    score=_score_from_open(open_counts.get(name, 0)),
+                    score=scores.get(name, 100),
                     last_scanned_at=last_seen.get(name),
                 )
             )
@@ -160,29 +186,44 @@ class ComplianceService:
                     doc_count=0,
                     findings_matched=matched.get(fw.name, 0),
                     open_findings=open_counts.get(fw.name, 0),
-                    score=_score_from_open(open_counts.get(fw.name, 0)),
+                    score=scores.get(fw.name, 100),
                     last_scanned_at=last_seen.get(fw.name),
                 )
             )
 
         return [item.to_dict() for item in out]
 
-    async def _aggregate_findings(
-        self, visible_user_ids: Optional[List[int]]
-    ) -> tuple[Dict[str, int], Dict[str, int], Dict[str, datetime]]:
+    async def _aggregate_findings(self, visible_user_ids: Optional[List[int]]) -> tuple[
+        Dict[str, int],
+        Dict[str, int],
+        Dict[str, datetime],
+        Dict[str, List[_FindingRow]],
+    ]:
         """Join Finding→Scan and bucket by every framework in Scan.frameworks.
 
-        Returns (matched_per_fw, open_per_fw, last_seen_per_fw).
-        Postgres jsonb_array_elements_text is the cleanest way to explode
-        the JSONB array; we filter & group in Python after pulling a narrow
-        projection. This stays fast for reasonable finding volumes and
-        avoids a complex SQLAlchemy construct for a first cut.
+        Returns (matched_per_fw, open_per_fw, last_seen_per_fw,
+        per_fw_rows). Per-framework row lists feed the CVSS aggregator;
+        each is capped at ``MAX_FINDINGS`` by severity-rank so a single
+        framework's tail cannot stall the API thread.
         """
-        stmt = select(
-            db_models.Scan.frameworks,
-            db_models.Scan.created_at,
-            db_models.Finding.severity,
-        ).join(db_models.Finding, db_models.Finding.scan_id == db_models.Scan.id)
+        severity_rank = case(
+            (func.upper(db_models.Finding.severity) == "CRITICAL", 4),
+            (func.upper(db_models.Finding.severity) == "HIGH", 3),
+            (func.upper(db_models.Finding.severity) == "MEDIUM", 2),
+            (func.upper(db_models.Finding.severity) == "LOW", 1),
+            else_=0,
+        )
+        stmt = (
+            select(
+                db_models.Scan.frameworks,
+                db_models.Scan.created_at,
+                db_models.Finding.severity,
+                db_models.Finding.cvss_score,
+                db_models.Finding.cvss_vector,
+            )
+            .join(db_models.Finding, db_models.Finding.scan_id == db_models.Scan.id)
+            .order_by(severity_rank.desc())
+        )
         if visible_user_ids is not None:
             stmt = stmt.where(db_models.Scan.user_id.in_(visible_user_ids))
 
@@ -190,8 +231,9 @@ class ComplianceService:
         matched: Dict[str, int] = {}
         open_counts: Dict[str, int] = {}
         last_seen: Dict[str, datetime] = {}
+        per_fw_rows: Dict[str, List[_FindingRow]] = {}
 
-        for frameworks, created_at, severity in result.all():
+        for frameworks, created_at, severity, cvss_score, cvss_vector in result.all():
             if not frameworks:
                 continue
             sev_lower = (severity or "").lower()
@@ -203,7 +245,18 @@ class ComplianceService:
                 prior = last_seen.get(fw)
                 if created_at and (prior is None or created_at > prior):
                     last_seen[fw] = created_at
-        return matched, open_counts, last_seen
+                bucket = per_fw_rows.setdefault(fw, [])
+                # Severity-desc ordering above means the first MAX_FINDINGS
+                # entries per framework are always the highest-impact ones.
+                if len(bucket) < MAX_FINDINGS:
+                    bucket.append(
+                        _FindingRow(
+                            severity=severity,
+                            cvss_score=cvss_score,
+                            cvss_vector=cvss_vector,
+                        )
+                    )
+        return matched, open_counts, last_seen, per_fw_rows
 
     async def _list_custom_frameworks(self) -> List[db_models.Framework]:
         default_names = set(DEFAULT_FRAMEWORKS.keys())
