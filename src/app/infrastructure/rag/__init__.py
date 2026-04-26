@@ -1,9 +1,9 @@
 """RAG (retrieval-augmented generation) layer.
 
-Pick a `VectorStore` via `get_vector_store()`. Two concrete impls today
-(`ChromaStore`, `QdrantStore`) plus the `DualWriteStore` wrapper for
-the migration window. The legacy `get_rag_service` symbol still works
-- it lives in `rag_client.py` and delegates to `get_vector_store()`.
+ADR-008 (Chroma → Qdrant migration finished): Qdrant is the only
+backend. Pick a `VectorStore` via `get_vector_store()`. The legacy
+`get_rag_service` symbol still works (re-exported by `rag_client.py`)
+to avoid churn across the ~7 historic call sites.
 """
 
 from app.infrastructure.rag.base import (

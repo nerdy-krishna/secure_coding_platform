@@ -125,25 +125,27 @@ class Settings(BaseSettings):
         default=2 * 60 * 60, description="Max seconds a single scan workflow may run."
     )
 
-    # --- RAG vector store (PR1 of Chroma → Qdrant migration) ---
-    # Default `chroma` keeps existing deployments on the current path.
-    # `dual` writes to both Chroma and Qdrant (reads stay on Chroma).
-    # `qdrant` is reachable only after PR2 flips reads; the field
-    # accepts it now so config validation matches what PR2 ships.
-    RAG_VECTOR_STORE: str = Field(
-        default="chroma",
-        description="One of: chroma | dual | qdrant.",
-    )
+    # --- RAG vector store (Qdrant only; ADR-008 supersedes ADR-007) ---
     QDRANT_HOST: str = "qdrant"
     QDRANT_PORT: int = 6333
-    QDRANT_API_KEY: Optional[SecretStr] = None
+    # Mandatory. Validator below rejects empty + the .env.example
+    # placeholder so a half-configured deploy fails fast at Settings
+    # load time rather than 500-ing on the first scan.
+    QDRANT_API_KEY: SecretStr
 
-    @field_validator("RAG_VECTOR_STORE")
-    def _validate_rag_vector_store(cls, v: str) -> str:
-        allowed = {"chroma", "dual", "qdrant"}
-        if v not in allowed:
+    @field_validator("QDRANT_API_KEY")
+    def _validate_qdrant_api_key(cls, v: SecretStr) -> SecretStr:
+        raw = v.get_secret_value() if hasattr(v, "get_secret_value") else str(v)
+        if not raw:
             raise ValueError(
-                f"RAG_VECTOR_STORE must be one of {sorted(allowed)}; got {v!r}."
+                "QDRANT_API_KEY is required. Set it in .env (see .env.example) "
+                "and restart."
+            )
+        if raw == "change-me-qdrant-key":
+            raise ValueError(
+                "QDRANT_API_KEY is set to the .env.example placeholder "
+                "('change-me-qdrant-key'). Generate a real key (e.g. "
+                "`openssl rand -hex 32`) and put it in .env, then restart."
             )
         return v
 

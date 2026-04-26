@@ -204,6 +204,30 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to auto-seed defaults: {e}")
 
+    # --- Eager-build the vector store (ADR-008) ---
+    # Warming the singleton at startup avoids the ~50–200 ms event-loop
+    # stall the lazy path causes when the first concurrent caller hits
+    # `threading.Lock` mid-request. Wrapped in try/except so a Qdrant
+    # outage at boot doesn't block lifespan; the next caller retries
+    # via the same lazy path. Threat-model G8.
+    if os.getenv("RAG_VECTOR_STORE"):
+        # Mitigation 6: ADR-008 dropped the flag entirely; warn the
+        # operator that their .env line is no longer honored.
+        logger.warning(
+            "RAG_VECTOR_STORE is set in env but no longer used; the platform "
+            "runs on Qdrant only (ADR-008). Remove the line from .env."
+        )
+    try:
+        from app.infrastructure.rag.factory import get_vector_store
+
+        get_vector_store()
+        logger.info("Vector store ready (Qdrant)")
+    except Exception as e:
+        logger.warning(
+            "Vector store eager-build failed; lazy retry on first call: %s",
+            e,
+        )
+
     # --- Start the outbox sweeper ---
     from app.infrastructure.messaging.outbox_sweeper import run_outbox_sweeper
 

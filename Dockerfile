@@ -18,11 +18,12 @@
 # image. Non-root (uid 1001) everywhere. BuildKit cache mounts on
 # pip/poetry keep rebuilds fast.
 #
-# Historical note: an `ml-assets` stage used to pre-download
-# `sentence-transformers/all-MiniLM-L6-v2`. Since Phase H.1.1 we use
-# ChromaDB's bundled ONNX embedder instead (lazy-downloaded to
-# /home/appuser/.cache/chroma on first use), and Phase I.3 dropped
-# sentence-transformers + torch entirely — so the stage went away.
+# Embedder note: `sentence-transformers/all-MiniLM-L6-v2` is loaded
+# at runtime via `fastembed.TextEmbedding(...)` (ADR-008). The model
+# weights are downloaded once at build time by the warmup `RUN`s in
+# the api + worker final stages and cached at
+# `FASTEMBED_CACHE_PATH=/opt/fastembed-cache`, so runtime never
+# touches HuggingFace and the image works in air-gapped deployments.
 
 # ---------- base ---------------------------------------------------------
 FROM python:3.12-slim-bookworm AS base
@@ -32,7 +33,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONPATH=/app/src \
-    PATH="/app/.venv/bin:$PATH"
+    PATH="/app/.venv/bin:$PATH" \
+    FASTEMBED_CACHE_PATH=/opt/fastembed-cache
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -47,8 +49,8 @@ RUN groupadd --gid ${APP_GID} ${APP_USER} \
     && useradd --uid ${APP_UID} --gid ${APP_GID} --create-home --shell /bin/bash ${APP_USER}
 
 WORKDIR /app
-RUN mkdir -p /app/.venv /app/.cache \
-    && chown -R ${APP_USER}:${APP_USER} /app
+RUN mkdir -p /app/.venv /app/.cache /opt/fastembed-cache \
+    && chown -R ${APP_USER}:${APP_USER} /app /opt/fastembed-cache
 
 # ---------- poetry-base --------------------------------------------------
 # Shared base for both builders. Has build-essential (for any wheels that
@@ -107,6 +109,12 @@ COPY --chown=appuser:appuser ./src /app/src
 COPY --chown=appuser:appuser ./alembic /app/alembic
 COPY --chown=appuser:appuser alembic.ini /app/alembic.ini
 
+# Pre-warm the fastembed model cache so air-gapped / restricted-egress
+# deployments don't reach out to HuggingFace on first scan. Cache lives
+# under FASTEMBED_CACHE_PATH (set in base stage). Threat-model G7 +
+# mitigation 7.
+RUN python -c "from fastembed import TextEmbedding; TextEmbedding('sentence-transformers/all-MiniLM-L6-v2').embed(['warmup'])"
+
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
@@ -157,5 +165,10 @@ USER appuser
 
 COPY --chown=appuser:appuser --from=worker-builder /app/.venv /app/.venv
 COPY --chown=appuser:appuser ./src /app/src
+
+# Pre-warm the fastembed model cache (same as the api stage). Worker
+# performs the bulk of the embedder work during scans; baking the
+# cache here keeps first-scan latency consistent.
+RUN python -c "from fastembed import TextEmbedding; TextEmbedding('sentence-transformers/all-MiniLM-L6-v2').embed(['warmup'])"
 
 CMD ["python", "-m", "app.workers.consumer"]

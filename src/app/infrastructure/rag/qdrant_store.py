@@ -1,18 +1,19 @@
-"""Qdrant implementation of `VectorStore`.
+"""Qdrant implementation of `VectorStore` (ADR-008).
 
-PR1 of the Chroma → Qdrant migration. This impl is exercised only when
-`RAG_VECTOR_STORE` is `dual` or `qdrant`; reads stay on Chroma in PR1,
-so the methods that return data are wired but their outputs are not
-served to live callers yet.
+The only RAG backend post-migration. ADR-007 staged the swap with a
+`dual` flag value during PR1; PR2+PR3 (this commit) retired the flag
+and made Qdrant the sole store.
 
-Threat-model gates carried into this module:
-- G5 (filter parity)  — `_translate_filter` covers `$eq`, `$ne`,
-  `$in`, `$and`, `$or` plus the literal filter shape used by
-  `analysis_node` in `generic_specialized_agent.py`.
-- G7 (placeholder env hygiene) — handled by `.env.example`, not this
-  file.
-- G11 (logs redact `QDRANT_API_KEY`) — `_log_init_error_env` skips any
-  env var whose name contains `API_KEY`.
+Module guarantees:
+- `_translate_filter` covers `$eq`, `$ne`, `$in`, `$and`, `$or` plus
+  the literal filter shape used by `analysis_node` in
+  `generic_specialized_agent.py` — pinned by
+  `tests/test_rag_qdrant_filter_translator.py`.
+- `_qdrant_id` deterministically maps Chroma string ids to UUIDs via
+  `uuid5` so existing collections (and the `_chroma_id` payload key)
+  round-trip cleanly.
+- `_log_init_error_env` redacts any env var whose name contains
+  `API_KEY` so init-failure logs cannot leak `QDRANT_API_KEY`.
 """
 
 from __future__ import annotations
@@ -36,8 +37,9 @@ from app.infrastructure.rag.embedder import embed
 
 logger = logging.getLogger(__name__)
 
-# MiniLM-L6-v2 output dim and metric — must match what Chroma produces
-# for these two collections so PR2's read-flip doesn't regress recall.
+# MiniLM-L6-v2 output dim and metric. Pinned to match the vectors any
+# existing Qdrant collection already holds (the embedder ships byte-
+# equivalent output to the prior chromadb-bundled ONNX path).
 VECTOR_SIZE = 384
 DISTANCE = qmodels.Distance.COSINE
 
@@ -365,10 +367,10 @@ def _qdrant_id(chroma_id: str) -> str:
     return str(uuid.uuid5(_QDRANT_ID_NAMESPACE, chroma_id))
 
 
-# Reserved for future async upgrade — see PR3 follow-ups. The current
-# qdrant-client `QdrantClient` is sync; calls happen inside the async
-# graph but the upstream lib runs them on a thread under the hood
-# (httpx). If profiling shows event-loop stalls we'll swap to
-# `AsyncQdrantClient` here.
+# Reserved for the future `AsyncQdrantClient` swap. The current
+# `QdrantClient` is sync; calls run inside the async graph but the
+# upstream lib runs them on a thread under the hood (httpx). If
+# profiling ever shows event-loop stalls, swap here. The bare
+# `asyncio` reference keeps the import alive for the swap diff.
 _ASYNC_CLIENT_PLACEHOLDER: Optional[Any] = None
-asyncio  # silence unused-import warning; imported for the PR2/3 swap.
+asyncio  # silence unused-import warning; reserved for the swap.
