@@ -276,25 +276,19 @@ class ScanRepository:
         when ``visible_user_ids`` is non-None; admins pass ``None`` and
         the filter is skipped. The optional ``source_filter`` constrains
         to a single scanner provenance (``"bandit"`` / ``"semgrep"`` /
-        ``"gitleaks"`` / ``"agent"``). Cursor pagination uses the
-        finding ``id`` (descending) so pages are deterministic and
-        disjoint.
+        ``"gitleaks"`` / ``"agent"``).
+
+        Cursor pagination uses ``Finding.id`` descending as the primary
+        sort so pages are deterministic and disjoint. Severity is
+        surfaced as a column in the admin UI for visual scanning;
+        keeping the SQL sort to a single monotonic key makes
+        ``id < cursor`` cursoring correct without composite-cursor
+        plumbing (close-features-4-6 fix).
         """
-        severity_rank = sa.case(
-            (sa.func.upper(db_models.Finding.severity) == "CRITICAL", 4),
-            (sa.func.upper(db_models.Finding.severity) == "HIGH", 3),
-            (sa.func.upper(db_models.Finding.severity) == "MEDIUM", 2),
-            (sa.func.upper(db_models.Finding.severity) == "LOW", 1),
-            else_=0,
-        )
         stmt = (
             select(db_models.Finding)
             .join(db_models.Scan, db_models.Scan.id == db_models.Finding.scan_id)
-            .order_by(
-                severity_rank.desc(),
-                db_models.Finding.scan_id.desc(),
-                db_models.Finding.id.desc(),
-            )
+            .order_by(db_models.Finding.id.desc())
             .limit(limit)
         )
         if visible_user_ids is not None:
