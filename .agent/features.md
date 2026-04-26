@@ -134,6 +134,19 @@ This file tracks new feature requests and technical implementation plans.
 
 ---
 
+## 10. OWASP LLM Top-10 + Agentic Top-10 frameworks (§3.11)
+
+**Status:** ✅ COMPLETE as of `tier1-and-llm-frameworks` run (2026-04-27).
+
+**What shipped:**
+- Two new frameworks seeded in `default_seed_service.FRAMEWORKS_DATA`: `llm_top10` (OWASP Top 10 for LLM Applications, 2025) and `agentic_top10` (OWASP Top 10 for Agentic AI Applications, 2026). Customers selecting either gets the AI-focused agent roster instead of the AppSec one.
+- Two new agents in `AGENT_DEFINITIONS`: `LLMSecurityAgent` (prompt injection, sensitive-info disclosure, model poisoning, output handling, excessive agency, system-prompt leakage, vector/embedding weaknesses, misinformation, unbounded consumption) and `AgenticSecurityAgent` (memory poisoning, tool misuse, privilege compromise, resource overload, cascading hallucination, intent breaking, deceptive behavior, repudiation, identity spoofing, human-in-the-loop overwhelm).
+- **Selective framework→agent mapping** added to the seed: each agent declares an optional `applicable_frameworks` field. Legacy AppSec agents (no field set) attach to the three OWASP AppSec frameworks; the new `LLMSecurityAgent` attaches only to `llm_top10` and `AgenticSecurityAgent` only to `agentic_top10`. Selecting `asvs` no longer pulls LLM-prompt-injection RAG context into a server-side scan and vice versa. Pinned by a regression test.
+- `SubmitPage` framework selector dynamically fetches from the backend, so the new frameworks appear automatically in the UI with no frontend changes.
+- **Out of scope (filed forward):** RAG content for LLM/Agentic Top-10 is not yet seeded — the frameworks are selectable but the agents will produce findings without RAG citations until operators ingest content via `POST /admin/rag/preprocess/...` for each new control_family. Compliance page hardcoded ingest buttons still cover only the 3 AppSec frameworks; AI-framework ingest UI is filed as a follow-up.
+
+---
+
 ## 8. OSV-Scanner dependency scan + CycloneDX BOM (ADR-009)
 
 **Status:** ✅ COMPLETE as of `prescan-approval-osv` run (2026-04-26).
