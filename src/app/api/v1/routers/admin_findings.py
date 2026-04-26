@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Literal, Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -107,5 +107,8 @@ async def list_admin_findings(
     return AdminFindingsResponse(
         items=items,
         next_cursor=next_cursor,
-        requested_at=datetime.utcnow(),
+        # `datetime.utcnow()` is deprecated in Python 3.12 (returns a
+        # naive datetime); use timezone-aware UTC for consistency with
+        # the rest of the codebase.
+        requested_at=datetime.now(timezone.utc),
     )

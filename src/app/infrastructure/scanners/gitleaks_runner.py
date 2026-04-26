@@ -54,9 +54,15 @@ from app.infrastructure.scanners.bandit_runner import _resolve_binary
 logger = logging.getLogger(__name__)
 
 
-GITLEAKS_BINARY = _resolve_binary(
-    "GITLEAKS_BINARY", "gitleaks", fallback="/usr/local/bin/gitleaks"
-)
+def _gitleaks_binary() -> str:
+    """Lazy accessor for the Gitleaks binary path. Resolves on first
+    call so `GITLEAKS_BINARY` env-var loaded by `dotenv` after import
+    is honored."""
+    return _resolve_binary(
+        "GITLEAKS_BINARY", "gitleaks", fallback="/usr/local/bin/gitleaks"
+    )
+
+
 GITLEAKS_TIMEOUT_SECONDS = 120
 GITLEAKS_CONFIG_PATH = "/app/scanners/configs/gitleaks.toml"
 DESCRIPTION_MAX_CHARS = 200
@@ -135,7 +141,7 @@ def _invoke_gitleaks_sync(staged_dir: Path) -> "subprocess.CompletedProcess[str]
     """
     return subprocess.run(  # noqa: S603 - args are a literal list
         [
-            GITLEAKS_BINARY,
+            _gitleaks_binary(),
             "detect",
             "--no-git",
             "--config",
@@ -211,7 +217,7 @@ async def run_gitleaks(
     except FileNotFoundError:
         logger.error(
             "scanner=gitleaks binary not found at %s; skipping prescan",
-            GITLEAKS_BINARY,
+            _gitleaks_binary(),
         )
         return []
     except Exception as exc:  # pragma: no cover - defensive

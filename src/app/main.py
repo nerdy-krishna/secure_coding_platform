@@ -250,6 +250,22 @@ async def lifespan(app: FastAPI):
         name="prescan-approval-sweeper",
     )
 
+    # --- Start the findings.source backfill sweeper (Feature-7 B3) ---
+    # Defensive catch for any `findings.source IS NULL` rows that
+    # land after the initial backfill. With B1 in place (LLM agent
+    # sets source="agent" at write time), this should be a no-op in
+    # steady state — bounded UPDATE per hour, zero overhead when the
+    # table is clean.
+    from app.infrastructure.messaging.findings_source_sweeper import (
+        run_findings_source_sweeper,
+    )
+
+    findings_source_sweeper_stop = asyncio.Event()
+    findings_source_sweeper_task = asyncio.create_task(
+        run_findings_source_sweeper(findings_source_sweeper_stop),
+        name="findings-source-sweeper",
+    )
+
     # --- Start the scan-progress LISTEN/NOTIFY bus (§3.10a) ---
     # Replaces the per-SSE-client 1 Hz Postgres poll with a single
     # LISTEN connection per app process that fans out scan-status /
@@ -278,6 +294,7 @@ async def lifespan(app: FastAPI):
     logger.info("Application shutdown.")
     sweeper_stop.set()
     prescan_sweeper_stop.set()
+    findings_source_sweeper_stop.set()
     if progress_bus is not None:
         try:
             await progress_bus.stop()
@@ -298,6 +315,13 @@ async def lifespan(app: FastAPI):
         prescan_sweeper_task.cancel()
     except Exception as e:
         logger.warning(f"Prescan-approval sweeper shutdown error: {e}")
+    try:
+        await asyncio.wait_for(findings_source_sweeper_task, timeout=5)
+    except asyncio.TimeoutError:
+        logger.warning("findings_source_sweeper did not stop within 5s; cancelling.")
+        findings_source_sweeper_task.cancel()
+    except Exception as e:
+        logger.warning(f"findings_source_sweeper shutdown error: {e}")
 
     from app.infrastructure.messaging.publisher import close_publisher
 

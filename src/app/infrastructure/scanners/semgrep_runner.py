@@ -46,9 +46,15 @@ from app.infrastructure.scanners.bandit_runner import _resolve_binary
 logger = logging.getLogger(__name__)
 
 
-SEMGREP_BINARY = _resolve_binary(
-    "SEMGREP_BINARY", "semgrep", fallback="/opt/semgrep-venv/bin/semgrep"
-)
+def _semgrep_binary() -> str:
+    """Lazy accessor for the Semgrep binary path. Resolves on first
+    call so `SEMGREP_BINARY` env-var loaded by `dotenv` after import
+    is honored."""
+    return _resolve_binary(
+        "SEMGREP_BINARY", "semgrep", fallback="/opt/semgrep-venv/bin/semgrep"
+    )
+
+
 SEMGREP_TIMEOUT_SECONDS = 120
 SEMGREP_CONFIG_PATH = "/app/scanners/configs/semgrep/security-audit.yml"
 DESCRIPTION_MAX_CHARS = 200
@@ -181,7 +187,7 @@ def _invoke_semgrep_sync(staged_dir: Path) -> "subprocess.CompletedProcess[str]"
     """
     return subprocess.run(  # noqa: S603 - args are a literal list
         [
-            SEMGREP_BINARY,
+            _semgrep_binary(),
             "--config",
             SEMGREP_CONFIG_PATH,
             "--metrics=off",
@@ -248,7 +254,8 @@ async def run_semgrep(
         return [_timeout_finding(staged_dir)]
     except FileNotFoundError:
         logger.error(
-            "scanner=semgrep binary not found at %s; skipping prescan", SEMGREP_BINARY
+            "scanner=semgrep binary not found at %s; skipping prescan",
+            _semgrep_binary(),
         )
         return []
     except Exception as exc:  # pragma: no cover - defensive

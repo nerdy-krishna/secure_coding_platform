@@ -40,9 +40,16 @@ from app.infrastructure.scanners.bandit_runner import _resolve_binary
 
 logger = logging.getLogger(__name__)
 
-OSV_BINARY = _resolve_binary(
-    "OSV_BINARY", "osv-scanner", fallback="/usr/local/bin/osv-scanner"
-)
+
+def _osv_binary() -> str:
+    """Lazy accessor for the OSV-Scanner binary path. Resolves on
+    first call so `OSV_BINARY` env-var loaded by `dotenv` after
+    import is honored."""
+    return _resolve_binary(
+        "OSV_BINARY", "osv-scanner", fallback="/usr/local/bin/osv-scanner"
+    )
+
+
 OSV_TIMEOUT_SECONDS = 180
 DESCRIPTION_MAX_CHARS = 200
 
@@ -343,10 +350,11 @@ async def run_osv(
     failure or parse error is downgraded to a WARN log + empty result
     (matches the existing scanner-fail policy).
     """
-    if not OSV_BINARY:
+    osv_bin = _osv_binary()
+    if not osv_bin:
         logger.error(
             "scanner=osv binary not found at %s; skipping prescan",
-            OSV_BINARY,
+            osv_bin,
         )
         return [], None
 
@@ -360,7 +368,7 @@ async def run_osv(
         json_path = tmp_path / "vulns.json"
         try:
             rc, _stdout, stderr = await asyncio.to_thread(
-                _run_osv_subprocess, OSV_BINARY, staged_dir, bom_path, json_path
+                _run_osv_subprocess, osv_bin, staged_dir, bom_path, json_path
             )
         except subprocess.TimeoutExpired:
             logger.warning(

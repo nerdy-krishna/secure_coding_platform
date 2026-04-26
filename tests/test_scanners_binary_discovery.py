@@ -7,7 +7,20 @@ fixed venv layout.
 
 from __future__ import annotations
 
+import pytest
+
 from app.infrastructure.scanners.bandit_runner import _resolve_binary
+
+
+@pytest.fixture(autouse=True)
+def _clear_resolve_binary_cache():
+    """`_resolve_binary` is `@functools.cache`d (Feature-7 F2 — lazy
+    resolution so .env-loaded `*_BINARY` is honored). Clear between
+    tests so monkeypatched env / shutil.which combinations don't
+    collide on cached values."""
+    _resolve_binary.cache_clear()
+    yield
+    _resolve_binary.cache_clear()
 
 
 def test_env_var_wins(monkeypatch):
