@@ -8,13 +8,12 @@
 import { useQuery } from "@tanstack/react-query";
 import React, { useState } from "react";
 import { Link } from "react-router-dom";
-import {
+import type {
   AdminFindingItem,
   AdminFindingSource,
   AdminFindingsResponse,
-  listAdminFindings,
 } from "../../shared/api/adminFindings";
-
+import { listAdminFindings } from "../../shared/api/adminFindings";
 const SOURCE_OPTIONS: Array<{ value: AdminFindingSource | ""; label: string }> = [
   { value: "", label: "All" },
   { value: "bandit", label: "Bandit" },
