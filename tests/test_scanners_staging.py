@@ -75,6 +75,25 @@ def test_stage_files_keeps_a_reverse_map_back_to_original_paths():
         assert "src/handlers/user.py" in original_paths.values()
 
 
+def test_safe_relative_path_handles_nul_byte():
+    """N13 — A NUL byte in `rel_path` historically crashed `Path.parts`
+    on POSIX since Python 3.10, aborting the entire scan via a bubbled
+    ValueError. The fallback substitutes the `unnamed` slug.
+    """
+    result = _safe_relative_path("foo\x00bar/baz.py")
+    # Either we got the "unnamed" sentinel back (Path raised) or NUL
+    # was sanitized component-by-component — both are acceptable; the
+    # invariant is "no exception escapes."
+    assert result == Path("unnamed") or "\x00" not in str(result)
+
+
+def test_safe_relative_path_only_nul_bytes_returns_unnamed():
+    """A path that is *entirely* NUL/empty must not crash either."""
+    result = _safe_relative_path("\x00\x00\x00")
+    assert "\x00" not in str(result)
+    assert result == Path("unnamed") or result.name == "unnamed"
+
+
 def test_stage_files_handles_basename_collisions():
     # Two files whose sanitized basenames collide (different content)
     # both persist via a sha1 disambiguator. Without that, the second

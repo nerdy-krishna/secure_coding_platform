@@ -186,10 +186,10 @@ async def test_blocked_pre_llm_node_logs_warning_with_correlation_id(
 
     triggering = _critical_gitleaks_finding()
     state = _state_with([triggering])
-    with caplog.at_level(
-        logging.WARNING, logger="app.infrastructure.workflows.worker_graph"
-    ):
-        result = await worker_graph.blocked_pre_llm_node(state)
+    app_logger = logging.getLogger("app")
+    monkeypatch.setattr(app_logger, "propagate", True)
+    caplog.set_level(logging.WARNING, logger="app.infrastructure.workflows.worker_graph")
+    result = await worker_graph.blocked_pre_llm_node(state)
     assert result == {}
     assert saw_status, "blocked node must call update_status"
     assert saw_status[0][1] == worker_graph.STATUS_BLOCKED_PRE_LLM
