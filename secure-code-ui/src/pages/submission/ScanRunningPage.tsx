@@ -52,11 +52,12 @@ const TERMINAL_STATUSES = new Set([
   "FAILED",
   "CANCELLED",
   "EXPIRED",
+  "BLOCKED_PRE_LLM",
 ]);
 
 function progressFromStages(seenStages: Set<string>, currentStatus: string): number {
   if (currentStatus === "COMPLETED" || currentStatus === "REMEDIATION_COMPLETED") return 100;
-  if (currentStatus === "FAILED" || currentStatus === "CANCELLED") return 100;
+  if (currentStatus === "FAILED" || currentStatus === "CANCELLED" || currentStatus === "BLOCKED_PRE_LLM") return 100;
   // Count how many known stages we've seen as a proportion of total.
   const known = KNOWN_STAGES.filter((s) => seenStages.has(s.key)).length;
   // Ensure we don't show 100% while still running.
@@ -144,10 +145,16 @@ const ScanRunningPage: React.FC = () => {
     };
   }, [scanId]);
 
-  // When scan reaches a terminal completed status, auto-navigate to results.
+  // When scan reaches a terminal status (success or BLOCKED_PRE_LLM
+  // short-circuit), auto-navigate to the results page so the user
+  // sees the outcome — including why a scan was blocked.
   useEffect(() => {
     if (!scanId) return;
-    if (status === "COMPLETED" || status === "REMEDIATION_COMPLETED") {
+    if (
+      status === "COMPLETED" ||
+      status === "REMEDIATION_COMPLETED" ||
+      status === "BLOCKED_PRE_LLM"
+    ) {
       const t = setTimeout(() => navigate(`/analysis/results/${scanId}`), 1500);
       return () => clearTimeout(t);
     }

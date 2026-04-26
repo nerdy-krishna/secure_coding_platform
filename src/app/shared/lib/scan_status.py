@@ -16,6 +16,11 @@ STATUS_COMPLETED: Final[str] = "COMPLETED"
 STATUS_REMEDIATION_COMPLETED: Final[str] = "REMEDIATION_COMPLETED"
 STATUS_FAILED: Final[str] = "FAILED"
 STATUS_CANCELLED: Final[str] = "CANCELLED"
+# Terminal status set by `blocked_pre_llm_node` when the deterministic
+# SAST pre-pass finds a Critical secret (Gitleaks). The scan ends
+# before any LLM call is made — saves cost and prevents the secret
+# from being forwarded to the model provider.
+STATUS_BLOCKED_PRE_LLM: Final[str] = "BLOCKED_PRE_LLM"
 
 # Scan statuses that represent a scan still moving toward completion.
 ACTIVE_SCAN_STATUSES: Final[tuple[str, ...]] = (

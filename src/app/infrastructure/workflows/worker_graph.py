@@ -46,7 +46,13 @@ from app.shared.lib.files import get_language_from_filename
 from app.shared.lib import cost_estimation
 from app.shared.lib.risk_score import compute_cvss_aggregate
 from app.infrastructure.scanners.bandit_runner import run_bandit
-from app.infrastructure.scanners.registry import scanners_for_file
+from app.infrastructure.scanners.gitleaks_runner import run_gitleaks
+from app.infrastructure.scanners.registry import (
+    MINIFIED_BYTE_LIMIT,
+    is_minified,
+    scanners_for_file,
+)
+from app.infrastructure.scanners.semgrep_runner import run_semgrep
 from app.infrastructure.scanners.staging import stage_files
 
 logger = logging.getLogger(__name__)
@@ -72,6 +78,7 @@ CHUNK_ONLY_IF_LARGER_THAN = 150_000
 # definitions live in app.shared.lib.scan_status.
 from app.shared.lib.scan_status import (  # noqa: E402
     STATUS_ANALYZING_CONTEXT,
+    STATUS_BLOCKED_PRE_LLM,
     STATUS_COMPLETED,
     STATUS_FAILED,
     STATUS_PENDING_APPROVAL,
@@ -394,18 +401,22 @@ async def deterministic_prescan_node(state: WorkerState) -> Dict[str, Any]:
         logger.info("deterministic_prescan: no files for scan %s; skipping", scan_id)
         return {}
 
-    # Per-file size cap (M6). Files we skip stay available to the LLM
-    # agents downstream — we just don't pay scanner CPU on them.
+    # Per-file size cap (M6 + N2). Minified web bundles get a tighter
+    # cap because Semgrep's parse pathology on them is the most likely
+    # real-world timeout trigger.
     eligible: Dict[str, str] = {}
     for path, content in files.items():
         if not scanners_for_file(path):
             continue
-        if len(content.encode("utf-8", "replace")) > PRESCAN_FILE_BYTE_LIMIT:
+        size = len(content.encode("utf-8", "replace"))
+        cap = MINIFIED_BYTE_LIMIT if is_minified(path) else PRESCAN_FILE_BYTE_LIMIT
+        if size > cap:
             logger.info(
-                "deterministic_prescan: skipping oversize file scan_id=%s path=%s bytes=%d",
+                "deterministic_prescan: skipping oversize file scan_id=%s path=%s bytes=%d cap=%d",
                 scan_id,
                 path,
-                len(content),
+                size,
+                cap,
             )
             continue
         eligible[path] = content
@@ -417,23 +428,38 @@ async def deterministic_prescan_node(state: WorkerState) -> Dict[str, Any]:
         )
         return {}
 
+    # Single shared semaphore covers all three scanner subprocesses in
+    # this prescan invocation (N9). Each scanner walks the staged tree
+    # itself, so we get three subprocess.run calls total per scan, not
+    # per file.
     semaphore = asyncio.Semaphore(CONCURRENT_SCANNER_LIMIT)
     prescan_findings: List[VulnerabilityFinding] = []
     try:
         with stage_files(eligible) as (staged_dir, original_paths):
-            # Single Bandit invocation over the whole staged tree:
-            # Bandit walks recursively itself, which is cheaper than
-            # spawning a process per file. The semaphore is in place
-            # for when Semgrep / Gitleaks land and per-file invocation
-            # becomes the right pattern.
-            async with semaphore:
-                bandit_findings = await run_bandit(staged_dir, original_paths)
-            prescan_findings.extend(bandit_findings)
-        # Persistence is deferred to `save_results_node` (single save
-        # site for the whole scan); the findings stay on `state` and
-        # ride through `analyze_files_parallel` (which extends, not
-        # replaces) and `correlate_findings` (which dedupes against
-        # any LLM-emitted overlap by `(file_path, cwe, line_number)`).
+
+            async def _gated(coro_factory):
+                async with semaphore:
+                    return await coro_factory()
+
+            scanner_tasks = [
+                _gated(lambda: run_bandit(staged_dir, original_paths)),
+                _gated(lambda: run_semgrep(staged_dir, original_paths)),
+                _gated(lambda: run_gitleaks(staged_dir, original_paths)),
+            ]
+            results = await asyncio.gather(*scanner_tasks, return_exceptions=True)
+            for scanner_name, result in zip(("bandit", "semgrep", "gitleaks"), results):
+                if isinstance(result, BaseException):
+                    # Per-scanner failure is non-fatal (N15-style at the
+                    # per-scanner level) — log + skip + continue with the
+                    # other scanners' findings.
+                    logger.warning(
+                        "deterministic_prescan: scanner=%s failed scan_id=%s err=%s",
+                        scanner_name,
+                        scan_id,
+                        result,
+                    )
+                    continue
+                prescan_findings.extend(result)
         logger.info(
             "deterministic_prescan: scan_id=%s eligible_files=%d findings=%d",
             scan_id,
@@ -441,14 +467,63 @@ async def deterministic_prescan_node(state: WorkerState) -> Dict[str, Any]:
             len(prescan_findings),
         )
     except Exception as exc:  # noqa: BLE001
-        logger.exception(
-            "deterministic_prescan: unexpected failure for scan %s: %s",
+        # N15: prescan-fail policy — never block the LLM analysis on a
+        # prescan crash. Log and continue with whatever we collected.
+        # The scanner stdout / exception text is NOT embedded in
+        # `Scan.error_message` (it could carry secret-shaped content).
+        logger.warning(
+            "deterministic_prescan: scan_id=%s prescan_failed continuing without findings: %s",
             scan_id,
             exc,
         )
-        return {"error_message": f"Deterministic SAST pre-pass failed: {exc}"}
+        return {"findings": []}
 
     return {"findings": prescan_findings}
+
+
+async def blocked_pre_llm_node(state: WorkerState) -> Dict[str, Any]:
+    """Terminal node reached when the SAST pre-pass found a Critical
+    secret (Gitleaks). Persists the triggering finding and sets the
+    scan status to ``BLOCKED_PRE_LLM`` BEFORE any LLM call is made.
+
+    MUST NOT call ``interrupt()`` — this is a terminal route, not a
+    pause. The user-facing scan detail surfaces a generic
+    "Scan blocked: critical secret detected" message; the triggering
+    finding (with redacted description) is persisted so the admin
+    findings list (`/admin/findings?source=gitleaks`) can surface
+    what triggered the block.
+    """
+    scan_id = state["scan_id"]
+    findings = state.get("findings") or []
+    triggering = next(
+        (
+            f
+            for f in findings
+            if getattr(f, "source", None) == "gitleaks"
+            and (f.severity or "").lower() == "critical"
+        ),
+        None,
+    )
+    if triggering is not None:
+        logger.warning(
+            "blocked_pre_llm: scan_id=%s trigger=gitleaks rule=%s file=%s line=%d",
+            scan_id,
+            triggering.title,
+            triggering.file_path,
+            triggering.line_number,
+        )
+    else:
+        logger.warning(
+            "blocked_pre_llm: scan_id=%s trigger=unknown (no critical gitleaks finding on state)",
+            scan_id,
+        )
+
+    async with AsyncSessionLocal() as db:
+        repo = ScanRepository(db)
+        if findings:
+            await repo.save_findings(scan_id, findings)
+        await repo.update_status(scan_id, STATUS_BLOCKED_PRE_LLM)
+    return {}
 
 
 async def estimate_cost_node(state: WorkerState) -> Dict[str, Any]:
@@ -1109,6 +1184,7 @@ workflow = StateGraph(WorkerState)
 # Define all nodes
 workflow.add_node("retrieve_and_prepare_data", retrieve_and_prepare_data_node)
 workflow.add_node("deterministic_prescan", deterministic_prescan_node)
+workflow.add_node("blocked_pre_llm", blocked_pre_llm_node)
 workflow.add_node("estimate_cost", estimate_cost_node)
 workflow.add_node("analyze_files_parallel", analyze_files_parallel_node)
 workflow.add_node("correlate_findings", correlate_findings_node)
@@ -1131,8 +1207,26 @@ def _route_after_retrieve(state: WorkerState) -> str:
 
 
 def _route_after_prescan(state: WorkerState) -> str:
-    """Deterministic SAST either fails (rare) or hands off to cost gate."""
-    return "handle_error" if state.get("error_message") else "estimate_cost"
+    """Route after the deterministic SAST pre-pass.
+
+    - Critical secret found by Gitleaks → terminal `blocked_pre_llm`
+      (do NOT call `interrupt()`; the user pays nothing and the secret
+      never reaches the LLM provider).
+    - Hard prescan failure → `handle_error` (rare; per N15 the prescan
+      node already swallows scanner crashes and returns `findings=[]`,
+      so this branch only fires on something catastrophic upstream).
+    - Otherwise → cost-approval gate at `estimate_cost`.
+    """
+    if state.get("error_message"):
+        return "handle_error"
+    findings = state.get("findings") or []
+    for finding in findings:
+        if (
+            getattr(finding, "source", None) == "gitleaks"
+            and (finding.severity or "").lower() == "critical"
+        ):
+            return "blocked_pre_llm"
+    return "estimate_cost"
 
 
 workflow.add_conditional_edges(
@@ -1148,9 +1242,11 @@ workflow.add_conditional_edges(
     _route_after_prescan,
     {
         "estimate_cost": "estimate_cost",
+        "blocked_pre_llm": "blocked_pre_llm",
         "handle_error": "handle_error",
     },
 )
+workflow.add_edge("blocked_pre_llm", END)
 
 # estimate_cost_node calls interrupt(); the graph pauses there, persists
 # state in the checkpointer, and yields. On approval, the worker calls

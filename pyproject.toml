@@ -84,6 +84,13 @@ optional = true
 [tool.poetry.group.worker.dependencies]
 tree-sitter = ">=0.21.0,<0.22.0"
 tree-sitter-languages = "^1.10.2"
+# Semgrep is installed in an isolated /opt/semgrep-venv inside the
+# worker Dockerfile (see Dockerfile worker stage). It's NOT in the main
+# Poetry dep tree because semgrep pins `rich<13.6` while fastmcp ^3.2.4
+# requires `rich>=13.9.4` — the conflict is unresolvable. The runner
+# resolves the binary via `app.infrastructure.scanners.bandit_runner._resolve_binary`
+# which honors `SEMGREP_BINARY` env var → `shutil.which("semgrep")` →
+# fallback path `/opt/semgrep-venv/bin/semgrep`.
 
 
 [tool.poetry.group.dev.dependencies]
