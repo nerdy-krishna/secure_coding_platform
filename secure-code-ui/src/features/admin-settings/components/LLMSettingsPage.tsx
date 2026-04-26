@@ -17,7 +17,13 @@ import type {
 import { Icon } from "../../../shared/ui/Icon";
 import { useToast } from "../../../shared/ui/Toast";
 
-const LLM_PROVIDERS = ["openai", "google", "anthropic"] as const;
+const LLM_PROVIDERS = [
+  "openai",
+  "google",
+  "anthropic",
+  "deepseek",
+  "xai",
+] as const;
 type Provider = (typeof LLM_PROVIDERS)[number];
 
 interface FormState {

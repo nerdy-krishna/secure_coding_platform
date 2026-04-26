@@ -34,8 +34,9 @@ class LLMConfigurationBase(BaseModel):
     name: str = Field(
         ..., description="A unique, user-friendly name for the LLM configuration."
     )
-    provider: str = Field(
-        ..., description="The LLM provider (e.g., 'openai', 'google', 'anthropic')."
+    provider: Literal["openai", "anthropic", "google", "deepseek", "xai"] = Field(
+        ...,
+        description="The LLM provider. One of: 'openai', 'anthropic', 'google', 'deepseek', 'xai'.",
     )
     model_name: str = Field(
         ..., description="The specific model name (e.g., 'gpt-4o', 'gemini-1.5-pro')."
@@ -97,8 +98,11 @@ class LLMConfigurationUpdate(BaseModel):
     name: Optional[str] = Field(
         None, description="A unique, user-friendly name for the LLM configuration."
     )
-    provider: Optional[str] = Field(
-        None, description="The LLM provider (e.g., 'openai', 'google', 'anthropic')."
+    provider: Optional[Literal["openai", "anthropic", "google", "deepseek", "xai"]] = (
+        Field(
+            None,
+            description="The LLM provider. One of: 'openai', 'anthropic', 'google', 'deepseek', 'xai'.",
+        )
     )
     model_name: Optional[str] = Field(
         None, description="The specific model name (e.g., 'gpt-4o', 'gemini-1.5-pro')."
@@ -123,6 +127,12 @@ class LLMConfigurationUpdate(BaseModel):
 
 
 class LLMConfigurationRead(LLMConfigurationBase):
+    # Read schema relaxes `provider` to `str` so that legacy rows whose
+    # provider value predates the current allowlist (e.g. 'gemini' from
+    # pre-2026-04-27 setup-form rows; see Alembic c0f39ef37367) still
+    # serialise. Validation at write time is enforced via the `Literal`
+    # on `LLMConfigurationBase.provider` for Create + Update.
+    provider: str  # type: ignore[assignment]
     id: uuid.UUID
     created_at: datetime
     updated_at: datetime

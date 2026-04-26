@@ -36,10 +36,16 @@ logger = logging.getLogger(__name__)
 # We try both shapes and fall back to the raw name LangChain uses so an
 # unknown preview model name still works via tiktoken's fallback encoding.
 
+# NOTE (eval-gap): DeepSeek and xAI Grok prompts are not yet exercised by
+# the Promptfoo eval suite or the deferred OWASP LLM/Agentic redteam pack.
+# Operators routing scans through them accept the model-alignment risk —
+# see .agent/features.md.
 _PROVIDER_PREFIX = {
     "openai": "openai",
     "anthropic": "anthropic",
     "google": "gemini",
+    "deepseek": "deepseek",
+    "xai": "xai",
 }
 
 

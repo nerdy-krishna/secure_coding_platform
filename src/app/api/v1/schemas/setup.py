@@ -11,8 +11,12 @@ class SetupRequest(BaseModel):
     )
 
     # LLM Configuration
-    llm_provider: str = Field(
-        ..., description="LLM Provider (openai, anthropic, gemini)"
+    llm_provider: Literal["openai", "anthropic", "google", "deepseek", "xai"] = Field(
+        ...,
+        description=(
+            "LLM Provider. One of: 'openai', 'anthropic', 'google', "
+            "'deepseek', 'xai'."
+        ),
     )
     llm_api_key: str = Field(..., description="API Key for the LLM Provider")
     llm_model: str = Field(..., description="Model name (e.g., gpt-4o, claude-3-opus)")

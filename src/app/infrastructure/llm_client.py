@@ -94,6 +94,14 @@ class LLMClient:
     # Anthropic, responseMimeType+schema on Google) based on the model.
     # ------------------------------------------------------------------
 
+    # DeepSeek and xAI both ship OpenAI-compatible Chat Completions APIs;
+    # Pydantic AI talks to them through the OpenAI client with a custom
+    # base_url. See https://api-docs.deepseek.com and https://docs.x.ai.
+    _OPENAI_COMPATIBLE_BASE_URLS = {
+        "deepseek": "https://api.deepseek.com/v1",
+        "xai": "https://api.x.ai/v1",
+    }
+
     def _build_model(self) -> Any:
         model_name = self.db_llm_config.model_name
         if self.provider_name == "openai":
@@ -110,6 +118,14 @@ class LLMClient:
             return GoogleModel(
                 model_name,
                 provider=GoogleProvider(api_key=self.decrypted_api_key),
+            )
+        base_url = self._OPENAI_COMPATIBLE_BASE_URLS.get(self.provider_name)
+        if base_url is not None:
+            return OpenAIModel(
+                model_name,
+                provider=OpenAIProvider(
+                    api_key=self.decrypted_api_key, base_url=base_url
+                ),
             )
         raise ValueError(f"Unsupported LLM provider: {self.provider_name}")
 
