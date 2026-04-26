@@ -52,7 +52,7 @@ export interface TokenResponse {
 export interface LLMConfiguration {
   id: string;
   name: string;
-  provider: string;
+  provider: "openai" | "anthropic" | "google" | "deepseek" | "xai";
   model_name: string;
   tokenizer?: string;
   input_cost_per_million: number;

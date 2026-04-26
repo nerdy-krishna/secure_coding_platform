@@ -68,6 +68,30 @@ def test_admin_override_takes_precedence():
     assert cost == pytest.approx(2.00, rel=1e-6)
 
 
+@pytest.mark.parametrize(
+    "provider,model",
+    [
+        ("deepseek", "deepseek-chat"),
+        ("xai", "grok-2-latest"),
+    ],
+)
+def test_first_working_model_key_resolves_new_providers(provider, model):
+    """`_PROVIDER_PREFIX` extension for DeepSeek + xAI must resolve to a
+    key LiteLLM recognises in its bundled `model_cost` map. If LiteLLM
+    ever renames either prefix, this test catches the drift before
+    cost estimation falls back to `len/4`.
+    """
+    import litellm
+
+    cfg = _config(provider, model)
+    key = cost_estimation._first_working_model_key(cfg)
+    assert key in litellm.model_cost, (
+        f"{provider}/{model}: resolver returned {key!r} which is not in "
+        f"litellm.model_cost — `_PROVIDER_PREFIX` and LiteLLM's bundled "
+        f"map have drifted apart."
+    )
+
+
 def test_estimate_for_prompt_uses_predicted_output_ratio():
     cfg = _config("openai", "gpt-4o")
     est = cost_estimation.estimate_cost_for_prompt(cfg, 1_000)

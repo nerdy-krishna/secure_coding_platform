@@ -209,3 +209,18 @@ This file tracks new feature requests and technical implementation plans.
 - Custom Semgrep rule packs beyond `p/security-audit` — needs DB schema + admin UI + worker integration.
 - Per-tenant `.gitleaksignore` allow-list table — needs DB schema + admin UI + worker integration.
 - Wall-clock benchmarking to justify per-scanner concurrency split — research task.
+
+---
+
+## 11. DeepSeek + xAI Grok provider support
+
+**Status:** ✅ COMPLETE as of `/sccap add-deepseek-grok-llm-support` (2026-04-27).
+
+- `LLMConfigurationBase.provider` and `LLMConfigurationUpdate.provider` are now `Literal["openai","anthropic","google","deepseek","xai"]` — unknown providers are rejected with HTTP 422 at the schema layer (mitigation #1 from the threat model).
+- `cost_estimation._PROVIDER_PREFIX` extended with `"deepseek": "deepseek"` and `"xai": "xai"`. LiteLLM's bundled `model_cost` map already keys both providers under those prefixes (e.g. `deepseek/deepseek-chat`, `xai/grok-2-latest`); no network calls are introduced.
+- Frontend: `LLM_PROVIDERS` in `LLMSettingsPage.tsx` and the `LLMConfiguration.provider` TS type (`shared/types/api.ts`) widened to the same allowlist.
+- API keys remain Fernet-encrypted via `EncryptedSecret`; no `.env.example` placeholders are added (CLAUDE.md H.0.2 — guarded by `tests/test_env_example_no_new_provider_keys.py`).
+
+**Eval-gap (operator-facing caveat):** the Promptfoo eval suite and the deferred OWASP LLM/Agentic redteam pack do not yet exercise DeepSeek or Grok. Their RLHF profiles differ from the incumbent providers; an attacker-controlled file embedding indirect-prompt-injection content could behave differently on these models. Treat both as *experimental* until the redteam pack ships.
+
+**Operator note:** restricted-egress deployments must allowlist `api.deepseek.com` and `api.x.ai` (TCP 443) before scans against those configs can complete.
