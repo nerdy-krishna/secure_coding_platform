@@ -1329,8 +1329,6 @@ export interface components {
             project_name: string;
             /** Scan Type */
             scan_type: string;
-            /** Utility Llm Config Id */
-            utility_llm_config_id?: string | null;
             /** Reasoning Llm Config Id */
             reasoning_llm_config_id?: string | null;
             /** Frameworks */

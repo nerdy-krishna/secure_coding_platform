@@ -108,7 +108,6 @@ async def retrieve_and_prepare_data_node(state: WorkerState) -> Dict[str, Any]:
             return {
                 "scan_type": scan.scan_type,
                 "current_scan_status": current_status,
-                "utility_llm_config_id": scan.utility_llm_config_id,
                 "reasoning_llm_config_id": scan.reasoning_llm_config_id,
                 "files": files,
                 "initial_file_map": original_snapshot.file_map,

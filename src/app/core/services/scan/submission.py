@@ -47,7 +47,6 @@ class ScanSubmissionService:
         files_data: List[Dict[str, Any]],
         scan_type: str,
         correlation_id: str,
-        utility_llm_config_id: uuid.UUID,
         reasoning_llm_config_id: uuid.UUID,
         frameworks: List[str],
         repo_url: Optional[str] = None,
@@ -92,7 +91,6 @@ class ScanSubmissionService:
             project_id=project.id,
             user_id=user_id,
             scan_type=scan_type,
-            utility_llm_config_id=utility_llm_config_id,
             reasoning_llm_config_id=reasoning_llm_config_id,
             frameworks=frameworks,
         )

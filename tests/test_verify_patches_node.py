@@ -57,7 +57,6 @@ def _state(**overrides) -> dict:
         "scan_id": uuid.uuid4(),
         "scan_type": "REMEDIATE",
         "current_scan_status": "RUNNING_AGENTS",
-        "utility_llm_config_id": None,
         "reasoning_llm_config_id": None,
         "files": None,
         "initial_file_map": None,
