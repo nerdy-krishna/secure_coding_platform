@@ -496,6 +496,11 @@ class AnalysisResultDetailResponse(BaseModel):
     text_report: Optional[str] = None
     original_code_map: Optional[Dict[str, str]] = None
     fixed_code_map: Optional[Dict[str, str]] = None
+    # Per-source finding counts for the scan results page badge row
+    # (sast-prescan-followups Group D2). Bucket "agent" covers legacy
+    # LLM-emitted findings whose `source` is NULL. Empty dict when no
+    # findings exist.
+    source_counts: Dict[str, int] = Field(default_factory=dict)
 
     class Config:
         from_attributes = True

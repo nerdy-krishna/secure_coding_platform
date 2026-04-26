@@ -111,21 +111,24 @@ This file tracks new feature requests and technical implementation plans.
 
 ---
 
-## 7. Deterministic SAST pre-pass — follow-ups
+## 7. Deterministic SAST pre-pass
 
-**Goal:** Extend the Bandit-only pre-pass shipped 2026-04-26 (`/sccap sast-prescan`) with the rest of recommendation §3.1.
+**Status:** ✅ COMPLETE as of `/sccap sast-prescan-followups` (2026-04-26). The recommendation §3.1 backlog is empty.
 
-**Backlog (ordered roughly by ROI):**
-- **Semgrep CE integration.** Add `semgrep` to runtime deps, ship a bundled rule pack (start with `p/security-audit`) at `/app/scanners/configs/semgrep/`, and add a `semgrep_runner.py` mirroring `bandit_runner`. Pin `--config` explicitly so user-tree `.semgrepignore` cannot redirect behavior.
-- **Gitleaks integration.** Download the binary in the worker Dockerfile (verify SHA), bundle a `.gitleaks.toml` at `/app/scanners/configs/gitleaks.toml`, add `gitleaks_runner.py` with secret redaction (`<REDACTED:length=N>`) before findings hit `WorkerState.findings`.
-- **Critical-secret short-circuit.** Add a conditional edge from `deterministic_prescan` → terminal `BLOCKED_PRE_LLM` status when Gitleaks reports a Critical finding, so the LLM never sees the secret. Routes around `estimate_cost_node` rather than calling `interrupt()`.
-- **Verified-findings prompt prefix.** Inject scanner findings into `generic_specialized_agent` prompts as a "do not duplicate" prefix so agents skip re-flagging instead of relying on `correlate_findings_node` dedup. Update agent structured-output schema + golden tests in lockstep.
-- **SHA-pin GitHub Actions.** `gitleaks/gitleaks-action@v2` (added by `/sccap-bootstrap`) currently uses a tag pin; switch to a SHA digest after verifying upstream.
-- **Backfill `findings.source` for historical scans.** Admin script that infers `source = NULL → "agent"` (or leaves NULL, since pre-prescan rows are entirely LLM-attributable).
-- **Per-scanner concurrency tuning.** Today `CONCURRENT_SCANNER_LIMIT = 5` is shared across scanners; if Semgrep wall-clock pressure shows up, split per-scanner caps.
-- **Admin UI surface.** Add a `source` filter to the findings list and a per-source counter on the scan results page.
-- **F1 (security-review Low) — NUL-byte input handling.** `staging._safe_relative_path` should `try/except (ValueError, OSError)` around `Path(rel_path).parts` so a NUL-bearing path is converted to the `unnamed` slug instead of aborting the entire scan via `error_message`.
-- **F2 (security-review Low) — Bandit binary discovery UX.** `bandit_runner.BANDIT_BINARY` is hard-coded to `/app/.venv/bin/bandit`. A `os.environ.get("BANDIT_BINARY") or shutil.which("bandit") or "/app/.venv/bin/bandit"` fallback would let local dev outside Docker iterate without silent FileNotFoundError suppression.
-- **F3 (security-review Low) — prescan-fail policy.** Today `_route_after_prescan` aborts the whole scan if the prescan node hits an unexpected exception (disk-full, etc.). Consider downgrading prescan failures to a logged warning + empty findings list so the LLM analysis still runs.
-- **F4 (security-review Info) — `ix_findings_source` cardinality.** Single-column non-unique index on a 3-cardinality VARCHAR(32). Either drop the index or make it `WHERE source IS NOT NULL` to skip the legacy NULL rows.
-- **F5 (security-review Info) — SHA-pin sweep.** `.pre-commit-config.yaml` pins by tag (`gitleaks/gitleaks@v8.21.2`, `astral-sh/ruff-pre-commit@v0.11.11`, `psf/black@25.1.0`, `pre-commit/pre-commit-hooks@v4.6.0`). Bundle these into the same `gitleaks/gitleaks-action@v2` SHA-pinning follow-up.
+**Shipped commits:**
+- `f93f580` — Bandit-only initial slice (`/sccap sast-prescan`).
+- Semgrep + Gitleaks runners + Critical-secret short-circuit (`BLOCKED_PRE_LLM` terminal node).
+- Verified-findings `<UNTRUSTED_SCANNER_FINDINGS>` prompt prefix in every LLM agent.
+- F1–F3 UX cleanup (NUL-byte path handling, `_resolve_binary` env-var/PATH/fallback discovery, prescan-fail-continues policy).
+- C1+F5 SHA-pin sweep across `.pre-commit-config.yaml` and `.github/workflows/ci.yml`.
+- F4 partial `ix_findings_source` index `WHERE source IS NOT NULL` + `findings.source = 'agent'` backfill admin script (idempotent + batched).
+- D1 admin findings list endpoint (`GET /api/v1/admin/findings`) with source filter + cursor pagination, doubly scoped by `current_superuser` + `visible_user_ids`.
+- D2 per-source counter row on the scan results page.
+
+**Filed forward (NOT in §3.1 scope; new follow-ups):**
+- New LLM-emitted findings should set `source="agent"` at write time (this run only backfilled history).
+- Custom Semgrep rule packs beyond `p/security-audit`.
+- Per-tenant `.gitleaksignore` allow-list table.
+- Wall-clock benchmarking to justify per-scanner concurrency split.
+- Race-window cleanup for `findings.source IS NULL` rows arriving after the backfill runs.
+- Renovate/Dependabot integration that auto-PRs SHA bumps for the now-pinned actions.

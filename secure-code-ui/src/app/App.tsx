@@ -14,6 +14,7 @@ import { ToastProvider } from "../shared/ui/Toast";
 import LLMSettingsPage from "../features/admin-settings/components/LLMSettingsPage";
 import DashboardPage from "../pages/account/DashboardPage";
 import SubmissionHistoryPage from "../pages/account/SubmissionHistoryPage";
+import AdminFindingsPage from "../pages/admin/AdminFindingsPage";
 import SystemConfigTab from "../pages/admin/SystemConfigTab";
 import UserManagementTab from "../pages/admin/UserManagement";
 import UserGroupsPage from "../pages/admin/UserGroupsPage";
@@ -162,6 +163,7 @@ function AppContent() {
           <Route path="/admin/system" element={<SystemConfigTab />} />
           <Route path="/admin/users" element={<UserManagementTab />} />
           <Route path="/admin/user-groups" element={<UserGroupsPage />} />
+          <Route path="/admin/findings" element={<AdminFindingsPage />} />
           <Route path="/admin/smtp" element={<SMTPSettingsTab />} />
           <Route path="/account/settings/llm" element={<LLMSettingsPage />} />
           <Route path="/admin/agents" element={<AgentManagementPage />} />

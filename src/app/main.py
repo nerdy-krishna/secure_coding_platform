@@ -24,6 +24,7 @@ from app.api.v1.routers.compliance import router as compliance_router
 from app.api.v1.routers.refresh import router as refresh_router
 from app.api.v1.routers.setup import router as setup_router
 from app.api.v1.routers.admin_config import router as admin_config_router
+from app.api.v1.routers.admin_findings import router as admin_findings_router
 from app.api.v1.routers.admin_groups import router as admin_groups_router
 from app.api.v1.routers.admin_seed import router as admin_seed_router
 from app.api.v1.routers.dashboard import router as dashboard_router
@@ -394,6 +395,8 @@ app.include_router(admin_seed_router, prefix="/api/v1", tags=["Admin: Seed"])
 
 # Router for admin user-group CRUD (scan-scope membership)
 app.include_router(admin_groups_router, prefix="/api/v1", tags=["Admin: User Groups"])
+# Cross-tenant findings list with source filter (sast-prescan-followups Group D1).
+app.include_router(admin_findings_router, prefix="/api/v1", tags=["Admin: Findings"])
 app.include_router(dashboard_router, prefix="/api/v1", tags=["Dashboard"])
 app.include_router(search_router, prefix="/api/v1", tags=["Search"])
 

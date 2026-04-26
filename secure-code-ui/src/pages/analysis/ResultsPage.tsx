@@ -338,6 +338,54 @@ const ResultsPage: React.FC = () => {
         ))}
       </div>
 
+      {/* Per-source counter row (sast-prescan-followups Group D2). */}
+      {data.source_counts && Object.keys(data.source_counts).length > 0 && (
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 8,
+            marginTop: 8,
+            marginBottom: 8,
+            alignItems: "center",
+          }}
+        >
+          <span
+            style={{
+              fontSize: 11,
+              color: "var(--fg-muted)",
+              textTransform: "uppercase",
+              letterSpacing: ".06em",
+            }}
+          >
+            By source:
+          </span>
+          {Object.entries(data.source_counts).map(([source, count]) => {
+            const colorMap: Record<string, string> = {
+              bandit: "#3b82f6",
+              semgrep: "#a855f7",
+              gitleaks: "#dc2626",
+              agent: "#6b7280",
+            };
+            return (
+              <span
+                key={source}
+                style={{
+                  padding: "4px 10px",
+                  borderRadius: 12,
+                  background: colorMap[source] || "#6b7280",
+                  color: "white",
+                  fontSize: 12,
+                  fontWeight: 600,
+                }}
+              >
+                {source}: {count}
+              </span>
+            );
+          })}
+        </div>
+      )}
+
       {/* body */}
       <div
         style={{

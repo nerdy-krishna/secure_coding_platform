@@ -468,11 +468,18 @@ class SubmissionService:
             )
         # --- END LOGGING BLOCK ---
 
+        # Per-source finding counts (sast-prescan-followups Group D2).
+        # Computed in the service layer (N8) so the repo stays a thin
+        # data-access shim. NULL `source` is bucketed as "agent" to
+        # cover legacy LLM-emitted rows.
+        source_counts = await self.repo.count_findings_by_source(scan_id)
+
         return api_models.AnalysisResultDetailResponse(
             status=scan.status,
             summary_report=summary_report_response,
             original_code_map=original_code_map or None,
             fixed_code_map=fixed_code_map or None,
+            source_counts=source_counts,
         )
 
     async def get_paginated_scans_for_project(
