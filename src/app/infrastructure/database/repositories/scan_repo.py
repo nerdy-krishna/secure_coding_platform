@@ -261,6 +261,67 @@ class ScanRepository:
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
+    async def query_findings(
+        self,
+        *,
+        visible_user_ids: Optional[List[int]],
+        source_filter: Optional[str] = None,
+        limit: int = 50,
+        cursor: Optional[int] = None,
+    ) -> List[db_models.Finding]:
+        """List findings across scans with admin-scope filtering.
+
+        N7 (sast-prescan-followups): the visibility-scope filter is
+        applied at the SQL layer (`Scan.user_id IN (visible_user_ids)`)
+        when ``visible_user_ids`` is non-None; admins pass ``None`` and
+        the filter is skipped. The optional ``source_filter`` constrains
+        to a single scanner provenance (``"bandit"`` / ``"semgrep"`` /
+        ``"gitleaks"`` / ``"agent"``). Cursor pagination uses the
+        finding ``id`` (descending) so pages are deterministic and
+        disjoint.
+        """
+        severity_rank = sa.case(
+            (sa.func.upper(db_models.Finding.severity) == "CRITICAL", 4),
+            (sa.func.upper(db_models.Finding.severity) == "HIGH", 3),
+            (sa.func.upper(db_models.Finding.severity) == "MEDIUM", 2),
+            (sa.func.upper(db_models.Finding.severity) == "LOW", 1),
+            else_=0,
+        )
+        stmt = (
+            select(db_models.Finding)
+            .join(db_models.Scan, db_models.Scan.id == db_models.Finding.scan_id)
+            .order_by(
+                severity_rank.desc(),
+                db_models.Finding.scan_id.desc(),
+                db_models.Finding.id.desc(),
+            )
+            .limit(limit)
+        )
+        if visible_user_ids is not None:
+            stmt = stmt.where(db_models.Scan.user_id.in_(visible_user_ids))
+        if source_filter is not None:
+            stmt = stmt.where(db_models.Finding.source == source_filter)
+        if cursor is not None:
+            stmt = stmt.where(db_models.Finding.id < cursor)
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def count_findings_by_source(self, scan_id: uuid.UUID) -> Dict[str, int]:
+        """Per-source finding counts for a single scan.
+
+        Used by the per-source counter (Group D2) on the scan results
+        page. NULL `source` is bucketed as ``"agent"`` (legacy
+        LLM-emitted findings before the source backfill ran).
+        """
+        bucket = sa.func.coalesce(db_models.Finding.source, "agent")
+        stmt = (
+            select(bucket.label("source"), sa.func.count(db_models.Finding.id))
+            .where(db_models.Finding.scan_id == scan_id)
+            .group_by(bucket)
+        )
+        rows = (await self.db.execute(stmt)).all()
+        return {str(source): int(count) for source, count in rows}
+
     async def mark_findings_as_applied(self, finding_ids: List[int]):
         """Sets the is_applied_in_remediation flag to true for a list of finding IDs."""
         if not finding_ids:

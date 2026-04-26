@@ -229,6 +229,10 @@ export interface ScanResultResponse {
   summary_report?: SummaryReport;
   original_code_map?: { [filePath: string]: string };
   fixed_code_map?: { [filePath: string]: string };
+  // Per-source finding counts for the per-source counter row on the
+  // results page (sast-prescan-followups Group D2). Empty object when
+  // the scan has no findings.
+  source_counts?: { [source: string]: number };
 }
 
 export interface CostDetails {

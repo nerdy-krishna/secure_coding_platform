@@ -19,6 +19,7 @@ const ADMIN_LINKS: AdminLink[] = [
   { to: "/admin/agents", label: "Agents" },
   { to: "/admin/frameworks", label: "Frameworks" },
   { to: "/admin/prompts", label: "Prompts" },
+  { to: "/admin/findings", label: "Findings" },
   { to: "/admin/smtp", label: "SMTP" },
   { to: "/account/settings/llm", label: "LLM configs" },
 ];

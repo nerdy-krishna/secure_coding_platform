@@ -46,6 +46,26 @@ from app.infrastructure.llm_client import AgentLLMResult
 # ----------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _propagate_app_logger():
+    """Ensure `logging.getLogger("app")` propagates so pytest's caplog
+    can capture records from submodules. `logging_config.setup` (loaded
+    on first FastAPI app import inside the test session) sets
+    `propagate=False` for the "app" logger; that silences caplog for
+    every subsequent test that depends on it. Flip it for the test,
+    restore after.
+    """
+    import logging
+
+    logger = logging.getLogger("app")
+    original = logger.propagate
+    logger.propagate = True
+    try:
+        yield
+    finally:
+        logger.propagate = original
+
+
 @pytest_asyncio.fixture
 async def db_engine() -> AsyncIterator[AsyncEngine]:
     """Per-test async engine.
