@@ -197,15 +197,24 @@ async def test_blocked_pre_llm_node_logs_warning_with_correlation_id(
         async def __aexit__(self, *_):
             return False
 
-    monkeypatch.setattr(worker_graph, "ScanRepository", _StubRepo)
-    monkeypatch.setattr(worker_graph, "AsyncSessionLocal", lambda: _StubSession())
+    # Post-split the blocked_pre_llm node looks up these symbols from
+    # its own module namespace (`nodes.prescan`), not from
+    # `worker_graph`. Patch where the lookup actually happens.
+    from app.infrastructure.workflows.nodes import prescan as prescan_mod
+
+    monkeypatch.setattr(prescan_mod, "ScanRepository", _StubRepo)
+    monkeypatch.setattr(prescan_mod, "AsyncSessionLocal", lambda: _StubSession())
 
     triggering = _critical_gitleaks_finding()
     state = _state_with([triggering])
     app_logger = logging.getLogger("app")
     monkeypatch.setattr(app_logger, "propagate", True)
+    # Logger names follow `__name__`; the blocked_pre_llm node now logs under
+    # `app.infrastructure.workflows.nodes.prescan`. Capture both the new and
+    # legacy paths so the assertion stays meaningful regardless of where
+    # future graph wiring moves the WARN call.
     caplog.set_level(
-        logging.WARNING, logger="app.infrastructure.workflows.worker_graph"
+        logging.WARNING, logger="app.infrastructure.workflows.nodes.prescan"
     )
     result = await worker_graph.blocked_pre_llm_node(state)
     assert result == {}

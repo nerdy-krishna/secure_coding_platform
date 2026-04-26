@@ -117,7 +117,13 @@ async def test_prescan_failure_continues_to_estimate_cost(monkeypatch, caplog):
     # Make stage_files() itself raise so the outer try/except in the
     # node fires (the per-scanner try/except inside swallows runner
     # crashes; the outer one is for the staging / setup path).
-    monkeypatch.setattr(worker_graph, "stage_files", _explode)
+    # Post-split the prescan node lives in `nodes.prescan`, so we patch
+    # the symbol at the call site (where the node actually looks it up
+    # via its module namespace), not on `worker_graph` (which only
+    # re-exports the node function for back-compat).
+    from app.infrastructure.workflows.nodes import prescan as prescan_mod
+
+    monkeypatch.setattr(prescan_mod, "stage_files", _explode)
     state = _state(files={"x.py": "y = 1\n"})
     # The app logger sets `propagate=False` once `logging_config.setup`
     # has been called by an earlier DB-backed test, so caplog's
@@ -157,7 +163,11 @@ async def test_prescan_does_not_persist_findings_in_node(monkeypatch):
             nonlocal saw_save
             saw_save = True
 
-    monkeypatch.setattr(worker_graph, "ScanRepository", _RaisingScanRepository)
+    # Post-split the prescan node looks up `ScanRepository` from its
+    # own module namespace (`nodes.prescan`), not from `worker_graph`.
+    from app.infrastructure.workflows.nodes import prescan as prescan_mod
+
+    monkeypatch.setattr(prescan_mod, "ScanRepository", _RaisingScanRepository)
     state = _state(files={"x.py": "y = 1\n"})
     await worker_graph.deterministic_prescan_node(state)
     assert saw_save is False, "deterministic_prescan_node must not save findings itself"
