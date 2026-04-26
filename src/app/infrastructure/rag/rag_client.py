@@ -1,13 +1,13 @@
-"""Back-compat shim for the legacy `RAGService` import path.
+"""Back-compat shim — re-exports the factory + Protocol under the old names.
 
-Pre-PR1 code did:
-
-    from app.infrastructure.rag.rag_client import get_rag_service
-
-This module preserves that import path but delegates to
-`app.infrastructure.rag.factory.get_vector_store()` so callers see the
-flag-driven impl without changing their imports. Will be deleted in
-PR3 when Chroma + the legacy module name go away together.
+ADR-008 retired Chroma + the `dual` flag and made Qdrant the only
+backend, but the old import path
+`from app.infrastructure.rag.rag_client import get_rag_service,
+RAGService` is still used by ~7 call sites (routers, services, agents,
+operator scripts). Keeping a thin re-export shim here lets the
+migration ship without touching every site; new code should import
+directly from `app.infrastructure.rag.factory` /
+`app.infrastructure.rag.base`.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from app.infrastructure.rag.base import (  # re-exported for typing
+from app.infrastructure.rag.base import (
     CWE_COLLECTION_NAME,
     SECURITY_GUIDELINES_COLLECTION,
     VectorStore,
@@ -24,14 +24,14 @@ from app.infrastructure.rag.factory import get_vector_store
 
 logger = logging.getLogger(__name__)
 
-# Type alias kept for callers that imported the symbol for typing.
+# Type alias kept for callers that import `RAGService` purely for typing.
 RAGService = VectorStore
 
 
 def get_rag_service() -> Optional[VectorStore]:
     """Return the configured `VectorStore`, or None on init failure.
 
-    Pre-PR1 callers tolerate `None` already; we keep that contract.
+    Pre-PR3 callers tolerate `None` already; we keep that contract.
     """
     try:
         return get_vector_store()

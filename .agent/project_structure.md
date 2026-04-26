@@ -56,7 +56,7 @@
     - **auth/**: Authentication backend (FastAPI Users, JWT).
     - **db/**: Database connection and session management.
     - **llm/**: Clients for LLM providers (OpenAI, Anthropic, etc.).
-    - **rag/**: Vector store layer for retrieval-augmented generation. `base.py` defines the `VectorStore` Protocol; concrete impls live in `chroma_store.py` (existing ChromaDB-backed) and `qdrant_store.py` (Qdrant-backed, PR1 of the migration). `embedder.py` lifts the ONNX `all-MiniLM-L6-v2` embedder out of Chroma's auto-embed path so both stores receive identical 384-dim vectors. `factory.py.get_vector_store()` picks the impl per `RAG_VECTOR_STORE`; in `dual` mode it returns a `DualWriteStore` wrapper that writes to both stores (Chroma fail-hard, Qdrant fail-open with `correlation_id`-tagged WARN log) and reads from Chroma. `rag_client.py` is a back-compat shim that delegates to the factory and will be deleted in PR3 alongside Chroma.
+    - **rag/**: Vector store layer for retrieval-augmented generation (Qdrant only after ADR-008). `base.py` defines the `VectorStore` Protocol + `RAGQueryResult`. `qdrant_store.py` is the singleton impl: Chroma-`where` → Qdrant-`Filter` translator covering `$eq`/`$ne`/`$in`/`$and`/`$or`; deterministic `uuid5` mapping for Chroma-style string ids; init-error log redacts `QDRANT_API_KEY`. `embedder.py` wraps `fastembed.TextEmbedding("sentence-transformers/all-MiniLM-L6-v2")` (vectors byte-equivalent to the prior chromadb-bundled ONNX). `factory.py.get_vector_store()` returns the singleton; `rag_client.py` is a back-compat re-export shim (`get_rag_service` / `RAGService = VectorStore`) preserved to avoid churn at the historic call sites.
     - **agents/**: LangChain agents for specific tasks (Analysis, Remediation).
     - **scanners/**: Deterministic SAST wrappers invoked by the worker graph's `deterministic_prescan_node` — `staging.py` (sandbox the file tree, sanitize basenames), `bandit_runner.py` (Bandit subprocess + Pydantic-allowlisted output), `semgrep_runner.py` (Semgrep CE multi-language coverage with bundled `p/security-audit` rule pack), `gitleaks_runner.py` (secret-scan with strict `RuleID/File/StartLine/Description` allowlist + `--redact`), `registry.py` (per-file routing + minified-bundle detection). All three runners share `_resolve_binary` for env-var / PATH / hardcoded-fallback discovery. Critical Gitleaks findings short-circuit the graph to `blocked_pre_llm` terminal node before any LLM call.
     - **observability/**: Optional Langfuse v3 instrumentation (`langfuse-otel-observability` run, 2026-04-26). `mask.py` redacts provider-key patterns / `keyword=value` lines / ≥20-char high-entropy bare strings before any payload reaches Langfuse. `langfuse_client.py` exposes `get_langfuse()`, `get_langchain_handler()`, and `flush_langfuse()` — all fail-open (return `None` / no-op when `LANGFUSE_ENABLED=false`, when keys are missing, or after a latched init failure). `LLMClient.generate_structured_output` wraps Pydantic AI `agent.run` in `start_as_current_span`; `workers/consumer.py` attaches the LangChain CallbackHandler at the parent-trace anchor. `trace_id` / `session_id` both equal `correlation_id_var.get()`.
@@ -117,57 +117,43 @@
   - **Action**: Runs idempotency precheck, then `await`s `worker_workflow.ainvoke` (or `ainvoke(Command(resume=…))` for approval/remediation messages).
 
 ### 4. Workflow Execution (The Graph)
-**File**: `src/app/infrastructure/workflows/worker_graph.py` defines the state graph.
+**File**: `src/app/infrastructure/workflows/worker_graph.py` defines the state graph. Source of truth for the trace shape lives in `.agent/scanning_flow.md` Phase 5; the node list below mirrors it.
 
-#### Node A: `retrieve_and_prepare_data_node`
+#### Node A: `retrieve_and_prepare_data`
 - **Goal**: Build context for the scan.
-- **Steps**:
-  1.  Fetches `Scan` object from DB.
-  2.  **Repo Mapping**: Calls `src/app/shared/analysis_tools/repository_map.py` -> `RepositoryMappingEngine.create_map` to parse files using `tree-sitter` and identify symbols (classes, functions).
-  3.  **Dependency Graph**: Calls `src/app/shared/analysis_tools/context_bundler.py` -> `ContextBundlingEngine` to build a NetworkX graph of file dependencies.
-  4.  **Agent Resolution**: Queries DB for agents associated with the selected `frameworks`.
+- **Action**: Fetches `Scan` from DB; runs `RepositoryMappingEngine.create_map` (tree-sitter symbol index) + `ContextBundlingEngine` (NetworkX dep graph); resolves the agent set from the selected frameworks.
 
-#### Node B: `triage_agents_node`
-- **Goal**: Efficiently route files to relevant agents.
-- **LLM**: **Utility LLM**
-- **Action**: For each file, sends a summary (from Repo Map) + Agent Descriptions to the LLM.
-- **Output**: `triaged_agents_per_file` (e.g., "auth.py" -> [Python Security Agent, Auth Auditor]).
+#### Node B: `deterministic_prescan`
+- **Goal**: Multi-scanner SAST fan-out (Bandit + Semgrep CE + Gitleaks subprocesses) before any LLM cost is incurred.
+- **Action**: Seeds `WorkerState.findings` with `source="bandit"/"semgrep"/"gitleaks"` rows under a single `asyncio.Semaphore(CONCURRENT_SCANNER_LIMIT=5)`. Per-scanner failure is non-fatal. **A Critical Gitleaks finding short-circuits the graph to `blocked_pre_llm` (terminal)** — no LLM spend.
 
-#### Node C: `dependency_aware_analysis_orchestrator`
-- **Goal**: Run the core analysis.
-- **Steps**:
-  1.  Topological Sort: Determines processing order based on the Dependency Graph.
-  2.  **Loop per File**:
-      - **Chunking**: Calls `src/app/shared/analysis_tools/chunker.py` -> `semantic_chunker` to split large files by function boundaries.
-      - **Agent Execution**: For each chunk, invokes `src/app/infrastructure/agents/generic_specialized_agent.py` -> `analysis_node`.
-          - **LLM**: **Reasoning LLM**.
-          - Uses RAG (Retrieval Augmented Generation) to fetch security guidelines.
-          - Generates `findings` and `fixes`.
-  3.  **Hybrid Mode (Remediate)**: If in `REMEDIATE` mode:
-      - Calls `consolidation_node` (internal to `worker_graph.py`).
-      - **Conflict Resolution**: If multiple agents suggest fixes for the same line, calls `_run_merge_agent` (using **Reasoning LLM**) to merge them.
-      - Applies fixes to the file content in-memory.
-      - Saves findings as "Applied".
+#### Node B-terminal: `blocked_pre_llm`
+- **Goal**: Hard-stop on credential leak found pre-LLM.
+- **Action**: Sets `Scan.status = STATUS_BLOCKED_PRE_LLM` and routes to END.
 
-#### Node D: `correlate_findings_node`
-- **Goal**: Deduplicate findings.
-- **Action**: Groups findings by `(file, cwe, line)`. Merges duplicate reports from different agents into a single high-confidence finding.
+#### Node C: `estimate_cost` (interrupt)
+- **Goal**: Token-count + price the upcoming LLM analysis; pause for user approval.
+- **Action**: Counts tokens via `litellm.token_counter`, prices via `litellm.cost_per_token` (or per-`LLMConfiguration` admin override), persists, sets status `PENDING_COST_APPROVAL`, then native `interrupt()` — graph state is serialized into the Postgres checkpointer.
 
-#### Node E: `save_results_node`
+#### Node D: `analyze_files_parallel`
+- **Goal**: Single-pass parallel LLM analysis.
+- **Action**: Runs every relevant agent (resolved via `resolve_agents_for_file`) against every file from the `ORIGINAL_SUBMISSION` snapshot in parallel, bounded by `asyncio.Semaphore(CONCURRENT_LLM_LIMIT=5)`. Per-file dependency context injected via `build_dep_summary`. RAG retrieval inside this node goes through `app.infrastructure.rag.factory.get_vector_store()` (Qdrant after ADR-008).
+
+#### Node E: `correlate_findings`
+- **Goal**: Deduplicate.
+- **Action**: Groups findings by `(file_path, cwe, line_number)`; merges duplicates into the highest-severity row with `corroborating_agents` populated.
+
+#### Node F: `consolidate_and_patch` (REMEDIATE only)
+- **Goal**: Merge and syntax-verify proposed fixes.
+- **Action**: Groups `proposed_fixes` by file, resolves line-range conflicts via `_run_merge_agent` (**Reasoning LLM**), tree-sitter syntax-verifies patched content, builds `final_file_map` for the `POST_REMEDIATION` snapshot. No-op for AUDIT/SUGGEST.
+
+#### Node G: `save_results`
 - **Goal**: Persistence.
-- **Action**: Calls `ScanRepository.save_findings` (or `update_correlated_findings`) to write final results to Postgres.
+- **Action**: Bulk-inserts correlated findings; persists the `POST_REMEDIATION` snapshot for REMEDIATE scans.
 
-#### Node F: `run_impact_reporting`
-- **Goal**: Generate executive summary.
-- **File**: `src/app/infrastructure/agents/impact_reporting_agent.py`
-- **LLM**: **Reasoning LLM**.
-- **Action**:
-  - `generate_impact_report_node`: Summarizes findings into an executive report (Risk Score, Categories, Strategy).
-  - `generate_sarif_node`: Converts findings to SARIF format for export.
-
-#### Node G: `save_final_report_node`
+#### Node H: `save_final_report`
 - **Goal**: Finalize scan.
-- **Action**: Calculates final Risk Score and updates Scan status to `COMPLETED` or `REMEDIATION_COMPLETED`.
+- **Action**: Computes the CVSS-weighted 0–10 `risk_score` via `app.shared.lib.risk_score.compute_cvss_aggregate`, persists `summary` JSON, sets final status `COMPLETED` / `REMEDIATION_COMPLETED`.
 
 ### 5. LLM Roles Summary
 - **Utility LLM**: Used for symbol-mapping / lightweight calls (`SymbolMapAgent` and similar). Configured per-scan via `Scan.utility_llm_config_id`.

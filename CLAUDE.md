@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Backend:** Python 3.12, FastAPI, Poetry, SQLAlchemy (async) + Alembic, **LangGraph 1.x + LangChain 1.x**, **LiteLLM** (cost / token), **Pydantic AI** (structured output retry), **FastMCP** (`/mcp` tool surface), `fastapi-users` (JWT Bearer)
 - **Worker:** separate container, consumes RabbitMQ via `aio-pika` (async, `connect_robust`) and invokes the LangGraph workflow with an `AsyncPostgresSaver` checkpointer on a single asyncio event loop
 - **Frontend:** React 18 + Vite + TypeScript, Ant Design, TanStack Query, React Router v7 (`secure-code-ui/`)
-- **Infra:** Postgres 16, RabbitMQ, ChromaDB (RAG, bundled ONNX embedder — no `sentence-transformers`), Fluentd → Loki → Grafana, optional Let's Encrypt via certbot
+- **Infra:** Postgres 16, RabbitMQ, **Qdrant** (RAG vector store — ADR-008; embedder via `fastembed` `sentence-transformers/all-MiniLM-L6-v2`, no `chromadb` / `sentence-transformers` / `torch`), Fluentd → Loki → Grafana, optional Let's Encrypt via certbot
 - **Observability (optional):** self-hosted **Langfuse v3** (web + worker + own Postgres + ClickHouse + Redis + MinIO) for per-LLM-call traces. Disabled by default; opt in via `LANGFUSE_ENABLED=true`. SDK lives in `infrastructure/observability/`
 
 ## Common commands
@@ -104,15 +104,22 @@ Feature-sliced: `app/` (providers + routes), `pages/` (route views grouped by ar
 - Tests use `tests/conftest.py` fixtures with SAVEPOINT-per-test rollback (H.0.3). `pyproject.toml` has `addopts = "--ignore=tests/test_ui_setup.py"` so the Playwright e2e is opt-in. CI runs the rest against a Postgres 16 service container.
 - New endpoints that list user-owned data: take `visible_user_ids = Depends(get_visible_user_ids)` and forward it through the service layer to the repository — never re-implement scope checks inline.
 
-## RAG vector store (Chroma → Qdrant migration, in flight)
+## RAG vector store (Qdrant)
 
-The RAG layer is mid-migration from ChromaDB to Qdrant via a 3-PR program.
+ADR-008 retired ChromaDB. The RAG layer runs on a single Qdrant container — see `src/app/infrastructure/rag/`:
 
-- **PR1 (shipped):** A `VectorStore` Protocol lives in `src/app/infrastructure/rag/base.py` with concrete `ChromaStore` and `QdrantStore` impls. The embedder is lifted into `src/app/infrastructure/rag/embedder.py` (single ONNX `all-MiniLM-L6-v2` source for both stores). `get_vector_store()` in `factory.py` picks the impl per the `RAG_VECTOR_STORE` env flag (`chroma` / `dual` / `qdrant`); default is `chroma`, which keeps existing deployments on the current path. In `dual` mode, writes go to both stores and reads stay on Chroma; Qdrant write failures log WARN with `correlation_id` and continue (Chroma is the read source so writes there fail-hard).
-- **PR2 (planned):** Flip reads to Qdrant. Operator MUST first run `POST /api/v1/admin/rag/rebuild` against `RAG_VECTOR_STORE=dual` so Qdrant is populated; only then is it safe to flip to `qdrant`. The `dual` flag value is deprecated after this run.
-- **PR3 (planned):** Drop the `chromadb` dependency, the `vector_db` compose service, and the `chroma_data` volume. Make `QDRANT_API_KEY` mandatory in `Settings`. Rewrite `src/app/scripts/debug_chroma.py` and `populate_cwe_data.py` against the factory; today they touch Chroma directly and log a WARN banner when `RAG_VECTOR_STORE != "chroma"` so an operator running them in dual-write mode notices that Qdrant will drift.
+- `base.py` defines the `VectorStore` Protocol; `factory.py.get_vector_store()` returns the singleton `QdrantStore`.
+- `embedder.py` uses `fastembed.TextEmbedding("sentence-transformers/all-MiniLM-L6-v2")`; the ONNX bundle is pre-warmed in the Docker build at `FASTEMBED_CACHE_PATH=/opt/fastembed-cache` so air-gapped / restricted-egress deployments never reach HuggingFace at runtime. Vectors are byte-equivalent to the prior chromadb-bundled embedder (max per-dim diff ~6e-9).
+- `qdrant_store.py` carries the Chroma-`where` → Qdrant-`Filter` translator covering `$eq` / `$ne` / `$in` / `$and` / `$or`; pinned by `tests/test_rag_qdrant_filter_translator.py`. Chroma string ids map to deterministic UUIDs via `uuid5`; the original id rides along in `payload._chroma_id` for round-trip.
+- `rag_client.py` is a back-compat re-export shim (`get_rag_service` / `RAGService = VectorStore`) so historic call sites in routers / agents / scripts continue to work without churn.
 
-`infrastructure/rag/qdrant_store.py` carries the Chroma-`where` → Qdrant-`Filter` translator (covers `$eq` / `$ne` / `$in` / `$and` / `$or`), which is the bug-prone part of the migration; `tests/test_rag_qdrant_filter_translator.py` pins it. The Qdrant container is SHA-pinned, attached to `scpnetwork` only, with no host port — operators use `docker compose exec qdrant ...` for diagnostics. Optional `QDRANT_API_KEY` in env hardens it further (PR3 makes it required).
+The Qdrant container is SHA-pinned, attached to `scpnetwork` only, with no host port — operators use `docker compose exec qdrant ...` for diagnostics. **`QDRANT_API_KEY` is mandatory**: the `Settings` validator rejects empty AND the literal `.env.example` placeholder `change-me-qdrant-key`, so the application refuses to start until a real key is in `.env`.
+
+Lifespan eager-builds the singleton at API startup (wrapped in try/except so a Qdrant outage at boot doesn't block startup; the next caller retries via the lazy path). Lifespan also logs a one-time WARN if `RAG_VECTOR_STORE` is still set in `.env` (the field was retired in ADR-008; remove the line).
+
+**Bootstrap on a fresh deploy:** Qdrant collections start empty. Operators populate RAG content via the existing admin UI flows (`POST /api/v1/admin/rag/preprocess/...` for ASVS/proactive_controls/cheatsheets CSVs, etc.). Scans against an empty RAG path still complete — agents produce findings without RAG citations until content is ingested.
+
+**Migration from PR1 dual-write:** the embedder is byte-equivalent so existing PR1-seeded Qdrant collections remain valid; no rebuild required. The `chroma_data` Docker volume is now orphaned — remove via `docker volume rm sccap_chroma_data` after pulling.
 
 ## Evaluations (Promptfoo)
 

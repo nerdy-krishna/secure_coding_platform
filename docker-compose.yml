@@ -30,8 +30,6 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
-      vector_db:
-        condition: service_started
       # Changed back to service_healthy now that we know Fluentd works
       fluentd:
         condition: service_healthy
@@ -90,35 +88,14 @@ services:
     networks:
       - scpnetwork
 
-  vector_db:
-    image: chromadb/chroma:0.5.3
-    container_name: sccap_vector_db
-    environment:
-      - LOG_LEVEL=DEBUG
-      - IS_PERSISTENT=TRUE
-      - ANONYMIZED_TELEMETRY=FALSE
-      - CHROMA_SERVER_HOST=0.0.0.0
-      - CHROMA_SERVER_HTTP_PORT=8000
-    ports:
-      - "${CHROMA_PORT_HOST:-8001}:8000"
-    volumes:
-      - chroma_data:/chroma
-    networks:
-      - scpnetwork
-    healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat" ]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-
   # ------------------------------------------------------------------
-  # Qdrant — second vector store, alongside Chroma during PR1 of the
-  # Chroma → Qdrant migration. Default `RAG_VECTOR_STORE=chroma` makes
-  # this container idle until an operator opts into `dual` or `qdrant`
-  # mode. SHA-pinned (threat-model G1); no host port (G2) — operators
-  # use `docker compose exec qdrant ...` for diagnostics. PR2 flips
-  # reads; PR3 drops Chroma + this comment along with it.
+  # Qdrant — the only vector store (ADR-008). SHA-pinned; no host
+  # port — operators use `docker compose exec qdrant ...` for
+  # diagnostics. RAG content is operator-uploaded via the admin UI
+  # (`POST /api/v1/admin/rag/preprocess/...`); fresh deploys start
+  # with empty collections until that ingest runs. `QDRANT_API_KEY`
+  # is mandatory: the Settings validator refuses to start with the
+  # `.env.example` placeholder value.
   # ------------------------------------------------------------------
   qdrant:
     image: qdrant/qdrant@sha256:94728574965d17c6485dd361aa3c0818b325b9016dac5ea6afec7b4b2700865f
@@ -406,7 +383,6 @@ services:
 volumes:
   postgres_data:
   rabbitmq_data:
-  chroma_data:
   loki-data:
   grafana-data:
   langfuse_postgres_data:

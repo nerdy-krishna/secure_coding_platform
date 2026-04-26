@@ -87,7 +87,7 @@ They also select:
 
 **File:** `src/app/workers/consumer.py`
 
-- RAG retrieval inside `analyze_files_parallel` routes through `app.infrastructure.rag.factory.get_vector_store()` — the `VectorStore` returned depends on `RAG_VECTOR_STORE` (`chroma` default, `dual` writes to both stores while reading Chroma, `qdrant` enables in PR2 of the Chroma → Qdrant migration). Embeddings come from the lifted `app.infrastructure.rag.embedder` so both stores produce identical 384-dim vectors.
+- RAG retrieval inside `analyze_files_parallel` routes through `app.infrastructure.rag.factory.get_vector_store()` which returns the singleton `QdrantStore` (ADR-008). Embeddings come from `app.infrastructure.rag.embedder` (`fastembed` `sentence-transformers/all-MiniLM-L6-v2`, 384-dim).
 - All node-level LLM calls are traced under a per-scan parent trace in **Langfuse** when `LANGFUSE_ENABLED=true` (`infrastructure/observability/`). Parent trace `id == X-Correlation-ID == correlation_id_var.get()` so Loki logs and Langfuse traces cross-reference. Path is fail-open — Langfuse outage never breaks a scan.
 - Runs in a separate Docker container with an **`aio-pika`** async RabbitMQ consumer (`aio_pika.connect_robust`, single asyncio event loop — no thread bridge, no blocking I/O)
 - Listens on three queues: `code_submission_queue`, `analysis_approved_queue`, `remediation_trigger_queue`, declared durable, `prefetch_count=1` (one scan at a time per worker)

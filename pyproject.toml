@@ -16,7 +16,6 @@ aio-pika = ">=9.5.5,<10.0.0"
 alembic = ">=1.16.1,<2.0.0"
 anthropic = ">=0.96.0,<1.0.0"
 asyncpg = ">=0.30.0,<0.31.0"
-chromadb = "0.5.3" # Vector DB - Pinned to match server version
 cryptography = "^45.0.4"
 email-validator = ">=2.2.0,<3.0.0" # Useful for FastAPI Users
 fastapi = ">=0.115.9,<0.116.0"
@@ -63,10 +62,11 @@ networkx = "^3.5"
 pandas = "^2.3.0"
 passlib = {extras = ["bcrypt"], version = ">=1.7.4,<2.0.0"}
 psycopg = {extras = ["binary"], version = "^3.2.9"}
-# PR1 of the Chroma → Qdrant migration. Used by
-# `app.infrastructure.rag.qdrant_store`; only loaded when
-# `RAG_VECTOR_STORE` is `dual` or `qdrant`. PR3 will drop chromadb.
+# Vector store + embedder. fastembed (Qdrant-maintained, MIT) provides
+# the same all-MiniLM-L6-v2 ONNX bundle the prior chromadb-bundled
+# embedder used; vectors are byte-equivalent (max per-dim diff ~6e-9).
 qdrant-client = "~1.17"
+fastembed = "~0.8"
 pydantic = ">=2.12,<3.0.0"  # pydantic-ai 1.86 requires >=2.12
 pydantic-settings = "^2.9.1"
 python = "~3.12"
