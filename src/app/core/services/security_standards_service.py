@@ -1,12 +1,15 @@
-import logging
-import io
 import csv
-from typing import List, Dict, Any, Optional, Tuple
+import io
+import json
+import logging
+from typing import Any, Dict, List, Optional, Tuple
+
 import httpx
-from fastapi import UploadFile, HTTPException
-from app.infrastructure.rag.rag_client import get_rag_service
-from app.infrastructure.database.repositories.rag_job_repo import RAGJobRepository
+from fastapi import HTTPException, UploadFile
+
 from app.infrastructure.database.repositories.llm_config_repo import LLMConfigRepository
+from app.infrastructure.database.repositories.rag_job_repo import RAGJobRepository
+from app.infrastructure.rag.rag_client import get_rag_service
 
 logger = logging.getLogger(__name__)
 
@@ -449,3 +452,198 @@ class SecurityStandardsService:
         except Exception as e:
             logger.error(f"Failed to fetch Cheatsheets: {e}")
             raise HTTPException(status_code=500, detail=f"Failed to fetch: {str(e)}")
+
+    @staticmethod
+    def _format_owasp_top10_doc(entry: Dict[str, Any]) -> str:
+        """Render one OWASP Top-10 entry into the doc_text shape the
+        generic_specialized_agent's RAG-context extractor expects.
+
+        Embeds the `**Vulnerability Pattern (...)`/`**Secure Pattern (...)`
+        headers and an optional `[[PYTHON PATTERNS]]` block with
+        `Vulnerable: ` / `Secure: ` code fences. Matches the regexes in
+        `app.infrastructure.agents.generic_specialized_agent.
+        _extract_patterns_from_doc`.
+        """
+        eid = entry["id"]
+        title = entry["title"]
+        family = entry.get("control_family", "")
+        descr = entry.get("description", "")
+        vp = entry.get("vulnerability_pattern", "")
+        sp = entry.get("secure_pattern", "")
+        cwes = entry.get("cwes") or []
+
+        parts: List[str] = [
+            f"OWASP {eid} [{family}]: {title} — {descr}",
+            "",
+            f"**Vulnerability Pattern ({eid} - {title}):**",
+            vp,
+            "",
+            f"**Secure Pattern ({eid} - {title}):**",
+            sp,
+        ]
+
+        examples = entry.get("examples") or {}
+        for lang, blocks in examples.items():
+            if not isinstance(blocks, dict):
+                continue
+            vulnerable = (blocks.get("vulnerable") or "").rstrip()
+            secure = (blocks.get("secure") or "").rstrip()
+            if not (vulnerable or secure):
+                continue
+            parts.append("")
+            parts.append(f"[[{lang.upper()} PATTERNS]]")
+            if vulnerable:
+                parts.append(f"Vulnerable:\n```{lang}\n{vulnerable}\n```")
+            if secure:
+                parts.append(f"Secure:\n```{lang}\n{secure}\n```")
+
+        if cwes:
+            parts.append("")
+            parts.append(f"Related CWEs: {', '.join(cwes)}")
+
+        return "\n".join(parts)
+
+    async def ingest_owasp_top10_json(
+        self,
+        file: UploadFile,
+        *,
+        framework_name: str,
+        expected_control_family: str,
+        user_id: int,
+    ) -> Dict[str, Any]:
+        """Generic ingest for the OWASP Top-10 family JSON files
+        (`llm_top10_2025.json`, `agentic_top10_2026.json`).
+
+        The JSON shape is documented at `data/owasp/<file>.json`. Each
+        entry becomes one RAG document with metadata
+        `{framework_name, control_family, scan_ready: True,
+        owasp_id, owasp_title, source}` so the generic specialized
+        agent's `metadata_filter` (control_family) retrieves only the
+        right framework's entries during a scan.
+        """
+        if not self.rag_service:
+            raise HTTPException(status_code=503, detail="RAG Service not available")
+
+        if not file.filename or not file.filename.endswith(".json"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"{framework_name} requires a .json file upload.",
+            )
+
+        content = await self._read_file_content(file)
+        try:
+            parsed = json.loads(content.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as e:
+            raise HTTPException(
+                status_code=400, detail=f"Failed to parse {framework_name} JSON: {e}"
+            )
+
+        # Validate the top-level shape so a typo'd file doesn't silently
+        # ingest the wrong framework's content into the wrong slot.
+        if parsed.get("framework") != framework_name:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"JSON 'framework' is "
+                    f"{parsed.get('framework')!r}; expected {framework_name!r}."
+                ),
+            )
+        if parsed.get("control_family") != expected_control_family:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"JSON 'control_family' is "
+                    f"{parsed.get('control_family')!r}; expected "
+                    f"{expected_control_family!r}."
+                ),
+            )
+
+        entries = parsed.get("entries") or []
+        if not entries:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No entries found in {framework_name} JSON.",
+            )
+
+        documents: List[str] = []
+        metadatas: List[Dict[str, Any]] = []
+        ids: List[str] = []
+        source = parsed.get("source", framework_name)
+        for entry in entries:
+            eid = entry.get("id")
+            if not eid:
+                continue
+            doc_text = self._format_owasp_top10_doc(
+                {**entry, "control_family": expected_control_family}
+            )
+            documents.append(doc_text)
+            metadatas.append(
+                {
+                    "source": source,
+                    "framework_name": framework_name,
+                    "control_family": expected_control_family,
+                    "owasp_id": eid,
+                    "owasp_title": entry.get("title", ""),
+                    "cwe_ids": ", ".join(entry.get("cwes") or []),
+                    "scan_ready": True,
+                }
+            )
+            ids.append(f"{framework_name}-{eid}")
+
+        if not documents:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No valid entries (need 'id' field) in {framework_name} JSON.",
+            )
+
+        # Replace any prior content for this framework — same pattern as ASVS.
+        self.rag_service.delete_by_framework(framework_name)
+        self.rag_service.add(documents=documents, metadatas=metadatas, ids=ids)
+
+        # Backfill a RAGPreprocessingJob row so the admin UI can show
+        # this ingestion in the standards list, mirroring ASVS.
+        if self.job_repo and self.llm_config_repo:
+            try:
+                configs = await self.llm_config_repo.get_all()
+                if configs:
+                    default_config_id = configs[0].id
+                    file_hash = self.job_repo.hash_content(content)
+                    job = await self.job_repo.create_job(
+                        user_id=user_id,
+                        framework_name=framework_name,
+                        llm_config_id=default_config_id,
+                        file_hash=file_hash,
+                    )
+                    processed_docs = [
+                        {
+                            "id": ids[i],
+                            "original_document": documents[i],
+                            "enriched_content": documents[i],
+                            "metadata": metadatas[i],
+                        }
+                        for i in range(len(documents))
+                    ]
+                    await self.job_repo.update_job(
+                        job.id,
+                        {
+                            "raw_content": content,
+                            "status": "COMPLETED",
+                            "processed_documents": processed_docs,
+                            "estimated_cost": {"total_cost": 0.0},
+                            "actual_cost": 0.0,
+                        },
+                    )
+                    logger.info(
+                        "Backfilled RAGPreprocessingJob %s for %s ingestion.",
+                        job.id,
+                        framework_name,
+                    )
+            except Exception as e:
+                logger.error(
+                    "Failed to backfill job record for %s: %s", framework_name, e
+                )
+
+        return {
+            "message": f"Successfully ingested {len(documents)} {framework_name} entries.",
+            "count": len(documents),
+        }
