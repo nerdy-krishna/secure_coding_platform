@@ -295,12 +295,15 @@ async def sccap_approve_scan(scan_id: str) -> Dict[str, Any]:
 
 
 @mcp.tool
-async def sccap_apply_fixes(
-    scan_id: str, finding_ids: Optional[List[int]] = None
-) -> Dict[str, Any]:
-    """Apply AI-suggested fixes from a completed SUGGEST-mode scan. Pass
-    `finding_ids` to apply a subset, or omit to apply all that have
-    suggestions."""
+async def sccap_apply_fixes(scan_id: str, finding_ids: List[int]) -> Dict[str, Any]:
+    """Apply AI-suggested fixes from a completed SUGGEST-mode scan.
+
+    `finding_ids` is REQUIRED — the underlying service rejects an
+    empty list (it has no concept of "apply all"). Pass the list of
+    finding ids returned by `sccap_get_scan_result`.
+    """
+    if not finding_ids:
+        raise ValueError("finding_ids must be a non-empty list of finding ids.")
     async with AsyncSessionLocal() as session:
         user = await _current_user(session)
         scan_service = _build_lifecycle_service(ScanRepository(session))

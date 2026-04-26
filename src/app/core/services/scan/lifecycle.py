@@ -198,8 +198,12 @@ class ScanLifecycleService:
 
         Allowed only when the scan is at the prescan-approval gate or
         already in one of the two terminal blocked states (so the user
-        can audit the post-decision state on the same screen). Other
-        statuses 400.
+        can audit the post-decision state on the same screen). All
+        other paths (scan-doesn't-exist / not-owner / wrong-status)
+        return the same 404 so an attacker can't distinguish "scan
+        exists, not yours" from "scan exists, yours, wrong status" via
+        the response body — closes the soft-enumeration vector flagged
+        in the prescan-approval-osv Phase 9 review.
         """
         from app.api.v1 import models as api_models  # local import — avoid circ
         from app.shared.lib.scan_status import (
@@ -207,12 +211,14 @@ class ScanLifecycleService:
             STATUS_BLOCKED_USER_DECLINE,
         )
 
+        not_found = HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Scan not found or not authorized.",
+        )
+
         scan = await self.repo.get_scan(scan_id)
         if not scan or (scan.user_id != user.id and not user.is_superuser):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Scan not found or not authorized.",
-            )
+            raise not_found
 
         review_statuses = {
             STATUS_PENDING_PRESCAN_APPROVAL,
@@ -220,14 +226,16 @@ class ScanLifecycleService:
             STATUS_BLOCKED_USER_DECLINE,
         }
         if scan.status not in review_statuses:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    "Prescan review only available while scan is at "
-                    "PENDING_PRESCAN_APPROVAL or in a prescan-blocked "
-                    f"state; current status: {scan.status}"
-                ),
+            # Don't leak the actual status to the caller — answer the
+            # same 404 the not-owner path returns. Authorized callers
+            # see the scan's status via the regular `/result` endpoint.
+            logger.info(
+                "get_prescan_review: scan %s not in reviewable status "
+                "(actual=%s); returning 404 (anti-enumeration).",
+                scan_id,
+                scan.status,
             )
+            raise not_found
 
         rows = await self.repo.get_findings_for_scan(scan_id)
         items = [api_models.PrescanFindingItem.model_validate(r) for r in rows]

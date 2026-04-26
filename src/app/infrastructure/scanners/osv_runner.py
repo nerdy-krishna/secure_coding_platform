@@ -26,6 +26,7 @@ import asyncio
 import html
 import json
 import logging
+import re
 import subprocess
 import tempfile
 import uuid
@@ -224,6 +225,38 @@ def _truncate_bom(bom: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     return bom
 
 
+_STDERR_REDACTION_PATTERNS = (
+    # github / gitlab / atlassian PATs (per github.com/dxa4481/truffleHog
+    # and the OSV-Scanner stderr observed in practice — when scanning a
+    # private package URL, OSV may echo back the original URL including
+    # any embedded auth).
+    re.compile(r"\b(?:gh[oprs]|github_pat)_[A-Za-z0-9_]{20,}"),
+    re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}"),
+    # Basic-auth-in-URL: `https://user:secret@host/...` — capture the
+    # secret half and redact it, leaving the host visible for triage.
+    re.compile(r"(https?://[^:/@\s]+:)([^@\s]{8,})(@)"),
+    # x-access-token style: `https://x-access-token:ghs_...@github.com/...`
+    re.compile(r"(x-access-token:)([^@\s]{8,})(@)"),
+)
+
+
+def _redact_stderr(s: str) -> str:
+    """Scrub secret-shaped substrings from OSV stderr before logging.
+
+    Mirrors the defensive-redaction stance the gitleaks runner gets
+    natively from `--redact`. OSV-Scanner v2.x doesn't have an
+    equivalent flag, and stderr can carry private-package URLs with
+    embedded auth tokens when scanning lockfiles that point at private
+    git remotes. (Phase-9 follow-up from prescan-approval-osv.)
+    """
+    for pat in _STDERR_REDACTION_PATTERNS:
+        if pat.groups:
+            s = pat.sub(lambda m: m.group(1) + "***REDACTED***" + m.group(3), s)
+        else:
+            s = pat.sub("***REDACTED***", s)
+    return s
+
+
 def _run_osv_subprocess(
     binary: str,
     staged_dir: Path,
@@ -232,13 +265,18 @@ def _run_osv_subprocess(
 ) -> Tuple[int, str, str]:
     """Invoke OSV-Scanner twice (CycloneDX BOM + JSON findings).
 
-    Two invocations because OSV-Scanner v2.x emits exactly one format
-    per run; the JSON output carries the vulnerability rows we need
-    for `VulnerabilityFinding`s, and the CycloneDX run emits the BOM
-    we persist.
+    Two invocations are required because OSV-Scanner v2.x emits
+    exactly one format per run — there is no multi-format flag. The
+    JSON output carries the vulnerability rows we need for
+    `VulnerabilityFinding`s; the CycloneDX run emits the BOM we
+    persist on `Scan.bom_cyclonedx`. Cost: one extra ~3-5s subprocess
+    on prescan; acceptable given the prescan is already running four
+    scanners under a shared `Semaphore(5)`. If a future OSV-Scanner
+    release adds multi-format support, fold this into one call.
 
     Returns the exit code, stdout, stderr of the JSON run only — the
-    CycloneDX run's content lives at ``bom_path``.
+    CycloneDX run's content lives at ``bom_path``. Returned stderr is
+    pre-redacted via `_redact_stderr`.
     """
     bom_proc = subprocess.run(  # noqa: S603 (allowlisted binary, no shell)
         [
@@ -261,7 +299,7 @@ def _run_osv_subprocess(
         logger.warning(
             "OSV BOM run exited with %d; stderr=%s",
             bom_proc.returncode,
-            (bom_proc.stderr or "")[:500],
+            _redact_stderr((bom_proc.stderr or "")[:500]),
         )
 
     findings_proc = subprocess.run(  # noqa: S603
@@ -284,7 +322,7 @@ def _run_osv_subprocess(
     return (
         findings_proc.returncode,
         findings_proc.stdout or "",
-        findings_proc.stderr or "",
+        _redact_stderr(findings_proc.stderr or ""),
     )
 
 
