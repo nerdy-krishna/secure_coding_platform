@@ -350,6 +350,10 @@ async def consolidate_and_patch_node(state: WorkerState) -> Dict[str, Any]:
 
     final_file_map = dict(initial_file_map)
     applied_signatures: set[str] = set()
+    # Patched-file content keyed by relative path. Used by the §3.9
+    # patch-verifier node downstream so it can re-run Semgrep against
+    # the post-remediation code without re-fetching by hash.
+    patched_files: Dict[str, str] = {}
 
     # Patch + persist per file. The loop is sequential to keep the merge-agent
     # calls under our rate limiter's natural flow; parallelizing here would
@@ -378,6 +382,7 @@ async def consolidate_and_patch_node(state: WorkerState) -> Dict[str, Any]:
             # second fix's snippet already got replaced by an earlier one,
             # the merge agent should have been involved.
             patched_content = file_content
+            file_was_patched = False
             for fix in sorted(resolved, key=lambda f: f.finding.line_number):
                 snippet = fix.suggestion.original_snippet
                 if snippet and snippet in patched_content:
@@ -387,6 +392,7 @@ async def consolidate_and_patch_node(state: WorkerState) -> Dict[str, Any]:
                     applied_signatures.add(
                         f"{file_path}|{fix.finding.cwe}|{fix.finding.line_number}"
                     )
+                    file_was_patched = True
 
             new_hashes = await repo.get_or_create_source_files(
                 [
@@ -398,6 +404,8 @@ async def consolidate_and_patch_node(state: WorkerState) -> Dict[str, Any]:
                 ]
             )
             final_file_map[file_path] = new_hashes[0]
+            if file_was_patched:
+                patched_files[file_path] = patched_content
 
     # Propagate the applied flag onto the post-correlation findings so the
     # UI and downstream reporting can distinguish applied vs. dropped fixes.
@@ -413,4 +421,8 @@ async def consolidate_and_patch_node(state: WorkerState) -> Dict[str, Any]:
         f"{len([p for p in final_file_map if p in fixes_by_file])} files."
     )
 
-    return {"findings": findings, "final_file_map": final_file_map}
+    return {
+        "findings": findings,
+        "final_file_map": final_file_map,
+        "patched_files": patched_files,
+    }

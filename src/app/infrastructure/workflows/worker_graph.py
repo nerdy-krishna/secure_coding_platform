@@ -59,6 +59,7 @@ from app.infrastructure.workflows.nodes.results import (
     save_results_node,
 )
 from app.infrastructure.workflows.nodes.retrieve import retrieve_and_prepare_data_node
+from app.infrastructure.workflows.nodes.verify import verify_patches_node
 from app.infrastructure.workflows.state import RelevantAgent, WorkerState
 
 # Status constants — re-exported from the shared module so downstream
@@ -101,6 +102,7 @@ __all__ = [
     "analyze_files_parallel_node",
     "correlate_findings_node",
     "consolidate_and_patch_node",
+    "verify_patches_node",
     "save_results_node",
     "save_final_report_node",
     "handle_error_node",
@@ -132,6 +134,7 @@ workflow.add_node("estimate_cost", estimate_cost_node)
 workflow.add_node("analyze_files_parallel", analyze_files_parallel_node)
 workflow.add_node("correlate_findings", correlate_findings_node)
 workflow.add_node("consolidate_and_patch", consolidate_and_patch_node)
+workflow.add_node("verify_patches", verify_patches_node)
 workflow.add_node("save_results", save_results_node)
 workflow.add_node("save_final_report", save_final_report_node)
 workflow.add_node("handle_error", handle_error_node)
@@ -255,6 +258,11 @@ workflow.add_conditional_edges(
 )
 workflow.add_conditional_edges(
     "consolidate_and_patch",
+    should_continue,
+    {"continue": "verify_patches", "handle_error": "handle_error"},
+)
+workflow.add_conditional_edges(
+    "verify_patches",
     should_continue,
     {"continue": "save_results", "handle_error": "handle_error"},
 )

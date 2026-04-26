@@ -55,6 +55,7 @@ _REEXPORTED_NAMES = (
     "analyze_files_parallel_node",
     "correlate_findings_node",
     "consolidate_and_patch_node",
+    "verify_patches_node",
     "save_results_node",
     "save_final_report_node",
     "handle_error_node",
