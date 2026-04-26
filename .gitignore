@@ -168,10 +168,27 @@ Desktop.ini
 fluentd/log/
 fluentd/buffer/
 *.pos
-.agent/
+# .agent/ is load-bearing operational docs — track its markdown.
+# The bulky recovery files (.agent/backend.txt, .agent/frontend.txt) are
+# already excluded by the global *.txt rule below.
 *.txt
 *.patch
 cookies.txt
 debug_*.py
 check_chroma_count.py
 trigger_chat.py
+
+# SCCAP harness — local, per-machine state
+.claude/sccap-state.json
+.claude/scheduled_tasks.lock
+
+# Promptfoo eval scratch dirs (committed: package-lock.json, source files,
+# extracted prompt .txt files — see negation rules below).
+evals/node_modules/
+evals/results/
+evals/.cache/
+evals/.promptfoo/
+
+# Whitelist the extracted prompt files even though `*.txt` is globally
+# ignored above (line ~174). These are committed and CI checks them.
+!evals/agents/**/prompts/*.txt
