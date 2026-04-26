@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Stack
 
 - **Backend:** Python 3.12, FastAPI, Poetry, SQLAlchemy (async) + Alembic, **LangGraph 1.x + LangChain 1.x**, **LiteLLM** (cost / token), **Pydantic AI** (structured output retry), **FastMCP** (`/mcp` tool surface), `fastapi-users` (JWT Bearer)
-- **Worker:** separate container, consumes RabbitMQ via `pika` (blocking) and invokes the LangGraph workflow with an `AsyncPostgresSaver` checkpointer
+- **Worker:** separate container, consumes RabbitMQ via `aio-pika` (async, `connect_robust`) and invokes the LangGraph workflow with an `AsyncPostgresSaver` checkpointer on a single asyncio event loop
 - **Frontend:** React 18 + Vite + TypeScript, Ant Design, TanStack Query, React Router v7 (`secure-code-ui/`)
 - **Infra:** Postgres 16, RabbitMQ, ChromaDB (RAG, bundled ONNX embedder — no `sentence-transformers`), Fluentd → Loki → Grafana, optional Let's Encrypt via certbot
 

@@ -87,15 +87,16 @@ They also select:
 
 **File:** `src/app/workers/consumer.py`
 
-- Runs in a separate Docker container with a **Pika** (RabbitMQ) blocking consumer
-- Listens on three queues: `code_submission_queue`, `analysis_approved_queue`, `remediation_trigger_queue`
-- On message receipt:
-  1. Parses `scan_id` from the message body
-  2. Creates an initial `WorkerState` dict
-  3. Schedules `run_graph_task_wrapper` on an async event loop
-- `run_graph_task_wrapper` gets the compiled LangGraph workflow and calls `ainvoke()`
-  - For approval/remediation messages it passes `Command(resume=payload)` so the existing checkpointed thread continues
-- On success → ACKs the RabbitMQ message; on failure → NACKs and sets scan status to `FAILED`
+- Runs in a separate Docker container with an **`aio-pika`** async RabbitMQ consumer (`aio_pika.connect_robust`, single asyncio event loop — no thread bridge, no blocking I/O)
+- Listens on three queues: `code_submission_queue`, `analysis_approved_queue`, `remediation_trigger_queue`, declared durable, `prefetch_count=1` (one scan at a time per worker)
+- On message receipt (`_handle_message` → `async with message.process(requeue=False, ignore_processed=True)`):
+  1. Parses `scan_id` from the message body and sets `correlation_id_var`
+  2. Builds an initial `WorkerState` dict
+  3. `await`s `_run_workflow_for_scan` inline — no `asyncio.run_coroutine_threadsafe` / `add_callback_threadsafe` dance
+- `_run_workflow_for_scan` runs an idempotency precheck (skips already-completed/in-flight scans), then `await worker_workflow.ainvoke(state | Command(resume=…), config={"configurable": {"thread_id": scan_id}})` under a `SCAN_WORKFLOW_TIMEOUT_SECONDS` `asyncio.wait_for`
+  - For approval/remediation messages it passes `Command(resume=payload)` so the checkpointed thread continues from `interrupt()`
+- On success → message context-manager ACKs; on failure → explicit `await message.reject(requeue=False)` (poison messages don't loop) and the scan row is set to `FAILED` for UI visibility
+- Outer consume loop is wrapped in exponential backoff (`_BACKOFF_START_SECONDS` → `_BACKOFF_CAP_SECONDS = 30s`) for the "broker down for minutes" case; per-op retries are handled by `connect_robust`
 
 ---
 

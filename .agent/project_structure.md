@@ -57,7 +57,7 @@
     - **scanners/**: Deterministic SAST wrappers invoked by the worker graph's `deterministic_prescan_node` — `staging.py` (sandbox the file tree, sanitize basenames), `bandit_runner.py` (Bandit subprocess + Pydantic-allowlisted output), `semgrep_runner.py` (Semgrep CE multi-language coverage with bundled `p/security-audit` rule pack), `gitleaks_runner.py` (secret-scan with strict `RuleID/File/StartLine/Description` allowlist + `--redact`), `registry.py` (per-file routing + minified-bundle detection). All three runners share `_resolve_binary` for env-var / PATH / hardcoded-fallback discovery. Critical Gitleaks findings short-circuit the graph to `blocked_pre_llm` terminal node before any LLM call.
     - **repositories/**: Data access layer.
 - **workers/**:
-    - **consumer.py**: RabbitMQ consumer for synchronous scan processing.
+    - **consumer.py**: Async RabbitMQ consumer (`aio-pika` `connect_robust`, single asyncio event loop). Subscribes to submission / approval / remediation queues with `prefetch_count=1`, runs an idempotency precheck, and `await`s the LangGraph workflow inline (no thread bridge). ACK on success; explicit `reject(requeue=False)` + DB status `FAILED` on poison/error.
 - **scripts/**: Operator-only admin scripts. NOT importable by routers / MCP tools (CI grep-check at `tests/test_scripts_isolation.py` enforces). Run via `docker compose exec app python -m app.scripts.<module>`. Includes `backfill_findings_source.py` (sets `findings.source = 'agent'` for legacy LLM-emitted rows).
 - **shared/**:
     - **lib/**: Utility modules — `cost_estimation.py` (LiteLLM token + price), `scan_scope.py` (visibility-scope helper), `scan_status.py` (worker status constants), `risk_score.py` (unified CVSS-weighted risk aggregate shared by worker / dashboard / compliance), `agent_routing.py`, `files.py`, `git`, `encryption`.
@@ -106,10 +106,10 @@
 
 ### 3. Worker Consumption
 - **File**: `src/app/workers/consumer.py`
-  - **Function**: `start_worker_consumer` -> `pika_message_callback`
-  - **Action**: Listens for messages. Upon receipt, deserializes the `scan_id` and schedules the async workflow.
-  - **Function**: `run_graph_task_wrapper`
-  - **Action**: Instantiates the LangGraph workflow and invokes it (`worker_workflow.ainvoke`).
+  - **Function**: `start_worker_consumer` → runs the asyncio event loop; registers `_handle_message` as the aio-pika consumer on the three durable queues (`prefetch_count=1`).
+  - **Action**: On message receipt, `_handle_message` deserializes the `scan_id`, sets `correlation_id_var`, and `await`s `_run_workflow_for_scan` inline (no thread bridge, no `run_coroutine_threadsafe`). ACK on success; `reject(requeue=False)` + DB status `FAILED` on error.
+  - **Function**: `_run_workflow_for_scan`
+  - **Action**: Runs idempotency precheck, then `await`s `worker_workflow.ainvoke` (or `ainvoke(Command(resume=…))` for approval/remediation messages).
 
 ### 4. Workflow Execution (The Graph)
 **File**: `src/app/infrastructure/workflows/worker_graph.py` defines the state graph.
