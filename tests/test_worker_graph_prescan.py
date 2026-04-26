@@ -125,7 +125,9 @@ async def test_prescan_failure_continues_to_estimate_cost(monkeypatch, caplog):
     # root-handler can't see records. Flip propagate for the test.
     app_logger = logging.getLogger("app")
     monkeypatch.setattr(app_logger, "propagate", True)
-    caplog.set_level(logging.WARNING, logger="app.infrastructure.workflows.worker_graph")
+    caplog.set_level(
+        logging.WARNING, logger="app.infrastructure.workflows.worker_graph"
+    )
     result = await worker_graph.deterministic_prescan_node(state)
     assert result == {"findings": []}, "must continue with empty findings, not error"
     assert "error_message" not in result
