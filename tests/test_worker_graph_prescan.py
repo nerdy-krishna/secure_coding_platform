@@ -128,7 +128,13 @@ async def test_prescan_failure_continues_to_estimate_cost(monkeypatch, caplog):
         logging.WARNING, logger="app.infrastructure.workflows.worker_graph"
     )
     result = await worker_graph.deterministic_prescan_node(state)
-    assert result == {"findings": []}, "must continue with empty findings, not error"
+    # Post-ADR-009 the failure path also returns a `bom_cyclonedx` key
+    # (None) so the worker state's bom is reset cleanly even when the
+    # prescan crashes before OSV ran.
+    assert result == {
+        "findings": [],
+        "bom_cyclonedx": None,
+    }, "must continue with empty findings, not error"
     assert "error_message" not in result
     # Sentinel from the exception must NOT have been re-raised; the
     # WARN log mentions the failure but the orchestrator doesn't get

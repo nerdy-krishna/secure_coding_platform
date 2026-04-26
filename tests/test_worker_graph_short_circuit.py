@@ -1,4 +1,10 @@
-"""Tests for the Critical-secret short-circuit terminal route.
+"""Tests for `_route_after_prescan` and the prescan-blocked terminal node.
+
+Post-ADR-009 semantics: ANY findings (Critical-Gitleaks included) now
+route to `pending_prescan_approval` for operator review. The
+`blocked_pre_llm` terminal is reachable only via
+`_route_after_prescan_approval` when the operator declines an override
+on a Critical Gitleaks finding.
 
 Exercises `_route_after_prescan` and `blocked_pre_llm_node` directly
 (the full graph compile path is out of scope for the same reasons
@@ -65,12 +71,17 @@ def _state_with(findings: List[VulnerabilityFinding]) -> Dict[str, Any]:
     }
 
 
-def test_route_after_prescan_picks_blocked_on_critical_gitleaks():
+def test_route_after_prescan_picks_pending_approval_on_critical_gitleaks():
+    """Post-ADR-009: Critical-Gitleaks no longer auto-routes to the
+    blocked terminal. Findings route to `pending_prescan_approval` for
+    operator review; the operator then decides via the override modal."""
     state = _state_with([_critical_gitleaks_finding()])
-    assert worker_graph._route_after_prescan(state) == "blocked_pre_llm"
+    assert worker_graph._route_after_prescan(state) == "pending_prescan_approval"
 
 
-def test_route_after_prescan_picks_estimate_cost_on_clean_findings():
+def test_route_after_prescan_picks_pending_approval_on_any_findings():
+    """Any non-empty findings list routes to the prescan-approval
+    pause; severity / source don't change the routing decision."""
     bandit_finding = VulnerabilityFinding(
         cwe="CWE-78",
         title="Bandit B602",
@@ -90,13 +101,12 @@ def test_route_after_prescan_picks_estimate_cost_on_clean_findings():
         is_applied_in_remediation=False,
     )
     state = _state_with([bandit_finding])
-    assert worker_graph._route_after_prescan(state) == "estimate_cost"
+    assert worker_graph._route_after_prescan(state) == "pending_prescan_approval"
 
 
-def test_route_after_prescan_picks_estimate_cost_on_low_gitleaks():
-    """A timeout finding from Gitleaks (Low severity) MUST NOT trigger
-    the short-circuit — only Critical does.
-    """
+def test_route_after_prescan_picks_pending_approval_on_low_gitleaks():
+    """Even a Low-severity finding pauses the graph for operator
+    review, so the gate is consistent regardless of provenance."""
     timeout_finding = VulnerabilityFinding(
         cwe="CWE-unknown",
         title="Gitleaks scanner timed out",
@@ -116,6 +126,13 @@ def test_route_after_prescan_picks_estimate_cost_on_low_gitleaks():
         is_applied_in_remediation=False,
     )
     state = _state_with([timeout_finding])
+    assert worker_graph._route_after_prescan(state) == "pending_prescan_approval"
+
+
+def test_route_after_prescan_picks_estimate_cost_on_empty_findings():
+    """Clean prescan (no findings) skips the operator gate and proceeds
+    directly to cost estimation."""
+    state = _state_with([])
     assert worker_graph._route_after_prescan(state) == "estimate_cost"
 
 

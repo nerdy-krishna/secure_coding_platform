@@ -223,11 +223,38 @@ async def create_scan(
 )
 async def approve_scan_analysis(
     scan_id: uuid.UUID,
+    request: Optional[api_models.ApprovalRequest] = None,
     user: db_models.User = Depends(current_active_user),
     service: SubmissionService = Depends(get_scan_service),
 ):
-    await service.approve_scan(scan_id, user)
+    """Resume a scan paused at a worker-graph interrupt.
+
+    Two interrupt points exist (ADR-009): the prescan-approval gate
+    (status `PENDING_PRESCAN_APPROVAL`) and the existing cost-approval
+    gate (status `PENDING_COST_APPROVAL`). The body's ``kind`` field
+    discriminates. Body is optional; missing body defaults to
+    ``kind="cost_approval", approved=True`` for backward compat.
+    """
+    await service.approve_scan(scan_id, user, request)
     return {"message": "Scan approved and queued for processing."}
+
+
+@router.get(
+    "/scans/{scan_id}/prescan-findings",
+    response_model=api_models.PrescanReviewResponse,
+)
+async def get_prescan_review(
+    scan_id: uuid.UUID,
+    user: db_models.User = Depends(current_active_user),
+    service: SubmissionService = Depends(get_scan_service),
+):
+    """Deterministic-scanner findings to render on the prescan-approval card.
+
+    Only valid while the scan sits at ``PENDING_PRESCAN_APPROVAL`` (the
+    gate) or has landed in one of the two prescan-terminal states
+    (``BLOCKED_PRE_LLM`` / ``BLOCKED_USER_DECLINE``).
+    """
+    return await service.get_prescan_review(scan_id, user)
 
 
 @router.post(
@@ -276,6 +303,9 @@ async def stream_scan_progress(
         "FAILED",
         "CANCELLED",
         "EXPIRED",
+        # ADR-009 terminal states from the prescan-approval gate.
+        "BLOCKED_PRE_LLM",
+        "BLOCKED_USER_DECLINE",
     }
     poll_interval_seconds = 1.0
     # Bound on the stream's lifetime as a safety net; the scan-workflow

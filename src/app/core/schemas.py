@@ -74,7 +74,11 @@ class VulnerabilityFinding(BaseModel):
     )
     source: Optional[str] = Field(
         default=None,
-        description="Provenance: 'bandit' / 'semgrep' / 'gitleaks' for deterministic-scanner findings, None for LLM-agent findings.",
+        description="Provenance: 'bandit' / 'semgrep' / 'gitleaks' / 'osv' for deterministic-scanner findings, None for LLM-agent findings.",
+    )
+    cve_id: Optional[str] = Field(
+        default=None,
+        description="CVE identifier (e.g. 'CVE-2024-12345') for findings derived from a known vulnerability database entry. Set by `osv_runner`; None for SAST/secret findings.",
     )
     agent_name: Optional[str] = Field(
         default=None, description="The name of the agent that generated the finding."

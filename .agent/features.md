@@ -134,6 +134,34 @@ This file tracks new feature requests and technical implementation plans.
 
 ---
 
+## 8. OSV-Scanner dependency scan + CycloneDX BOM (ADR-009)
+
+**Status:** ✅ COMPLETE as of `prescan-approval-osv` run (2026-04-26).
+
+**What shipped:**
+- `src/app/infrastructure/scanners/osv_runner.py` — fourth deterministic scanner. Runs OSV-Scanner v2.x as a subprocess against the staged dependency tree; produces `VulnerabilityFinding` rows (`source="osv"`) and a CycloneDX 1.5 BOM dict. BOM is hard-capped at 5 MB (truncation sentinel written at overflow); WARN logged at 2 MB.
+- `Scan.bom_cyclonedx` JSONB column — persisted eagerly in `deterministic_prescan_node` before the prescan-approval interrupt so it survives regardless of operator decision.
+- Alembic migration `add_scan_bom_cyclonedx` — reversible; also adds the `findings.cve_id` column.
+- `SourceFilter` in `admin_findings.py` extended to include `"osv"`.
+- BOM safe-render on scan results page: `safeUrl.ts:isSafeHttpUrl` filters `references` URLs before use as `<a href>`.
+
+---
+
+## 9. Prescan-approval gate (ADR-009)
+
+**Status:** ✅ COMPLETE as of `prescan-approval-osv` run (2026-04-26).
+
+**What shipped:**
+- Replaces the pre-ADR-009 Critical-Gitleaks auto-block with a human-in-the-loop gate. When the deterministic pre-pass produces any findings, the graph pauses at the new `pending_prescan_approval` node (`interrupt()`, status `PENDING_PRESCAN_APPROVAL`) so the operator can review before any LLM spend.
+- `GET /scans/{id}/prescan-findings` endpoint — serves the deterministic findings for the prescan-approval card.
+- `POST /scans/{id}/approve` extended with `kind` discriminator — `"prescan_approval"` resumes the prescan gate; `"cost_approval"` resumes the existing cost gate. Body is backward-compatible (missing body defaults to cost approval).
+- Post-resume routing (`_route_after_prescan_approval`): `approved=False` → `user_decline` terminal node → `STATUS_BLOCKED_USER_DECLINE`; `approved=True` with unacknowledged Critical Gitleaks → `blocked_pre_llm` → `STATUS_BLOCKED_PRE_LLM`; otherwise → `estimate_cost`.
+- `prescan_approval_sweeper.py` — auto-declines scans parked at `PENDING_PRESCAN_APPROVAL` for >24 h; writes `PRESCAN_AUTO_DECLINED` scan event; deletes checkpointer thread.
+- LangGraph checkpointer-thread cleanup on every terminal status (completed, failed, declined, blocked) via `_maybe_cleanup_checkpointer_thread` in `consumer.py`.
+- Frontend: `PrescanReviewCard.tsx` + `CriticalSecretOverrideModal.tsx` in `secure-code-ui/src/features/prescan-approval/`. Override modal explicitly names the credential rule and the three downstream destinations (LLM provider, Langfuse, Loki); requires the operator to type "OVERRIDE" before the danger-styled Continue button enables.
+
+---
+
 ## 7. Deterministic SAST pre-pass
 
 **Status:** ✅ COMPLETE as of `/sccap sast-prescan-followups` (2026-04-26). The recommendation §3.1 backlog is empty.

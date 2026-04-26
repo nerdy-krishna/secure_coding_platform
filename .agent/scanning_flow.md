@@ -14,7 +14,12 @@ flowchart TD
 
     subgraph Worker Workflow
       G --> H["retrieve_and_prepare_data"]
-      H --> I["estimate_cost"]
+      H --> H2["deterministic_prescan\n(Bandit+Semgrep+Gitleaks+OSV)"]
+      H2 -->|"findings non-empty"| H3["pending_prescan_approval\ninterrupt()"]
+      H3 -->|"approved=False"| H4["user_decline → END"]
+      H3 -->|"approved=True, critical secret,\nno override"| H5["blocked_pre_llm → END"]
+      H3 -->|"approved=True"| I["estimate_cost\ninterrupt()"]
+      H2 -->|"findings empty"| I
       I -->|"interrupt(payload)"| Z1["paused\n(checkpointer)"]
       Z1 -->|"Command(resume=...)"| K["analyze_files_parallel"]
       K --> L["correlate_findings"]
@@ -24,7 +29,7 @@ flowchart TD
       O --> Z2["END"]
     end
 
-    P["User Approves Cost"] -->|"POST /scans/{id}/approve"| Q["scan_service.approve_scan"]
+    P["User Reviews Prescan / Approves Cost"] -->|"POST /scans/{id}/approve"| Q["scan_service.approve_scan"]
     Q -->|"Publishes to"| R["RabbitMQ\nanalysis_approved_queue"]
     R -->|"Consumed by"| F
 ```
@@ -110,9 +115,12 @@ Compiled as a **LangGraph `StateGraph`** with an `AsyncPostgresSaver` checkpoint
 
 ```
 retrieve_and_prepare_data
-  → deterministic_prescan        (Bandit + Semgrep + Gitleaks subprocesses — no interrupt)
-      → blocked_pre_llm → END    (terminal: Critical Gitleaks finding short-circuits LLM cost)
-      → estimate_cost            (interrupt → resume via Command)
+  → deterministic_prescan        (Bandit + Semgrep + Gitleaks + OSV-Scanner — no interrupt)
+      → pending_prescan_approval (interrupt — fires when findings non-empty)
+          → user_decline → END           (operator clicked Stop; status BLOCKED_USER_DECLINE)
+          → blocked_pre_llm → END        (operator declined Critical-secret override; status BLOCKED_PRE_LLM)
+          → estimate_cost                (approved; interrupt → resume via Command)
+      → estimate_cost            (skip gate when findings empty; interrupt → resume via Command)
         → analyze_files_parallel
         → correlate_findings
         → consolidate_and_patch  (no-op for AUDIT / SUGGEST)
@@ -120,7 +128,7 @@ retrieve_and_prepare_data
         → save_final_report → END
 ```
 
-`handle_error` is reachable from every node via the `should_continue` conditional edges and sets status `FAILED`. `blocked_pre_llm` is reachable only from `deterministic_prescan` and sets status `BLOCKED_PRE_LLM` — the user pays no LLM cost and the secret never leaves the worker.
+`handle_error` is reachable from every node via the `should_continue` conditional edges and sets status `FAILED`. `blocked_pre_llm` is reachable only from `_route_after_prescan_approval` (when the operator declines the Critical-secret override modal) and sets status `BLOCKED_PRE_LLM`. `user_decline` is reachable only from `_route_after_prescan_approval` (when the operator clicks Stop regardless of severity) and sets status `BLOCKED_USER_DECLINE`.
 
 ### Node 1 — `retrieve_and_prepare_data`
 
@@ -141,19 +149,28 @@ Deterministic SAST pre-pass that runs **before** the cost-approval interrupt and
   - **Bandit** for Python (`.py`, `.pyi`).
   - **Semgrep CE** for the multi-language subset its bundled `p/security-audit` pack covers (`.py`, `.js`, `.ts`, `.jsx`, `.tsx`, `.java`, `.go`, `.rb`, `.php`, `.cs`, `.c`, `.cpp`, `.h`, etc.).
   - **Gitleaks** for any text-shaped file (source + common config / docs).
-- Each scanner walks the staged tree itself; the prescan node fans out three subprocess invocations under a single shared `asyncio.Semaphore(CONCURRENT_SCANNER_LIMIT=5)` (N9). Per-scanner failure is non-fatal — the other two scanners' findings still flow through.
+  - **OSV-Scanner** for dependency manifests across the staged tree. Returns a `(findings, bom_cyclonedx_dict)` tuple; `bom_cyclonedx_dict` is persisted to `Scan.bom_cyclonedx` (JSONB, hard-capped at 5 MB with a `_truncated`/`_original_size_bytes` sentinel on overflow).
+- Each scanner walks the staged tree itself; the prescan node fans out four subprocess invocations under a single shared `asyncio.Semaphore(CONCURRENT_SCANNER_LIMIT=5)` (N9). Per-scanner failure is non-fatal — the remaining scanners' findings still flow through.
 - **Subprocess hardening (M1, N1–N3):** every invocation is `subprocess.run([...], shell=False, check=False, timeout=120)`; arguments are a literal list with `--` separator before user-derived paths; configs are pinned to bundled paths (`/app/scanners/configs/semgrep/security-audit.yml`, `/app/scanners/configs/gitleaks.toml`) so user-tree configs cannot redirect behavior; Semgrep gets `--metrics=off --disable-version-check --no-git-ignore`; Gitleaks gets `--redact --no-git`.
 - **Output (M5 / M7 / N1):** parsed through strict Pydantic allowlists. Gitleaks's allowlist is the tightest — only `RuleID`, `File`, `StartLine`, `Description` cross the boundary; `Match`, `Secret`, `Fingerprint`, `Commit`, `Author`, `Email` are silently dropped even if present. Every `VulnerabilityFinding.description` is `html.escape()`d and capped at 200 chars before reaching any LLM prompt.
 - **Resource caps (M6 / N2):** files larger than `PRESCAN_FILE_BYTE_LIMIT` (1 MiB) are skipped; minified web bundles (`*.min.js`, `*.bundle.js`, `*.min.css`) get a tighter `MINIFIED_BYTE_LIMIT` (256 KiB) to dodge Semgrep's parse pathology. Per-scanner 120 s subprocess timeout.
-- **Critical-secret short-circuit (A3 / N4):** any Gitleaks finding (severity = Critical by construction) routes the graph from `_route_after_prescan` to the terminal `blocked_pre_llm` node instead of to `estimate_cost`. The user pays no LLM cost; the secret never leaves the worker.
+- **Prescan-approval gate (ADR-009):** when `findings` is non-empty after the prescan, `_route_after_prescan` routes to the new `pending_prescan_approval` node, which persists findings to DB and calls native `interrupt({"scan_id", "findings_count", "has_critical_secret"})`. The operator reviews findings on the scan-status page (via `GET /scans/{id}/prescan-findings`) and resumes by posting `{"kind": "prescan_approval", "approved": true/false, "override_critical_secret": true/false}` to `POST /scans/{id}/approve`. The post-resume router `_route_after_prescan_approval` dispatches: `approved=False` → `user_decline` (status `BLOCKED_USER_DECLINE`); `approved=True` with unacknowledged Critical Gitleaks secret → `blocked_pre_llm` (status `BLOCKED_PRE_LLM`); otherwise → `estimate_cost`. Scans parked at `PENDING_PRESCAN_APPROVAL` for >24 h are auto-declined by `prescan_approval_sweeper.py`.
 - **Failure policy (N15):** unexpected prescan crash → log WARN with `correlation_id` + `findings: []` continuation; the graph proceeds to `estimate_cost` so the LLM analysis still runs. Scanner stdout is NEVER embedded in `Scan.error_message`.
-- **MUST NOT call `interrupt()`** (M8 / N5). The cost-approval pause stays at `estimate_cost_node`. The blocked node is a terminal route, not a pause.
+- **MUST NOT call `interrupt()`** (M8 / N5). The prescan-approval pause sits at `pending_prescan_approval_node`; the cost-approval pause sits at `estimate_cost_node`. Both `blocked_pre_llm` and `user_decline` are terminal routes, not pauses. The prescan node itself must not pause — it only seeds findings into state for the approval gate.
 - Findings ride through state to `save_results_node` (single save site). `analyze_files_parallel` extends rather than replaces `state["findings"]`; `correlate_findings_node` dedupes scanner + LLM overlaps by `(file_path, cwe, line_number)`.
 - Provenance via `findings.source` column: `"bandit"` / `"semgrep"` / `"gitleaks"` for scanner findings; `NULL` for legacy LLM-agent rows; `"agent"` for new LLM rows once the backfill admin script runs.
 
-### Node 1.5b — `blocked_pre_llm` (terminal)
+### Node 1.5b — `pending_prescan_approval` (interrupt)
 
-Reached when `_route_after_prescan` finds a Critical Gitleaks finding on `state["findings"]`. Persists the triggering Finding via `ScanRepository.save_findings`; sets `Scan.status = STATUS_BLOCKED_PRE_LLM`; logs WARN with `scan_id`, scanner, rule, file, line for admin investigation via `/admin/findings?source=gitleaks`. Returns `{}`. Routes to `END`.
+Reached from `_route_after_prescan` when `state["findings"]` is non-empty. Persists deterministic findings to DB and sets status `PENDING_PRESCAN_APPROVAL` **before** calling native `interrupt({"scan_id", "findings_count", "has_critical_secret"})` so the scan-status page can render findings while the worker thread is parked. On resume, the payload `{"approved", "override_critical_secret"}` is stamped into `state["prescan_approval"]` and `_route_after_prescan_approval` decides the next node.
+
+### Node 1.5c — `user_decline` (terminal)
+
+Reached from `_route_after_prescan_approval` when `approved=False`. Persists the deterministic prescan findings (so the results page shows them), sets `Scan.status = STATUS_BLOCKED_USER_DECLINE`, and the consumer's post-workflow cleanup deletes the LangGraph checkpointer thread (M5 / G7). Routes to `END`.
+
+### Node 1.5d — `blocked_pre_llm` (terminal)
+
+Reached from `_route_after_prescan_approval` when the operator approved but declined the Critical-secret override modal (`approved=True, override_critical_secret=False` and a Critical Gitleaks finding present). Persists the triggering finding via `ScanRepository.save_findings`; sets `Scan.status = STATUS_BLOCKED_PRE_LLM`; the consumer's post-workflow cleanup deletes the checkpointer thread; logs WARN with `scan_id`, scanner, rule, file, line for admin investigation via `/admin/findings?source=gitleaks`. Routes to `END`.
 
 ### Node 2 — `estimate_cost`
 
@@ -218,13 +235,19 @@ For **AUDIT** it's a no-op. For **SUGGEST** the correlated findings keep their e
 ## Status Lifecycle
 
 ```
-QUEUED → ANALYZING_CONTEXT → PENDING_COST_APPROVAL
-                                  ↓ (user approves)
-                            QUEUED_FOR_SCAN → ANALYZING_CONTEXT → RUNNING_AGENTS
-                                  → COMPLETED / REMEDIATION_COMPLETED
+QUEUED → ANALYZING_CONTEXT → PENDING_PRESCAN_APPROVAL
+                                  ↓ (findings present; operator reviews)
+                            ┌─── approved=False ──────────────────────────────→ BLOCKED_USER_DECLINE
+                            ├─── approved=True, critical secret, no override → BLOCKED_PRE_LLM
+                            └─── approved=True ───────────────────────────────→ PENDING_COST_APPROVAL
+                                                                                      ↓ (cost approved)
+                                                                               QUEUED_FOR_SCAN → ANALYZING_CONTEXT → RUNNING_AGENTS
+                                                                                      → COMPLETED / REMEDIATION_COMPLETED
+
+QUEUED → ANALYZING_CONTEXT → PENDING_COST_APPROVAL   (no prescan findings; gate skipped)
 ```
 
-If any error occurs at any node, the `handle_error` node sets the status to `FAILED`.
+If any error occurs at any node, the `handle_error` node sets the status to `FAILED`. Scans stuck at `PENDING_PRESCAN_APPROVAL` for >24 h are auto-declined to `BLOCKED_USER_DECLINE` by `prescan_approval_sweeper.py`.
 
 ---
 
