@@ -19,3 +19,4 @@
 | 8b | verify (c2) | haiku | 2026-04-27T00:23:30Z | 2026-04-27T00:25:07Z | ✓ | OVERALL: PASS — 26 focused + 197 full pytest; mypy baseline 105 unchanged; alembic head=c0f39ef37367 |
 | 9b | security (c2) | opus | 2026-04-27T00:25:07Z | 2026-04-27T00:27:55Z | ✓ | APPROVE — 1C + 2H cleared; 1 Medium (rate limiter) + 1 Low (discovery process) filed in plan "Out of scope" |
 | 10 | doc-sync | sonnet | 2026-04-27T00:27:55Z | 2026-04-27T00:28:35Z | ✓ | NO PATCHES — features.md §11 already accurate; project_structure.md "etc." is open-ended; scanning_flow.md is model-agnostic |
+| 11 | ship | (orch) | 2026-04-27T00:28:35Z | 2026-04-27T00:29:30Z | ✓ | 66b8bf0 pushed to origin/main (19 files, +729 -9) |
