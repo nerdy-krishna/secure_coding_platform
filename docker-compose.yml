@@ -60,11 +60,26 @@ services:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "${POSTGRES_PORT_HOST:-5432}:5432"
+    depends_on:
+      fluentd:
+        condition: service_healthy
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}" ]
       interval: 10s
       timeout: 5s
       retries: 5
+    # Route Postgres stdout (failed-auth events, slow-query lines) through
+    # fluentd → Loki under the 30 d retention contract (ADR-010 P1-R1).
+    # Without this, the json-file cap of 50 m × 5 = 250 MB lets a noisy
+    # error rotate forensic events out of `docker logs`.
+    logging:
+      driver: "fluentd"
+      options:
+        fluentd-address: localhost:24224
+        tag: docker.db.{{.Name}}
+        fluentd-async: "true"
+        fluentd-retry-wait: "1s"
+        fluentd-max-retries: "30"
     networks:
       - scpnetwork
 
@@ -81,11 +96,18 @@ services:
       - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq/
+      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - ./rabbitmq/definitions.json:/etc/rabbitmq/definitions.json:ro
     healthcheck:
       test: [ "CMD", "rabbitmq-diagnostics", "-q", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
     networks:
       - scpnetwork
 
@@ -113,6 +135,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
     networks:
       - scpnetwork
 
@@ -167,6 +194,13 @@ services:
       timeout: 3s
       retries: 12
       start_period: 20s
+    # Cap fluentd's own json-file log so a fluentd-side error loop
+    # cannot fill the host disk (ADR-010).
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
     networks:
       - scpnetwork
 
@@ -175,9 +209,20 @@ services:
     container_name: sccap_loki
     ports:
       - "3100:3100"
-    command: -config.file=/etc/loki/local-config.yaml
+    # Custom config (loki/loki-config.yaml) enables the compactor with
+    # operator-tunable retention. -config.expand-env=true lets us
+    # template ${LOKI_RETENTION_DAYS} into the YAML at startup.
+    command: -config.file=/etc/loki/local-config.yaml -config.expand-env=true
+    environment:
+      - LOKI_RETENTION_DAYS=${LOKI_RETENTION_DAYS:-30d}
     volumes:
+      - ./loki/loki-config.yaml:/etc/loki/local-config.yaml:ro
       - loki-data:/loki
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
     networks:
       - scpnetwork
 
@@ -196,6 +241,11 @@ services:
       - ./grafana/provisioning:/etc/grafana/provisioning
     depends_on:
       - loki
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
     networks:
       - scpnetwork
 
@@ -221,6 +271,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
     networks:
       - scpnetwork
 
@@ -242,6 +297,11 @@ services:
       nofile:
         soft: 262144
         hard: 262144
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
     networks:
       - scpnetwork
 
@@ -261,6 +321,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
     networks:
       - scpnetwork
 
@@ -278,6 +343,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
     networks:
       - scpnetwork
 
@@ -321,6 +391,11 @@ services:
       TELEMETRY_ENABLED: "false"
     ports:
       - "${LANGFUSE_WEB_PORT:-3001}:3000"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
     networks:
       - scpnetwork
 
@@ -355,6 +430,11 @@ services:
       REDIS_PORT: "6379"
       REDIS_AUTH: ${REDIS_PASSWORD:-change-me-redis}
       TELEMETRY_ENABLED: "false"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
     networks:
       - scpnetwork
 
@@ -377,9 +457,56 @@ services:
       - ./certbot/conf:/etc/letsencrypt
       - ./certbot/www:/var/www/certbot
     depends_on:
-      - app
+      app:
+        condition: service_started
+      fluentd:
+        condition: service_healthy
+    # nginx access logs land in Loki under retention (ADR-010 P1-R1)
+    # so probe / abuse patterns survive longer than the json-file cap.
+    logging:
+      driver: "fluentd"
+      options:
+        fluentd-address: localhost:24224
+        tag: docker.ui.{{.Name}}
+        fluentd-async: "true"
+        fluentd-retry-wait: "1s"
+        fluentd-max-retries: "30"
     networks:
       - scpnetwork
+
+  # ------------------------------------------------------------------
+  # disk-monitor — locally-built busybox sidecar that emits host-disk
+  # usage to fluentd → Loki at >=30 s intervals (ADR-010 P5). The
+  # Grafana alert in grafana/provisioning/alerting/disk-alert.yaml
+  # consumes its output.
+  # ------------------------------------------------------------------
+  disk-monitor:
+    build: ./tools/df-emitter
+    container_name: sccap_disk_monitor
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    user: "65534:65534"
+    volumes:
+      - /:/host:ro
+    environment:
+      DF_MOUNTPOINTS: "/host /host/var/lib/docker"
+      DF_INTERVAL_SECONDS: 30
+      FLUENTD_HOST: fluentd
+      FLUENTD_PORT: 24224
+    depends_on:
+      fluentd:
+        condition: service_healthy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - scpnetwork
+    restart: unless-stopped
 
 volumes:
   postgres_data:

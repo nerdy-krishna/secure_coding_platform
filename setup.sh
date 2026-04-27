@@ -217,6 +217,140 @@ rm -f .env.bak
 echo "[+] Configuration saved."
 
 
+# 2.7. Docker daemon log defaults (ADR-010 P2)
+# ----------------------------------------------------------------------
+# Belt-and-suspenders for the per-service `logging:` blocks in
+# docker-compose.yml: also set host-wide json-file caps so any container
+# an operator runs *outside* compose (e.g. ad-hoc `docker run`) inherits
+# the bound. Three-branch root detection (P2-E2): EUID==0 vs sudo vs
+# neither. Pre-existing /etc/docker/daemon.json is JSON-merged via
+# python3 (P2-E1) — never `>`-overwritten — so operator keys like
+# `data-root` or `registry-mirrors` are preserved. Backup written to
+# /etc/docker/daemon.json.bak.sccap-<timestamp>.
+
+_sccap_with_root() {
+    # Run "$@" as root via the cleanest available channel. Never
+    # interpolates user input into a shell string — argv only.
+    if [ "$EUID" -eq 0 ]; then
+        "$@"
+    elif command -v sudo >/dev/null 2>&1; then
+        sudo "$@"
+    else
+        echo "[!] Neither root nor sudo available. As root, run:"
+        echo "    $*"
+        return 1
+    fi
+}
+
+_sccap_render_daemon_json() {
+    # Read the existing /etc/docker/daemon.json (or {}) and merge our
+    # log-driver defaults conservatively: only add `log-driver` /
+    # `log-opts` if absent, never clobber an operator-set value.
+    # Output to $1 (a temp file).
+    local out_path="$1"
+    local existing="{}"
+    if [ -f /etc/docker/daemon.json ]; then
+        existing=$(_sccap_with_root cat /etc/docker/daemon.json) || return 1
+    fi
+    DAEMON_EXISTING="$existing" python3 - "$out_path" <<'PY'
+import json
+import os
+import sys
+
+raw = os.environ.get("DAEMON_EXISTING", "{}").strip() or "{}"
+try:
+    cfg = json.loads(raw)
+except json.JSONDecodeError:
+    print(f"[!] /etc/docker/daemon.json is not valid JSON; refusing to merge.", file=sys.stderr)
+    sys.exit(2)
+if not isinstance(cfg, dict):
+    print("[!] /etc/docker/daemon.json must be a JSON object; refusing to merge.", file=sys.stderr)
+    sys.exit(2)
+
+changed = False
+if "log-driver" not in cfg:
+    cfg["log-driver"] = "json-file"
+    changed = True
+elif cfg["log-driver"] != "json-file":
+    print(f"[!] Existing log-driver={cfg['log-driver']!r} preserved (only json-file is configured by SCCAP).", file=sys.stderr)
+
+opts = cfg.setdefault("log-opts", {})
+if not isinstance(opts, dict):
+    print("[!] Existing log-opts is not a dict; refusing to merge.", file=sys.stderr)
+    sys.exit(2)
+for key, value in (("max-size", "50m"), ("max-file", "5")):
+    if key not in opts:
+        opts[key] = value
+        changed = True
+
+with open(sys.argv[1], "w", encoding="utf-8") as fh:
+    json.dump(cfg, fh, indent=2, sort_keys=True)
+    fh.write("\n")
+
+sys.exit(0 if changed else 100)  # 100 = nothing to do
+PY
+}
+
+echo ""
+echo "[*] Docker daemon log rotation (ADR-010 — bounded log volume):"
+echo "    Sets host-wide json-file defaults (max-size 50m, max-file 5)"
+echo "    via /etc/docker/daemon.json. This restarts the Docker daemon"
+echo "    and will recreate ALL containers on this host (not just SCCAP)."
+read -p "    Apply now? (type YES to confirm, anything else skips): " daemon_confirm
+if [ "$daemon_confirm" = "YES" ]; then
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "[!] python3 unavailable; cannot merge JSON safely. Skipping."
+    else
+        _sccap_render_status=0
+        _sccap_render_daemon_json "/tmp/sccap-daemon.json.$$" || _sccap_render_status=$?
+        case "$_sccap_render_status" in
+            0)
+                # Backup any existing daemon.json before atomic install.
+                if _sccap_with_root test -f /etc/docker/daemon.json; then
+                    BACKUP_PATH="/etc/docker/daemon.json.bak.sccap-$(date +%s)"
+                    if _sccap_with_root cp -a /etc/docker/daemon.json "$BACKUP_PATH"; then
+                        echo "    Existing daemon.json backed up to $BACKUP_PATH"
+                    else
+                        echo "[!] Backup failed; aborting daemon.json change."
+                        rm -f "/tmp/sccap-daemon.json.$$"
+                        exit 1
+                    fi
+                fi
+                if _sccap_with_root install -m 0644 -o root -g root \
+                       "/tmp/sccap-daemon.json.$$" /etc/docker/daemon.json; then
+                    rm -f "/tmp/sccap-daemon.json.$$"
+                    if [[ "$OSTYPE" == "darwin"* ]]; then
+                        echo "[+] daemon.json updated. Restart Docker Desktop manually to apply."
+                    else
+                        if _sccap_with_root systemctl restart docker; then
+                            echo "[+] Docker daemon restarted with new log defaults."
+                        else
+                            echo "[!] daemon.json updated but systemctl restart docker failed."
+                            echo "    Restart docker manually (e.g. 'sudo systemctl restart docker')"
+                            echo "    to apply, or restore from $BACKUP_PATH if needed."
+                        fi
+                    fi
+                else
+                    rm -f "/tmp/sccap-daemon.json.$$"
+                    echo "[!] daemon.json install failed; existing file untouched."
+                fi
+                ;;
+            100)
+                echo "[+] daemon.json already had log-driver/log-opts; nothing to do."
+                rm -f "/tmp/sccap-daemon.json.$$"
+                ;;
+            *)
+                echo "[!] daemon.json render failed (exit $_sccap_render_status); skipping."
+                rm -f "/tmp/sccap-daemon.json.$$"
+                ;;
+        esac
+    fi
+else
+    echo "    Skipped. Per-compose `logging:` blocks still bound SCCAP services;"
+    echo "    only ad-hoc \`docker run\` containers on this host stay unbounded."
+fi
+
+
 # 2. Environment Setup (Cont.)
 # CORS Configuration is now handled in the Setup Wizard UI.
 

@@ -27,7 +27,12 @@
 │       ├── workers/        # Consumer (RabbitMQ)
 │       └── main.py         # App Entry Point
 ├── evals/                  # Promptfoo eval harness (mock + live CI)
+├── loki/                   # Loki custom config (ADR-010 retention)
+├── rabbitmq/               # RabbitMQ bounded-queue policy + conf (ADR-010)
 ├── scripts/                # Repo-root operator scripts (e.g. extract_eval_prompts.py)
+├── tools/                  # Operator tooling
+│   └── df-emitter/         # Busybox sidecar: emits host-disk usage to fluentd (ADR-010)
+├── .agent/runbooks/        # Operator runbooks (e.g. disk-fill.md)
 ├── poetry.lock             # Backend Lock File
 └── pyproject.toml          # Backend Project Config
 ```
@@ -196,3 +201,44 @@ The Bandit / Gitleaks / OSV-Scanner binaries follow the same pin pattern in the 
 ### Defensive `findings.source` backfill (Feature-7 B3)
 
 The `infrastructure/messaging/findings_source_sweeper.py` runs hourly on the API container and updates any `findings WHERE source IS NULL` rows to `source='agent'`. With the LLM agent stamping `source="agent"` at write time (Feature-7 B1), this should be a no-op in steady state — bounded UPDATE per pass (5000 rows max), zero cost when the table is clean (the precheck COUNT short-circuits before the UPDATE). Defensive against any future code path that inserts a finding without setting `source`.
+
+## Logging architecture (ADR-010)
+
+Bounded log volume across four independent layers. Drives the `disk-monitor` Grafana alert and the `docs/runbooks/disk-fill.md` operator runbook.
+
+### Per-service log driver matrix
+
+| Service | Driver | Why |
+|---|---|---|
+| `app`, `worker`, `db`, `ui` | `fluentd` | Security-/audit-relevant stdout (app/worker structured logs, Postgres failed-auth, nginx access). Lands in Loki under `LOKI_RETENTION_DAYS` (default 30 d) so probe / abuse patterns survive longer than the json-file cap. |
+| `rabbitmq`, `qdrant`, `fluentd`, `loki`, `grafana`, `disk-monitor`, all `langfuse-*` | `json-file` `max-size: 50m`, `max-file: 5` (250 MB ceiling/container) | Infrastructure stdout only; rotate-out is acceptable. Caps total Docker log volume to a known bound regardless of error-loop verbosity. |
+
+### fluentd buffer (`fluentd/fluentd.conf`)
+
+- `<buffer>` block: `total_limit_size 2GB`, `overflow_action drop_oldest_chunk`, `retry_max_times 600` (replacing the prior `retry_forever true`), `flush_interval 5s`. Retry window: ~50 minutes.
+- `<system> log_level info` plus a `<label @ERROR>` sink — fluentd's own internal-error events get tagged `service_name=fluentd-internal level=ERROR event=BUFFER_OVERFLOW` (when the message matches `BufferOverflowError|drop_oldest_chunk|chunk bytes limit exceeds`) and routed to fluentd's stdout, which itself rotates under the json-file cap. The Grafana `fluentd-buffer-overflow` rule alerts on the count.
+
+### Loki retention (`loki/loki-config.yaml`)
+
+- Custom config replaces the bundled `local-config.yaml`. Compactor: `retention_enabled: true`, `retention_delete_delay: 2h`, `delete_request_store: filesystem`. `limits_config.retention_period: ${LOKI_RETENTION_DAYS:-30d}` — operator-tunable via `.env`.
+- Loki is started with `-config.expand-env=true` so the env var resolves at boot.
+- **One-time migration cost:** existing Loki data older than `LOKI_RETENTION_DAYS` is deleted on the first compactor cycle. Operators with active long-window forensics must capture before deploy. PCI-DSS 10.5.3 / HIPAA 164.312(b) commonly require ≥1 year — set `LOKI_RETENTION_DAYS=365d` plus a larger `loki-data` volume.
+
+### Host-disk visibility (`tools/df-emitter/`, `grafana/provisioning/alerting/disk-alert.yaml`)
+
+- Locally-built busybox sidecar `disk-monitor` mounts `/:/host:ro`, runs as UID 65534, `read_only: true`, `cap_drop: [ALL]`. Emits `df` JSON every `DF_INTERVAL_SECONDS` (default 30, refuses < 10) for an allowlisted set of mountpoints (default `/` and `/var/lib/docker`).
+- Two Grafana provisioning rules: `host-disk-fill` (warning ≥ 75%, critical ≥ 90%) and `fluentd-buffer-overflow` (any count > 0). Both annotate the runbook URL.
+
+### Daemon-wide fallback (`setup.sh` §2.7)
+
+- `setup.sh` writes `/etc/docker/daemon.json` with json-file defaults (`max-size: 50m`, `max-file: 5`) so any container an operator runs *outside* compose still gets capped.
+- Three-branch root detection (`_sccap_with_root`): `EUID==0` runs directly; `sudo` available → `sudo "$@"` (fixed argv); neither → prints exact root commands and returns non-zero.
+- Pre-existing `/etc/docker/daemon.json` is JSON-merged via `python3` (preserving operator keys like `data-root`, `registry-mirrors`); a backup is written to `/etc/docker/daemon.json.bak.sccap-<timestamp>` before atomic install. Operator must type `YES` to confirm; `systemctl restart docker` follows on Linux (Docker Desktop is a manual restart on macOS).
+
+### RabbitMQ queue overflow (`rabbitmq/definitions.json`, `rabbitmq/rabbitmq.conf`)
+
+- Definitions file pins a `sccap-bounded-queues` policy on `^(code_submission_queue|analysis_approved_queue|remediation_trigger_queue)$` with `max-length: 100000`, `overflow: drop-head` so a wedged worker can't balloon `rabbitmq_data`. Bound by `load_definitions` in the mounted `rabbitmq.conf`.
+
+### Operator runbook
+
+- `docs/runbooks/disk-fill.md` (canonical: `.agent/runbooks/disk-fill.md`) demarcates HOST vs CONTAINER commands and covers: Loki outage recovery, first-compactor I/O spike, compliance retention trade-off, daemon.json rollback path, recent incident replay. Recommended supplement: flip `GF_AUTH_ANONYMOUS_ENABLED=false` in production to lock down Grafana viewer access.
