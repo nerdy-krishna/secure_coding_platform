@@ -1,0 +1,66 @@
+# Loki 3.4 config — ADR-010 P4. Replaces the bundled local-config.yaml
+# so the compactor + retention enforcement is on by default.
+#
+# Retention is operator-tunable via LOKI_RETENTION_DAYS (default 30d);
+# Loki's -config.expand-env=true flag interpolates the env var at
+# startup. Accepts duration strings (30d / 4w / 720h).
+#
+# Compliance note: PCI-DSS 10.5.3 / HIPAA 164.312(b) commonly require
+# >=1 year audit-log retention. Operators bound by those regimes must
+# set LOKI_RETENTION_DAYS=365d AND provision a larger volume for
+# `loki-data`, OR ship logs to long-term cold storage before deploy.
+
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+
+common:
+  path_prefix: /loki
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+  instance_addr: 127.0.0.1
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: boltdb-shipper
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+storage_config:
+  boltdb_shipper:
+    active_index_directory: /loki/index
+    cache_location: /loki/index_cache
+  filesystem:
+    directory: /loki/chunks
+
+# Compactor enforces retention by deleting chunks older than the
+# configured window. Without retention_enabled: true, the compactor
+# only compacts indexes without deleting data — disk fills slowly.
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  retention_delete_delay: 2h
+  retention_delete_worker_count: 150
+  delete_request_store: filesystem
+
+limits_config:
+  retention_period: ${LOKI_RETENTION_DAYS:-30d}
+  # boltdb-shipper does not support structured metadata; tsdb does. We
+  # stay on boltdb-shipper for query compatibility with PR1-era data.
+  allow_structured_metadata: false
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
+
+ruler:
+  alertmanager_url: http://localhost:9093
+
+analytics:
+  reporting_enabled: false

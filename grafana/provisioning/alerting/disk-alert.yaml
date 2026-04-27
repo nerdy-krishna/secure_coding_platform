@@ -1,0 +1,206 @@
+# Grafana 11 alerting provisioning — ADR-010 P5 + P3-R1 (BUFFER_OVERFLOW).
+# Two rule groups, both backed by the existing Loki datasource:
+#   1. host-disk-fill — warns at >=75% used on `/` or `/var/lib/docker`,
+#      crits at >=90%. Fed by the disk-monitor sidecar.
+#   2. fluentd-buffer-overflow — fires the moment fluentd's @ERROR
+#      label promotes a drop_oldest_chunk event to BUFFER_OVERFLOW.
+#
+# The contact-point and notification-policy provisioning is intentionally
+# left out so existing operator setups (email, Slack, PagerDuty webhooks)
+# aren't clobbered. Operators wire these rules to their own routes.
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: sccap-disk-fill
+    folder: SCCAP
+    interval: 1m
+    rules:
+      - uid: sccap-host-disk-warn
+        title: Host disk fill — warning (>=75%)
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: loki
+            model:
+              datasource:
+                type: loki
+                uid: loki
+              expr: |
+                quantile_over_time(0.95,
+                  {service_name="disk-monitor"}
+                  | json
+                  | unwrap used_pct [5m]
+                )
+              queryType: range
+              refId: A
+              maxDataPoints: 43200
+              intervalMs: 60000
+          - refId: B
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 0
+              to: 0
+            model:
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              reducer: max
+              type: reduce
+              refId: B
+          - refId: C
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 0
+              to: 0
+            model:
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: $B >= 75
+              type: threshold
+              refId: C
+        noDataState: NoData
+        execErrState: Error
+        for: 10m
+        labels:
+          severity: warning
+          service: sccap-host
+        annotations:
+          summary: Host disk usage >= 75% on a SCCAP-monitored mountpoint
+          description: >
+            disk-monitor sidecar reported >= 75% usage for 10m. Free space
+            via the runbook before the critical threshold (90%) trips.
+          runbook_url: file:///workspace/.agent/runbooks/disk-fill.md
+
+      - uid: sccap-host-disk-crit
+        title: Host disk fill — critical (>=90%)
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: loki
+            model:
+              datasource:
+                type: loki
+                uid: loki
+              expr: |
+                quantile_over_time(0.95,
+                  {service_name="disk-monitor"}
+                  | json
+                  | unwrap used_pct [5m]
+                )
+              queryType: range
+              refId: A
+              maxDataPoints: 43200
+              intervalMs: 60000
+          - refId: B
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 0
+              to: 0
+            model:
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              reducer: max
+              type: reduce
+              refId: B
+          - refId: C
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 0
+              to: 0
+            model:
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: $B >= 90
+              type: threshold
+              refId: C
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: critical
+          service: sccap-host
+        annotations:
+          summary: Host disk usage >= 90% — service degradation imminent
+          description: >
+            disk-monitor sidecar reported >= 90% usage for 5m. Follow the
+            disk-fill runbook now; Postgres / RabbitMQ / fluentd will
+            start failing once / hits 100%.
+          runbook_url: file:///workspace/.agent/runbooks/disk-fill.md
+
+  - orgId: 1
+    name: sccap-log-pipeline
+    folder: SCCAP
+    interval: 1m
+    rules:
+      - uid: sccap-fluentd-buffer-overflow
+        title: fluentd buffer overflow — chunks dropped
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: loki
+            model:
+              datasource:
+                type: loki
+                uid: loki
+              expr: |
+                sum(count_over_time(
+                  {service_name="fluentd-internal", event="BUFFER_OVERFLOW"}[5m]
+                ))
+              queryType: range
+              refId: A
+              maxDataPoints: 43200
+              intervalMs: 60000
+          - refId: B
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 0
+              to: 0
+            model:
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              reducer: last
+              type: reduce
+              refId: B
+          - refId: C
+            datasourceUid: __expr__
+            relativeTimeRange:
+              from: 0
+              to: 0
+            model:
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: $B > 0
+              type: threshold
+              refId: C
+        noDataState: OK
+        execErrState: Error
+        for: 0m
+        labels:
+          severity: critical
+          service: fluentd
+        annotations:
+          summary: fluentd dropped log chunks (BUFFER_OVERFLOW)
+          description: >
+            Sustained Loki backpressure exhausted fluentd's bounded retry
+            window; drop_oldest_chunk fired. Logs from the affected window
+            are LOST. See runbook §"Loki outage recovery".
+          runbook_url: file:///workspace/.agent/runbooks/disk-fill.md
