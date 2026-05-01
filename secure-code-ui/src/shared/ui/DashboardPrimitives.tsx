@@ -82,7 +82,8 @@ export interface SparkProps {
 
 export const Spark: React.FC<SparkProps> = ({ data, tone = "primary", idKey }) => {
   const { points, color, gradientId } = useMemo(() => {
-    const safe = data.length >= 2 ? data : [0, 0];
+    const safe = (data ?? []).filter(Number.isFinite).slice(0, 1024);
+    if (safe.length < 2) safe.splice(0, safe.length, 0, 0);
     const max = Math.max(...safe);
     const min = Math.min(...safe);
     const w = 180;
@@ -144,15 +145,20 @@ export const SevBar: React.FC<SevBarProps> = ({
   low = 0,
   info = 0,
 }) => {
-  const total = crit + high + med + low + info || 1;
+  const c = Math.max(0, crit | 0);
+  const h = Math.max(0, high | 0);
+  const m = Math.max(0, med | 0);
+  const l = Math.max(0, low | 0);
+  const i = Math.max(0, info | 0);
+  const total = c + h + m + l + i || 1;
   const pct = (n: number) => `${((n / total) * 100).toFixed(1)}%`;
   return (
     <div className="stat-bar" aria-label="Severity breakdown">
-      <span style={{ width: pct(crit), background: "var(--critical)" }} />
-      <span style={{ width: pct(high), background: "var(--high)" }} />
-      <span style={{ width: pct(med), background: "var(--medium)" }} />
-      <span style={{ width: pct(low), background: "var(--low)" }} />
-      <span style={{ width: pct(info), background: "var(--info)" }} />
+      <span style={{ width: pct(c), background: "var(--critical)" }} />
+      <span style={{ width: pct(h), background: "var(--high)" }} />
+      <span style={{ width: pct(m), background: "var(--medium)" }} />
+      <span style={{ width: pct(l), background: "var(--low)" }} />
+      <span style={{ width: pct(i), background: "var(--info)" }} />
     </div>
   );
 };
@@ -179,10 +185,11 @@ export const RiskRing: React.FC<RiskRingProps> = ({
   label = "Posture",
   size = 120,
 }) => {
+  const s = Number.isFinite(score) ? Math.max(0, Math.min(100, score)) : 0;
   const r = 48;
   const c = 2 * Math.PI * r;
-  const off = c - (score / 100) * c;
-  const color = ringColor(score);
+  const off = c - (s / 100) * c;
+  const color = ringColor(s);
 
   return (
     <div style={{ position: "relative", width: size, height: size }}>
@@ -232,7 +239,7 @@ export const RiskRing: React.FC<RiskRingProps> = ({
               color: "var(--fg)",
             }}
           >
-            {score}
+            {s}
           </div>
           <div
             style={{

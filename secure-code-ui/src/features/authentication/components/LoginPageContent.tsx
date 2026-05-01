@@ -4,7 +4,7 @@
 // of the app so light/dark × A/B variant switching from AuthLayout's
 // floating toggle ripples through without extra wiring.
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../../../shared/hooks/useAuth";
 import { type UserLoginData } from "../../../shared/types/api";
@@ -19,6 +19,8 @@ const LoginPageContent: React.FC = () => {
     clearError,
   } = useAuth();
   const toast = useToast();
+  const lastSubmitRef = useRef<number>(0);
+  const mountedAt = useRef<number>(Date.now());
 
   const [form, setForm] = useState<UserLoginData & { remember: boolean }>({
     username: "",
@@ -35,11 +37,31 @@ const LoginPageContent: React.FC = () => {
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.username || !form.password) return;
+    // V2.4.2: reject sub-750ms scripted submissions
+    if (Date.now() - mountedAt.current < 750) return;
+    // V2.2.1: enforce input length bounds
+    if (!form.username || !form.password || form.username.length > 320 || form.password.length > 4096) {
+      toast.error("Username or password is too long.");
+      return;
+    }
+    // V2.4.1: client-side cooldown between submissions
+    const now = Date.now();
+    if (now - lastSubmitRef.current < 1500) {
+      toast.error("Please wait before retrying.");
+      return;
+    }
+    lastSubmitRef.current = now;
     try {
       await login({ username: form.username, password: form.password });
-    } catch (err) {
-      console.error("LoginPage: login failed:", err);
+    } catch (err: unknown) {
+      // V13.4.2 / V16.2.5: only log in dev; never expose raw error objects
+      if (import.meta.env.DEV) {
+        const sanitisedErr = err as { response?: { status?: number }; message?: string } | null;
+        console.error("LoginPage: login failed:", {
+          status: sanitisedErr?.response?.status,
+          message: sanitisedErr?.message,
+        });
+      }
     }
   };
 

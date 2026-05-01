@@ -12,6 +12,29 @@ from app.shared.lib.encryption import FernetEncrypt
 
 logger = logging.getLogger(__name__)
 
+_SUPPORTED_PROVIDERS = {"openai", "anthropic", "google", "litellm", "ollama"}
+
+
+def _validate_cfg(cfg) -> None:
+    """Validate LLM configuration fields before persistence.
+
+    Raises ValueError if any field is out of range or unsupported.
+    """
+    provider = getattr(cfg, "provider", None)
+    if provider not in _SUPPORTED_PROVIDERS:
+        raise ValueError(
+            f"Unsupported provider '{provider}'. Must be one of {sorted(_SUPPORTED_PROVIDERS)}."
+        )
+    name = getattr(cfg, "name", None)
+    if not name or not (1 <= len(name) <= 255):
+        raise ValueError("name must be between 1 and 255 characters.")
+    input_cost = getattr(cfg, "input_cost_per_million", None)
+    if input_cost is not None and input_cost < 0:
+        raise ValueError("input_cost_per_million must be non-negative.")
+    output_cost = getattr(cfg, "output_cost_per_million", None)
+    if output_cost is not None and output_cost < 0:
+        raise ValueError("output_cost_per_million must be non-negative.")
+
 
 class LLMConfigRepository:
     def __init__(self, db_session: AsyncSession):
@@ -58,7 +81,11 @@ class LLMConfigRepository:
     async def get_all(
         self, skip: int = 0, limit: int = 100
     ) -> List[db_models.LLMConfiguration]:
-        """Retrieves all LLM configurations, with pagination."""
+        """Retrieves all LLM configurations, with pagination.
+
+        limit is capped to a maximum of 500 to prevent unbounded queries.
+        """
+        limit = max(1, min(limit, 500))
         logger.debug(
             "Fetching all LLM configs from DB.", extra={"skip": skip, "limit": limit}
         )
@@ -74,6 +101,7 @@ class LLMConfigRepository:
         self, config: api_models.LLMConfigurationCreate
     ) -> db_models.LLMConfiguration:
         """Creates a new LLM configuration in the database with an encrypted API key."""
+        _validate_cfg(config)
         logger.info(
             "Creating new LLM config in DB.", extra={"config_name": config.name}
         )
@@ -106,7 +134,12 @@ class LLMConfigRepository:
     ) -> Optional[db_models.LLMConfiguration]:
         """Updates an existing LLM configuration. Encrypts the API key if a new one is provided."""
         logger.info("Updating LLM config in DB.", extra={"config_id": str(config_id)})
-        db_config = await self.get_by_id(config_id)
+        result = await self.db.execute(
+            select(db_models.LLMConfiguration)
+            .filter(db_models.LLMConfiguration.id == config_id)
+            .with_for_update()
+        )
+        db_config = result.scalars().first()
         if not db_config:
             logger.warning(
                 "LLM config not found for update.", extra={"config_id": str(config_id)}
@@ -126,6 +159,7 @@ class LLMConfigRepository:
                     db_config.encrypted_api_key = FernetEncrypt.encrypt(plain)
             elif hasattr(db_config, key):
                 setattr(db_config, key, value)
+        _validate_cfg(db_config)
         await self.db.commit()
         await self.db.refresh(db_config)
         logger.info(

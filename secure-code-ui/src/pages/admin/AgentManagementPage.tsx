@@ -112,6 +112,14 @@ const AgentManagementPage: React.FC = () => {
       toast.error("All fields are required.");
       return;
     }
+    if (
+      form.name.length > 128 ||
+      form.description.length > 1024 ||
+      form.domain_query.length > 4096
+    ) {
+      toast.error("One or more fields exceed the allowed length.");
+      return;
+    }
     // `domain_query` is stored server-side as an object; the admin UI
     // edits it as raw text. Try parsing JSON; fall back to the raw
     // string which the backend accepts as a free-text RAG query.
@@ -347,6 +355,7 @@ const AgentManagementPage: React.FC = () => {
               onChange={(e) => setForm({ ...form, name: e.target.value })}
               required
               autoFocus
+              maxLength={128}
             />
           </label>
           <label style={{ display: "grid", gap: 6 }}>
@@ -362,6 +371,7 @@ const AgentManagementPage: React.FC = () => {
                 setForm({ ...form, description: e.target.value })
               }
               required
+              maxLength={1024}
             />
           </label>
           <label style={{ display: "grid", gap: 6 }}>
@@ -377,6 +387,7 @@ const AgentManagementPage: React.FC = () => {
                 setForm({ ...form, domain_query: e.target.value })
               }
               required
+              maxLength={4096}
             />
           </label>
           <button type="submit" style={{ display: "none" }} />

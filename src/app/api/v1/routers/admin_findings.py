@@ -79,6 +79,11 @@ async def list_admin_findings(
         description="Last finding id from the previous page; results returned have id < cursor.",
     ),
     db: AsyncSession = Depends(get_db),
+    # TODO(V08.4.2): Supplement with a step-up / risk-evaluation dependency
+    # e.g. `_step_up=Depends(require_recent_reauth(window_minutes=15))` once
+    # that helper exists. Until then the JWT must carry a `last_authenticated_at`
+    # claim and /admin/* routes should reject tokens older than 15 minutes.
+    # Tracking: admin interfaces must not rely on the role bit alone (ASVS V08.4.2).
     _user=Depends(current_superuser),
     visible_user_ids: Optional[List[int]] = Depends(get_visible_user_ids),
 ) -> AdminFindingsResponse:
@@ -104,6 +109,19 @@ async def list_admin_findings(
         for row in rows
     ]
     next_cursor = items[-1].id if len(items) == limit else None
+    # V16.2.1 / V16.3.2 L3 sensitive-data-access audit log: record who read what
+    # and how many rows were returned, but never log finding contents themselves.
+    logger.info(
+        "admin.findings.read",
+        extra={
+            "actor_id": _user.id,
+            "source_filter": source,
+            "limit": limit,
+            "cursor": cursor,
+            "returned": len(items),
+            "visible_user_ids": visible_user_ids,
+        },
+    )
     return AdminFindingsResponse(
         items=items,
         next_cursor=next_cursor,

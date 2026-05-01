@@ -129,6 +129,14 @@ const UserGroupsPage: React.FC = () => {
       toast.error("Group name is required.");
       return;
     }
+    if (form.name.trim().length > 64) {
+      toast.error("Group name must be 64 characters or fewer.");
+      return;
+    }
+    if (form.description.trim().length > 512) {
+      toast.error("Description must be 512 characters or fewer.");
+      return;
+    }
     if (editing) {
       updateMutation.mutate({
         id: editing.id,
@@ -340,6 +348,7 @@ const UserGroupsPage: React.FC = () => {
               onChange={(e) => setForm({ ...form, name: e.target.value })}
               required
               autoFocus
+              maxLength={64}
             />
           </label>
           <label style={{ display: "grid", gap: 6 }}>
@@ -354,6 +363,7 @@ const UserGroupsPage: React.FC = () => {
               onChange={(e) =>
                 setForm({ ...form, description: e.target.value })
               }
+              maxLength={512}
             />
           </label>
           <button type="submit" style={{ display: "none" }} />
@@ -409,10 +419,19 @@ const UserGroupsPage: React.FC = () => {
             <form
               onSubmit={(e) => {
                 e.preventDefault();
-                if (!memberEmail.trim()) return;
+                const trimmedEmail = memberEmail.trim();
+                if (!trimmedEmail) return;
+                if (trimmedEmail.length > 254) {
+                  toast.error("Email address is too long.");
+                  return;
+                }
+                if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+                  toast.error("Please enter a valid email address.");
+                  return;
+                }
                 addMemberMutation.mutate({
                   id: activeGroup.id,
-                  email: memberEmail.trim(),
+                  email: trimmedEmail,
                 });
               }}
               style={{ display: "flex", gap: 8 }}
@@ -424,6 +443,7 @@ const UserGroupsPage: React.FC = () => {
                 value={memberEmail}
                 onChange={(e) => setMemberEmail(e.target.value)}
                 style={{ flex: 1 }}
+                maxLength={254}
               />
               <button
                 type="submit"

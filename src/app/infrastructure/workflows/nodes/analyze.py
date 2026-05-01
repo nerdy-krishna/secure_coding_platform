@@ -52,7 +52,7 @@ async def analyze_files_parallel_node(state: WorkerState) -> Dict[str, Any]:
     """
     scan_id, scan_type = state["scan_id"], state["scan_type"]
     logger.info(
-        f"Starting single-pass analysis for scan {scan_id} in '{scan_type}' mode."
+        "Starting single-pass analysis for scan %s in %r mode.", scan_id, scan_type
     )
 
     # --- REVISED GUARD CLAUSE BLOCK ---
@@ -110,7 +110,8 @@ async def analyze_files_parallel_node(state: WorkerState) -> Dict[str, Any]:
         token_count = len(file_content) / 4
         if token_count > CHUNK_ONLY_IF_LARGER_THAN:
             logger.info(
-                f"{file_path} is a large file, applying chunking.",
+                "%s is a large file, applying chunking.",
+                file_path,
                 extra={"scan_id": str(scan_id)},
             )
             return semantic_chunker(file_content, file_summary)
@@ -225,7 +226,7 @@ async def analyze_files_parallel_node(state: WorkerState) -> Dict[str, Any]:
                     },
                 )
         except Exception as e:
-            logger.warning(f"FILE_ANALYZED event emit failed for {file_path}: {e}")
+            logger.warning("FILE_ANALYZED event emit failed for %s: %s", file_path, e)
 
         return {"findings": file_findings, "fixes": file_fixes}
 
@@ -240,7 +241,7 @@ async def analyze_files_parallel_node(state: WorkerState) -> Dict[str, Any]:
     for r in file_results:
         if isinstance(r, BaseException):
             logger.error(
-                f"File analysis task failed for scan {scan_id}: {r}", exc_info=r
+                "File analysis task failed for scan %s: %s", scan_id, r, exc_info=r
             )
             continue
         all_scan_findings.extend(r.get("findings", []))
@@ -253,10 +254,11 @@ async def analyze_files_parallel_node(state: WorkerState) -> Dict[str, Any]:
     prior_findings = state.get("findings") or []
 
     logger.info(
-        f"Single-pass analysis complete for scan {scan_id}: "
-        f"{len(all_scan_findings)} agent findings, "
-        f"{len(prior_findings)} prior findings, "
-        f"{len(all_proposed_fixes)} proposed fixes."
+        "Single-pass analysis complete for scan %s: %d agent findings, %d prior findings, %d proposed fixes.",
+        scan_id,
+        len(all_scan_findings),
+        len(prior_findings),
+        len(all_proposed_fixes),
     )
 
     return {

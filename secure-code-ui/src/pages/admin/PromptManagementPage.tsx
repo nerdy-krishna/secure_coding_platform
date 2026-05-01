@@ -121,6 +121,22 @@ const PromptManagementPage: React.FC = () => {
       toast.error("Name and content are required.");
       return;
     }
+    if (form.name.length > 200) {
+      toast.error("Template name must be 200 characters or fewer.");
+      return;
+    }
+    if (form.template_text.length > 32768) {
+      toast.error("Template content must be 32 768 characters or fewer.");
+      return;
+    }
+    if (
+      !Number.isInteger(form.version) ||
+      form.version < 1 ||
+      form.version > 1000
+    ) {
+      toast.error("Version must be an integer between 1 and 1000.");
+      return;
+    }
     const payload = {
       name: form.name,
       template_type: form.template_type,
@@ -325,6 +341,7 @@ const PromptManagementPage: React.FC = () => {
                 className="sccap-input"
                 placeholder="e.g. python.sqli.detailed_fix"
                 value={form.name}
+                maxLength={200}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
               />
             </label>
@@ -397,6 +414,7 @@ const PromptManagementPage: React.FC = () => {
               rows={18}
               placeholder="Enter the full prompt template text…"
               value={form.template_text}
+              maxLength={32768}
               onChange={(e) =>
                 setForm({ ...form, template_text: e.target.value })
               }

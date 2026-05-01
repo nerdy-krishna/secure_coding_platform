@@ -8,9 +8,19 @@ title = "SCCAP gitleaks config"
 useDefault = true
 
 [allowlist]
-description = "Allow placeholder strings in committed example/config files"
+# ASVS V13.3.1 — allowlist is scoped to known placeholder strings rather than
+# entire paths so that a real secret accidentally committed under any path is
+# still caught.  Path exemptions are limited to files whose *only* purpose is
+# to hold placeholders; the broad docs/.* exemption has been removed.
+description = "Allow known placeholder strings in committed example/config files"
 paths = [
     '''\.env\.example$''',
     '''README\.md$''',
-    '''docs/.*''',
+    '''docs/static/img/.*''',
+]
+regexes = [
+    '''change-me-[\w\-]*''',
+    '''REPLACE[_\-]ME''',
+    '''supersecretkey1234567890''',
+    '''your[_\-]secret[_\-]here''',
 ]

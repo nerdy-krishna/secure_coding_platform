@@ -1,4 +1,14 @@
-# src/app/api/v1/routers/admin_prompts.py
+"""Admin CRUD for prompt templates.
+
+DANGEROUS FUNCTIONALITY (V15.1.5): template_text drives every LLM call in the
+scan workflow — a compromised superuser can pivot the entire scan engine via
+this endpoint (e.g., to exfiltrate scan content via prompt-injection back to
+the provider, or to suppress findings). All routes are superuser-gated.
+Higher-assurance deployments should add change auditing and a 2-person rule on
+prompt updates; tracked separately.
+"""
+
+import logging
 import uuid
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -7,6 +17,8 @@ from app.infrastructure.database import models as db_models
 from app.infrastructure.auth.core import current_superuser
 from app.core.services.admin_service import AdminService
 from app.api.v1.dependencies import get_admin_service
+
+logger = logging.getLogger(__name__)
 
 prompt_router = APIRouter(prefix="/prompts", tags=["Admin: Prompt Templates"])
 
@@ -22,7 +34,18 @@ async def create_prompt_template(
     user: db_models.User = Depends(current_superuser),
 ):
     """Creates a new prompt template."""
-    return await admin_service.create_prompt_template(template)
+    result = await admin_service.create_prompt_template(template)
+    logger.info(
+        "admin.prompt.created",
+        extra={
+            "actor_id": str(user.id),
+            "name": template.name,
+            "template_type": template.template_type,
+            "variant": template.variant,
+            "version": template.version,
+        },
+    )
+    return result
 
 
 @prompt_router.get("/", response_model=List[api_models.PromptTemplateRead])
@@ -60,6 +83,10 @@ async def update_prompt_template(
     )
     if not updated_template:
         raise HTTPException(status_code=404, detail="Prompt template not found")
+    logger.info(
+        "admin.prompt.updated",
+        extra={"actor_id": str(user.id), "template_id": str(template_id)},
+    )
     return updated_template
 
 
@@ -73,4 +100,8 @@ async def delete_prompt_template(
     deleted = await admin_service.delete_prompt_template(template_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Prompt template not found")
+    logger.info(
+        "admin.prompt.deleted",
+        extra={"actor_id": str(user.id), "template_id": str(template_id)},
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

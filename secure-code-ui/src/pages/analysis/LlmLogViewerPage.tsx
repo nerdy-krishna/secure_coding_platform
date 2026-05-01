@@ -8,13 +8,45 @@ import React, { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { scanService } from "../../shared/api/scanService";
 import type { LLMInteractionResponse } from "../../shared/types/api";
+import { useAuth } from "../../shared/hooks/useAuth";
+import { redactSensitive } from "../../shared/lib/redact";
 import { Icon } from "../../shared/ui/Icon";
+
+const INTERNAL_ERROR_INDICATORS = [
+  "traceback",
+  "at line",
+  "sql:",
+  "sqlalchemy",
+  "file \"",
+  "exception",
+  "stacktrace",
+  "stack trace",
+];
+
+/** Sanitize a backend error string for non-superuser display. */
+function sanitizeErrorMessage(raw: string): string | null {
+  const lower = raw.toLowerCase();
+  const looksLikeInternals = INTERNAL_ERROR_INDICATORS.some((indicator) =>
+    lower.includes(indicator),
+  );
+  if (looksLikeInternals) return null; // caller renders a generic message
+  // Truncate to first sentence or 200 chars, whichever is shorter.
+  const firstSentenceEnd = raw.search(/[.!?]\s/);
+  const truncated =
+    firstSentenceEnd > 0 && firstSentenceEnd < 200
+      ? raw.slice(0, firstSentenceEnd + 1)
+      : raw.slice(0, 200);
+  return truncated !== raw ? `${truncated}…` : truncated;
+}
 
 const LlmLogViewerPage: React.FC = () => {
   const { scanId } = useParams<{ scanId: string }>();
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const isSuperuser = user?.is_superuser === true;
   const [selectedFilePath, setSelectedFilePath] = useState<string>("All Files");
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [showTechDetails, setShowTechDetails] = useState<Record<number, boolean>>({});
 
   const { data: interactions = [], isLoading, isError, error } = useQuery<
     LLMInteractionResponse[],
@@ -356,13 +388,21 @@ const LlmLogViewerPage: React.FC = () => {
                               <div>
                                 <Label>Prompt context</Label>
                                 <pre className="sccap-code">
-                                  {JSON.stringify(r.prompt_context, null, 2)}
+                                  {JSON.stringify(
+                                    redactSensitive(r.prompt_context),
+                                    null,
+                                    2,
+                                  )}
                                 </pre>
                               </div>
                               <div>
                                 <Label>Parsed output</Label>
                                 <pre className="sccap-code">
-                                  {JSON.stringify(r.parsed_output, null, 2)}
+                                  {JSON.stringify(
+                                    redactSensitive(r.parsed_output),
+                                    null,
+                                    2,
+                                  )}
                                 </pre>
                               </div>
                               {r.error && (
@@ -378,7 +418,61 @@ const LlmLogViewerPage: React.FC = () => {
                                       fontSize: 12.5,
                                     }}
                                   >
-                                    {r.error}
+                                    {(() => {
+                                      const safe = sanitizeErrorMessage(r.error);
+                                      const genericMessage =
+                                        "An internal error occurred during this LLM call. See backend logs for details.";
+                                      const displayText = safe ?? genericMessage;
+                                      const hasTechnicalDetails =
+                                        isSuperuser && safe !== r.error;
+                                      const techVisible =
+                                        showTechDetails[r.id] ?? false;
+                                      return (
+                                        <>
+                                          <span>{displayText}</span>
+                                          {hasTechnicalDetails && (
+                                            <>
+                                              {" "}
+                                              <button
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  setShowTechDetails((prev) => ({
+                                                    ...prev,
+                                                    [r.id]: !prev[r.id],
+                                                  }));
+                                                }}
+                                                style={{
+                                                  background: "none",
+                                                  border: "none",
+                                                  cursor: "pointer",
+                                                  color: "var(--critical)",
+                                                  fontSize: 11,
+                                                  textDecoration: "underline",
+                                                  padding: 0,
+                                                }}
+                                              >
+                                                {techVisible
+                                                  ? "Hide technical details"
+                                                  : "Show technical details"}
+                                              </button>
+                                              {techVisible && (
+                                                <pre
+                                                  style={{
+                                                    marginTop: 8,
+                                                    whiteSpace: "pre-wrap",
+                                                    wordBreak: "break-all",
+                                                    fontSize: 11,
+                                                    opacity: 0.85,
+                                                  }}
+                                                >
+                                                  {r.error}
+                                                </pre>
+                                              )}
+                                            </>
+                                          )}
+                                        </>
+                                      );
+                                    })()}
                                   </div>
                                 </div>
                               )}

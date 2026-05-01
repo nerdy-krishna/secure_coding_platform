@@ -164,7 +164,14 @@ async def lifespan(app: FastAPI):
                 if llm_mode_config and llm_mode_config.value:
                     raw = llm_mode_config.value
                     mode_str = raw.get("mode") if isinstance(raw, dict) else str(raw)
-                    SystemConfigCache.set_llm_mode(mode_str or "")
+                    if mode_str:
+                        try:
+                            SystemConfigCache.set_llm_mode(mode_str)
+                        except ValueError as exc:
+                            logger.warning(
+                                "LLM optimization mode invalid in DB (%s); using default.",
+                                exc,
+                            )
                     logger.info(
                         f"LLM optimization mode: {SystemConfigCache.get_llm_mode()}"
                     )

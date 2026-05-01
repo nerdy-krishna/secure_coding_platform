@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import urllib.parse
 from typing import Any, Optional
 
 from app.config.config import settings
@@ -39,6 +40,28 @@ logger = logging.getLogger(__name__)
 _lock = threading.Lock()
 _client: Optional[Any] = None
 _disabled: bool = False
+
+
+# Allowlist of hostnames permitted as Langfuse egress targets (V13.2.4).
+# 'cloud.langfuse.com' covers the SaaS endpoint; 'langfuse-web' covers the
+# compose-internal service name used by the default self-hosted deployment.
+# Extend this set if you run Langfuse under a custom hostname.
+_LANGFUSE_HOST_ALLOWLIST: frozenset[str] = frozenset(
+    {"cloud.langfuse.com", "langfuse-web"}
+)
+
+
+def _host_is_allowed(host_url: str) -> bool:
+    """Return True iff the hostname in *host_url* is in the egress allowlist.
+
+    Logs a CRITICAL message (once, inside the lock) if the host is rejected so
+    the operator can detect a misconfigured or poisoned LANGFUSE_HOST env var.
+    """
+    try:
+        hostname = urllib.parse.urlparse(host_url).hostname or ""
+    except Exception:
+        hostname = ""
+    return hostname in _LANGFUSE_HOST_ALLOWLIST
 
 
 def _is_configured() -> bool:
@@ -77,6 +100,21 @@ def get_langfuse() -> Optional[Any]:
             return None
         if _client is not None:
             return _client
+        # V13.2.4 egress allowlist — reject env-var-supplied hosts that are not
+        # in the explicit set of known-good Langfuse endpoints.  A poisoned or
+        # misconfigured LANGFUSE_HOST could exfiltrate prompt/completion payloads
+        # (which carry user code, secrets-shaped content, etc.) to an arbitrary
+        # host.  We latch _disabled=True so we do not retry after rejection.
+        if not _host_is_allowed(settings.LANGFUSE_HOST):
+            _disabled = True
+            logger.critical(
+                "Langfuse SDK disabled: LANGFUSE_HOST '%s' is not in the egress "
+                "allowlist %r. Update _LANGFUSE_HOST_ALLOWLIST or correct the "
+                "LANGFUSE_HOST environment variable.",
+                settings.LANGFUSE_HOST,
+                sorted(_LANGFUSE_HOST_ALLOWLIST),
+            )
+            return None
         try:
             from langfuse import Langfuse  # type: ignore[import-not-found]
 

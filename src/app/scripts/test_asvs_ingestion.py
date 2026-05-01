@@ -60,5 +60,9 @@ V1,Encoding and Sanitization,V1.1,Encoding and Sanitization Architecture,V1.1.1,
         traceback.print_exc()
 
 
-if __name__ == "__main__":
+if __name__ == "__main__" and os.environ.get("SCCAP_ALLOW_DEV_SMOKE_TESTS") == "1":
     asyncio.run(test_ingestion())
+else:
+    raise SystemExit(
+        "Smoke-test runner disabled outside dev. Set SCCAP_ALLOW_DEV_SMOKE_TESTS=1 to enable."
+    )

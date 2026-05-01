@@ -2,9 +2,11 @@
 import hashlib
 import logging
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.infrastructure.database import models as db_models
@@ -50,8 +52,29 @@ class RAGJobRepository:
             status="PENDING",
         )
         self.db.add(job)
-        await self.db.commit()
-        await self.db.refresh(job)
+        try:
+            await self.db.commit()
+            await self.db.refresh(job)
+        except SQLAlchemyError:
+            logger.error(
+                "rag_job.create.failed",
+                extra={
+                    "job_id": None,
+                    "user_id": user_id,
+                    "framework_name": framework_name,
+                },
+                exc_info=True,
+            )
+            raise
+        logger.info(
+            "rag_job.created",
+            extra={
+                "job_id": str(job.id),
+                "user_id": user_id,
+                "framework_name": framework_name,
+                "llm_config_id": str(llm_config_id),
+            },
+        )
         return job
 
     async def get_job_by_id(
@@ -63,7 +86,13 @@ class RAGJobRepository:
             db_models.RAGPreprocessingJob.user_id == user_id,
         )
         result = await self.db.execute(stmt)
-        return result.scalars().first()
+        row = result.scalars().first()
+        if row is None:
+            logger.warning(
+                "rag_job.access.denied_or_missing",
+                extra={"job_id": str(job_id), "user_id": user_id},
+            )
+        return row
 
     async def update_job(self, job_id: uuid.UUID, data: Dict[str, Any]):
         """Updates a job record with the given data."""
@@ -73,7 +102,27 @@ class RAGJobRepository:
             .values(**data)
         )
         await self.db.execute(stmt)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except SQLAlchemyError:
+            logger.error(
+                "rag_job.update.failed",
+                extra={"job_id": str(job_id)},
+                exc_info=True,
+            )
+            raise
+        logger.info(
+            "rag_job.updated",
+            extra={"job_id": str(job_id), "updated_fields": list(data.keys())},
+        )
+        if data.get("status") == "FAILED":
+            logger.warning(
+                "rag_job.failed",
+                extra={
+                    "job_id": str(job_id),
+                    "error_class": type(data.get("error_message")).__name__,
+                },
+            )
 
     async def get_latest_job_for_framework(
         self, framework_name: str, user_id: int
@@ -92,3 +141,21 @@ class RAGJobRepository:
         )
         result = await self.db.execute(stmt)
         return result.scalars().first()
+
+    async def purge_old_raw_content(self, retention_days: int) -> int:
+        """Nulls out raw_content on completed jobs older than retention_days.
+
+        Default retention is 90 days. Call this from a periodic sweeper to
+        limit the window in which uploaded file bytes remain in the database.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+        stmt = (
+            update(db_models.RAGPreprocessingJob)
+            .where(db_models.RAGPreprocessingJob.status == "COMPLETED")
+            .where(db_models.RAGPreprocessingJob.completed_at < cutoff)
+            .where(db_models.RAGPreprocessingJob.raw_content.isnot(None))
+            .values(raw_content=None)
+        )
+        res = await self.db.execute(stmt)
+        await self.db.commit()
+        return res.rowcount or 0

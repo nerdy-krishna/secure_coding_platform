@@ -8,6 +8,7 @@ import React from "react";
 import { Link, useLocation } from "react-router-dom";
 
 import { useAuth } from "../shared/hooks/useAuth";
+import { isSafeHttpUrl } from "../shared/lib/safeUrl";
 
 interface AdminLink {
   to: string;
@@ -35,7 +36,7 @@ export const AdminSubNav: React.FC = () => {
   // External link to the self-hosted Langfuse UI. Superuser-only because
   // Langfuse traces span all tenants (no per-project isolation in the
   // first iteration — see threat model #2).
-  const showLangfuse = isSuperuser && LANGFUSE_HOST.length > 0;
+  const showLangfuse = isSuperuser && LANGFUSE_HOST.length > 0 && isSafeHttpUrl(LANGFUSE_HOST);
   const itemStyle = (active: boolean): React.CSSProperties => ({
     padding: "6px 12px",
     borderRadius: 8,

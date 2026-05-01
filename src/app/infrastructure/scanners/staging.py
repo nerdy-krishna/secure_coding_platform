@@ -29,6 +29,9 @@ from typing import Dict, Iterator, Mapping, Tuple
 
 logger = logging.getLogger(__name__)
 
+# V02.4.1 — anti-automation limits at the staging boundary.
+MAX_STAGED_FILES = 10_000
+MAX_STAGED_TOTAL_BYTES = 500 * 1024 * 1024  # 500 MiB
 
 _UNSAFE_NAME_CHARS = re.compile(r"[^A-Za-z0-9._\-]")
 
@@ -90,6 +93,17 @@ def stage_files(files: Mapping[str, str]) -> Iterator[Tuple[Path, Dict[Path, str
 
     The temp directory is removed on exit even if the caller raises.
     """
+    # V02.4.1 — enforce anti-automation limits before touching the filesystem.
+    if len(files) > MAX_STAGED_FILES:
+        raise ValueError(
+            f"submission exceeds {MAX_STAGED_FILES} files ({len(files)} received)"
+        )
+    total = sum(len(c.encode("utf-8", "replace")) for c in files.values())
+    if total > MAX_STAGED_TOTAL_BYTES:
+        raise ValueError(
+            f"submission exceeds {MAX_STAGED_TOTAL_BYTES} bytes total"
+            f" ({total} bytes received)"
+        )
     staged_dir = Path(tempfile.mkdtemp(prefix="sccap-scan-"))
     original_paths: Dict[Path, str] = {}
     try:

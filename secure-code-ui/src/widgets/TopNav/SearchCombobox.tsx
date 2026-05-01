@@ -41,6 +41,12 @@ function sevColor(sev: string | null | undefined): string {
   return "var(--info)";
 }
 
+/**
+ * SearchCombobox — input contract (ASVS V2.1.1, V2.1.3):
+ *   - Query `q`: 2–128 characters, NUL/control characters (U+0000–U+001F) stripped, whitespace trimmed before debounce.
+ *   - Backend rate-limit: 60 search requests / min / user (enforced server-side on POST /api/v1/search).
+ *     TODO (V2.1.3 / V2.4.1): confirm backend rate-limit is active; add TODO here if not yet configured.
+ */
 export const SearchCombobox: React.FC = () => {
   const navigate = useNavigate();
   const [q, setQ] = useState("");
@@ -88,9 +94,11 @@ export const SearchCombobox: React.FC = () => {
       // surfaces immediately without the user hunting for it.
       navigate(`/analysis/results`);
     } else if (row.kind === "scan") {
-      navigate(`/analysis/results/${row.hit.id}`);
+      // V1.2.2: encode backend-supplied id to keep the route well-formed.
+      navigate(`/analysis/results/${encodeURIComponent(row.hit.id)}`);
     } else {
-      navigate(`/analysis/results/${row.hit.scan_id}`);
+      // V1.2.2: encode backend-supplied scan_id to keep the route well-formed.
+      navigate(`/analysis/results/${encodeURIComponent(row.hit.scan_id)}`);
     }
   };
 
@@ -135,9 +143,13 @@ export const SearchCombobox: React.FC = () => {
           placeholder="Search projects, scans, findings…"
           value={q}
           onChange={(e) => {
-            setQ(e.target.value);
+            // V2.1.1 / V2.2.1: strip NUL/control chars and enforce max length client-side.
+            // eslint-disable-next-line no-control-regex
+            const next = e.target.value.replace(/[\x00-\x1f]/g, "").slice(0, 128);
+            setQ(next);
             setOpen(true);
           }}
+          maxLength={128}
           onFocus={() => setOpen(true)}
           onKeyDown={onKeyDown}
           style={{ paddingLeft: 32, height: 34 }}
