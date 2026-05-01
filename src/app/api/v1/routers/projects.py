@@ -466,7 +466,7 @@ async def stream_scan_progress(
         TTL, and is intentionally not echoed in any log line.
     """
     # Authz: reuse the existing service check.
-    scan = await service.get_scan_status(scan_id)
+    scan = await service.get_scan_status(scan_id, user)
     if scan.user_id != user.id and not user.is_superuser:
         logger.warning(
             "scans.stream.access_denied",
@@ -548,7 +548,7 @@ async def stream_scan_progress(
                     )
                     return
 
-                scan = await service.get_scan_status(scan_id)
+                scan = await service.get_scan_status(scan_id, user)
 
                 # Emit on status change (including the first tick).
                 if scan.status != last_status:

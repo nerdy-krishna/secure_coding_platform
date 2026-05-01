@@ -59,4 +59,7 @@ class WorkerState(TypedDict):
     # carries `approved: bool` and `override_critical_secret: bool`.
     # Populated only between the interrupt return and the next route.
     prescan_approval: Optional[Dict[str, Any]]
+    # Number of resume attempts on the prescan-approval interrupt; capped at 3
+    # by `_route_after_prescan_approval` to prevent loop-back denial of service.
+    resume_attempts: Optional[int]
     error_message: Optional[str]

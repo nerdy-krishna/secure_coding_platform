@@ -397,6 +397,7 @@ async def _build_initial_state(
         "files": None,
         "initial_file_map": None,
         "final_file_map": None,
+        "patched_files": None,
         "repository_map": None,
         "dependency_graph": None,
         "all_relevant_agents": {},
@@ -404,6 +405,9 @@ async def _build_initial_state(
         "findings": [],
         "proposed_fixes": None,
         "agent_results": None,
+        "bom_cyclonedx": None,
+        "prescan_approval": None,
+        "resume_attempts": None,
         "error_message": None,
     }
 
