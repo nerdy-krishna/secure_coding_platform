@@ -220,6 +220,9 @@ async def start_preprocessing_job(
         ..., min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$"
     ),
     target_languages: List[str] = Form([]),
+    # V14.2.8 — explicit consent for raw upload retention. Defaults to false
+    # so a missing field is treated as "do not store the bytes."
+    raw_content_retention_consent: bool = Form(False),
     user: db_models.User = Depends(current_superuser),
     job_repo: RAGJobRepository = Depends(get_rag_job_repository),
     preprocessor: RAGPreprocessorService = Depends(get_rag_preprocessor_service),
@@ -251,8 +254,21 @@ async def start_preprocessing_job(
         framework_name=framework_name,
         llm_config_id=llm_config_id,
         file_hash=file_hash,
+        raw_content_retention_consent=raw_content_retention_consent,
     )
-    await job_repo.update_job(job.id, {"raw_content": contents})
+    # V14.2.8 — only persist raw upload bytes when the operator explicitly
+    # consented; otherwise leave `raw_content` NULL.
+    if raw_content_retention_consent:
+        await job_repo.update_job(job.id, {"raw_content": contents})
+    else:
+        logger.info(
+            "admin.rag.raw_content_suppressed_no_consent",
+            extra={
+                "job_id": str(job.id),
+                "framework_name": framework_name,
+                "size_bytes": len(contents),
+            },
+        )
 
     estimated_cost = await preprocessor.estimate_cost(
         contents, llm_config_id, target_languages
