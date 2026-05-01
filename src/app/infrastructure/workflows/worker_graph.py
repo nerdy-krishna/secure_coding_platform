@@ -190,8 +190,9 @@ def _route_after_prescan_approval(state: WorkerState) -> str:
         return "handle_error"
 
     # V02.4.1: anti-automation — cap resume attempts per scan to 3.
-    resume_attempts = state.get("resume_attempts", 0) + 1
-    state["resume_attempts"] = resume_attempts
+    # The counter is incremented inside `pending_prescan_approval_node` so the
+    # checkpointer persists it; we only read it here.
+    resume_attempts = state.get("resume_attempts") or 0
     if resume_attempts > 3:
         logger.warning(
             "audit.prescan_approval_routed: too many resume attempts, declining",
