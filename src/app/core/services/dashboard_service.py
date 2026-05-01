@@ -88,27 +88,35 @@ class DashboardService:
         self.db = db
 
     async def get_stats(self, visible_user_ids: Optional[List[int]]) -> DashboardStats:
-        scope_filter = self._scope_filter(visible_user_ids)
+        try:
+            scope_filter = self._scope_filter(visible_user_ids)
 
-        open_findings = await self._open_findings_by_severity(scope_filter)
-        fixes_ready = await self._fixes_ready(scope_filter)
-        scans_this_month, scans_trend, cost_this_month = await self._scan_activity(
-            scope_filter
-        )
-        rows = await self._findings_for_aggregate(scope_filter)
-        # Off-thread so a large finding set does not stall the FastAPI
-        # event loop while the cvss library iterates per-row.
-        aggregate = await asyncio.to_thread(compute_cvss_aggregate, rows)
-        risk_score = self._risk_score(aggregate)
+            open_findings = await self._open_findings_by_severity(scope_filter)
+            fixes_ready = await self._fixes_ready(scope_filter)
+            scans_this_month, scans_trend, cost_this_month = await self._scan_activity(
+                scope_filter
+            )
+            rows = await self._findings_for_aggregate(scope_filter)
+            # Off-thread so a large finding set does not stall the FastAPI
+            # event loop while the cvss library iterates per-row.
+            aggregate = await asyncio.to_thread(compute_cvss_aggregate, rows)
+            risk_score = self._risk_score(aggregate)
 
-        return DashboardStats(
-            risk_score=risk_score,
-            open_findings=open_findings,
-            fixes_ready=fixes_ready,
-            scans_this_month=scans_this_month,
-            scans_trend=scans_trend,
-            cost_this_month_usd=cost_this_month,
-        )
+            return DashboardStats(
+                risk_score=risk_score,
+                open_findings=open_findings,
+                fixes_ready=fixes_ready,
+                scans_this_month=scans_this_month,
+                scans_trend=scans_trend,
+                cost_this_month_usd=cost_this_month,
+            )
+        except Exception:
+            logger.error(
+                "dashboard: aggregate stats failed",
+                extra={"visible_user_ids": visible_user_ids},
+                exc_info=True,
+            )
+            raise
 
     # --- internals -----------------------------------------------------
 

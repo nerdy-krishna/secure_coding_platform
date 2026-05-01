@@ -20,7 +20,15 @@ const DISMISSED_KEY = "notifications_dismissed";
 
 function readDismissed(): boolean {
   try {
-    return localStorage.getItem(DISMISSED_KEY) === "true";
+    const v = localStorage.getItem(DISMISSED_KEY);
+    if (v !== null && v !== "true" && v !== "false") {
+      try {
+        localStorage.removeItem(DISMISSED_KEY);
+      } catch {
+        /* ignore */
+      }
+    }
+    return v === "true";
   } catch {
     // Private/incognito tabs may throw on localStorage access; treat
     // as not-dismissed so the user can opt in (the API itself is the

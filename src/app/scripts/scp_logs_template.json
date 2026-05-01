@@ -8,16 +8,16 @@
     "mappings": {
       "properties": {
         "@timestamp": { "type": "date" },
-        "container_id": { "type": "keyword" },
-        "container_name": { "type": "keyword" },
-        "correlation_id": { "type": "keyword" },
-        "func_name": { "type": "keyword" },
-        "level": { "type": "keyword" },
-        "logger_name": { "type": "keyword" },
-        "message": { "type": "text" },
-        "service_name": { "type": "keyword" },
-        "exc_info": { "type": "text" },
-        "source": { "type": "keyword" }
+        "container_id": { "type": "keyword", "ignore_above": 256 },
+        "container_name": { "type": "keyword", "ignore_above": 256 },
+        "correlation_id": { "type": "keyword", "ignore_above": 256 },
+        "func_name": { "type": "keyword", "ignore_above": 256 },
+        "level": { "type": "keyword", "ignore_above": 256 },
+        "logger_name": { "type": "keyword", "ignore_above": 256 },
+        "message": { "type": "text", "fields": { "raw": { "type": "keyword", "ignore_above": 1024 } } },
+        "service_name": { "type": "keyword", "ignore_above": 256 },
+        "exc_info": { "type": "text", "fields": { "raw": { "type": "keyword", "ignore_above": 1024 } } },
+        "source": { "type": "keyword", "ignore_above": 256 }
       }
     }
   },
