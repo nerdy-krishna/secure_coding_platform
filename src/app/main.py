@@ -181,6 +181,46 @@ async def lifespan(app: FastAPI):
                         f"{SystemConfigCache.get_llm_mode()}."
                     )
 
+                # V14.2.7 — load retention windows for chat / LLM-interaction / RAG-job.
+                # Admins set these via /admin/system-config; falls back to in-code
+                # defaults (DEFAULT_RETENTION_DAYS) if a key is absent.
+                from app.core.config_cache import (
+                    RETENTION_KIND_CHAT_MESSAGE,
+                    RETENTION_KIND_LLM_INTERACTION,
+                    RETENTION_KIND_RAG_JOB,
+                )
+
+                for retention_key, retention_kind in [
+                    (
+                        "system.retention.llm_interaction_days",
+                        RETENTION_KIND_LLM_INTERACTION,
+                    ),
+                    (
+                        "system.retention.chat_message_days",
+                        RETENTION_KIND_CHAT_MESSAGE,
+                    ),
+                    ("system.retention.rag_job_days", RETENTION_KIND_RAG_JOB),
+                ]:
+                    cfg = await repo.get_by_key(retention_key)
+                    if cfg and isinstance(cfg.value, dict) and "days" in cfg.value:
+                        try:
+                            SystemConfigCache.set_retention_days(
+                                retention_kind, int(cfg.value["days"])
+                            )
+                        except (TypeError, ValueError):
+                            logger.warning(
+                                "Invalid retention days in DB for %s; using default.",
+                                retention_key,
+                            )
+                logger.info(
+                    "Retention windows: llm=%dd chat=%dd rag=%dd",
+                    SystemConfigCache.get_retention_days(
+                        RETENTION_KIND_LLM_INTERACTION
+                    ),
+                    SystemConfigCache.get_retention_days(RETENTION_KIND_CHAT_MESSAGE),
+                    SystemConfigCache.get_retention_days(RETENTION_KIND_RAG_JOB),
+                )
+
             else:
                 logger.info("Setup not completed. Allowing all origins for setup mode.")
                 SystemConfigCache.set_cors_enabled(True)  # Enable CORS for setup
@@ -281,6 +321,17 @@ async def lifespan(app: FastAPI):
         name="findings-source-sweeper",
     )
 
+    # --- Start the retention sweeper (V14.2.7) -------------------------------
+    # Hourly: deletes rows whose `expires_at` is in the past from
+    # llm_interactions / chat_messages / rag_preprocessing_jobs.
+    from app.infrastructure.messaging.retention_sweeper import run_retention_sweeper
+
+    retention_sweeper_stop = asyncio.Event()
+    retention_sweeper_task = asyncio.create_task(
+        run_retention_sweeper(retention_sweeper_stop),
+        name="retention-sweeper",
+    )
+
     # --- Start the scan-progress LISTEN/NOTIFY bus (§3.10a) ---
     # Replaces the per-SSE-client 1 Hz Postgres poll with a single
     # LISTEN connection per app process that fans out scan-status /
@@ -310,6 +361,7 @@ async def lifespan(app: FastAPI):
     sweeper_stop.set()
     prescan_sweeper_stop.set()
     findings_source_sweeper_stop.set()
+    retention_sweeper_stop.set()
     if progress_bus is not None:
         try:
             await progress_bus.stop()
@@ -337,6 +389,13 @@ async def lifespan(app: FastAPI):
         findings_source_sweeper_task.cancel()
     except Exception as e:
         logger.warning(f"findings_source_sweeper shutdown error: {e}")
+    try:
+        await asyncio.wait_for(retention_sweeper_task, timeout=5)
+    except asyncio.TimeoutError:
+        logger.warning("retention_sweeper did not stop within 5s; cancelling.")
+        retention_sweeper_task.cancel()
+    except Exception as e:
+        logger.warning(f"retention_sweeper shutdown error: {e}")
 
     from app.infrastructure.messaging.publisher import close_publisher
 

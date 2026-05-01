@@ -247,7 +247,7 @@ QUEUED → ANALYZING_CONTEXT → PENDING_PRESCAN_APPROVAL
 QUEUED → ANALYZING_CONTEXT → PENDING_COST_APPROVAL   (no prescan findings; gate skipped)
 ```
 
-If any error occurs at any node, the `handle_error` node sets the status to `FAILED`. Scans stuck at `PENDING_PRESCAN_APPROVAL` for >24 h are auto-declined to `BLOCKED_USER_DECLINE` by `prescan_approval_sweeper.py`.
+If any error occurs at any node, the `handle_error` node sets the status to `FAILED`. Scans stuck at `PENDING_PRESCAN_APPROVAL` for >24 h are auto-declined to `BLOCKED_USER_DECLINE` by `prescan_approval_sweeper.py`. Persisted scan-related history is bounded by `retention_sweeper.py` — an hourly background task that deletes rows whose `expires_at` is in the past from `llm_interactions`, `chat_messages`, and `rag_preprocessing_jobs` (V14.2.7). Retention windows are configurable via `system.retention.{kind}_days` system_config keys; defaults are 90/180/90 days.
 
 ---
 

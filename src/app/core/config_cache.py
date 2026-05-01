@@ -1,5 +1,5 @@
 import threading
-from typing import List, Literal
+from typing import Dict, List, Literal
 
 # Canonical values for the LLM optimization mode. "anthropic_optimized"
 # enables prompt caching, tuned prompt variants, and Anthropic-only dispatch.
@@ -8,6 +8,19 @@ LLMMode = Literal["anthropic_optimized", "multi_provider"]
 LLM_MODE_ANTHROPIC_OPTIMIZED: LLMMode = "anthropic_optimized"
 LLM_MODE_MULTI_PROVIDER: LLMMode = "multi_provider"
 DEFAULT_LLM_MODE: LLMMode = LLM_MODE_MULTI_PROVIDER
+
+# V14.2.7 — retention windows applied to the row's `expires_at` at insert time
+# (and via the retention_sweeper at delete time). Operators can override via
+# system_config keys `system.retention.{kind}_days`; if the cache hasn't been
+# populated yet (e.g. during admin write) the constants below apply.
+RETENTION_KIND_LLM_INTERACTION = "llm_interaction"
+RETENTION_KIND_CHAT_MESSAGE = "chat_message"
+RETENTION_KIND_RAG_JOB = "rag_job"
+DEFAULT_RETENTION_DAYS: Dict[str, int] = {
+    RETENTION_KIND_LLM_INTERACTION: 90,
+    RETENTION_KIND_CHAT_MESSAGE: 180,
+    RETENTION_KIND_RAG_JOB: 90,
+}
 
 
 class SystemConfigCache:
@@ -86,3 +99,20 @@ class SystemConfigCache:
     def is_anthropic_optimized(cls) -> bool:
         with cls._lock:
             return cls._llm_mode == LLM_MODE_ANTHROPIC_OPTIMIZED
+
+    # --- Retention (V14.2.7) ---------------------------------------------------
+    _retention_days: Dict[str, int] = {}
+
+    @classmethod
+    def set_retention_days(cls, kind: str, days: int) -> None:
+        """Cache the retention window (days) for one of llm_interaction /
+        chat_message / rag_job. Days <= 0 disables expiry for that kind."""
+        with cls._lock:
+            cls._retention_days[kind] = int(days)
+
+    @classmethod
+    def get_retention_days(cls, kind: str) -> int:
+        """Returns the configured retention window in days. Falls back to
+        the in-code default if the admin hasn't set a system_config row."""
+        with cls._lock:
+            return cls._retention_days.get(kind, DEFAULT_RETENTION_DAYS.get(kind, 0))
