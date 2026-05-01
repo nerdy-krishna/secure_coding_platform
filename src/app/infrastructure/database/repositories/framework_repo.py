@@ -4,6 +4,7 @@ import uuid
 from typing import List, Optional
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -11,6 +12,20 @@ from app.api.v1 import models as api_models
 from app.infrastructure.database import models as db_models
 
 logger = logging.getLogger(__name__)
+
+_ALLOWED_FIELDS = {"name", "description"}
+
+
+def _validate(name: str, description: str) -> None:
+    """Validate framework name and description lengths."""
+    if not (1 <= len(name) <= 255):
+        raise ValueError(
+            f"Framework name must be between 1 and 255 characters, got {len(name)}."
+        )
+    if not (1 <= len(description) <= 4000):
+        raise ValueError(
+            f"Framework description must be between 1 and 4000 characters, got {len(description)}."
+        )
 
 
 class FrameworkRepository:
@@ -23,12 +38,27 @@ class FrameworkRepository:
         self, framework_data: api_models.FrameworkCreate
     ) -> db_models.Framework:
         """Creates a new Framework in the database."""
-        db_framework = db_models.Framework(**framework_data.model_dump())
+        raw = framework_data.model_dump()
+        _validate(raw.get("name", ""), raw.get("description", ""))
+        payload = {k: v for k, v in raw.items() if k in _ALLOWED_FIELDS}
+        db_framework = db_models.Framework(**payload)
         self.db.add(db_framework)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except SQLAlchemyError as e:
+            logger.error(
+                "framework.created.failed",
+                extra={"framework_id": None, "error_class": e.__class__.__name__},
+                exc_info=True,
+            )
+            raise
         await self.db.refresh(db_framework)
         logger.info(
-            f"Created framework '{db_framework.name}' with ID {db_framework.id}."
+            "framework.created",
+            extra={
+                "framework_id": str(db_framework.id),
+                "framework_name": db_framework.name,
+            },
         )
         return db_framework
 
@@ -70,13 +100,28 @@ class FrameworkRepository:
         if not db_framework:
             return None
 
-        update_data = framework_data.model_dump(exclude_unset=True)
+        raw_update = framework_data.model_dump(exclude_unset=True)
+        update_data = {k: v for k, v in raw_update.items() if k in _ALLOWED_FIELDS}
+        new_name = update_data.get("name", db_framework.name)
+        new_description = update_data.get("description", db_framework.description)
+        _validate(new_name, new_description)
         for key, value in update_data.items():
             setattr(db_framework, key, value)
 
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except SQLAlchemyError as e:
+            logger.error(
+                "framework.updated.failed",
+                extra={
+                    "framework_id": str(framework_id),
+                    "error_class": e.__class__.__name__,
+                },
+                exc_info=True,
+            )
+            raise
         await self.db.refresh(db_framework)
-        logger.info(f"Updated framework with ID {framework_id}.")
+        logger.info("framework.updated", extra={"framework_id": str(framework_id)})
         return db_framework
 
     async def delete_framework(self, framework_id: uuid.UUID) -> bool:
@@ -86,8 +131,19 @@ class FrameworkRepository:
             return False
 
         await self.db.delete(db_framework)
-        await self.db.commit()
-        logger.info(f"Deleted framework with ID {framework_id}.")
+        try:
+            await self.db.commit()
+        except SQLAlchemyError as e:
+            logger.error(
+                "framework.deleted.failed",
+                extra={
+                    "framework_id": str(framework_id),
+                    "error_class": e.__class__.__name__,
+                },
+                exc_info=True,
+            )
+            raise
+        logger.info("framework.deleted", extra={"framework_id": str(framework_id)})
         return True
 
     async def update_agent_mappings_for_framework(
@@ -96,7 +152,10 @@ class FrameworkRepository:
         """Sets the associated agents for a given framework."""
         db_framework = await self.get_framework_by_id(framework_id)
         if not db_framework:
-            logger.warning(f"Framework not found during agent mapping: {framework_id}")
+            logger.warning(
+                "framework.agent_mapping.framework_not_found",
+                extra={"framework_id": str(framework_id)},
+            )
             return None
 
         # Fetch the agent objects to be associated
@@ -106,16 +165,34 @@ class FrameworkRepository:
             agents_to_map = list(result.scalars().all())
 
             if len(agents_to_map) != len(agent_ids):
-                logger.warning("Some agent IDs provided for mapping were not found.")
+                missing = set(str(a) for a in agent_ids) - {
+                    str(a.id) for a in agents_to_map
+                }
+                raise ValueError(f"Invalid agent_ids: {missing}")
         else:
             agents_to_map = []
 
         # Update the relationship
         db_framework.agents = agents_to_map
         self.db.add(db_framework)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except SQLAlchemyError as e:
+            logger.error(
+                "framework.agent_mapping.failed",
+                extra={
+                    "framework_id": str(framework_id),
+                    "error_class": e.__class__.__name__,
+                },
+                exc_info=True,
+            )
+            raise
         await self.db.refresh(db_framework)
         logger.info(
-            f"Updated agent mappings for framework {framework_id} with {len(agents_to_map)} agents."
+            "framework.agent_mapping.updated",
+            extra={
+                "framework_id": str(framework_id),
+                "agent_count": len(agents_to_map),
+            },
         )
         return db_framework

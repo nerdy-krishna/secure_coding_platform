@@ -45,7 +45,7 @@ const emptyForm = {
   value: "",
   description: "",
   is_secret: false,
-  encrypted: false,
+  encrypted: true,
 };
 type FormState = typeof emptyForm;
 
@@ -149,6 +149,14 @@ const SystemConfigTab: React.FC = () => {
   }, []);
 
   const handleLogLevelChange = async (value: LogLevel) => {
+    if (
+      value === "DEBUG" &&
+      !window.confirm(
+        "DEBUG logs include full LLM prompts which can contain secrets and PII. Continue?",
+      )
+    ) {
+      return;
+    }
     setSavingLog(true);
     try {
       await logService.setLogLevel(value);
@@ -223,6 +231,35 @@ const SystemConfigTab: React.FC = () => {
   const addOrigin = () => {
     const trimmed = originInput.trim();
     if (!trimmed) return;
+    if (trimmed.length > 256) {
+      toast.error("Origin must be 256 characters or fewer.");
+      return;
+    }
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(trimmed);
+    } catch {
+      toast.error("Enter a valid origin URL (e.g. https://example.com).");
+      return;
+    }
+    if (parsedUrl.pathname !== "/" || parsedUrl.search || parsedUrl.hash) {
+      toast.error("Origin must not include a path, query, or fragment.");
+      return;
+    }
+    if (parsedUrl.protocol !== "https:" && parsedUrl.protocol !== "http:") {
+      toast.error("Only https:// or http:// origins are allowed.");
+      return;
+    }
+    if (
+      parsedUrl.protocol === "http:" &&
+      parsedUrl.hostname !== "localhost" &&
+      parsedUrl.hostname !== "127.0.0.1"
+    ) {
+      toast.error(
+        "Only https:// origins are allowed (localhost may use http://).",
+      );
+      return;
+    }
     if (allowedOrigins.includes(trimmed)) {
       toast.warn("Origin already exists.");
       return;
@@ -235,8 +272,11 @@ const SystemConfigTab: React.FC = () => {
     setEditingKey(cfg.key);
     setForm({
       key: cfg.key,
-      value:
-        typeof cfg.value === "object"
+      // Secret values are write-only: show empty so the server retains the
+      // existing value when the admin saves without entering a new one.
+      value: cfg.is_secret
+        ? ""
+        : typeof cfg.value === "object"
           ? JSON.stringify(cfg.value, null, 2)
           : String(cfg.value ?? ""),
       description: cfg.description ?? "",
@@ -253,20 +293,50 @@ const SystemConfigTab: React.FC = () => {
   };
 
   const onSave = () => {
-    let parsed: JsonValue;
-    try {
-      parsed = JSON.parse(form.value) as JsonValue;
-    } catch {
-      toast.error("Invalid JSON for Value.");
+    if (!editingKey && !/^[a-zA-Z0-9_.-]{1,128}$/.test(form.key)) {
+      toast.error(
+        "Key must be 1–128 characters and contain only letters, digits, underscores, dots, or hyphens.",
+      );
       return;
     }
-    createMutation.mutate({
-      key: form.key,
-      value: parsed,
-      description: form.description,
-      is_secret: form.is_secret,
-      encrypted: form.encrypted,
-    });
+    if (form.description.length > 1024) {
+      toast.error("Description must be 1 024 characters or fewer.");
+      return;
+    }
+    if (form.is_secret && !form.encrypted) {
+      toast.error("Secret values must be encrypted at rest.");
+      return;
+    }
+    // For existing secret rows, an empty value means "keep the existing server value".
+    const isSecretUnchanged = !!editingKey && form.is_secret && form.value === "";
+    if (!isSecretUnchanged) {
+      if (form.value.length > 65536) {
+        toast.error("Value must be 65 536 characters or fewer.");
+        return;
+      }
+      let parsed: JsonValue;
+      try {
+        parsed = JSON.parse(form.value) as JsonValue;
+      } catch {
+        toast.error("Invalid JSON for Value.");
+        return;
+      }
+      createMutation.mutate({
+        key: form.key,
+        value: parsed,
+        description: form.description,
+        is_secret: form.is_secret,
+        encrypted: form.encrypted,
+      });
+    } else {
+      // Omit value so the server retains the existing secret.
+      createMutation.mutate({
+        key: form.key,
+        description: form.description,
+        is_secret: form.is_secret,
+        encrypted: form.encrypted,
+      } as Parameters<typeof createMutation.mutate>[0]);
+    }
   };
 
   return (
@@ -382,6 +452,7 @@ const SystemConfigTab: React.FC = () => {
                 className="sccap-input"
                 placeholder="https://my-domain.com"
                 value={originInput}
+                maxLength={256}
                 onChange={(e) => setOriginInput(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
@@ -398,6 +469,9 @@ const SystemConfigTab: React.FC = () => {
               >
                 <Icon.Plus size={12} /> Add
               </button>
+            </div>
+            <div style={{ fontSize: 11, color: "var(--fg-subtle)", marginBottom: 8 }}>
+              https:// only — http is rejected for non-loopback origins.
             </div>
             {allowedOrigins.length === 0 ? (
               <div style={{ fontSize: 12, color: "var(--fg-subtle)" }}>
@@ -586,6 +660,7 @@ const SystemConfigTab: React.FC = () => {
               className="sccap-input mono"
               placeholder="e.g. GLOBAL_ALERT_MESSAGE"
               value={form.key}
+              maxLength={128}
               onChange={(e) => setForm({ ...form, key: e.target.value })}
               disabled={!!editingKey}
             />
@@ -597,7 +672,11 @@ const SystemConfigTab: React.FC = () => {
             <textarea
               className="sccap-input mono"
               rows={6}
-              placeholder='{"message": "Maintenance mode"}'
+              placeholder={
+                editingKey && form.is_secret
+                  ? "Leave blank to keep the existing secret value."
+                  : '{"message": "Maintenance mode"}'
+              }
               value={form.value}
               onChange={(e) => setForm({ ...form, value: e.target.value })}
               style={{ fontSize: 12.5 }}
@@ -611,6 +690,7 @@ const SystemConfigTab: React.FC = () => {
               className="sccap-input"
               placeholder="Short description"
               value={form.description}
+              maxLength={1024}
               onChange={(e) =>
                 setForm({ ...form, description: e.target.value })
               }
@@ -629,17 +709,52 @@ const SystemConfigTab: React.FC = () => {
               role="switch"
               aria-checked={form.is_secret}
               tabIndex={0}
-              onClick={() => setForm({ ...form, is_secret: !form.is_secret })}
+              onClick={() => {
+                const next = !form.is_secret;
+                // Auto-enable encryption when marking as secret.
+                setForm({ ...form, is_secret: next, encrypted: next ? true : form.encrypted });
+              }}
               onKeyDown={(e) => {
                 if (e.key === " " || e.key === "Enter") {
                   e.preventDefault();
-                  setForm({ ...form, is_secret: !form.is_secret });
+                  const next = !form.is_secret;
+                  setForm({ ...form, is_secret: next, encrypted: next ? true : form.encrypted });
                 }
               }}
             />
             <span style={{ fontSize: 13, color: "var(--fg)" }}>
               Mark as secret (value hidden in UI)
             </span>
+          </div>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              marginTop: 4,
+            }}
+          >
+            <div
+              className={`sccap-switch ${form.encrypted ? "on" : ""}`}
+              role="switch"
+              aria-checked={form.encrypted}
+              tabIndex={0}
+              onClick={() => setForm({ ...form, encrypted: !form.encrypted })}
+              onKeyDown={(e) => {
+                if (e.key === " " || e.key === "Enter") {
+                  e.preventDefault();
+                  setForm({ ...form, encrypted: !form.encrypted });
+                }
+              }}
+            />
+            <span style={{ fontSize: 13, color: "var(--fg)" }}>
+              Encrypt at rest
+            </span>
+            {form.is_secret && !form.encrypted && (
+              <span style={{ fontSize: 11.5, color: "var(--color-danger, #e53e3e)", marginLeft: 6 }}>
+                Secret values must be encrypted.
+              </span>
+            )}
           </div>
         </div>
       </Modal>

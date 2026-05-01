@@ -22,6 +22,26 @@ _channel: Optional[AbstractRobustChannel] = None
 _lock = asyncio.Lock()
 _declared_queues: set[str] = set()
 
+# Allowlist of keys that may be forwarded from the caller's message_body to the
+# queue payload.  Any key not in this set is silently dropped before publish so
+# that mass-assignment-style payload pass-through (V15.3.3) is impossible.
+ALLOWED_OUTBOX_KEYS: frozenset[str] = frozenset(
+    {
+        # code_submission_queue / analysis_approved_queue envelope fields
+        "scan_id",
+        "user_id",
+        "project_id",
+        "file_paths",
+        "git_ref",
+        "kind",
+        "approved",
+        "override_critical_secret",
+        # remediation_queue fields
+        "remediation_id",
+        "apply_fixes",
+    }
+)
+
 
 async def _get_channel() -> AbstractRobustChannel:
     global _connection, _channel
@@ -57,8 +77,9 @@ async def publish_message(
         logger.error("RABBITMQ_URL is not configured. Cannot publish message.")
         return False
 
+    safe_body = {k: v for k, v in message_body.items() if k in ALLOWED_OUTBOX_KEYS}
     full_body = {
-        **message_body,
+        **safe_body,
         "correlation_id": correlation_id or str(uuid.uuid4()),
     }
 
@@ -74,12 +95,19 @@ async def publish_message(
         )
         logger.info(
             "Published message to queue.",
-            extra={"queue": queue_name, "body": full_body},
+            extra={
+                "queue": queue_name,
+                "correlation_id": full_body.get("correlation_id"),
+                "message_keys": list(full_body.keys()),
+                "body_size_bytes": len(json.dumps(full_body)),
+            },
         )
         return True
     except Exception as e:
         logger.error(
-            f"Failed to publish message to queue '{queue_name}': {e}",
+            "Failed to publish message to queue %r: %s",
+            queue_name,
+            e,
             exc_info=True,
         )
         return False
@@ -93,7 +121,7 @@ async def close_publisher() -> None:
             try:
                 await _connection.close()
             except Exception as e:
-                logger.warning(f"Error closing RabbitMQ publisher connection: {e}")
+                logger.warning("Error closing RabbitMQ publisher connection: %s", e)
         _connection = None
         _channel = None
         _declared_queues.clear()

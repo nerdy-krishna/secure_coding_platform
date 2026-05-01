@@ -67,11 +67,22 @@ class LLMClient:
     across concurrent callers (the Pydantic AI Agent construction is
     cheap, and keeping it per-call lets us set system_prompt with
     cache_control correctly for Anthropic).
+
+    V15.4.1: __slots__ + freeze-after-init converts the docstring
+    concurrency warning into a runtime guarantee — post-construction
+    attribute writes raise AttributeError, preventing accidental state
+    mutation if the instance is ever cached or shared.
     """
 
-    provider_name: str
-    db_llm_config: DB_LLMConfiguration
-    decrypted_api_key: str
+    # V15.4.1: restrict attributes and prevent post-init mutation.
+    __slots__ = ("provider_name", "db_llm_config", "decrypted_api_key", "_frozen")
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if getattr(self, "_frozen", False):
+            raise AttributeError(
+                f"LLMClient is immutable after construction; cannot set '{name}'."
+            )
+        super().__setattr__(name, value)
 
     def __init__(self, llm_config: DB_LLMConfiguration):
         self.db_llm_config = llm_config
@@ -82,6 +93,7 @@ class LLMClient:
                 f"API key for LLM config {llm_config.id} is missing or not decrypted."
             )
         self.decrypted_api_key = decrypted_api_key
+        self._frozen = True  # V15.4.1: freeze instance; no further attribute writes.
         logger.info(
             "LLMClient initialized for provider=%s model=%s",
             self.provider_name,
@@ -186,11 +198,13 @@ class LLMClient:
             agent_kwargs["system_prompt"] = system_prompt
         agent: Agent = Agent(model, **agent_kwargs)
 
+        # V14.2.4 / V16.2.5 / V13.4.2: mask prompt payload before logging to
+        # prevent PII/secrets reaching Loki when DEBUG is enabled at runtime.
         logger.debug(
             "LLM PROMPT [%s/%s]:\n%s\n---END PROMPT---",
             self.provider_name,
             self.db_llm_config.model_name,
-            full_prompt_for_counting,
+            mask(full_prompt_for_counting),
         )
 
         start_time = time.perf_counter()
@@ -267,11 +281,13 @@ class LLMClient:
             logger.error(error_message)
 
         if parsed_output_value is not None:
+            # V14.2.4 / V16.2.5 / V13.4.2: mask response payload before logging;
+            # V16.2.5 forbids logging unredacted LLM payloads.
             logger.debug(
                 "LLM RESPONSE [%s/%s]:\n%s\n---END RESPONSE---",
                 self.provider_name,
                 self.db_llm_config.model_name,
-                parsed_output_value,
+                mask(parsed_output_value.model_dump_json()),
             )
 
         cost = cost_estimation.calculate_actual_cost(

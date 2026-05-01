@@ -27,6 +27,7 @@ router = APIRouter()
 COOKIE_NAME = "SecureCodePlatformRefresh"
 ALGORITHM = "HS256"
 AUDIENCE = "fastapi-users:auth"
+REFRESH_TOKEN_TYPE = "refresh"
 
 
 @router.post("/refresh")
@@ -42,6 +43,10 @@ async def refresh_access_token(
     refresh_token = request.cookies.get(COOKIE_NAME)
 
     if not refresh_token:
+        logger.warning(
+            "auth.refresh.no_cookie",
+            extra={"ip": request.client.host if request.client else None},
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="No refresh token found.",
@@ -62,15 +67,27 @@ async def refresh_access_token(
             detail="Refresh token expired. Please log in again.",
         )
     except jwt.InvalidTokenError as e:
-        logger.warning(f"Invalid refresh token: {e}")
+        logger.warning("auth.refresh.invalid_token", extra={"error": str(e)})
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid refresh token.",
         )
 
+    # Reject access tokens (or any token not explicitly typed as a refresh token)
+    # to prevent access-token-as-refresh-token confusion attacks (V09.2.2).
+    if payload.get("typ") != REFRESH_TOKEN_TYPE:
+        logger.warning(
+            "auth.refresh.wrong_token_type", extra={"typ": payload.get("typ")}
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token type.",
+        )
+
     # Extract user ID from the token's 'sub' claim
     user_id_str = payload.get("sub")
     if not user_id_str:
+        logger.warning("auth.refresh.missing_sub")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token payload.",
@@ -79,6 +96,7 @@ async def refresh_access_token(
     try:
         user_id = int(user_id_str)
     except (ValueError, TypeError):
+        logger.warning("auth.refresh.bad_user_id", extra={"sub": user_id_str})
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid user identifier in token.",
@@ -87,6 +105,7 @@ async def refresh_access_token(
     # Look up the user
     user = await user_manager.get(user_id)
     if user is None or not user.is_active:
+        logger.warning("auth.refresh.user_inactive", extra={"user_id": user_id})
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found or inactive.",
@@ -96,10 +115,29 @@ async def refresh_access_token(
     strategy = get_custom_cookie_jwt_strategy()
     new_access_token = await strategy.write_token(user)
 
-    # Rotate the refresh token by generating a new one and setting the cookie
+    # Enforce absolute session lifetime (V07.3.2): propagate original_iat from
+    # the inbound token so the session cannot be extended indefinitely by rotation.
+    original_iat = payload.get("original_iat", datetime.now(timezone.utc).timestamp())
+    absolute_lifetime = getattr(
+        settings, "SESSION_ABSOLUTE_LIFETIME_SECONDS", 43200
+    )  # default 12 h
+    if datetime.now(timezone.utc).timestamp() - original_iat > absolute_lifetime:
+        logger.warning(
+            "auth.refresh.session_lifetime_exceeded", extra={"user_id": user.id}
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session lifetime exceeded; please log in again.",
+        )
+
+    # Rotate the refresh token by generating a new one and setting the cookie.
+    # Include typ=REFRESH_TOKEN_TYPE to prevent access-token-as-refresh-token
+    # confusion (V09.2.2) and carry original_iat for absolute-lifetime enforcement.
     new_refresh_payload = {
         "sub": str(user.id),
         "aud": AUDIENCE,
+        "typ": REFRESH_TOKEN_TYPE,
+        "original_iat": original_iat,
         "exp": datetime.now(timezone.utc).timestamp()
         + settings.REFRESH_TOKEN_LIFETIME_SECONDS,
     }
@@ -110,7 +148,7 @@ async def refresh_access_token(
     )
     await strategy.write_refresh_token(response, new_refresh_token)
 
-    logger.info(f"Token refreshed successfully for user {user.id} ({user.email}).")
+    logger.info("auth.refresh.success", extra={"user_id": user.id, "email": user.email})
 
     return {
         "access_token": new_access_token,

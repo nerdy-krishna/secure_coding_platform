@@ -130,21 +130,25 @@ const ScanRunningPage: React.FC = () => {
   useEffect(() => {
     if (!scanId) return;
     const apiBase = (import.meta.env.VITE_API_BASE_URL as string) || "/api/v1";
-    // EventSource can't send the Authorization header, so the SSE endpoint
-    // also accepts the JWT via `?access_token=` (short-TTL). Fall back to
-    // the (short-lived) cookie if the access token is missing so a first
-    // subscribe after a reload still resolves.
-    const accessToken = localStorage.getItem("accessToken");
-    const qs = accessToken
-      ? `?access_token=${encodeURIComponent(accessToken)}`
-      : "";
-    const url = `${apiBase}/scans/${scanId}/stream${qs}`;
+    // NOTE: Bearer tokens must never appear in URLs — access logs (nginx,
+    // ingress, CDN) record full request URLs and would capture any
+    // ?access_token= value verbatim (V16.2.5). Authentication is handled
+    // exclusively via the HttpOnly refresh cookie (withCredentials: true);
+    // the backend SSE endpoint must accept cookie-only auth for this path.
+    const url = `${apiBase}/scans/${scanId}/stream`;
     const es = new EventSource(url, { withCredentials: true });
     esRef.current = es;
 
     es.addEventListener("scan_state", (ev) => {
       try {
         const payload = JSON.parse((ev as MessageEvent).data) as ScanStateMsg;
+        // Validate shape and length before trusting payload fields.
+        if (
+          typeof payload.status !== "string" ||
+          payload.status.length >= 64
+        ) {
+          return;
+        }
         setStatus(payload.status);
       } catch {
         // noop
@@ -154,14 +158,26 @@ const ScanRunningPage: React.FC = () => {
     es.addEventListener("scan_event", (ev) => {
       try {
         const payload = JSON.parse((ev as MessageEvent).data) as ScanEventMsg;
-        setEvents((prev) => [...prev, payload]);
-        if (payload.stage_name) {
-          setSeenStages((prev) => {
-            const next = new Set(prev);
-            next.add(payload.stage_name);
-            return next;
-          });
+        // Validate required string fields and lengths before use.
+        if (
+          typeof payload.status !== "string" ||
+          payload.status.length >= 64
+        ) {
+          return;
         }
+        if (
+          typeof payload.stage_name !== "string" ||
+          payload.stage_name.length >= 64
+        ) {
+          return;
+        }
+        // Cap events array to prevent unbounded memory growth.
+        setEvents((prev) => [...prev, payload].slice(-500));
+        setSeenStages((prev) => {
+          const next = new Set(prev);
+          next.add(payload.stage_name);
+          return next;
+        });
         // §3.10b — fold FILE_ANALYZED events into the per-file progress
         // map. Each FILE_ANALYZED carries `{file_path, findings_count,
         // fixes_count}` in `details`; rendered as a list below the
@@ -170,16 +186,39 @@ const ScanRunningPage: React.FC = () => {
           payload.stage_name === "FILE_ANALYZED" &&
           payload.details?.file_path
         ) {
-          const filePath = payload.details.file_path;
-          setFileProgress((prev) => ({
-            ...prev,
-            [filePath]: {
-              file_path: filePath,
-              findings_count: payload.details?.findings_count ?? 0,
-              fixes_count: payload.details?.fixes_count ?? 0,
-              timestamp: payload.timestamp,
-            },
-          }));
+          // Clamp file_path length and coerce numeric counts to prevent
+          // unbounded state growth from malformed payloads.
+          const filePath = String(payload.details.file_path).slice(0, 512);
+          if (!filePath) return;
+          const findingsCount = Math.max(
+            0,
+            Number(payload.details?.findings_count) | 0,
+          );
+          const fixesCount = Math.max(
+            0,
+            Number(payload.details?.fixes_count) | 0,
+          );
+          setFileProgress((prev) => {
+            const next = {
+              ...prev,
+              [filePath]: {
+                file_path: filePath,
+                findings_count: findingsCount,
+                fixes_count: fixesCount,
+                timestamp: payload.timestamp,
+              },
+            };
+            // Cap fileProgress map to prevent unbounded DOM growth.
+            const keys = Object.keys(next);
+            if (keys.length > 1000) {
+              // Drop the entry with the oldest (or null) timestamp.
+              const oldest = keys.reduce((a, b) =>
+                (next[a].timestamp ?? "") <= (next[b].timestamp ?? "") ? a : b,
+              );
+              delete next[oldest];
+            }
+            return next;
+          });
         }
       } catch {
         // noop
@@ -189,6 +228,14 @@ const ScanRunningPage: React.FC = () => {
     es.addEventListener("done", (ev) => {
       try {
         const payload = JSON.parse((ev as MessageEvent).data) as ScanStateMsg;
+        // Validate shape and length before trusting payload fields.
+        if (
+          typeof payload.status !== "string" ||
+          payload.status.length >= 64
+        ) {
+          es.close();
+          return;
+        }
         setStatus(payload.status);
       } catch {
         // noop

@@ -19,6 +19,7 @@ from typing import Dict, Optional
 
 import litellm
 
+from app.config.config import settings
 from app.infrastructure.database import models as db_models
 
 logger = logging.getLogger(__name__)
@@ -89,6 +90,15 @@ def _admin_override(
         return None
     if in_per_m <= 0 and out_per_m <= 0:
         return None
+    if (in_per_m > 0) ^ (out_per_m > 0):
+        logger.warning(
+            "LLMConfiguration %s has partial cost override (in=%s out=%s); "
+            "falling back to LiteLLM map",
+            config.id,
+            in_per_m,
+            out_per_m,
+        )
+        return None
     return (in_per_m / 1_000_000, out_per_m / 1_000_000)
 
 
@@ -109,6 +119,10 @@ async def count_tokens(
     """
     if not text:
         return 0
+    if not isinstance(text, str):
+        raise TypeError("count_tokens: text must be str")
+    if len(text) > 4_000_000:
+        text = text[:4_000_000]
     del api_key  # unused; kept for backwards-compatible call sites
 
     model = _first_working_model_key(config)
@@ -168,6 +182,10 @@ def estimate_cost_for_prompt(
     """Pre-call cost estimate. Output tokens are predicted at 25% of input
     by default (same heuristic as before); admin can tune by passing a
     different ratio when calling."""
+    if not isinstance(input_tokens, int) or input_tokens < 0:
+        raise ValueError("input_tokens must be a non-negative int")
+    if not (0.0 <= output_token_percentage <= 4.0):
+        raise ValueError("output_token_percentage out of range")
     predicted_output_tokens = max(0, int(input_tokens * output_token_percentage))
     input_cost, predicted_output_cost = _compute_cost(
         config, input_tokens, predicted_output_tokens
@@ -181,6 +199,11 @@ def estimate_cost_for_prompt(
         predicted_output_tokens,
         total_estimated_cost,
     )
+    MAX_PER_SCAN_USD = getattr(settings, "MAX_PER_SCAN_ESTIMATED_COST_USD", 100.0)
+    if total_estimated_cost > MAX_PER_SCAN_USD:
+        raise ValueError(
+            f"Estimated cost ${total_estimated_cost:.2f} exceeds per-scan ceiling ${MAX_PER_SCAN_USD}"
+        )
     return {
         "input_cost": input_cost,
         "predicted_output_cost": predicted_output_cost,

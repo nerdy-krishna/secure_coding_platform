@@ -68,7 +68,7 @@ def _verify_syntax_with_treesitter(full_code: str, filename: str) -> bool:
         tree = parser.parse(full_code.encode("utf-8"))
         return not tree.root_node.has_error
     except Exception as e:
-        logger.warning(f"Tree-sitter syntax check failed for {filename}: {e}")
+        logger.warning("Tree-sitter syntax check failed for %s: %s", filename, e)
         return True  # Don't block on tree-sitter errors
 
 
@@ -86,12 +86,11 @@ async def _run_merge_agent(
     if not llm_client:
         return None
 
-    logger.info(f"DEBUG: _run_merge_agent code_block:\n{code_block}")
-    logger.info(
-        f"DEBUG: _run_merge_agent conflicting_fixes: {[fix.model_dump() for fix in conflicting_fixes]}"
-    )
-    logger.info(
-        f"DEBUG: _run_merge_agent code_to_search_in (first 500 chars): {code_to_search_in[:500]}"
+    logger.debug(
+        "_run_merge_agent: filename=%s code_block_chars=%d conflicts=%d",
+        (conflicting_fixes[0].finding.file_path or "") if conflicting_fixes else "",
+        len(code_block),
+        len(conflicting_fixes),
     )
 
     # Use the highest-priority finding as the basis for the merged finding metadata
@@ -141,10 +140,11 @@ The `merged_code` field should contain ONLY the final, corrected code that will 
         and response.parsed_output.original_snippet_for_replacement in code_to_search_in
     ):
         logger.warning(
-            f"Merge agent did not produce a verifiable snippet for {filename}. "
-            f"Conflicts: {len(conflicting_fixes)} fixes, CWEs: "
-            f"{[f.finding.cwe for f in conflicting_fixes]}. "
-            f"Falling back to highest priority fix."
+            "Merge agent did not produce a verifiable snippet for %s. "
+            "Conflicts: %d fixes, CWEs: %r. Falling back to highest priority fix.",
+            filename,
+            len(conflicting_fixes),
+            [f.finding.cwe for f in conflicting_fixes],
         )
         return None
 
@@ -154,8 +154,9 @@ The `merged_code` field should contain ONLY the final, corrected code that will 
     # No-op guard: the merged code must actually change something.
     if merged_code.strip() == original_snippet.strip():
         logger.warning(
-            f"Merge agent returned a fix identical to the original for {filename}. "
-            f"Falling back to highest priority fix."
+            "Merge agent returned a fix identical to the original for %s. "
+            "Falling back to highest priority fix.",
+            filename,
         )
         return None
 
@@ -163,8 +164,9 @@ The `merged_code` field should contain ONLY the final, corrected code that will 
     candidate_code = code_to_search_in.replace(original_snippet, merged_code, 1)
     if not _verify_syntax_with_treesitter(candidate_code, filename):
         logger.warning(
-            f"Merge agent produced syntactically invalid code for {filename}. "
-            f"Falling back to highest priority fix."
+            "Merge agent produced syntactically invalid code for %s. "
+            "Falling back to highest priority fix.",
+            filename,
         )
         return None
 
@@ -186,7 +188,7 @@ The `merged_code` field should contain ONLY the final, corrected code that will 
         original_snippet=original_snippet,
         code=merged_code,
     )
-    logger.info(f"Merge agent succeeded for {filename} with syntax-verified code.")
+    logger.info("Merge agent succeeded for %s with syntax-verified code.", filename)
     return FixResult(finding=merged_finding, suggestion=merged_suggestion)
 
 
@@ -252,7 +254,9 @@ async def _resolve_file_fix_conflicts(
         winner: Optional[FixResult] = None
         if len(conflict_group) > 1:
             logger.info(
-                f"Resolving conflict among {len(conflict_group)} fixes via Merge Agent for scan {scan_id}."
+                "Resolving conflict among %d fixes via Merge Agent for scan %s.",
+                len(conflict_group),
+                scan_id,
             )
             conflict_group.sort(
                 key=lambda f: (
@@ -360,52 +364,53 @@ async def consolidate_and_patch_node(state: WorkerState) -> Dict[str, Any]:
     # require threading the semaphore through and the cost/latency win is
     # small vs. the analysis phase's many-agents-per-file parallelism.
     async with AsyncSessionLocal() as db:
-        repo = ScanRepository(db)
-        for file_path, file_fixes in fixes_by_file.items():
-            file_content = live_codebase.get(file_path)
-            if not file_content:
-                continue
+        async with db.begin():
+            repo = ScanRepository(db)
+            for file_path, file_fixes in fixes_by_file.items():
+                file_content = live_codebase.get(file_path)
+                if not file_content:
+                    continue
 
-            resolved = await _resolve_file_fix_conflicts(
-                file_fixes,
-                file_content,
-                reasoning_llm_id,
-                owasp_rank_map,
-                scan_id,
-            )
-            if not resolved:
-                continue
+                resolved = await _resolve_file_fix_conflicts(
+                    file_fixes,
+                    file_content,
+                    reasoning_llm_id,
+                    owasp_rank_map,
+                    scan_id,
+                )
+                if not resolved:
+                    continue
 
-            # Apply fixes in line-number order against the ORIGINAL content
-            # (single pass — not iterative cross-file). Each fix's
-            # original_snippet is expected to match the original file; if a
-            # second fix's snippet already got replaced by an earlier one,
-            # the merge agent should have been involved.
-            patched_content = file_content
-            file_was_patched = False
-            for fix in sorted(resolved, key=lambda f: f.finding.line_number):
-                snippet = fix.suggestion.original_snippet
-                if snippet and snippet in patched_content:
-                    patched_content = patched_content.replace(
-                        snippet, fix.suggestion.code, 1
-                    )
-                    applied_signatures.add(
-                        f"{file_path}|{fix.finding.cwe}|{fix.finding.line_number}"
-                    )
-                    file_was_patched = True
+                # Apply fixes in line-number order against the ORIGINAL content
+                # (single pass — not iterative cross-file). Each fix's
+                # original_snippet is expected to match the original file; if a
+                # second fix's snippet already got replaced by an earlier one,
+                # the merge agent should have been involved.
+                patched_content = file_content
+                file_was_patched = False
+                for fix in sorted(resolved, key=lambda f: f.finding.line_number):
+                    snippet = fix.suggestion.original_snippet
+                    if snippet and snippet in patched_content:
+                        patched_content = patched_content.replace(
+                            snippet, fix.suggestion.code, 1
+                        )
+                        applied_signatures.add(
+                            f"{file_path}|{fix.finding.cwe}|{fix.finding.line_number}"
+                        )
+                        file_was_patched = True
 
-            new_hashes = await repo.get_or_create_source_files(
-                [
-                    {
-                        "path": file_path,
-                        "content": patched_content,
-                        "language": get_language_from_filename(file_path),
-                    }
-                ]
-            )
-            final_file_map[file_path] = new_hashes[0]
-            if file_was_patched:
-                patched_files[file_path] = patched_content
+                new_hashes = await repo.get_or_create_source_files(
+                    [
+                        {
+                            "path": file_path,
+                            "content": patched_content,
+                            "language": get_language_from_filename(file_path),
+                        }
+                    ]
+                )
+                final_file_map[file_path] = new_hashes[0]
+                if file_was_patched:
+                    patched_files[file_path] = patched_content
 
     # Propagate the applied flag onto the post-correlation findings so the
     # UI and downstream reporting can distinguish applied vs. dropped fixes.
@@ -416,9 +421,10 @@ async def consolidate_and_patch_node(state: WorkerState) -> Dict[str, Any]:
             f.is_applied_in_remediation = True
 
     logger.info(
-        f"consolidate_and_patch for scan {scan_id}: "
-        f"patched {len(applied_signatures)} findings across "
-        f"{len([p for p in final_file_map if p in fixes_by_file])} files."
+        "consolidate_and_patch for scan %s: patched %d findings across %d files.",
+        scan_id,
+        len(applied_signatures),
+        len([p for p in final_file_map if p in fixes_by_file]),
     )
 
     return {

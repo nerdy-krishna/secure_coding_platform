@@ -21,7 +21,19 @@ async def handle_error_node(state: WorkerState) -> Dict[str, Any]:
     error = state.get("error_message", "An unknown error occurred.")
     scan_id = state["scan_id"]
     logger.error(
-        f"Workflow for scan {scan_id} failed: {error}", extra={"error_message": error}
+        "Workflow for scan %s failed: %s",
+        scan_id,
+        error,
+        extra={"error_message": error},
     )
-    await ScanRepository(AsyncSessionLocal()).update_status(scan_id, STATUS_FAILED)
+    try:
+        async with AsyncSessionLocal() as db:
+            await ScanRepository(db).update_status(scan_id, STATUS_FAILED)
+            await db.commit()
+    except Exception as e:
+        logger.exception(
+            "handle_error_node: failed to persist FAILED status for scan %s: %s",
+            scan_id,
+            e,
+        )
     return {}

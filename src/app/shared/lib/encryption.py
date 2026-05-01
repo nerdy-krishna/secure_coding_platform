@@ -1,13 +1,24 @@
 # src/app/shared/lib/encryption.py
 
+import logging
+
 from cryptography.fernet import Fernet
 from app.config.config import settings
 
+logger = logging.getLogger(__name__)
 
+
+# Fernet wraps short at-rest secrets (<=64KB plaintext); larger payloads should use a streaming codec.
 class FernetEncrypt:
     """
     A utility class for encrypting and decrypting data using Fernet.
     It automatically handles missing base64 padding in the key from the .env file.
+
+    Key rotation requires an application restart; ``_fernet`` is intentionally
+    immutable at runtime to keep ``encrypt``/``decrypt`` thread-safe without an
+    external lock.  If a runtime rotation API is needed in the future, introduce
+    ``_lock = threading.Lock()`` as a class attribute and gate any ``_fernet``
+    reassignment with ``with cls._lock: cls._fernet = Fernet(new_key_bytes)``.
     """
 
     _key_str = settings.ENCRYPTION_KEY
@@ -28,18 +39,30 @@ class FernetEncrypt:
         # It will raise a ValueError here if the key is still invalid after padding.
         _fernet = Fernet(key_as_bytes)
 
-    except Exception as e:
+    except Exception:
         raise ValueError(
             "Invalid ENCRYPTION_KEY. Could not initialize encryption service. "
-            f"Please ensure it's a valid, URL-safe base64-encoded key. Original error: {e}"
-        ) from e
+            "Ensure it is a URL-safe base64 32-byte key."
+        ) from None
 
     @classmethod
     def encrypt(cls, data: str) -> str:
         """Encrypts a string and returns the encrypted data as a string."""
+        if not isinstance(data, str):
+            raise TypeError("FernetEncrypt.encrypt: data must be str")
+        if len(data) > 64_000:
+            raise ValueError("FernetEncrypt.encrypt: data exceeds 64KB cap")
         return cls._fernet.encrypt(data.encode("utf-8")).decode("utf-8")
 
     @classmethod
     def decrypt(cls, encrypted_data: str) -> str:
         """Decrypts an encrypted string and returns the original data."""
-        return cls._fernet.decrypt(encrypted_data.encode("utf-8")).decode("utf-8")
+        if not isinstance(encrypted_data, str):
+            raise TypeError("FernetEncrypt.decrypt: encrypted_data must be str")
+        if len(encrypted_data) > 100_000 or len(encrypted_data) < 20:
+            raise ValueError("FernetEncrypt.decrypt: token length out of range")
+        try:
+            return cls._fernet.decrypt(encrypted_data.encode("utf-8")).decode("utf-8")
+        except Exception as exc:
+            logger.warning("encryption.decrypt_failed err=%s", type(exc).__name__)
+            raise

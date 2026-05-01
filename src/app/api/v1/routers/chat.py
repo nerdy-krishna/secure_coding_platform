@@ -1,10 +1,11 @@
 # src/app/api/v1/routers/chat.py
 import logging
+import re
 import uuid
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.api.v1.dependencies import get_chat_service
 from app.core.services.chat_service import ChatService
@@ -27,11 +28,25 @@ class ChatSessionCreateRequest(BaseModel):
         ..., description="The ID of the LLM to use for this session."
     )
     frameworks: List[str] = Field(
-        [], description="A list of security framework names to provide context."
+        default_factory=list,
+        max_length=10,
+        description="A list of security framework names to provide context (max 10 items).",
     )
     project_id: Optional[uuid.UUID] = Field(
         None, description="Optional project ID to associate with the chat."
     )
+
+    @field_validator("frameworks")
+    @classmethod
+    def validate_framework_items(cls, v: List[str]) -> List[str]:
+        pattern = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+        for item in v:
+            if not pattern.match(item):
+                raise ValueError(
+                    "Each framework name must be 1–64 characters and contain only "
+                    "letters, digits, underscores, or hyphens."
+                )
+        return v
 
 
 class ChatSessionResponse(BaseModel):
@@ -47,7 +62,12 @@ class ChatSessionResponse(BaseModel):
 
 
 class AskQuestionRequest(BaseModel):
-    question: str = Field(..., min_length=1, description="The user's question.")
+    question: str = Field(
+        ...,
+        min_length=1,
+        max_length=8000,
+        description="The user's question (max 8000 characters).",
+    )
 
 
 class ChatMessageResponse(BaseModel):
@@ -77,6 +97,15 @@ async def create_chat_session(
         project_id=request.project_id,
         llm_config_id=request.llm_config_id,
         frameworks=request.frameworks,
+    )
+    logger.info(
+        "chat.session.created",
+        extra={
+            "actor_id": str(user.id),
+            "session_id": str(session.id),
+            "llm_config_id": str(request.llm_config_id),
+            "frameworks": request.frameworks,
+        },
     )
     return ChatSessionResponse(
         id=session.id,
@@ -139,6 +168,14 @@ async def ask_question(
     ai_message = await chat_service.post_message_to_session(
         session_id=session_id, question=request.question, user=user
     )
+    logger.info(
+        "chat.session.ask",
+        extra={
+            "actor_id": str(user.id),
+            "session_id": str(session_id),
+            "cost": ai_message.cost,
+        },
+    )
     return ChatMessageResponse(
         id=ai_message.id,
         role=ai_message.role,
@@ -170,8 +207,16 @@ async def delete_chat_session(
     """Deletes a chat session and all its messages."""
     success = await chat_service.delete_session(session_id, user)
     if not success:
+        logger.warning(
+            "chat.session.delete_denied",
+            extra={"actor_id": str(user.id), "session_id": str(session_id)},
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Chat session not found or you do not have permission to delete it.",
         )
+    logger.info(
+        "chat.session.deleted",
+        extra={"actor_id": str(user.id), "session_id": str(session_id)},
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

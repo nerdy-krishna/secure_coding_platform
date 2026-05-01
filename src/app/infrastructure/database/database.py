@@ -27,7 +27,23 @@ if not settings.ASYNC_DATABASE_URL:
 
 # Create an asynchronous SQLAlchemy engine.
 # settings.DB_ECHO can be used to toggle SQL query logging for debugging.
-engine = create_async_engine(settings.ASYNC_DATABASE_URL, echo=settings.DB_ECHO)
+# Guard: never enable SQL echo in production to prevent sensitive data (bound
+# parameters such as passwords, API keys, PII) from leaking into stdout/Loki.
+_db_echo = (
+    bool(settings.DB_ECHO)
+    and getattr(settings, "ENVIRONMENT", "development") != "production"
+)
+if bool(settings.DB_ECHO) and not _db_echo:
+    logger.warning(
+        "DB_ECHO is enabled in settings but has been suppressed because ENVIRONMENT=%s. "
+        "Set ENVIRONMENT=development to enable SQL echo logging.",
+        getattr(settings, "ENVIRONMENT", "development"),
+    )
+engine = create_async_engine(
+    settings.ASYNC_DATABASE_URL,
+    echo=_db_echo,
+    hide_parameters=True,
+)
 
 # Create an asynchronous session factory.
 # expire_on_commit=False is a good default for FastAPI to prevent issues

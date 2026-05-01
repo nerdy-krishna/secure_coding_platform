@@ -77,7 +77,13 @@ class LLMConfigRepository:
         logger.info(
             "Creating new LLM config in DB.", extra={"config_name": config.name}
         )
-        encrypted_key = FernetEncrypt.encrypt(config.api_key)
+        # api_key is a Pydantic SecretStr; unwrap before encrypting.
+        api_key_plain = (
+            config.api_key.get_secret_value()
+            if hasattr(config.api_key, "get_secret_value")
+            else str(config.api_key)
+        )
+        encrypted_key = FernetEncrypt.encrypt(api_key_plain)
         db_config = db_models.LLMConfiguration(
             name=config.name,
             provider=config.provider,
@@ -106,11 +112,18 @@ class LLMConfigRepository:
                 "LLM config not found for update.", extra={"config_id": str(config_id)}
             )
             return None
+        # exclude_unset retains SecretStr objects; unwrap when encrypting.
         update_data = config_update.model_dump(exclude_unset=True)
+        new_api_key = getattr(config_update, "api_key", None)
         for key, value in update_data.items():
             if key == "api_key":
-                if value:
-                    db_config.encrypted_api_key = FernetEncrypt.encrypt(value)
+                if new_api_key:
+                    plain = (
+                        new_api_key.get_secret_value()
+                        if hasattr(new_api_key, "get_secret_value")
+                        else str(new_api_key)
+                    )
+                    db_config.encrypted_api_key = FernetEncrypt.encrypt(plain)
             elif hasattr(db_config, key):
                 setattr(db_config, key, value)
         await self.db.commit()

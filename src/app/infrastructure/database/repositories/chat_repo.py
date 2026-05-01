@@ -3,13 +3,18 @@ import logging
 import uuid
 from typing import List, Optional
 
-from sqlalchemy import select, update, delete
+from sqlalchemy import func, select, update, delete
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.infrastructure.database import models as db_models
 
 logger = logging.getLogger(__name__)
+
+# Input validation constants
+_ALLOWED_ROLES = {"user", "assistant", "system"}
+MAX_MESSAGES_PER_SESSION = 1000
 
 
 class ChatRepository:
@@ -27,6 +32,16 @@ class ChatRepository:
         project_id: Optional[uuid.UUID] = None,
     ) -> db_models.ChatSession:
         """Creates a new chat session."""
+        # V02.2.1 — validate title and frameworks before persisting
+        if not (1 <= len(title) <= 255):
+            raise ValueError("title must be between 1 and 255 characters")
+        if not isinstance(frameworks, list) or len(frameworks) > 10:
+            raise ValueError("frameworks must be a list with at most 10 entries")
+        for fw in frameworks:
+            if len(fw) > 64:
+                raise ValueError(
+                    f"Each framework entry must be at most 64 characters, got: {fw!r}"
+                )
         logger.info(f"Creating new chat session titled '{title}' for user {user_id}.")
         session = db_models.ChatSession(
             user_id=user_id,
@@ -36,7 +51,15 @@ class ChatRepository:
             frameworks=frameworks,
         )
         self.db.add(session)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except SQLAlchemyError:
+            logger.error(
+                "chat.create_session.failed",
+                extra={"session_id": None, "user_id": user_id},
+                exc_info=True,
+            )
+            raise
         await self.db.refresh(session)
         return session
 
@@ -50,7 +73,14 @@ class ChatRepository:
             .filter_by(id=session_id, user_id=user_id)
         )
         result = await self.db.execute(stmt)
-        return result.scalars().first()
+        row = result.scalars().first()
+        # V16.3.2 — log access denied / missing for detection
+        if row is None:
+            logger.warning(
+                "chat.session.access.denied_or_missing",
+                extra={"session_id": str(session_id), "user_id": user_id},
+            )
+        return row
 
     async def get_sessions_for_user(self, user_id: int) -> List[db_models.ChatSession]:
         """Retrieves all chat sessions for a given user."""
@@ -67,15 +97,51 @@ class ChatRepository:
         session_id: uuid.UUID,
         role: str,
         content: str,
+        user_id: int,
         cost: Optional[float] = None,
     ) -> db_models.ChatMessage:
         """Adds a new message to a chat session."""
-        logger.debug(f"Adding '{role}' message to session {session_id}.")
+        # V02.2.3 — role allow-list
+        if role not in _ALLOWED_ROLES:
+            raise ValueError(f"role must be one of {_ALLOWED_ROLES}, got: {role!r}")
+        # V02.2.1 — content length bounds
+        if not (1 <= len(content) <= 50_000):
+            raise ValueError("content must be between 1 and 50,000 characters")
+        # V08.2.2 — verify the caller owns the session before inserting
+        owner_check = await self.db.execute(
+            select(db_models.ChatSession.id).filter_by(id=session_id, user_id=user_id)
+        )
+        if owner_check.scalar_one_or_none() is None:
+            raise PermissionError(
+                f"Session {session_id} not found or not owned by user {user_id}"
+            )
+        # V02.3.2 — per-session message count cap
+        count_result = await self.db.execute(
+            select(func.count(db_models.ChatMessage.id)).where(
+                db_models.ChatMessage.session_id == session_id
+            )
+        )
+        if (count_result.scalar() or 0) >= MAX_MESSAGES_PER_SESSION:
+            raise ValueError(
+                f"Session {session_id} has reached the maximum of {MAX_MESSAGES_PER_SESSION} messages"
+            )
+        logger.debug(
+            f"Adding '{role}' message to session {session_id}.",
+            extra={"session_id": str(session_id), "role": role, "user_id": user_id},
+        )
         message = db_models.ChatMessage(
             session_id=session_id, role=role, content=content, cost=cost
         )
         self.db.add(message)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except SQLAlchemyError:
+            logger.error(
+                "chat.add_message.failed",
+                extra={"session_id": str(session_id), "user_id": user_id},
+                exc_info=True,
+            )
+            raise
         await self.db.refresh(message)
         return message
 
@@ -87,6 +153,7 @@ class ChatRepository:
         """
         session = await self.get_session_by_id(session_id, user_id)
         if not session:
+            # V16.3.2 — warning already logged in get_session_by_id
             return []
         # The messages are already loaded via the relationship in get_session_by_id
         return sorted(session.messages, key=lambda m: m.timestamp)
@@ -96,36 +163,62 @@ class ChatRepository:
         session_id: uuid.UUID,
         message_ids_to_delete: List[int],
         summary_content: str,
+        user_id: int,
     ):
         """
         Atomically deletes a list of messages and inserts a new system message
         with the summary of the deleted content.
         """
+        # V08.2.2 — verify caller owns the session before mutating
+        session = await self.get_session_by_id(session_id, user_id)
+        if session is None:
+            raise PermissionError(
+                f"Session {session_id} not found or not owned by user {user_id}"
+            )
         logger.info(
             f"Summarizing {len(message_ids_to_delete)} messages for session {session_id}."
         )
-        # First, nullify any LLM interaction foreign keys to avoid constraint violations
-        stmt_nullify_fk = (
-            update(db_models.LLMInteraction)
-            .where(db_models.LLMInteraction.chat_message_id.in_(message_ids_to_delete))
-            .values(chat_message_id=None)
+        # V02.3.4 — acquire a row lock to serialise concurrent summarisation calls
+        await self.db.execute(
+            select(db_models.ChatSession)
+            .where(db_models.ChatSession.id == session_id)
+            .with_for_update()
         )
-        await self.db.execute(stmt_nullify_fk)
+        # V02.3.3 / V15.4.2 — wrap all three writes in a savepoint for atomicity
+        async with self.db.begin_nested():
+            # First, nullify any LLM interaction foreign keys to avoid constraint violations
+            stmt_nullify_fk = (
+                update(db_models.LLMInteraction)
+                .where(
+                    db_models.LLMInteraction.chat_message_id.in_(message_ids_to_delete)
+                )
+                .values(chat_message_id=None)
+            )
+            await self.db.execute(stmt_nullify_fk)
 
-        # Delete the old messages
-        stmt_delete = delete(db_models.ChatMessage).where(
-            db_models.ChatMessage.id.in_(message_ids_to_delete)
-        )
-        await self.db.execute(stmt_delete)
+            # Delete the old messages
+            stmt_delete = delete(db_models.ChatMessage).where(
+                db_models.ChatMessage.id.in_(message_ids_to_delete)
+            )
+            await self.db.execute(stmt_delete)
 
-        # Add the new summary message
-        summary_message = db_models.ChatMessage(
-            session_id=session_id,
-            role="system",
-            content=f"Summary of earlier conversation: {summary_content}",
-        )
-        self.db.add(summary_message)
-        await self.db.commit()
+            # Add the new summary message
+            summary_message = db_models.ChatMessage(
+                session_id=session_id,
+                role="system",
+                content=f"Summary of earlier conversation: {summary_content}",
+            )
+            self.db.add(summary_message)
+
+        try:
+            await self.db.commit()
+        except SQLAlchemyError:
+            logger.error(
+                "chat.replace_messages_with_summary.failed",
+                extra={"session_id": str(session_id), "user_id": user_id},
+                exc_info=True,
+            )
+            raise
         logger.info(
             f"Successfully replaced old messages with summary for session {session_id}."
         )
@@ -163,7 +256,15 @@ class ChatRepository:
                 message.llm_interaction.chat_message_id = None
 
         await self.db.delete(session)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except SQLAlchemyError:
+            logger.error(
+                "chat.delete_session.failed",
+                extra={"session_id": str(session_id), "user_id": user_id},
+                exc_info=True,
+            )
+            raise
         logger.info(f"Successfully deleted chat session {session_id}.")
         return True
 
@@ -175,4 +276,12 @@ class ChatRepository:
             .values(chat_message_id=chat_message_id)
         )
         await self.db.execute(stmt)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except SQLAlchemyError:
+            logger.error(
+                "chat.link_llm_interaction.failed",
+                extra={"session_id": None},
+                exc_info=True,
+            )
+            raise

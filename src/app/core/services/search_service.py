@@ -27,6 +27,10 @@ from app.infrastructure.database import models as db_models
 
 logger = logging.getLogger(__name__)
 
+# Input validation limits (V02.1.3 / V02.2.1 / V02.3.2)
+MAX_QUERY_LEN = 200  # characters; beyond this a LIKE scan is both slow and pointless
+MAX_LIMIT = 50  # per-entity result cap; prevents unbounded table scans
+
 
 @dataclass
 class ProjectHit:
@@ -78,19 +82,45 @@ class SearchService:
         query: str,
         visible_user_ids: Optional[List[int]],
         limit: int,
+        verbose: bool = False,
     ) -> SearchResults:
         query = query.strip()
         if not query:
             return SearchResults(projects=[], scans=[], findings=[])
 
-        scope_scan_col = self._scope(db_models.Scan.user_id, visible_user_ids)
-        scope_project_col = self._scope(db_models.Project.user_id, visible_user_ids)
-        pattern = f"%{query}%"
+        # V02.2.1 / V02.1.3 / V02.3.2: validate length and range before any DB work
+        if len(query) > MAX_QUERY_LEN:
+            raise ValueError(f"query too long (max {MAX_QUERY_LEN} characters)")
+        if limit < 1 or limit > MAX_LIMIT:
+            raise ValueError(f"limit out of range (1–{MAX_LIMIT})")
 
-        projects = await self._search_projects(pattern, scope_project_col, limit)
-        scans = await self._search_scans(pattern, scope_scan_col, limit)
-        findings = await self._search_findings(pattern, scope_scan_col, limit)
-        return SearchResults(projects=projects, scans=scans, findings=findings)
+        # V02.2.1: escape SQL LIKE meta-characters to prevent wildcard-driven table scans
+        safe = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{safe}%"
+
+        try:
+            scope_scan_col = self._scope(db_models.Scan.user_id, visible_user_ids)
+            scope_project_col = self._scope(db_models.Project.user_id, visible_user_ids)
+
+            projects = await self._search_projects(pattern, scope_project_col, limit)
+            scans = await self._search_scans(pattern, scope_scan_col, limit)
+            findings = await self._search_findings(
+                pattern, scope_scan_col, limit, verbose=verbose
+            )
+            return SearchResults(projects=projects, scans=scans, findings=findings)
+        except ValueError:
+            raise
+        except Exception:
+            # V16.3.4: log diagnostic info without echoing the raw query string
+            logger.error(
+                "search: query failed",
+                extra={
+                    "visible_user_ids": visible_user_ids,
+                    "query_length": len(query),
+                },
+                exc_info=True,
+            )
+            raise
 
     # --- internals ------------------------------------------------------
 
@@ -110,7 +140,7 @@ class SearchService:
         stmt = (
             select(db_models.Project.id, db_models.Project.name)
             .where(scope)
-            .where(db_models.Project.name.ilike(pattern))
+            .where(db_models.Project.name.ilike(pattern, escape="\\"))
             .order_by(db_models.Project.updated_at.desc())
             .limit(limit)
         )
@@ -130,7 +160,7 @@ class SearchService:
             )
             .join(db_models.Project, db_models.Project.id == db_models.Scan.project_id)
             .where(scope)
-            .where(cast(db_models.Scan.id, String).ilike(pattern))
+            .where(cast(db_models.Scan.id, String).ilike(pattern, escape="\\"))
             .order_by(db_models.Scan.created_at.desc())
             .limit(limit)
         )
@@ -138,21 +168,32 @@ class SearchService:
         return [ScanHit(id=r[0], status=r[1], project_name=r[2]) for r in rows]
 
     async def _search_findings(
-        self, pattern: str, scope: sa.ColumnElement[bool], limit: int
+        self,
+        pattern: str,
+        scope: sa.ColumnElement[bool],
+        limit: int,
+        verbose: bool = False,
     ) -> List[FindingHit]:
         # Match on title OR file_path; annotate `matched_on` so the UI can
         # show users why a row came back even when the match is in the path.
-        title_match = db_models.Finding.title.ilike(pattern)
-        path_match = db_models.Finding.file_path.ilike(pattern)
+        title_match = db_models.Finding.title.ilike(pattern, escape="\\")
+        path_match = db_models.Finding.file_path.ilike(pattern, escape="\\")
+
+        # V14.2.6: when verbose=False (default for the autocomplete combobox) omit
+        # file_path from the SELECT to avoid over-fetching data the caller won't render.
+        columns = [
+            db_models.Finding.id,
+            db_models.Finding.scan_id,
+            db_models.Finding.title,
+            db_models.Finding.severity,
+            title_match.label("title_matched"),
+        ]
+        if verbose:
+            # insert file_path at index 3 so positional offsets stay consistent below
+            columns.insert(3, db_models.Finding.file_path)
+
         stmt = (
-            select(
-                db_models.Finding.id,
-                db_models.Finding.scan_id,
-                db_models.Finding.title,
-                db_models.Finding.file_path,
-                db_models.Finding.severity,
-                title_match.label("title_matched"),
-            )
+            select(*columns)
             .join(db_models.Scan, db_models.Scan.id == db_models.Finding.scan_id)
             .where(scope)
             .where(or_(title_match, path_match))
@@ -160,14 +201,26 @@ class SearchService:
             .limit(limit)
         )
         rows = (await self.db.execute(stmt)).all()
+        if verbose:
+            return [
+                FindingHit(
+                    id=r[0],
+                    scan_id=r[1],
+                    title=r[2],
+                    file_path=r[3],
+                    severity=r[4],
+                    matched_on="title" if r[5] else "file_path",
+                )
+                for r in rows
+            ]
         return [
             FindingHit(
                 id=r[0],
                 scan_id=r[1],
                 title=r[2],
-                file_path=r[3],
-                severity=r[4],
-                matched_on="title" if r[5] else "file_path",
+                file_path=None,
+                severity=r[3],
+                matched_on="title" if r[4] else "file_path",
             )
             for r in rows
         ]

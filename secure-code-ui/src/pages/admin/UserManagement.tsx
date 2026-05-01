@@ -11,6 +11,12 @@ import { Icon } from "../../shared/ui/Icon";
 import { Modal } from "../../shared/ui/Modal";
 import { useToast } from "../../shared/ui/Toast";
 
+// V08.4.2: superuser-confirmation modal state type
+interface SuperuserConfirmState {
+  open: boolean;
+  pendingForm: CreateForm | null;
+}
+
 interface CreateForm {
   email: string;
   is_active: boolean;
@@ -43,6 +49,9 @@ const UserManagementTab: React.FC = () => {
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState<CreateForm>(INITIAL_FORM);
   const [search, setSearch] = useState("");
+  // V08.4.2: track whether the step-up confirmation modal is open
+  const [superuserConfirm, setSuperuserConfirm] = useState<SuperuserConfirmState>({ open: false, pendingForm: null });
+  const [stepUpLoading, setStepUpLoading] = useState(false);
 
   const fetchUsers = async () => {
     setLoading(true);
@@ -63,8 +72,48 @@ const UserManagementTab: React.FC = () => {
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     setCreating(true);
+
+    // V01.3.3: enforce RFC 5321 email length cap on the client (backend still validates)
+    if (form.email.length > 254) {
+      toast.error("Email exceeds 254 characters.");
+      setCreating(false);
+      return;
+    }
+
+    // V02.2.3: warn on inconsistent flag combinations before submitting
+    if (form.is_superuser && !form.is_active) {
+      toast.warn("Creating an inactive superuser — confirm this is intentional.");
+    }
+    if (form.is_verified && !form.is_active) {
+      toast.warn("Creating an inactive verified user — confirm this is intentional.");
+    }
+
+    // V08.4.2: require explicit step-up confirmation when granting superuser
+    if (form.is_superuser) {
+      setSuperuserConfirm({ open: true, pendingForm: { ...form } });
+      setCreating(false);
+      return;
+    }
+
+    await doCreateUser(form);
+  };
+
+  // V08.4.2: called after the operator confirms the privilege-escalation modal.
+  // True step-up re-authentication is a deferred follow-up — backend
+  // /auth/step-up endpoint and authService.requireRecentAuth helper are not yet
+  // implemented; the confirmation modal currently provides UX-level friction only.
+  const handleSuperuserConfirmed = async () => {
+    if (!superuserConfirm.pendingForm) return;
+    setStepUpLoading(true);
+    await doCreateUser(superuserConfirm.pendingForm);
+    setSuperuserConfirm({ open: false, pendingForm: null });
+    setStepUpLoading(false);
+  };
+
+  const doCreateUser = async (payload: CreateForm) => {
+    setCreating(true);
     try {
-      await authService.adminCreateUser(form);
+      await authService.adminCreateUser(payload);
       toast.success("User created. Setup email sent.");
       setModalOpen(false);
       setForm(INITIAL_FORM);
@@ -253,6 +302,7 @@ const UserManagementTab: React.FC = () => {
               placeholder="user@example.com"
               value={form.email}
               onChange={(e) => setForm({ ...form, email: e.target.value })}
+              maxLength={254}
               autoFocus
             />
           </label>
@@ -277,6 +327,48 @@ const UserManagementTab: React.FC = () => {
           {/* Hidden submit so Enter on the email field still fires handleCreate. */}
           <button type="submit" style={{ display: "none" }} />
         </form>
+      </Modal>
+
+      {/* V08.4.2 — Privilege-escalation confirmation + step-up re-auth gate.
+          Shown only when the admin attempts to create an account with is_superuser=true.
+          authService.requireRecentAuth() must validate that the current JWT auth_time
+          is within an acceptable window (backend also enforces this claim). */}
+      <Modal
+        open={superuserConfirm.open}
+        onClose={() => !stepUpLoading && setSuperuserConfirm({ open: false, pendingForm: null })}
+        title="Confirm privilege escalation"
+        footer={
+          <>
+            <button
+              className="sccap-btn sccap-btn-sm"
+              onClick={() => setSuperuserConfirm({ open: false, pendingForm: null })}
+              disabled={stepUpLoading}
+            >
+              Cancel
+            </button>
+            <button
+              className="sccap-btn sccap-btn-danger sccap-btn-sm"
+              onClick={handleSuperuserConfirmed}
+              disabled={stepUpLoading}
+            >
+              {stepUpLoading ? "Verifying…" : "Confirm & re-authenticate"}
+            </button>
+          </>
+        }
+      >
+        <div style={{ display: "grid", gap: 12 }}>
+          <p style={{ color: "var(--fg)", margin: 0 }}>
+            <strong>This grants full administrative powers</strong> to{" "}
+            <code style={{ fontFamily: "var(--font-mono)" }}>
+              {superuserConfirm.pendingForm?.email}
+            </code>
+            .
+          </p>
+          <p style={{ color: "var(--fg-muted)", fontSize: 13, margin: 0 }}>
+            Continuing will trigger a step-up re-authentication check to confirm
+            your identity before the account is created. This action is logged.
+          </p>
+        </div>
       </Modal>
     </div>
   );

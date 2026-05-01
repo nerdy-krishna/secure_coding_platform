@@ -17,6 +17,42 @@ from app.shared.lib.files import get_language_from_filename  # UPDATED IMPORT
 
 logger = logging.getLogger(__name__)
 
+# Magic-byte signatures for supported archive types
+_ARCHIVE_MAGIC: dict = {
+    ".zip": [(0, b"PK\x03\x04")],
+    ".tar.gz": [(0, b"\x1f\x8b")],
+    ".tgz": [(0, b"\x1f\x8b")],
+    ".tar.bz2": [(0, b"BZh")],
+    ".tbz2": [(0, b"BZh")],
+    ".tar.xz": [(0, b"\xfd7zXZ\x00")],
+    ".txz": [(0, b"\xfd7zXZ\x00")],
+    # ustar marker at offset 257 (both "ustar\x00" and "ustar  ")
+    ".tar": [(257, b"ustar")],
+}
+
+
+def _safe(s: str) -> str:
+    """Sanitise an attacker-supplied string for log output (log injection prevention)."""
+    return s.replace("\r", "\\r").replace("\n", "\\n")[:256]
+
+
+def _verify_archive_magic(archive_path: str, file_extension: str) -> bool:
+    """Verify archive content matches the expected magic bytes for the given extension."""
+    signatures = _ARCHIVE_MAGIC.get(file_extension)
+    if not signatures:
+        return False
+    try:
+        with open(archive_path, "rb") as f:
+            for offset, magic in signatures:
+                f.seek(offset)
+                chunk = f.read(len(magic))
+                if chunk == magic:
+                    return True
+        return False
+    except OSError:
+        return False
+
+
 # Configuration for archive extraction security
 # These could be moved to settings if more dynamic configuration is needed
 MAX_UNCOMPRESSED_SIZE_BYTES = 100 * 1024 * 1024  # 100 MB
@@ -59,10 +95,10 @@ def _sanitize_extracted_content(content_bytes: bytes) -> str:
         try:
             content_str = content_bytes.decode("latin-1")
         except UnicodeDecodeError as e:
-            logger.error(f"Failed to decode file content with UTF-8 and latin-1: {e}")
+            logger.error("Failed to decode file content with UTF-8 and latin-1: %s", e)
             raise HTTPException(
                 status_code=400,
-                detail=f"File content encoding not supported (tried UTF-8, latin-1). Error: {e}",
+                detail="File content encoding not supported (tried UTF-8, latin-1).",
             )
     return content_str.replace("\x00", "")
 
@@ -83,6 +119,18 @@ def extract_archive_to_files(archive_file: UploadFile) -> List[Dict[str, Any]]:
     """
     if not archive_file.filename:
         raise HTTPException(status_code=400, detail="Archive filename is missing.")
+
+    # V05.3.2: Reject filenames with path traversal, path separators, or NUL bytes early.
+    raw_filename = archive_file.filename
+    if (
+        "\x00" in raw_filename
+        or ".." in raw_filename
+        or os.sep in raw_filename
+        or (os.altsep and os.altsep in raw_filename)
+    ):
+        raise HTTPException(
+            status_code=400, detail="Archive filename contains invalid characters."
+        )
 
     file_extension = "".join(
         [suffix for suffix in archive_file.filename.lower().split(".") if suffix]
@@ -108,17 +156,30 @@ def extract_archive_to_files(archive_file: UploadFile) -> List[Dict[str, Any]]:
     file_count = 0
 
     with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, archive_file.filename)
+        # V05.3.2: Use basename only to guarantee the saved file stays within temp_dir.
+        safe_archive_name = (
+            os.path.basename(archive_file.filename)
+            .replace("\x00", "")
+            .replace("..", "_")
+        )
+        archive_path = os.path.join(temp_dir, safe_archive_name)
         try:
             with open(archive_path, "wb") as f_out:
                 shutil.copyfileobj(archive_file.file, f_out)
         except Exception as e:
-            logger.error(f"Failed to save uploaded archive: {e}")
+            logger.error("Failed to save uploaded archive: %s", e)
             raise HTTPException(
                 status_code=500, detail="Error saving uploaded archive."
             )
         finally:
             archive_file.file.close()  # Ensure the UploadFile stream is closed
+
+        # V05.2.2: Verify magic bytes match the declared extension before opening.
+        if not _verify_archive_magic(archive_path, file_extension):
+            raise HTTPException(
+                status_code=400,
+                detail="Archive content does not match its extension.",
+            )
 
         extraction_target_dir = os.path.join(temp_dir, "extracted_content")
         os.makedirs(extraction_target_dir, exist_ok=True)
@@ -129,6 +190,14 @@ def extract_archive_to_files(archive_file: UploadFile) -> List[Dict[str, Any]]:
                     for member_info in zf.infolist():
                         if member_info.is_dir():
                             continue  # Skip directories
+
+                        # V05.2.5: Skip zip entries whose external attributes indicate a symlink.
+                        if (member_info.external_attr >> 16) & 0o170000 == 0o120000:
+                            logger.warning(
+                                "archive.zip_symlink_skipped path=%s",
+                                _safe(member_info.filename),
+                            )
+                            continue
 
                         file_count += 1
                         if file_count > MAX_FILES_IN_ARCHIVE:
@@ -144,30 +213,34 @@ def extract_archive_to_files(archive_file: UploadFile) -> List[Dict[str, Any]]:
                                 detail=f"Archive uncompressed size exceeds limit ({MAX_UNCOMPRESSED_SIZE_BYTES // (1024 * 1024)} MB).",
                             )
 
-                        if not _is_path_safe(
-                            extraction_target_dir, member_info.filename
+                        # V15.4.2: Normalise path and reject absolute or traversal paths.
+                        normalised_name = os.path.normpath(member_info.filename)
+                        if os.path.isabs(normalised_name) or normalised_name.startswith(
+                            ".."
                         ):
                             logger.warning(
-                                f"Skipping potentially unsafe path in ZIP: {member_info.filename}"
+                                "archive.unsafe_zip_path path=%s",
+                                _safe(member_info.filename),
                             )
                             continue
 
-                        # Extract then read
-                        try:
-                            # Ensure target directory for the file exists
-                            member_extract_path = os.path.join(
-                                extraction_target_dir, member_info.filename
+                        if not _is_path_safe(extraction_target_dir, normalised_name):
+                            logger.warning(
+                                "archive.unsafe_zip_path path=%s",
+                                _safe(member_info.filename),
                             )
-                            os.makedirs(
-                                os.path.dirname(member_extract_path), exist_ok=True
-                            )
-                            zf.extract(member_info, path=extraction_target_dir)
+                            continue
 
-                            with open(member_extract_path, "rb") as extracted_f:
-                                content_bytes = extracted_f.read()
+                        # V15.4.2: Read directly from zip into memory (no extract-then-open)
+                        # so no symlink/junction file is ever written to disk.
+                        try:
+                            with zf.open(member_info) as zf_entry:
+                                content_bytes = zf_entry.read()
                         except Exception as e:
                             logger.error(
-                                f"Error extracting/reading file {member_info.filename} from zip: {e}"
+                                "archive.zip_read_error path=%s error=%s",
+                                _safe(member_info.filename),
+                                e,
                             )
                             continue  # Skip this file
 
@@ -189,8 +262,23 @@ def extract_archive_to_files(archive_file: UploadFile) -> List[Dict[str, Any]]:
             ):
                 # tarfile.open can handle .tar, .tar.gz, .tar.bz2, .tar.xz automatically
                 with tarfile.open(archive_path, "r:*") as tf:
+                    # V15.4.2: Use data_filter (Python 3.12+) to atomically reject symlinks,
+                    # hardlinks, and absolute/traversal paths inside the extraction call.
+                    if hasattr(tarfile, "data_filter"):
+                        tf.extraction_filter = tarfile.data_filter  # type: ignore[attr-defined]
+
                     for member_info in tf.getmembers():
-                        if not member_info.isfile():  # Process only regular files
+                        # V05.2.5: Explicitly skip symlinks and hardlinks.
+                        if member_info.issym() or member_info.islnk():
+                            logger.warning(
+                                "archive.tar_link_skipped path=%s",
+                                _safe(member_info.name),
+                            )
+                            continue
+
+                        # V05.2.5: Use isreg() (stricter than isfile()) to allow only
+                        # regular files.
+                        if not member_info.isreg():
                             continue
 
                         file_count += 1
@@ -209,38 +297,29 @@ def extract_archive_to_files(archive_file: UploadFile) -> List[Dict[str, Any]]:
 
                         if not _is_path_safe(extraction_target_dir, member_info.name):
                             logger.warning(
-                                f"Skipping potentially unsafe path in TAR: {member_info.name}"
+                                "archive.unsafe_tar_path path=%s",
+                                _safe(member_info.name),
                             )
                             continue
 
                         try:
-                            # Extract then read
-                            # Ensure target directory for the file exists
-                            member_extract_path = os.path.join(
-                                extraction_target_dir, member_info.name
-                            )
-                            os.makedirs(
-                                os.path.dirname(member_extract_path), exist_ok=True
-                            )
-
-                            # Extract file object
+                            # Extract file object directly into memory (no disk write needed).
                             extracted_fo = tf.extractfile(member_info)
                             if extracted_fo:
                                 with extracted_fo as f:
                                     content_bytes = f.read()
-                                # Save to disk to be consistent with zip logic, or read directly
-                                # For now, let's keep it consistent with reading from extracted file on disk
-                                with open(member_extract_path, "wb") as disk_f:
-                                    disk_f.write(content_bytes)
                             else:
-                                # Should not happen if member_info.isfile() is true and no error
+                                # Should not happen if member_info.isreg() is true
                                 logger.warning(
-                                    f"Could not extract file object for {member_info.name} from tar."
+                                    "archive.tar_no_fileobj path=%s",
+                                    _safe(member_info.name),
                                 )
                                 continue
                         except Exception as e:
                             logger.error(
-                                f"Error extracting/reading file {member_info.name} from tar: {e}"
+                                "archive.tar_read_error path=%s error=%s",
+                                _safe(member_info.name),
+                                e,
                             )
                             continue  # Skip this file
 
@@ -261,13 +340,14 @@ def extract_archive_to_files(archive_file: UploadFile) -> List[Dict[str, Any]]:
 
         except HTTPException:  # Re-raise HTTPExceptions
             raise
-        except Exception as e:
+        except Exception:
+            # V16.5.1: Log full details server-side; return only a generic message to the client.
             logger.error(
-                f"Error processing archive {archive_file.filename}: {e}", exc_info=True
+                "archive.process_failed filename=%s",
+                _safe(archive_file.filename),
+                exc_info=True,
             )
-            raise HTTPException(
-                status_code=500, detail=f"Error processing archive: {str(e)}"
-            )
+            raise HTTPException(status_code=500, detail="Error processing archive.")
 
     if not extracted_files_data:
         raise HTTPException(

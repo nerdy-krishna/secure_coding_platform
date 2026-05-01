@@ -1,9 +1,71 @@
 # src/app/api/v1/models.py
 
 from datetime import datetime
+import ipaddress
+import socket
 import uuid
-from pydantic import UUID4, BaseModel, Field, field_validator
+from pydantic import (
+    UUID4,
+    BaseModel,
+    Field,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 from typing import List, Literal, Optional, Dict, Any
+
+# Allowlist of permitted repo hosts for SSRF prevention (V01.3.6)
+_ALLOWED_REPO_HOSTS = frozenset({"github.com", "gitlab.com", "bitbucket.org"})
+
+
+def _validate_repo_url(url: str) -> str:
+    """Validate a repo URL against an allowlist of protocols, hosts, and ports.
+
+    Enforces:
+    - scheme must be 'https'
+    - no userinfo in netloc
+    - hostname must be in the allowed host allowlist
+    - port must be None or 443
+    - hostname must not resolve to a private/reserved IP
+
+    Raises ValueError on any violation.
+    """
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+
+    if parsed.scheme != "https":
+        raise ValueError("repo_url must use the https scheme.")
+
+    if "@" in (parsed.netloc or ""):
+        raise ValueError("repo_url must not contain userinfo (credentials in URL).")
+
+    hostname = parsed.hostname or ""
+    if not hostname:
+        raise ValueError("repo_url must have a valid hostname.")
+
+    if hostname not in _ALLOWED_REPO_HOSTS:
+        raise ValueError(
+            f"repo_url hostname '{hostname}' is not in the allowed host list "
+            f"({', '.join(sorted(_ALLOWED_REPO_HOSTS))})."
+        )
+
+    port = parsed.port
+    if port is not None and port != 443:
+        raise ValueError("repo_url must use port 443 or no explicit port.")
+
+    # Guard against DNS rebinding to private/reserved ranges
+    try:
+        resolved_ip = socket.gethostbyname(hostname)
+        addr = ipaddress.ip_address(resolved_ip)
+        if not addr.is_global:
+            raise ValueError(
+                f"repo_url hostname resolves to a non-global IP address ({resolved_ip})."
+            )
+    except socket.gaierror:
+        raise ValueError(f"repo_url hostname '{hostname}' could not be resolved.")
+
+    return url
 
 
 class ApprovalRequest(BaseModel):
@@ -32,30 +94,49 @@ class ApprovalRequest(BaseModel):
 
 class LLMConfigurationBase(BaseModel):
     name: str = Field(
-        ..., description="A unique, user-friendly name for the LLM configuration."
+        ...,
+        description="A unique, user-friendly name for the LLM configuration.",
+        min_length=1,
+        max_length=200,
     )
     provider: Literal["openai", "anthropic", "google", "deepseek", "xai"] = Field(
         ...,
         description="The LLM provider. One of: 'openai', 'anthropic', 'google', 'deepseek', 'xai'.",
     )
     model_name: str = Field(
-        ..., description="The specific model name (e.g., 'gpt-4o', 'gemini-1.5-pro')."
+        ...,
+        description="The specific model name (e.g., 'gpt-4o', 'gemini-1.5-pro').",
+        min_length=1,
+        max_length=200,
     )
     tokenizer: Optional[str] = Field(
         None,
         description="The tokenizer to use for token counting (e.g., 'cl100k_base'). Defaults to model-specific or a general tokenizer if not provided.",
+        max_length=120,
     )
     input_cost_per_million: float = Field(
-        default=0.0, description="Cost per 1 million input tokens in USD."
+        default=0.0,
+        description="Cost per 1 million input tokens in USD.",
+        ge=0,
+        le=10000,
     )
     output_cost_per_million: float = Field(
-        default=0.0, description="Cost per 1 million output tokens in USD."
+        default=0.0,
+        description="Cost per 1 million output tokens in USD.",
+        ge=0,
+        le=10000,
     )
     # --- End of added fields ---
 
 
 class SystemConfigurationBase(BaseModel):
-    key: str = Field(..., description="The unique key for the configuration setting.")
+    key: str = Field(
+        ...,
+        min_length=1,
+        max_length=200,
+        pattern=r"^[a-zA-Z0-9_.\-]+$",
+        description="The unique key for the configuration setting.",
+    )
     value: Dict[str, Any] = Field(
         ..., description="The value of the configuration setting (JSON)."
     )
@@ -78,8 +159,6 @@ class SystemConfigurationCreate(SystemConfigurationBase):
 class SystemConfigurationUpdate(BaseModel):
     value: Optional[Dict[str, Any]] = None
     description: Optional[str] = None
-    is_secret: Optional[bool] = None
-    encrypted: Optional[bool] = None
 
 
 class SystemConfigurationRead(SystemConfigurationBase):
@@ -89,9 +168,22 @@ class SystemConfigurationRead(SystemConfigurationBase):
     class Config:
         from_attributes = True
 
+    @model_validator(mode="after")
+    def _mask_secret_value(self) -> "SystemConfigurationRead":
+        """Mask secret values at the schema layer (V15.3.1)."""
+        if self.is_secret:
+            object.__setattr__(self, "value", {"_redacted": True})
+        return self
+
 
 class LLMConfigurationCreate(LLMConfigurationBase):
-    api_key: str = Field(..., description="The API key for the provider.")
+    api_key: SecretStr = Field(
+        ...,
+        description="The API key for the provider.",
+        min_length=10,
+        max_length=512,
+        json_schema_extra={"x-sensitivity": "secret"},
+    )
 
 
 class LLMConfigurationUpdate(BaseModel):
@@ -111,9 +203,12 @@ class LLMConfigurationUpdate(BaseModel):
         None,
         description="The tokenizer to use for token counting (e.g., 'cl100k_base').",
     )
-    api_key: Optional[str] = Field(
+    api_key: Optional[SecretStr] = Field(
         None,
         description="The API key for the provider. If provided, it will be updated and re-encrypted.",
+        min_length=10,
+        max_length=512,
+        json_schema_extra={"x-sensitivity": "secret"},
     )
     input_cost_per_million: Optional[float] = Field(
         None, description="Cost per 1 million input tokens in USD."
@@ -143,8 +238,8 @@ class LLMConfigurationRead(LLMConfigurationBase):
 
 # --- Agent Schemas (NEW) ---
 class AgentBase(BaseModel):
-    name: str
-    description: str
+    name: str = Field(..., min_length=1, max_length=200)
+    description: str = Field(..., min_length=1, max_length=2000)
     domain_query: Dict[str, Any]
 
 
@@ -170,8 +265,14 @@ class FrameworkBase(BaseModel):
     name: str = Field(
         ...,
         description="The unique name of the security framework (e.g., 'OWASP ASVS').",
+        min_length=1,
+        max_length=200,
     )
-    description: str = Field(..., description="A brief description of the framework.")
+    description: str = Field(
+        ...,
+        description="A brief description of the framework.",
+        max_length=2000,
+    )
 
 
 class FrameworkCreate(FrameworkBase):
@@ -198,18 +299,25 @@ class FrameworkAgentMappingUpdate(BaseModel):
 
 # --- RAG Management Schemas (NEW) ---
 class RAGDocumentDeleteRequest(BaseModel):
-    document_ids: List[str]
+    document_ids: List[str] = Field(..., min_length=1, max_length=500)
 
 
 # --- Prompt Template Schemas (NEW) ---
 class PromptTemplateBase(BaseModel):
-    name: str = Field(..., description="The unique name for the prompt template.")
+    name: str = Field(
+        ...,
+        description="The unique name for the prompt template.",
+        max_length=200,
+    )
     template_type: str = Field(
         ...,
         description="The type of template (e.g., 'QUICK_AUDIT', 'DETAILED_REMEDIATION').",
+        max_length=64,
     )
     agent_name: Optional[str] = Field(
-        None, description="The name of the agent this prompt is for."
+        None,
+        description="The name of the agent this prompt is for.",
+        max_length=200,
     )
     variant: str = Field(
         "generic",
@@ -219,9 +327,16 @@ class PromptTemplateBase(BaseModel):
             "Claude with cache-friendly prefixes. The runtime picks by the "
             "active llm.optimization_mode with fallback to 'generic'."
         ),
+        max_length=64,
     )
-    version: int = Field(1, description="The version of the prompt template.")
-    template_text: str = Field(..., description="The content of the prompt template.")
+    version: int = Field(
+        1, description="The version of the prompt template.", ge=1, le=10000
+    )
+    template_text: str = Field(
+        ...,
+        description="The content of the prompt template.",
+        max_length=200_000,
+    )
 
 
 class PromptTemplateCreate(PromptTemplateBase):
@@ -249,13 +364,21 @@ class PromptTemplateRead(PromptTemplateBase):
 
 class SubmissionRequest(BaseModel):
     files: Optional[List[Dict[str, str]]] = Field(
-        None, description="List of files, each a dict with 'path' and 'content'."
+        None,
+        description="List of files, each a dict with 'path' and 'content'.",
+        max_length=1000,
     )
     repo_url: Optional[str] = Field(
-        None, description="URL of the Git repository to analyze."
+        None,
+        description="URL of the Git repository to analyze.",
+        max_length=2048,
+        pattern=r"^https://",
     )
     frameworks: List[str] = Field(
-        ..., description="List of security frameworks to analyze against."
+        ...,
+        description="List of security frameworks to analyze against.",
+        min_length=1,
+        max_length=20,
     )
     main_llm_config_id: uuid.UUID = Field(
         ..., description="ID of the LLM config for the main agent."
@@ -264,19 +387,47 @@ class SubmissionRequest(BaseModel):
         ..., description="ID of the LLM config for specialized agents."
     )
 
+    @field_validator("repo_url", mode="after")
+    @classmethod
+    def _validate_repo_url(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        return _validate_repo_url(v)
+
+    @field_validator("frameworks", mode="after")
+    @classmethod
+    def _validate_framework_lengths(cls, v: List[str]) -> List[str]:
+        for item in v:
+            if len(item) > 64:
+                raise ValueError(
+                    f"Each framework name must be at most 64 characters; got {len(item)}."
+                )
+        return v
+
+    @model_validator(mode="after")
+    def _enforce_files_xor_repo(self) -> "SubmissionRequest":
+        """Enforce XOR invariant: exactly one of files or repo_url must be provided (V02.2.3)."""
+        if bool(self.files) == bool(self.repo_url):
+            raise ValueError("Provide exactly one of `files` or `repo_url`.")
+        return self
+
 
 # --- Individual File Model (NEW - for graph input) ---
 class CodeFile(BaseModel):
-    filename: str = Field(..., description="The name/path of the file.")
-    content: str = Field(..., description="The content of the file.")
+    filename: str = Field(
+        ..., description="The name/path of the file.", min_length=1, max_length=1024
+    )
+    content: str = Field(
+        ..., description="The content of the file.", max_length=2_000_000
+    )
 
 
 class SecurityQueryCreate(BaseModel):
-    query_name: str
-    language: str
-    query_content: str
-    description: Optional[str] = None
-    cwe_id: Optional[str] = None
+    query_name: str = Field(..., min_length=1, max_length=200)
+    language: str = Field(..., min_length=1, max_length=64)
+    query_content: str = Field(..., max_length=200_000)
+    description: Optional[str] = Field(None, max_length=4000)
+    cwe_id: Optional[str] = Field(None, max_length=32, pattern=r"^CWE-[0-9]+$")
     asvs_category: Optional[str] = None
 
 
@@ -312,11 +463,11 @@ class VulnerabilityFindingResponse(BaseModel):
     cwe: str
     description: str
     severity: str
-    line_number: int
+    line_number: int = Field(..., ge=0)
     remediation: str
     confidence: str
     corroborating_agents: Optional[List[str]] = None
-    cvss_score: Optional[float] = None
+    cvss_score: Optional[float] = Field(default=None, ge=0.0, le=10.0)
     cvss_vector: Optional[str] = None
     references: List[str]
     fixes: Optional[Dict[str, Any]] = None
@@ -380,8 +531,14 @@ class LLMInteractionResponse(BaseModel):
     output_tokens: Optional[int] = None
     total_tokens: Optional[int] = None
     prompt_template_name: Optional[str] = None
-    prompt_context: Optional[Dict[str, Any]] = None
-    parsed_output: Optional[Dict[str, Any]] = None
+    prompt_context: Optional[Dict[str, Any]] = Field(
+        default=None,
+        json_schema_extra={"x-sensitivity": "pii_or_secret"},
+    )
+    parsed_output: Optional[Dict[str, Any]] = Field(
+        default=None,
+        json_schema_extra={"x-sensitivity": "pii_or_secret"},
+    )
     error: Optional[str] = None
 
     class Config:
@@ -449,14 +606,36 @@ class PaginatedResultsResponse(BaseModel):
 
 
 class GitRepoPreviewRequest(BaseModel):
-    repo_url: str
+    repo_url: str = Field(
+        ...,
+        min_length=8,
+        max_length=2048,
+        pattern=r"^https://",
+    )
+
+    @field_validator("repo_url", mode="after")
+    @classmethod
+    def _validate_repo_url(cls, v: str) -> str:
+        return _validate_repo_url(v)
 
 
 class RemediationRequest(BaseModel):
     categories_to_fix: List[str] = Field(
         ...,
         description="A list of vulnerability categories (agent names) to remediate.",
+        min_length=1,
+        max_length=50,
     )
+
+    @field_validator("categories_to_fix", mode="after")
+    @classmethod
+    def _validate_category_lengths(cls, v: List[str]) -> List[str]:
+        for item in v:
+            if len(item) > 64:
+                raise ValueError(
+                    f"Each category name must be at most 64 characters; got {len(item)}."
+                )
+        return v
 
 
 # --- Detailed Analysis Result Models (NEW - for /result/{submission_id}) ---

@@ -14,12 +14,16 @@ import uuid
 from typing import List, Optional, Set
 
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.infrastructure.database import models as db_models
 
 logger = logging.getLogger(__name__)
+
+_MAX_GROUPS_PER_LIST = 500
 
 
 class UserGroupRepository:
@@ -39,8 +43,20 @@ class UserGroupRepository:
             name=name, description=description, created_by=created_by
         )
         self.db.add(group)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except SQLAlchemyError:
+            logger.error(
+                "user_group.created.failed",
+                extra={"name": name, "created_by": created_by},
+                exc_info=True,
+            )
+            raise
         await self.db.refresh(group)
+        logger.info(
+            "user_group.created",
+            extra={"group_id": str(group.id), "name": name, "created_by": created_by},
+        )
         return group
 
     async def update_group(
@@ -57,8 +73,17 @@ class UserGroupRepository:
             group.name = name
         if description is not None:
             group.description = description
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except SQLAlchemyError:
+            logger.error(
+                "user_group.updated.failed",
+                extra={"group_id": str(group_id)},
+                exc_info=True,
+            )
+            raise
         await self.db.refresh(group)
+        logger.info("user_group.updated", extra={"group_id": str(group_id)})
         return group
 
     async def delete_group(self, group_id: uuid.UUID) -> bool:
@@ -66,7 +91,16 @@ class UserGroupRepository:
         if group is None:
             return False
         await self.db.delete(group)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except SQLAlchemyError:
+            logger.error(
+                "user_group.deleted.failed",
+                extra={"group_id": str(group_id)},
+                exc_info=True,
+            )
+            raise
+        logger.info("user_group.deleted", extra={"group_id": str(group_id)})
         return True
 
     async def list_groups(self) -> List[db_models.UserGroup]:
@@ -74,6 +108,7 @@ class UserGroupRepository:
             select(db_models.UserGroup)
             .options(selectinload(db_models.UserGroup.memberships))
             .order_by(db_models.UserGroup.name)
+            .limit(_MAX_GROUPS_PER_LIST)
         )
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
@@ -100,22 +135,31 @@ class UserGroupRepository:
     async def add_member(
         self, group_id: uuid.UUID, user_id: int, *, role: str = "member"
     ) -> db_models.UserGroupMembership:
-        # Idempotent: return the existing row when already a member.
-        existing = await self.db.get(
-            db_models.UserGroupMembership, {"group_id": group_id, "user_id": user_id}
+        # Idempotent upsert: avoids TOCTOU race between existence check and insert.
+        stmt = (
+            pg_insert(db_models.UserGroupMembership)
+            .values(group_id=group_id, user_id=user_id, role=role)
+            .on_conflict_do_update(
+                index_elements=["group_id", "user_id"],
+                set_={"role": role},
+            )
+            .returning(db_models.UserGroupMembership)
         )
-        if existing:
-            if existing.role != role:
-                existing.role = role
-                await self.db.commit()
-                await self.db.refresh(existing)
-            return existing
-        membership = db_models.UserGroupMembership(
-            group_id=group_id, user_id=user_id, role=role
+        try:
+            result = await self.db.execute(stmt)
+            await self.db.commit()
+        except SQLAlchemyError:
+            logger.error(
+                "user_group.member.added.failed",
+                extra={"group_id": str(group_id), "user_id": user_id, "role": role},
+                exc_info=True,
+            )
+            raise
+        membership = result.scalars().first()
+        logger.info(
+            "user_group.member.added",
+            extra={"group_id": str(group_id), "user_id": user_id, "role": role},
         )
-        self.db.add(membership)
-        await self.db.commit()
-        await self.db.refresh(membership)
         return membership
 
     async def remove_member(self, group_id: uuid.UUID, user_id: int) -> bool:
@@ -125,7 +169,19 @@ class UserGroupRepository:
         if existing is None:
             return False
         await self.db.delete(existing)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except SQLAlchemyError:
+            logger.error(
+                "user_group.member.removed.failed",
+                extra={"group_id": str(group_id), "user_id": user_id},
+                exc_info=True,
+            )
+            raise
+        logger.info(
+            "user_group.member.removed",
+            extra={"group_id": str(group_id), "user_id": user_id},
+        )
         return True
 
     # --- Hot path for scan visibility ---------------------------------
@@ -159,6 +215,7 @@ class UserGroupRepository:
             )
             .where(db_models.UserGroupMembership.user_id == user_id)
             .order_by(db_models.UserGroup.name)
+            .limit(_MAX_GROUPS_PER_LIST)
         )
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
@@ -172,5 +229,18 @@ class UserGroupRepository:
             db_models.UserGroupMembership.user_id == user_id
         )
         result = await self.db.execute(stmt)
-        await self.db.commit()
-        return result.rowcount or 0
+        try:
+            await self.db.commit()
+        except SQLAlchemyError:
+            logger.error(
+                "user_group.member.bulk_removed.failed",
+                extra={"user_id": user_id},
+                exc_info=True,
+            )
+            raise
+        count = result.rowcount or 0
+        logger.info(
+            "user_group.member.bulk_removed",
+            extra={"user_id": user_id, "count": count},
+        )
+        return count

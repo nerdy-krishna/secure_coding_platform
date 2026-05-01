@@ -1,12 +1,13 @@
 # src/app/shared/analysis_tools/repository_map.py
 
+import concurrent.futures
+import hashlib
 import logging
 from pathlib import Path
 from typing import Dict, List, Tuple
 import fnmatch
 
 from pydantic import BaseModel, Field
-import tree_sitter_languages
 from tree_sitter import Language, Node, Parser, Tree
 from tree_sitter_languages import get_language
 
@@ -256,9 +257,7 @@ class RepositoryMappingEngine:
     """
 
     def __init__(self):
-        self.parser = Parser()
         self.supported_languages: Dict[str, Language] = {}
-        logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
 
     def _get_language_handler(self, file_path: str) -> Tuple[str, Language]:
@@ -311,28 +310,20 @@ class RepositoryMappingEngine:
             raise GrammarLoadingError(f"No language configured for file: {file_path}")
 
         try:
-            self.logger.info(
-                f"Attempting to load grammar for '{lang_name}'. "
-                f"tree-sitter-languages version: {tree_sitter_languages.__version__}"
-            )
+            self.logger.info("grammar.load lang=%s", lang_name)
             language = get_language(
                 lang_name
             )  # This is where the original error occurs
             if (
                 language is None
             ):  # Defensive check, get_language usually raises on failure
-                raise GrammarLoadingError(
-                    f"get_language('{lang_name}') returned None for {file_path}"
-                )
+                raise GrammarLoadingError(f"get_language('{lang_name}') returned None")
             return lang_name, language
         except Exception as e:
             # This catches the original "TypeError: __init__()..." and other loading issues
-            self.logger.error(
-                f"Failed to load grammar for language '{lang_name}' for {file_path}: {e}",
-                exc_info=True,
-            )
+            self.logger.error("grammar.load_failed lang=%s", lang_name, exc_info=True)
             raise GrammarLoadingError(
-                f"Could not load grammar for language '{lang_name}' (file: {file_path}): {e}"
+                f"Could not load grammar for language '{lang_name}': {e}"
             ) from e
 
     def _execute_query(
@@ -362,14 +353,28 @@ class RepositoryMappingEngine:
         """Parses a single file and extracts its structure."""
         summary = FileSummary(path=file_path)
 
+        # V02.2.1: enforce per-file content size cap (2 MB)
+        if len(content) > 2_000_000:
+            summary.errors.append("Skipped: file exceeds 2MB cap")
+            return summary
+
         # _get_language_handler now raises GrammarLoadingError if it fails.
         # The error will propagate up to create_map if not caught here.
         lang_name, language = self._get_language_handler(file_path)
 
-        self.parser.set_language(language)  # type: ignore
+        # V15.4.1: construct a local Parser per call to avoid shared-state
+        # concurrency hazards when the engine is used across threads/tasks.
+        parser = Parser()
+        parser.set_language(language)  # type: ignore
 
         try:
-            tree = self.parser.parse(bytes(content, "utf8"))
+            # V02.4.1: enforce a 5-second parse budget via a background thread.
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(parser.parse, bytes(content, "utf8"))
+                tree = future.result(timeout=5.0)
+        except concurrent.futures.TimeoutError:
+            summary.errors.append("Tree-sitter parse timed out")
+            return summary
         except Exception as e:
             summary.errors.append(f"Tree-sitter failed to parse file: {e}")
             return summary
@@ -380,7 +385,13 @@ class RepositoryMappingEngine:
             if node.text:
                 summary.imports.append(node.text.decode("utf8").strip("'\"<>"))
 
+        # V02.3.2: cap imports list
+        summary.imports = summary.imports[:1000]
+
         symbol_captures = self._execute_query(tree, language, lang_name, "symbols")
+
+        # V02.2.3: total line count for range validation
+        total_lines = content.count("\n") + 1
 
         processed_symbols = {}
         for node, capture_name in symbol_captures:
@@ -403,6 +414,10 @@ class RepositoryMappingEngine:
                     line_number = node.start_point[0] + 1
                     end_line_number = node.end_point[0] + 1
 
+                    # V02.2.3: enforce consistent line-range bounds
+                    if not (1 <= line_number <= end_line_number <= total_lines):
+                        continue
+
                     if (symbol_name, line_number) not in processed_symbols:
                         symbol = Symbol(
                             name=symbol_name,
@@ -413,6 +428,9 @@ class RepositoryMappingEngine:
                         summary.symbols.append(symbol)
                         processed_symbols[(symbol_name, line_number)] = symbol
 
+        # V02.3.2: cap symbols list
+        summary.symbols = summary.symbols[:5000]
+
         return summary
 
     def create_map(self, files: Dict[str, str]) -> RepositoryMap:
@@ -421,12 +439,30 @@ class RepositoryMappingEngine:
         If any file fails critical parsing due to grammar issues, this method
         will raise a GrammarLoadingError.
         """
-        self.logger.info(f"Starting repository mapping for {len(files)} files.")
+        # V02.2.1: enforce upper bound on number of files processed
+        MAX_FILES = 20_000
+        MAX_PATH_LEN = 1024
+
+        self.logger.info("repo_map.start file_count=%d", len(files))
+
+        if len(files) > MAX_FILES:
+            raise ValueError(
+                f"Repository exceeds maximum file limit of {MAX_FILES} files."
+            )
+
         repo_map = RepositoryMap()
         for file_path, content in files.items():
+            # V02.2.1: skip paths that exceed the length cap
+            if len(file_path) > MAX_PATH_LEN:
+                continue
+
+            # Use a short hash of the path for log messages to avoid log-injection
+            # via attacker-controlled filenames (V16.2.5 / V16.4.1).
+            path_hash = hashlib.sha256(file_path.encode()).hexdigest()[:12]
+
             # Check against ignore patterns first
             if any(fnmatch.fnmatch(file_path, pattern) for pattern in IGNORE_PATTERNS):
-                self.logger.info(f"Skipping ignored file: {file_path}")
+                self.logger.debug("repo_map.skip_ignored path_hash=%s", path_hash)
                 repo_map.files[file_path] = FileSummary(
                     path=file_path,
                     errors=["Skipped: File matches global ignore pattern."],
@@ -434,21 +470,19 @@ class RepositoryMappingEngine:
                 continue
 
             if not content.strip():
-                self.logger.info(f"Skipping empty file: {file_path}")
+                self.logger.debug("repo_map.skip_empty path_hash=%s", path_hash)
                 repo_map.files[file_path] = FileSummary(
                     path=file_path, errors=["Skipped empty file."]
                 )
                 continue
 
-            self.logger.info(f"Parsing file: {file_path}")
+            self.logger.debug("repo_map.parse path_hash=%s", path_hash)
             try:
                 file_summary = self._parse_file(file_path, content)
                 repo_map.files[file_path] = file_summary
             except GrammarLoadingError as e:
                 # Instead of halting, log a warning and create a placeholder summary.
-                self.logger.warning(
-                    f"Could not determine language for '{file_path}'. It will be skipped from parsing. Error: {e}"
-                )
+                self.logger.warning("repo_map.no_grammar path_hash=%s", path_hash)
                 repo_map.files[file_path] = FileSummary(
                     path=file_path,
                     errors=[
@@ -459,8 +493,7 @@ class RepositoryMappingEngine:
                 Exception
             ) as e:  # Catch other unexpected errors during _parse_file for this specific file
                 self.logger.error(
-                    f"Unexpected error parsing file {file_path}, skipping this file: {e}",
-                    exc_info=True,
+                    "repo_map.parse_error path_hash=%s", path_hash, exc_info=True
                 )
                 summary = FileSummary(path=file_path)
                 summary.errors.append(f"Unexpected error during parsing: {str(e)}")

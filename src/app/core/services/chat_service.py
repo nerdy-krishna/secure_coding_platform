@@ -10,7 +10,19 @@ from sqlalchemy import select
 from app.infrastructure.database.repositories.chat_repo import ChatRepository
 from app.infrastructure.database import models as db_models
 from app.infrastructure.agents.chat_agent import ChatAgent
+from app.infrastructure.observability.mask import mask as mask_secrets
 from app.shared.lib.scan_status import COMPLETED_SCAN_STATUSES
+
+# Input validation constants
+_MAX_TITLE_CHARS = 200
+_MAX_QUESTION_CHARS = 8000
+_VALID_FRAMEWORKS = {
+    "asvs",
+    "proactive_controls",
+    "cheatsheets",
+    "llm_top10",
+    "agentic_top10",
+}
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +44,26 @@ class ChatService:
         project_id: Optional[uuid.UUID] = None,
     ) -> db_models.ChatSession:
         """Creates a new chat session for a user with initial config."""
+        # V02.2.1 — positive input validation
+        if not title or len(title) > _MAX_TITLE_CHARS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"title must be 1..{_MAX_TITLE_CHARS} chars",
+            )
+        unknown_frameworks = set(frameworks) - _VALID_FRAMEWORKS
+        if unknown_frameworks:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"unknown frameworks: {sorted(unknown_frameworks)}",
+            )
+        # V16.4.1 — structured bound-field logging; avoids log-injection via title
         logger.info(
-            f"User {user.id} creating new chat session '{title}' with LLM {llm_config_id}."
+            "chat: new session creating",
+            extra={
+                "actor_user_id": user.id,
+                "title": title,
+                "llm_config_id": str(llm_config_id),
+            },
         )
         return await self.chat_repo.create_session(
             user_id=user.id,
@@ -59,6 +89,11 @@ class ChatService:
         if not messages and not await self.chat_repo.get_session_by_id(
             session_id, user.id
         ):
+            # V16.3.2 — log denied access for SIEM enumeration-probe detection
+            logger.warning(
+                "chat: session access denied",
+                extra={"session_id": str(session_id), "actor_user_id": user.id},
+            )
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Chat session not found or not authorized.",
@@ -72,42 +107,85 @@ class ChatService:
         Posts a user's message, gets a response from the ChatAgent,
         and saves both messages to the database.
         """
+        # V02.2.1 — positive input validation for question
+        if not question.strip() or len(question) > _MAX_QUESTION_CHARS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"question must be 1..{_MAX_QUESTION_CHARS} chars",
+            )
+
         # 1. Verify user has access to the session and get its config
         session = await self.chat_repo.get_session_by_id(session_id, user.id)
         if not session:
+            # V16.3.2 — log denied access for SIEM enumeration-probe detection
+            logger.warning(
+                "chat: session access denied",
+                extra={"session_id": str(session_id), "actor_user_id": user.id},
+            )
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Chat session not found or not authorized.",
             )
 
-        # 2. Save the user's message (without cost)
+        # V16.4.1 — structured bound-field logging; avoids log-injection
+        logger.info(
+            "chat: invoking agent",
+            extra={"session_id": str(session_id), "actor_user_id": user.id},
+        )
+
+        # V14.2.4 — redact secrets before persistence; keep original for LLM in-flight
+        redacted_question = str(mask_secrets(question))
+
+        # 2. Save the user's message (without cost) — redacted copy persisted
+        # V02.3.3 — save user message; on failure we propagate before any LLM cost
         await self.chat_repo.add_message(
-            session_id=session_id, role="user", content=question
+            session_id=session_id,
+            role="user",
+            content=redacted_question,
+            user_id=user.id,
         )
 
         # 3. Get conversation history for the agent
         history = await self.chat_repo.get_messages_for_session(session_id, user.id)
 
         # 4. Invoke the ChatAgent to get a response
-        logger.info(f"Invoking ChatAgent for session {session_id}.")
-        (
-            ai_response_content,
-            llm_interaction_id,
-            cost,
-        ) = await self.chat_agent.generate_response(
-            session_id=session_id,
-            user_question=question,
-            history=history,
-            llm_config_id=session.llm_config_id,
-            frameworks=session.frameworks,
-        )
+        # V16.3.4 + V16.5.2 — catch agent failures; degrade gracefully instead of 500
+        try:
+            (
+                ai_response_content,
+                llm_interaction_id,
+                cost,
+            ) = await self.chat_agent.generate_response(
+                session_id=session_id,
+                user_question=question,  # unredacted copy for LLM only
+                history=history,
+                llm_config_id=session.llm_config_id,
+                user_id=user.id,
+                frameworks=session.frameworks,
+            )
+        except Exception:
+            logger.error(
+                "chat: agent invocation failed",
+                extra={"session_id": str(session_id), "actor_user_id": user.id},
+                exc_info=True,
+            )
+            # Graceful degradation: persist a placeholder so the session stays intact
+            ai_response_content = (
+                "The advisor is temporarily unavailable. Please try again shortly."
+            )
+            cost = None
+            llm_interaction_id = None
 
-        # 5. Save the AI's response with the calculated cost
+        # V14.2.4 — redact AI response before persistence
+        redacted_ai_response = str(mask_secrets(ai_response_content))
+
+        # 5. Save the AI's response with the calculated cost — redacted copy persisted
         ai_message = await self.chat_repo.add_message(
             session_id=session_id,
             role="assistant",
-            content=ai_response_content,
+            content=redacted_ai_response,
             cost=cost,
+            user_id=user.id,
         )
 
         # 6. Link the LLM interaction to the AI's chat message
@@ -118,7 +196,11 @@ class ChatService:
 
     async def delete_session(self, session_id: uuid.UUID, user: db_models.User) -> bool:
         """Deletes a user's chat session."""
-        logger.info(f"User {user.id} requesting to delete session {session_id}.")
+        # V16.4.1 — structured bound-field logging; avoids log-injection
+        logger.info(
+            "chat: session delete requested",
+            extra={"actor_user_id": user.id, "session_id": str(session_id)},
+        )
         return await self.chat_repo.delete_session(session_id, user.id)
 
     async def get_session_context(
@@ -143,6 +225,11 @@ class ChatService:
         """
         session = await self.chat_repo.get_session_by_id(session_id, user.id)
         if not session:
+            # V16.3.2 — log denied access for SIEM enumeration-probe detection
+            logger.warning(
+                "chat: session access denied",
+                extra={"session_id": str(session_id), "actor_user_id": user.id},
+            )
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Chat session not found or not authorized.",

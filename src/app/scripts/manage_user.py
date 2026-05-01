@@ -3,6 +3,9 @@ import asyncio
 import argparse
 import sys
 import logging
+import getpass
+import re
+import socket
 from typing import cast, Dict, Any
 
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
@@ -24,7 +27,7 @@ async def manage_user(email: str, superuser: bool, verified: bool):
     """
     Finds a user by email and updates their superuser and verified status.
     """
-    print(f"Attempting to manage user: {email}")
+    logger.info("Attempting to manage user: %s", email)
 
     # --- START: Self-contained database connection ---
     if not settings.ASYNC_DATABASE_URL:
@@ -44,7 +47,7 @@ async def manage_user(email: str, superuser: bool, verified: bool):
         user_to_update = await user_manager.get_by_email(email)
 
         if not user_to_update:
-            print(f"Error: User with email {email} not found.")
+            logger.error("User with email %s not found.", email)
             return
 
         user_to_update = cast(User, user_to_update)
@@ -52,20 +55,48 @@ async def manage_user(email: str, superuser: bool, verified: bool):
 
         if superuser is not None and user_to_update.is_superuser != superuser:
             update_dict["is_superuser"] = superuser
-            print(f"Updating is_superuser to: {superuser}")
+            logger.info("Updating is_superuser to: %s", superuser)
 
         if verified is not None and user_to_update.is_verified != verified:
             update_dict["is_verified"] = verified
-            print(f"Updating is_verified to: {verified}")
+            logger.info("Updating is_verified to: %s", verified)
+
+        # V02.2.3: auto-set is_verified when granting superuser
+        if update_dict.get("is_superuser"):
+            update_dict["is_verified"] = True
+
+        # V13.3.2 / V02.3.2: confirmation prompt for elevated flag grants
+        if update_dict.get("is_superuser") or update_dict.get("is_verified"):
+            confirm = input(
+                f"Grant elevated flags {list(update_dict)} to {user_to_update.email}? [yes/NO] "
+            )
+            if confirm.strip().lower() != "yes":
+                logger.info("Aborted by operator.")
+                print("Aborted.")
+                return
 
         if update_dict:
+            # V16.3.2 / V16.3.3 / V02.3.2: audit log before superuser elevation
+            if update_dict.get("is_superuser"):
+                logger.warning(
+                    "AUDIT: superuser grant: user=%s actor=%s host=%s",
+                    user_to_update.email,
+                    getpass.getuser(),
+                    socket.gethostname(),
+                )
+
             # Corrected: Create a UserUpdate schema instance from the dictionary
             user_update_schema = UserUpdate(**update_dict)
             # Corrected: Pass the schema to the user_manager's update method
-            await user_manager.update(user_update_schema, user_to_update)
-            print(f"Successfully updated user: {email}")
+            # V02.3.3: wrap update in try/except for transactional safety
+            try:
+                await user_manager.update(user_update_schema, user_to_update)
+            except Exception as e:
+                logger.error("Failed to update user %s: %s", user_to_update.email, e)
+                raise
+            logger.info("Successfully updated user: %s", email)
         else:
-            print("No changes were needed for the user.")
+            logger.info("No changes were needed for the user.")
 
 
 async def main():
@@ -85,9 +116,15 @@ async def main():
     )
     args = parser.parse_args()
 
+    # V02.2.1: validate email format before proceeding
+    EMAIL_RE = re.compile(r"^[^@]+@[^@]+\.[^@]+$")
+    if not EMAIL_RE.match(args.email):
+        print("Invalid email format")
+        sys.exit(1)
+
     if args.superuser is None and args.verified is None:
-        print(
-            "Error: You must specify at least one action (--superuser or --verified)."
+        logger.error(
+            "You must specify at least one action (--superuser or --verified)."
         )
         sys.exit(1)
 

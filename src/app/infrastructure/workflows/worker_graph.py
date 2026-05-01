@@ -20,6 +20,7 @@ migration.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -187,16 +188,61 @@ def _route_after_prescan_approval(state: WorkerState) -> str:
     """
     if state.get("error_message"):
         return "handle_error"
-    payload = state.get("prescan_approval") or {}
-    if not payload.get("approved", False):
+
+    # V02.4.1: anti-automation — cap resume attempts per scan to 3.
+    resume_attempts = state.get("resume_attempts", 0) + 1
+    state["resume_attempts"] = resume_attempts
+    if resume_attempts > 3:
+        logger.warning(
+            "audit.prescan_approval_routed: too many resume attempts, declining",
+            extra={
+                "scan_id": str(state.get("scan_id")),
+                "resume_attempts": resume_attempts,
+            },
+        )
         return "user_decline"
+
+    payload = state.get("prescan_approval") or {}
+
     findings = state.get("findings") or []
     has_critical_secret = any(
         getattr(f, "source", None) == "gitleaks"
         and (f.severity or "").lower() == "critical"
         for f in findings
     )
-    if has_critical_secret and not payload.get("override_critical_secret", False):
+    critical_gitleaks_count = sum(
+        1
+        for f in findings
+        if getattr(f, "source", None) == "gitleaks"
+        and (f.severity or "").lower() == "critical"
+    )
+
+    # V16.3.3: emit audit log for every routing decision at this security gate.
+    logger.info(
+        "audit.prescan_approval_routed",
+        extra={
+            "scan_id": str(state.get("scan_id")),
+            "approved": bool(payload.get("approved")),
+            "override_critical_secret": bool(payload.get("override_critical_secret")),
+            "approver_user_id": payload.get("approver_user_id"),
+            "critical_gitleaks_count": critical_gitleaks_count,
+        },
+    )
+
+    # V02.2.3: reject contradictory payloads — override without approval, or
+    # override when there are no Critical Gitleaks findings present.
+    override = payload.get("override_critical_secret")
+    approved = payload.get("approved")
+    if override is True and approved is not True:
+        return "user_decline"
+    if override is True and not has_critical_secret:
+        return "user_decline"
+
+    # V02.2.1: use strict identity check (is True) so non-bool truthy values
+    # such as 'yes' or 1 are rejected rather than accepted.
+    if approved is not True:
+        return "user_decline"
+    if has_critical_secret and override is not True:
         return "blocked_pre_llm"
     return "estimate_cost"
 
@@ -277,31 +323,40 @@ workflow.add_edge("handle_error", END)
 
 _workflow: Optional[Pregel] = None
 _checkpointer_conn: Optional[psycopg.AsyncConnection] = None
+_workflow_init_lock = asyncio.Lock()
 
 
 async def get_workflow() -> Pregel:
+    # V15.4.1: double-checked locking prevents concurrent coroutines from each
+    # creating a psycopg.AsyncConnection and compiling the workflow.
     global _workflow, _checkpointer_conn
     if _workflow is not None:
         return _workflow
-    if not settings.ASYNC_DATABASE_URL:
-        raise ValueError("ASYNC_DATABASE_URL must be configured.")
-    if _checkpointer_conn is None or _checkpointer_conn.closed:
-        logger.info("Creating new psycopg async connection for checkpointer...")
-        try:
-            conn_url = settings.ASYNC_DATABASE_URL.replace(
-                "postgresql+asyncpg://", "postgresql://"
-            )
-            _checkpointer_conn = await psycopg.AsyncConnection.connect(conn_url)
-        except Exception as e:
-            logger.error(
-                f"Failed to create psycopg async connection for checkpointer: {e}",
-                exc_info=True,
-            )
-            raise
-    checkpointer = AsyncPostgresSaver(conn=_checkpointer_conn)  # type: ignore
-    _workflow = workflow.compile(checkpointer=checkpointer)
-    logger.info("Main worker workflow compiled and ready with PostgreSQL checkpointer.")
-    return _workflow
+    async with _workflow_init_lock:
+        if _workflow is not None:
+            return _workflow
+        if not settings.ASYNC_DATABASE_URL:
+            raise ValueError("ASYNC_DATABASE_URL must be configured.")
+        if _checkpointer_conn is None or _checkpointer_conn.closed:
+            # V16.4.1: use a plain string literal — no f-string, no variable interpolation.
+            logger.info("Creating new psycopg async connection for checkpointer")
+            try:
+                conn_url = settings.ASYNC_DATABASE_URL.replace(
+                    "postgresql+asyncpg://", "postgresql://"
+                )
+                _checkpointer_conn = await psycopg.AsyncConnection.connect(conn_url)
+            except Exception as e:
+                # V16.3.4: log without interpolating `e` (which can contain DSN
+                # fragments); exc_info=True still gives the full traceback to ops.
+                logger.error("checkpointer_connect_failed", exc_info=True)
+                raise RuntimeError("Checkpointer connection failed") from e
+        checkpointer = AsyncPostgresSaver(conn=_checkpointer_conn)  # type: ignore
+        _workflow = workflow.compile(checkpointer=checkpointer)
+        # V16.4.1: plain string, no f-string interpolation.
+        logger.info(
+            "Main worker workflow compiled and ready with PostgreSQL checkpointer"
+        )
+        return _workflow
 
 
 async def close_workflow_resources():

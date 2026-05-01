@@ -4,10 +4,21 @@
 Path prefix `/admin/user-groups`. All endpoints are gated on
 `current_superuser`; the frontend only shows the Groups page to
 admin accounts.
+
+Data protection
+---------------
+``MemberRead.email`` and ``MemberAdd.email`` are PII (classification:
+internal-personal).  Log lines emitted by this module MUST NOT contain
+raw email addresses — use only hashed or redacted representations (see
+``hashlib.sha256`` pattern in ``add_member``).  Emails SHOULD be
+deleted within a reasonable retention window after membership is removed
+via the ``remove_member`` path.  See the project log-redaction policy
+for full V14.1.2 compliance requirements.
 """
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import uuid
 from typing import List, Optional
@@ -28,12 +39,17 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin/user-groups", tags=["Admin: User Groups"])
 
+# Business limits (V02.3.2) — prevent unbounded resource creation.
+MAX_USER_GROUPS = 1000
+MAX_MEMBERS_PER_GROUP = 5000
+
 
 # --- Schemas -------------------------------------------------------------
 
 
 class MemberRead(BaseModel):
     user_id: int
+    # PII: classification=internal-personal; retain only while membership active; redact in logs
     email: str
     role: str
 
@@ -58,6 +74,7 @@ class UserGroupUpdate(BaseModel):
 
 
 class MemberAdd(BaseModel):
+    # PII: classification=internal-personal; retain only while membership active; redact in logs
     email: EmailStr
     role: str = Field(default="member", pattern="^(member|owner)$")
 
@@ -123,6 +140,12 @@ async def create_group(
     repo: UserGroupRepository = Depends(_repo),
     db: AsyncSession = Depends(get_db),
 ) -> UserGroupRead:
+    existing = await repo.list_groups()
+    if len(existing) >= MAX_USER_GROUPS:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Maximum number of user groups has been reached.",
+        )
     try:
         group = await repo.create_group(
             name=payload.name,
@@ -139,6 +162,10 @@ async def create_group(
     # Reload with memberships relationship hydrated.
     fresh = await repo.get_group(group.id)
     assert fresh is not None
+    logger.info(
+        "admin.group.created",
+        extra={"actor_id": user.id, "group_id": str(group.id), "name": payload.name},
+    )
     return await _hydrate(fresh, db)
 
 
@@ -155,6 +182,10 @@ async def update_group(
     )
     if group is None:
         raise HTTPException(status_code=404, detail="Group not found.")
+    logger.info(
+        "admin.group.updated",
+        extra={"actor_id": _user.id, "group_id": str(group_id)},
+    )
     fresh = await repo.get_group(group.id)
     assert fresh is not None
     return await _hydrate(fresh, db)
@@ -173,6 +204,10 @@ async def delete_group(
     ok = await repo.delete_group(group_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Group not found.")
+    logger.info(
+        "admin.group.deleted",
+        extra={"actor_id": _user.id, "group_id": str(group_id)},
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -188,6 +223,12 @@ async def add_member(
     if group is None:
         raise HTTPException(status_code=404, detail="Group not found.")
 
+    if len(group.memberships or []) >= MAX_MEMBERS_PER_GROUP:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Group has reached the maximum allowed members.",
+        )
+
     # Resolve email → user_id. We intentionally don't expose enumeration:
     # if the user doesn't exist we return 404 without distinguishing from
     # "group not found".
@@ -196,11 +237,27 @@ async def add_member(
     )
     user = result.scalars().first()
     if user is None:
+        logger.warning(
+            "admin.group.add_member_failed",
+            extra={
+                "actor_id": _user.id,
+                "email_hash": hashlib.sha256(payload.email.encode()).hexdigest()[:16],
+            },
+        )
         raise HTTPException(
             status_code=404, detail="User with that email does not exist."
         )
 
     await repo.add_member(group_id, user.id, role=payload.role)
+    logger.info(
+        "admin.group.member_added",
+        extra={
+            "actor_id": _user.id,
+            "group_id": str(group_id),
+            "user_id": user.id,
+            "role": payload.role,
+        },
+    )
     fresh = await repo.get_group(group_id)
     assert fresh is not None
     return await _hydrate(fresh, db)
@@ -220,4 +277,8 @@ async def remove_member(
     ok = await repo.remove_member(group_id, user_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Membership not found.")
+    logger.info(
+        "admin.group.member_removed",
+        extra={"actor_id": _user.id, "group_id": str(group_id), "user_id": user_id},
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

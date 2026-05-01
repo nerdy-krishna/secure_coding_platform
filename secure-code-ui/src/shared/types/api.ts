@@ -30,12 +30,12 @@ export interface UserLoginData {
   client_secret?: string;
 }
 
+// NOTE: privilege flags (is_active, is_superuser, is_verified) are intentionally
+// absent — registration payloads must never set them. Use AdminUserCreate
+// (aliased from the generated schemas) for admin-only user creation.
 export interface UserRegisterData {
   email: string;
   password: string;
-  is_active?: boolean;
-  is_superuser?: boolean;
-  is_verified?: boolean;
 }
 
 export type UserRead = Schemas["UserRead"];

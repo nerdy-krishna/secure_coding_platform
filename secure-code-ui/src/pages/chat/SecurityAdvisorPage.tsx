@@ -58,6 +58,9 @@ const QUICK_REPLIES = [
   "Summarize the scan",
 ];
 
+const MAX_QUESTION_LEN = 8000;
+const MAX_TITLE_LEN = 200;
+
 const SecurityAdvisorPage: React.FC = () => {
   const queryClient = useQueryClient();
   const toast = useToast();
@@ -68,6 +71,7 @@ const SecurityAdvisorPage: React.FC = () => {
   const [newLlmId, setNewLlmId] = useState<string>("");
   const [newFrameworks, setNewFrameworks] = useState<string[]>([]);
   const threadRef = useRef<HTMLDivElement | null>(null);
+  const lastSendRef = useRef<number>(0);
 
   const { data: sessions = [], isLoading: loadingSessions } = useQuery<
     ChatSession[]
@@ -124,7 +128,10 @@ const SecurityAdvisorPage: React.FC = () => {
       });
       setDraft("");
     },
-    onError: (err: Error) => toast.error(err.message || "Ask failed"),
+    onError: (err: Error) => {
+      if (process.env.NODE_ENV !== "production") console.error("[askMutation]", err);
+      toast.error("Ask failed");
+    },
   });
 
   const createMutation = useMutation({
@@ -141,8 +148,10 @@ const SecurityAdvisorPage: React.FC = () => {
       setNewTitle("");
       setNewFrameworks([]);
     },
-    onError: (err: Error) =>
-      toast.error(err.message || "Could not create session"),
+    onError: (err: Error) => {
+      if (process.env.NODE_ENV !== "production") console.error("[createMutation]", err);
+      toast.error("Could not create session");
+    },
   });
 
   const deleteMutation = useMutation({
@@ -151,7 +160,10 @@ const SecurityAdvisorPage: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ["chatSessions"] });
       setActiveSessionId(null);
     },
-    onError: (err: Error) => toast.error(err.message || "Delete failed"),
+    onError: (err: Error) => {
+      if (process.env.NODE_ENV !== "production") console.error("[deleteMutation]", err);
+      toast.error("Delete failed");
+    },
   });
 
   const buckets = useMemo(() => bucketSessions(sessions), [sessions]);
@@ -159,10 +171,23 @@ const SecurityAdvisorPage: React.FC = () => {
     sessions.find((s) => s.id === activeSessionId) ?? null;
 
   const canSend =
-    !!activeSessionId && draft.trim().length > 0 && !askMutation.isPending;
+    !!activeSessionId &&
+    draft.trim().length > 0 &&
+    draft.trim().length <= MAX_QUESTION_LEN &&
+    !askMutation.isPending;
 
   const handleSend = () => {
     if (!canSend) return;
+    if (draft.trim().length > MAX_QUESTION_LEN) {
+      toast.error(`Question exceeds the ${MAX_QUESTION_LEN}-character limit.`);
+      return;
+    }
+    const now = Date.now();
+    if (now - lastSendRef.current < 1500) {
+      toast.error("Please wait a moment between questions.");
+      return;
+    }
+    lastSendRef.current = now;
     askMutation.mutate(draft.trim());
   };
 
@@ -528,6 +553,7 @@ const SecurityAdvisorPage: React.FC = () => {
                   : "Start a chat to enable the advisor."
               }
               value={draft}
+              maxLength={MAX_QUESTION_LEN}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
@@ -707,6 +733,7 @@ const SecurityAdvisorPage: React.FC = () => {
             <input
               className="sccap-input"
               value={newTitle}
+              maxLength={MAX_TITLE_LEN}
               onChange={(e) => setNewTitle(e.target.value)}
               placeholder="e.g., SQL injection walk-through"
               autoFocus
