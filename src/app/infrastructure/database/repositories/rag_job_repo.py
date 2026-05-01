@@ -42,8 +42,16 @@ class RAGJobRepository:
         framework_name: str,
         llm_config_id: uuid.UUID,
         file_hash: str,
+        raw_content_retention_consent: bool = False,
     ) -> db_models.RAGPreprocessingJob:
-        """Creates a new job record in the database."""
+        """Creates a new job record in the database.
+
+        V14.2.8 — `raw_content_retention_consent` is captured at create
+        time and persisted on the row. The write-guard for raw upload
+        bytes lives in `set_raw_content` (called by the preprocessor
+        after the job row exists): bytes are only stored when the
+        operator gave consent, otherwise the column stays NULL.
+        """
         # V14.2.7 — stamp retention expiry from the cached config.
         from app.core.config_cache import (
             RETENTION_KIND_RAG_JOB,
@@ -63,6 +71,7 @@ class RAGJobRepository:
             original_file_hash=file_hash,
             status="PENDING",
             expires_at=expires_at,
+            raw_content_retention_consent=raw_content_retention_consent,
         )
         self.db.add(job)
         try:

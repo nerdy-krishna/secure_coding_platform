@@ -61,6 +61,10 @@ export const FrameworkIngestionModal: React.FC<FrameworkIngestionModalProps> = (
   const [file, setFile] = useState<File | null>(null);
   const [targetLanguages, setTargetLanguages] = useState<string[]>([]);
   const [llmConfigId, setLlmConfigId] = useState<string>("");
+  // V14.2.8 — explicit consent for retaining the uploaded CSV bytes. Off by
+  // default; admins must opt in to enable the (optional) re-ingest path.
+  const [rawContentRetentionConsent, setRawContentRetentionConsent] =
+    useState<boolean>(false);
 
   const isEdit = !!initialValues?.isEdit;
 
@@ -70,6 +74,7 @@ export const FrameworkIngestionModal: React.FC<FrameworkIngestionModalProps> = (
       setFile(null);
       setTargetLanguages([]);
       setLlmConfigId(llmConfigs[0]?.id ?? "");
+      setRawContentRetentionConsent(false);
       setJobData(null);
       setStep(0);
     }
@@ -154,6 +159,7 @@ export const FrameworkIngestionModal: React.FC<FrameworkIngestionModalProps> = (
           frameworkName,
           targetLanguages,
           llmConfigId,
+          rawContentRetentionConsent,
         );
       } else if (isEdit) {
         response = await ragService.reprocessFramework(
@@ -391,6 +397,33 @@ export const FrameworkIngestionModal: React.FC<FrameworkIngestionModalProps> = (
             </select>
             <span style={{ fontSize: 11, color: "var(--fg-subtle)" }}>
               Used to analyze documents and generate patterns.
+            </span>
+          </label>
+
+          {/* V14.2.8 — opt-in retention consent. Off by default; admins must
+              explicitly tick this for the backend to persist the uploaded CSV
+              bytes. Without consent the file is processed and then discarded. */}
+          <label
+            style={{
+              display: "flex",
+              gap: 8,
+              alignItems: "flex-start",
+              fontSize: 13,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={rawContentRetentionConsent}
+              onChange={(e) =>
+                setRawContentRetentionConsent(e.target.checked)
+              }
+              disabled={loading}
+              style={{ marginTop: 3 }}
+            />
+            <span>
+              Retain my uploaded CSV bytes for the configured retention window
+              (used to support re-ingestion). I consent to storage. If unchecked,
+              the file is parsed for this run and the raw bytes are discarded.
             </span>
           </label>
 

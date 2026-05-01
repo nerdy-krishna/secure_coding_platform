@@ -182,6 +182,7 @@ export const ragService = {
     frameworkName: string,
     targetLanguages: string[] = [],
     llmConfigId: string,
+    rawContentRetentionConsent: boolean = false,
   ): Promise<RAGJobStartResponse> => {
     // V02.2.1 validations
     assertIngestFile(file);
@@ -203,6 +204,9 @@ export const ragService = {
     formData.append("framework_name", frameworkName);
     for (const lang of targetLanguages) formData.append("target_languages", lang);
     formData.append("llm_config_id", llmConfigId);
+    // V14.2.8: explicit consent for raw upload retention. Backend defaults to
+    // false (no storage); we only forward the field when the operator opted in.
+    formData.append("raw_content_retention_consent", String(!!rawContentRetentionConsent));
 
     const promise = apiClient
       .post<RAGJobStartResponse>("/admin/rag/preprocess/start", formData)

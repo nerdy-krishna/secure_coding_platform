@@ -441,6 +441,13 @@ class RAGPreprocessingJob(Base):
     # protection: NULL after status transitions to COMPLETED unless raw_content_retention_consent=True;
     # purged via RAGJobRepository.purge_old_raw_content per RETENTION_DAYS_RAG_JOBS
     raw_content: Mapped[Optional[bytes]] = mapped_column(sa.LargeBinary, nullable=True)
+    # V14.2.8 — explicit consent flag for retaining raw upload bytes.
+    # Captured at framework-create time in FrameworkIngestionModal; the
+    # backend write-guard in `RAGJobRepository.create_job` refuses to
+    # store raw_content when this is False.
+    raw_content_retention_consent: Mapped[bool] = mapped_column(
+        sa.Boolean, server_default="false", nullable=False
+    )
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="PENDING")
     estimated_cost: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB)
     actual_cost: Mapped[Optional[float]] = mapped_column(DECIMAL(10, 8))
