@@ -330,4 +330,12 @@ async def pending_prescan_approval_node(state: WorkerState) -> Dict[str, Any]:
         scan_id,
         approval_payload,
     )
-    return {"prescan_approval": approval_payload or {}}
+    # V02.4.1 anti-automation: bump the persisted resume-attempt counter on
+    # every resume from this gate. The cap is enforced in
+    # `_route_after_prescan_approval`. The increment must happen in this node
+    # (not the routing function) so the checkpointer actually persists it.
+    resume_attempts = (state.get("resume_attempts") or 0) + 1
+    return {
+        "prescan_approval": approval_payload or {},
+        "resume_attempts": resume_attempts,
+    }

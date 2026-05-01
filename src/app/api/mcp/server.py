@@ -477,7 +477,7 @@ async def sccap_approve_scan(scan_id: str) -> Dict[str, Any]:
             repo = ScanRepository(session)
             # V08.2.2 / V08.4.1 — explicit ownership check at MCP boundary.
             query = _build_query_service(repo)
-            scan = await query.get_scan_status(uuid.UUID(scan_id))
+            scan = await query.get_scan_status(uuid.UUID(scan_id), user)
             if scan.user_id != user.id and not user.is_superuser:
                 logger.warning(
                     "mcp.authz.denied",
@@ -527,7 +527,7 @@ async def sccap_apply_fixes(scan_id: str, finding_ids: List[int]) -> Dict[str, A
             repo = ScanRepository(session)
             # V08.2.2 / V08.4.1 — explicit ownership check at MCP boundary.
             query = _build_query_service(repo)
-            scan = await query.get_scan_status(uuid.UUID(scan_id))
+            scan = await query.get_scan_status(uuid.UUID(scan_id), user)
             if scan.user_id != user.id and not user.is_superuser:
                 logger.warning(
                     "mcp.authz.denied",
