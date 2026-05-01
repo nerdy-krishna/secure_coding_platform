@@ -1,10 +1,15 @@
 # src/app/shared/analysis_tools/chunker.py
+import hashlib
 import logging
 from typing import List
 from app.shared.analysis_tools.repository_map import FileSummary
 from app.core.schemas import CodeChunk
 
 logger = logging.getLogger(__name__)
+
+MAX_CONTENT_BYTES = 5_000_000
+MAX_SYMBOLS = 5000
+MAX_CHUNKS = 200
 
 
 def semantic_chunker(file_content: str, file_summary: FileSummary) -> List[CodeChunk]:
@@ -19,15 +24,41 @@ def semantic_chunker(file_content: str, file_summary: FileSummary) -> List[CodeC
     The `Node` object from tree-sitter has `start_point` and `end_point`.
 
     """
+    # V02.2.1: Validate content size before processing
+    if len(file_content.encode("utf-8", "replace")) > MAX_CONTENT_BYTES:
+        raise ValueError(
+            f"file_content exceeds maximum allowed size of {MAX_CONTENT_BYTES} bytes"
+        )
+
     chunks = []
     lines = file_content.splitlines(keepends=True)
 
     # Sort symbols by their starting line number to process the file in order
     sorted_symbols = sorted(file_summary.symbols, key=lambda s: s.line_number)
 
+    # V02.2.1: Clamp symbol count
+    sorted_symbols = sorted_symbols[:MAX_SYMBOLS]
+
+    # V02.2.1: Reject symbols with inverted or out-of-range bounds
+    for s in sorted_symbols:
+        if not (1 <= s.line_number <= s.end_line_number <= len(lines)):
+            raise ValueError(f"invalid symbol bounds: {s}")
+
+    # V02.2.3: Dedupe overlapping symbols
+    cleaned = []
+    prev_end = 0
+    for s in sorted_symbols:
+        if s.line_number <= prev_end:
+            continue
+        cleaned.append(s)
+        prev_end = s.end_line_number
+    sorted_symbols = cleaned
+
     if not sorted_symbols:
+        _path_hash = hashlib.sha256(file_summary.path.encode()).hexdigest()[:12]
         logger.warning(
-            f"File {file_summary.path} has content but no parsable symbols. Treating as a single chunk."
+            "chunker: file has content but no parsable symbols path_hash=%s",
+            _path_hash,
         )
         return [
             {
@@ -126,11 +157,12 @@ def semantic_chunker(file_content: str, file_summary: FileSummary) -> List[CodeC
                 # Append to the code
                 last_chunk["code"] += trailing_content
                 last_chunk["end_line"] = len(lines)
-                logger.info(
-                    f"Appended trailing content to last chunk '{last_chunk['symbol_name']}'"
-                )
+                logger.debug("chunker: appended trailing content to last chunk")
 
-    logger.info(
-        f"Successfully split {file_summary.path} into {len(chunks)} semantic chunks with gap coverage."
-    )
+    # V02.3.2: Cap emitted chunks to prevent unbounded memory/cost amplification
+    if len(chunks) > MAX_CHUNKS:
+        chunks = chunks[:MAX_CHUNKS]
+        logger.warning("chunker: truncated output to %d chunks", MAX_CHUNKS)
+
+    logger.info("chunker: split file into %d semantic chunks", len(chunks))
     return chunks

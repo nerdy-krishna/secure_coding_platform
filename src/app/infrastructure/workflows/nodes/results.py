@@ -32,31 +32,37 @@ async def save_results_node(state: WorkerState) -> Dict[str, Any]:
     findings = state.get("findings", [])
     final_file_map = state.get("final_file_map")
 
-    logger.info(f"Saving final results for scan {scan_id}.")
-    async with AsyncSessionLocal() as db:
-        repo = ScanRepository(db)
+    logger.info("Saving final results for scan %s.", scan_id)
+    try:
+        async with AsyncSessionLocal() as db:
+            repo = ScanRepository(db)
 
-        if findings:
-            if scan_type in ("AUDIT", "SUGGEST"):
-                # For these modes, we do a bulk insert of new, correlated findings
-                await repo.save_findings(scan_id, findings)
-            else:  # For REMEDIATE, we update the existing findings with correlation data
-                await repo.update_correlated_findings(findings)
+            if findings:
+                if scan_type in ("AUDIT", "SUGGEST"):
+                    # For these modes, we do a bulk insert of new, correlated findings
+                    await repo.save_findings(scan_id, findings)
+                else:  # For REMEDIATE, we update the existing findings with correlation data
+                    await repo.update_correlated_findings(findings)
 
-        if scan_type == "REMEDIATE" and final_file_map:
-            logger.info(f"Saving POST_REMEDIATION snapshot for scan {scan_id}.")
-            await repo.create_code_snapshot(
-                scan_id=scan_id,
-                file_map=final_file_map,
-                snapshot_type="POST_REMEDIATION",
-            )
+            if scan_type == "REMEDIATE" and final_file_map:
+                logger.info("Saving POST_REMEDIATION snapshot for scan %s.", scan_id)
+                await repo.create_code_snapshot(
+                    scan_id=scan_id,
+                    file_map=final_file_map,
+                    snapshot_type="POST_REMEDIATION",
+                )
+    except Exception:
+        logger.error(
+            "save_results_failed", extra={"scan_id": str(scan_id)}, exc_info=True
+        )
+        raise
 
     return {}
 
 
 async def save_final_report_node(state: WorkerState) -> Dict[str, Any]:
     scan_id, findings = state["scan_id"], state.get("findings", [])
-    logger.info(f"Saving final reports and risk score for scan {scan_id}.")
+    logger.info("Saving final reports and risk score for scan %s.", scan_id)
     severity_map = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0, "INFORMATIONAL": 0}
     for f in findings:
         sev = (f.severity or "LOW").upper()
@@ -78,10 +84,28 @@ async def save_final_report_node(state: WorkerState) -> Dict[str, Any]:
         if state.get("scan_type") == "REMEDIATE"
         else STATUS_COMPLETED
     )
-    await ScanRepository(AsyncSessionLocal()).save_final_reports_and_status(
-        scan_id=scan_id,
-        status=final_status,
-        summary=summary_data,
-        risk_score=final_risk_score,
+    logger.info(
+        "audit.scan.finalized",
+        extra={
+            "scan_id": str(scan_id),
+            "scan_type": state.get("scan_type"),
+            "final_status": final_status,
+            "findings_total": len(findings),
+            "risk_score": final_risk_score,
+            "severity_counts": severity_map,
+        },
     )
+    try:
+        async with AsyncSessionLocal() as db:
+            await ScanRepository(db).save_final_reports_and_status(
+                scan_id=scan_id,
+                status=final_status,
+                summary=summary_data,
+                risk_score=final_risk_score,
+            )
+    except Exception:
+        logger.error(
+            "save_final_report_failed", extra={"scan_id": str(scan_id)}, exc_info=True
+        )
+        raise
     return {}

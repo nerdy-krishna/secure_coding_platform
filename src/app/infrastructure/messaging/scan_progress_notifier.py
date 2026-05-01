@@ -14,10 +14,19 @@ Design:
   pooled SQLAlchemy connection — LISTEN holds the connection idle
   forever and pool drainers would close it). One LISTEN connection
   per app process.
-- SSE handlers call `bus.subscribe(scan_id)` to get an `asyncio.Queue`,
-  `await queue.get()` for the next event, and `bus.unsubscribe()` on
-  disconnect. The bus drops notifications for scan_ids with no
-  subscribers (cheap in-memory check).
+- SSE handlers call `bus.subscribe(scan_id, owner_user_id=...,
+  visible_user_ids=...)` to get an `asyncio.Queue`, `await queue.get()`
+  for the next event, and `bus.unsubscribe()` on disconnect. The bus
+  drops notifications for scan_ids with no subscribers (cheap in-memory
+  check).
+
+Tenant-scope invariant (V08.2.2 / V08.4.1):
+  `subscribe` enforces tenant scope as defense-in-depth even when
+  callers are already authorized. It validates that the scan belongs
+  to `owner_user_id` or is visible via `visible_user_ids` by loading
+  the scan from the DB inside the bus, raising `PermissionError` if
+  the check fails. This ensures cross-tenant isolation is enforced at
+  the bus layer and does not rely solely on upstream callers.
 
 Failure mode: if the bus connection drops, `_listen_loop` reconnects
 with exponential backoff. SSE handlers fall back to a slower poll
@@ -30,13 +39,16 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Dict, Optional, Set
+import uuid
+from typing import Dict, List, Optional, Set
 
 import psycopg
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
 from app.config.config import settings
+from app.infrastructure.database import AsyncSessionLocal
+from app.infrastructure.database.repositories.scan_repo import ScanRepository
 
 logger = logging.getLogger(__name__)
 
@@ -96,13 +108,51 @@ class ScanProgressBus:
         self._stop = asyncio.Event()
         self._conn: Optional[psycopg.AsyncConnection] = None
 
-    async def subscribe(self, scan_id: str) -> asyncio.Queue:
+    async def subscribe(
+        self,
+        scan_id: str,
+        *,
+        owner_user_id: int,
+        visible_user_ids: Optional[List[int]],
+    ) -> asyncio.Queue:
         """Register an `asyncio.Queue` for notifications about a scan.
+
+        Enforces tenant-scope ownership (V08.2.2 / V08.4.1) before
+        registering the subscriber. Raises `PermissionError` if the
+        scan does not belong to `owner_user_id` and is not within
+        `visible_user_ids` (pass ``None`` for admins who bypass the
+        filter).
 
         The queue receives the bus's notification kind ("status" /
         "event") whenever a NOTIFY arrives for `scan_id`. The caller
         is responsible for re-reading the DB to get current state.
         """
+        # Defense-in-depth tenant check: verify the scan is owned by
+        # the requester or is within their visibility scope before
+        # registering the subscriber queue.
+        async with AsyncSessionLocal() as session:
+            repo = ScanRepository(session)
+            scan = await repo.get_scan(uuid.UUID(scan_id))
+        if scan is None:
+            raise PermissionError(
+                f"subscribe: scan {scan_id!r} not found or not accessible."
+            )
+        if visible_user_ids is not None:
+            # Regular user: scan must be owned by a user in the visible set.
+            if scan.user_id not in visible_user_ids:
+                logger.warning(
+                    "scan_progress.subscribe.access_denied: "
+                    "requester %s not in visible_user_ids for scan %s (owner=%s)",
+                    owner_user_id,
+                    scan_id,
+                    scan.user_id,
+                )
+                raise PermissionError(
+                    f"subscribe: requester {owner_user_id} is not authorised "
+                    f"to subscribe to scan {scan_id!r}."
+                )
+        # visible_user_ids is None → admin; no restriction.
+
         async with self._lock:
             queues = self._subscribers.setdefault(scan_id, set())
             q: asyncio.Queue = asyncio.Queue(maxsize=64)

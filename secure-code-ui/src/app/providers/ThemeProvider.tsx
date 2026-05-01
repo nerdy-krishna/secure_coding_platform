@@ -62,6 +62,23 @@ function readRole(): SccapRole {
   return raw === "admin" ? "admin" : "user";
 }
 
+// Allow-list regex for CSS color values accepted as accent overrides.
+// Permits #hex (3–8 hex digits), rgb(), rgba(), hsl(), hsla(), oklch(), color().
+// Rejects strings containing ; or { } to prevent CSS injection.
+const ACCENT_RE =
+  /^#[0-9a-fA-F]{3,8}$|^(rgb|rgba|hsl|hsla|oklch|color)\([^;{}]{0,80}\)$/i;
+
+function safeAccent(raw: string): string {
+  const trimmed = raw.slice(0, 128);
+  return ACCENT_RE.test(trimmed) && !/[;{}]/.test(trimmed) ? trimmed : "";
+}
+
+function readAccent(): string {
+  if (typeof window === "undefined") return "";
+  const raw = window.localStorage.getItem(STORAGE_KEYS.accent) || "";
+  return safeAccent(raw);
+}
+
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
@@ -71,10 +88,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({
   const [variant, setVariantState] = useState<SccapVariant>(() =>
     readStored<SccapVariant>(STORAGE_KEYS.variant, "A", ["A", "B"]),
   );
-  const [accent, setAccentState] = useState<string>(() => {
-    if (typeof window === "undefined") return "";
-    return window.localStorage.getItem(STORAGE_KEYS.accent) || "";
-  });
+  const [accent, setAccentState] = useState<string>(() => readAccent());
   const [role, setRoleState] = useState<SccapRole>(() => readRole());
 
   useEffect(() => {
@@ -93,10 +107,11 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({
   // (the prototype does this naively; a proper OKLCH derivation can come
   // later if the palette needs nuance).
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEYS.accent, accent);
-    if (accent) {
-      document.documentElement.style.setProperty("--primary", accent);
-      document.documentElement.style.setProperty("--primary-strong", accent);
+    const validated = safeAccent(accent);
+    window.localStorage.setItem(STORAGE_KEYS.accent, validated);
+    if (validated) {
+      document.documentElement.style.setProperty("--primary", validated);
+      document.documentElement.style.setProperty("--primary-strong", validated);
     } else {
       document.documentElement.style.removeProperty("--primary");
       document.documentElement.style.removeProperty("--primary-strong");

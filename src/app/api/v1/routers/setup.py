@@ -87,7 +87,13 @@ async def perform_setup(
     # (product name, role, deployment type, email local-part). This is a
     # cheap secondary check; primary password strength is enforced by the
     # UserManager / fastapi-users password helper.
-    _pw_lower = (request.admin_password or "").lower()
+    # admin_password is a Pydantic SecretStr; unwrap for the substring check.
+    _pw_value = (
+        request.admin_password.get_secret_value()
+        if hasattr(request.admin_password, "get_secret_value")
+        else (request.admin_password or "")
+    )
+    _pw_lower = _pw_value.lower()
     _ctx_tokens = {
         "sccap",
         "admin",
@@ -110,8 +116,9 @@ async def perform_setup(
     user_create = auth_schemas.UserCreate(
         # admin_email: PII - persisted plaintext, MUST NOT be logged here
         email=request.admin_email,
-        # admin_password: SECRET - hashed by UserManager.password_helper before persist
-        password=request.admin_password,
+        # admin_password: SECRET - hashed by UserManager.password_helper before persist.
+        # Unwrap the SecretStr; UserCreate expects a plain string.
+        password=_pw_value,
         is_superuser=True,
         is_active=True,
         is_verified=True,

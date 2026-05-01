@@ -1,4 +1,5 @@
 import asyncio
+import os
 from unittest.mock import AsyncMock, MagicMock
 from app.core.services.security_standards_service import SecurityStandardsService
 from app.infrastructure.rag.rag_client import RAGService
@@ -34,6 +35,9 @@ with patch(
 
 
 async def test_cheatsheets():
+    assert isinstance(
+        service._fetch_github_files, AsyncMock
+    ), "verify_rag_signatures must run with mocked _fetch_github_files"
     print("Testing Cheatsheets Ingestion...")
     # Mock internals
     service._fetch_github_files = AsyncMock(
@@ -52,9 +56,7 @@ async def test_cheatsheets():
 
     try:
         # We just want to ensure it accepts user_id now
-        await service.ingest_cheatsheets_github(
-            "http://github.com/OWASP/CheatSheetSeries", user_id=123
-        )
+        await service.ingest_cheatsheets_github("about:blank", user_id=123)
         print("PASS: ingest_cheatsheets_github accepted user_id")
     except TypeError as e:
         print(f"FAIL: ingest_cheatsheets_github raised TypeError: {e}")
@@ -66,11 +68,12 @@ async def test_cheatsheets():
 
 
 async def test_proactive_controls():
+    assert isinstance(
+        service._fetch_github_files, AsyncMock
+    ), "verify_rag_signatures must run with mocked _fetch_github_files"
     print("\nTesting Proactive Controls Ingestion...")
     try:
-        await service.ingest_proactive_controls_github(
-            "http://github.com/OWASP/Proactive-Controls", user_id=123
-        )
+        await service.ingest_proactive_controls_github("about:blank", user_id=123)
         print("PASS: ingest_proactive_controls_github accepted user_id")
     except TypeError as e:
         print(f"FAIL: ingest_proactive_controls_github raised TypeError: {e}")
@@ -81,5 +84,9 @@ async def test_proactive_controls():
 
 
 if __name__ == "__main__":
+    if os.environ.get("SCCAP_ALLOW_DEV_SMOKE_TESTS") != "1":
+        raise SystemExit(
+            "Disabled outside dev. Set SCCAP_ALLOW_DEV_SMOKE_TESTS=1 to enable."
+        )
     asyncio.run(test_cheatsheets())
     asyncio.run(test_proactive_controls())

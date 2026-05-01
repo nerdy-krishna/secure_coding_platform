@@ -136,8 +136,12 @@ class ComplianceService:
         if self.rag_service:
             try:
                 doc_counts.update(self.rag_service.get_framework_stats())
-            except Exception as e:
-                logger.warning("RAG doc-count lookup failed: %s", e)
+            except Exception:
+                logger.error(
+                    "compliance: RAG framework-stats lookup failed",
+                    extra={"visible_user_ids": visible_user_ids},
+                    exc_info=True,
+                )
 
         # 2. Findings aggregates per framework in scope.
         matched, open_counts, last_seen, per_fw_rows = await self._aggregate_findings(
@@ -278,8 +282,12 @@ class ComplianceService:
             return []
         try:
             result = self.rag_service.get_by_framework(framework_name)
-        except Exception as e:
-            logger.warning("RAG get_by_framework failed: %s", e)
+        except Exception:
+            logger.error(
+                "compliance: RAG get_by_framework failed",
+                extra={"framework_name": framework_name},
+                exc_info=True,
+            )
             return []
 
         documents = result.get("documents", []) or []

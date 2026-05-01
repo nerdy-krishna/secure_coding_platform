@@ -9,6 +9,7 @@
 import { useQuery } from "@tanstack/react-query";
 import React, { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useDebounce } from "../../shared/hooks/useDebounce";
 import { scanService } from "../../shared/api/scanService";
 import type {
   ProjectHistoryItem,
@@ -53,10 +54,11 @@ function latestScan(p: ProjectHistoryItem): ScanHistoryItem | null {
 const ProjectsPage: React.FC = () => {
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebounce(search, 300);
 
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["projects", search],
-    queryFn: () => scanService.getProjectHistory(1, 100, search || undefined),
+    queryKey: ["projects", debouncedSearch],
+    queryFn: () => scanService.getProjectHistory(1, 100, debouncedSearch || undefined),
   });
 
   const projects = useMemo(() => data?.items ?? [], [data]);

@@ -67,11 +67,24 @@ const FrameworkManagementPage: React.FC = () => {
   }, [editing]);
 
   const onApiError = (err: unknown, verb: string) => {
-    const detail =
+    const rawDetail =
       err instanceof AxiosError
         ? (err.response?.data as { detail?: string })?.detail
-        : "Unknown error";
-    toast.error(`Failed to ${verb} framework: ${detail ?? "unknown error"}`);
+        : undefined;
+    // Log full detail for developers; never expose arbitrary backend text to users.
+    console.error(`[FrameworkManagementPage] ${verb} framework error:`, err);
+    // Allow only short validation-style messages through; show generic text otherwise.
+    const safeDetail =
+      typeof rawDetail === "string" &&
+      rawDetail.length <= 200 &&
+      /^[a-z0-9 _.,'":;!()-]+$/i.test(rawDetail)
+        ? rawDetail
+        : null;
+    toast.error(
+      safeDetail
+        ? `Failed to ${verb} framework: ${safeDetail}`
+        : `Failed to ${verb} framework — please retry.`,
+    );
   };
 
   const createMutation = useMutation({
@@ -129,17 +142,34 @@ const FrameworkManagementPage: React.FC = () => {
       toast.error("Name and description are required.");
       return;
     }
+    // V02.2.1 / V01.3.3: enforce field length caps before sending to the backend.
+    if (form.name.length > 128) {
+      toast.error("Framework name must be 128 characters or fewer.");
+      return;
+    }
+    if (form.description.length > 1024) {
+      toast.error("Description must be 1024 characters or fewer.");
+      return;
+    }
+    // V02.2.1: allow-list agent_ids against the loaded agent list to prevent silent ID-injection.
+    const unknownIds = form.agent_ids.filter((id) => !agentById.has(id));
+    if (unknownIds.length > 0) {
+      toast.warn(
+        `${unknownIds.length} unrecognised agent ID(s) were removed before saving.`,
+      );
+    }
+    const safeAgentIds = form.agent_ids.filter((id) => agentById.has(id));
     if (editing) {
       updateMutation.mutate({
         id: editing.id,
         values: { name: form.name, description: form.description },
-        agent_ids: form.agent_ids,
+        agent_ids: safeAgentIds,
       });
     } else {
       createMutation.mutate({
         name: form.name,
         description: form.description,
-        agent_ids: form.agent_ids,
+        agent_ids: safeAgentIds,
       });
     }
   };
@@ -361,6 +391,7 @@ const FrameworkManagementPage: React.FC = () => {
               onChange={(e) => setForm({ ...form, name: e.target.value })}
               required
               autoFocus
+              maxLength={128}
             />
           </label>
           <label style={{ display: "grid", gap: 6 }}>
@@ -376,6 +407,7 @@ const FrameworkManagementPage: React.FC = () => {
                 setForm({ ...form, description: e.target.value })
               }
               required
+              maxLength={1024}
             />
           </label>
           <div style={{ display: "grid", gap: 6 }}>

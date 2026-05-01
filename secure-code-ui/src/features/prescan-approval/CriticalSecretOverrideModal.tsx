@@ -10,6 +10,12 @@
 // ADR-009 / G6 / G7. The modal is dumb; the host page submits the
 // approval request with `override_critical_secret: true` after this
 // resolves.
+//
+// Security note: this modal is a client-side attestation gate only.
+// The backend prescan-approval endpoint MUST independently require and
+// audit-log the `override_critical_secret: true` flag and reject
+// requests that lack it; do not rely on this modal as a security
+// boundary.
 
 import React, { useEffect, useState } from "react";
 import { Icon } from "../../shared/ui/Icon";

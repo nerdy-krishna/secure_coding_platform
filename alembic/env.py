@@ -36,16 +36,22 @@ try:
     if not alembic_db_url:
         raise ValueError("ALEMBIC_DATABASE_URL could not be constructed from settings.")
 
+    # ASVS V02.2.1: enforce expected URL scheme before engine is created
+    if not alembic_db_url.startswith(("postgresql+asyncpg://", "postgresql://")):
+        raise ValueError("ALEMBIC_DATABASE_URL must use postgresql+asyncpg or postgresql scheme")
+
     # Set the sqlalchemy.url in the config for Alembic to use
     config.set_main_option("sqlalchemy.url", alembic_db_url)
-    log.info(
-        f"Alembic configured with database URL for host: {settings.POSTGRES_HOST_ALEMBIC}"
-    )
+    # ASVS V13.4.6/V16.2.5/V16.4.1: log without host or URL fragments; use %-style to prevent log-injection
+    log.info("Alembic configured with database URL for primary host")
 
     target_metadata = Base.metadata
 
-except (ImportError, ValueError) as e:
-    log.error(f"Failed to configure Alembic: {e}")
+except ImportError as e:
+    # ASVS V13.4.2/V16.3.4/V16.5.3: fail closed — abort on misconfiguration
+    # ASVS V16.4.1: sanitize exception string to prevent log-injection via newline characters
+    log.error("Failed to configure Alembic: %s", str(e).replace("\r", " ").replace("\n", " "))
+    raise
 # --- End Model Imports ---
 
 
@@ -115,4 +121,8 @@ else:
     try:
         asyncio.run(run_async_migrations())
     except KeyboardInterrupt:
+        sys.exit(1)
+    except Exception as exc:
+        # ASVS V16.5.4: structured terminal record of failure before process exits
+        log.exception("alembic migration aborted")
         sys.exit(1)

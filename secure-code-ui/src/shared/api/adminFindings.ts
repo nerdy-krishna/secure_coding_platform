@@ -36,9 +36,17 @@ export async function listAdminFindings(
   query: AdminFindingsQuery = {},
 ): Promise<AdminFindingsResponse> {
   const params: Record<string, string | number> = {};
-  if (query.source) params.source = query.source;
-  if (query.limit !== undefined) params.limit = query.limit;
-  if (query.cursor !== undefined) params.cursor = query.cursor;
+  if (query.source && ['bandit', 'semgrep', 'gitleaks', 'agent'].includes(query.source)) {
+    params.source = query.source;
+  }
+  if (query.limit !== undefined) {
+    const lim = Math.max(1, Math.min(500, Math.trunc(query.limit)));
+    params.limit = lim;
+  }
+  if (query.cursor !== undefined) {
+    const c = Math.max(0, Math.trunc(query.cursor));
+    if (Number.isFinite(c)) params.cursor = c;
+  }
   const response = await apiClient.get<AdminFindingsResponse>(
     "/admin/findings",
     { params },

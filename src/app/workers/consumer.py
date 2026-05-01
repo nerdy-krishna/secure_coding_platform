@@ -59,6 +59,12 @@ logging.config.dictConfig(LOGGING_CONFIG)
 logging.captureWarnings(True)
 logger = logging.getLogger(__name__)
 
+
+def _safe(s: Any) -> str:
+    """Strip CR/LF from attacker-influenced strings before logging."""
+    return str(s).replace("\r", "").replace("\n", "")
+
+
 load_dotenv()
 
 # Scan statuses for which the LangGraph checkpointer thread should be
@@ -162,7 +168,7 @@ async def _run_workflow_for_scan(
     scan_id_uuid = initial_state["scan_id"]
     scan_id_str_log = str(scan_id_uuid)
     action = "Resuming" if resume_payload is not None else "Starting"
-    logger.info(f"WORKFLOW: {action} worker_workflow for scan_id: {scan_id_str_log}")
+    logger.info("WORKFLOW: %s worker_workflow for scan_id: %s", action, scan_id_str_log)
 
     # Idempotency precheck: only meaningful for fresh-start messages. For a
     # resume, the scan is in STATUS_PENDING_APPROVAL and would fail the
@@ -179,20 +185,22 @@ async def _run_workflow_for_scan(
                 existing = await repo.get_scan(scan_id_uuid)
             if existing is None:
                 logger.warning(
-                    f"WORKFLOW: Scan {scan_id_str_log} not found in DB; "
-                    f"ACKing as noop."
+                    "WORKFLOW: Scan %s not found in DB; ACKing as noop.",
+                    scan_id_str_log,
                 )
                 return True
             if existing.status not in _WORKFLOW_ENTRY_STATUSES:
                 logger.info(
-                    f"WORKFLOW: Scan {scan_id_str_log} already in status "
-                    f"'{existing.status}' — treating as duplicate delivery."
+                    "WORKFLOW: Scan %s already in status '%s' — treating as duplicate delivery.",
+                    scan_id_str_log,
+                    existing.status,
                 )
                 return True
         except Exception as e:
             logger.warning(
-                f"WORKFLOW: Idempotency precheck failed for {scan_id_str_log}: {e}. "
-                f"Proceeding with workflow invocation.",
+                "WORKFLOW: Idempotency precheck failed for %s: %s. Proceeding with workflow invocation.",
+                scan_id_str_log,
+                e,
                 exc_info=True,
             )
 
@@ -301,7 +309,7 @@ async def _run_workflow_for_scan(
             timeout=settings.SCAN_WORKFLOW_TIMEOUT_SECONDS,
         )
 
-        logger.info(f"WORKFLOW: worker_workflow completed for SID: {scan_id_str_log}.")
+        logger.info("WORKFLOW: worker_workflow completed for SID: %s.", scan_id_str_log)
 
         if final_graph_state and not final_graph_state.get("error_message"):
             success = True
@@ -311,17 +319,18 @@ async def _run_workflow_for_scan(
                 if final_graph_state
                 else "Workflow returned no state"
             )
-            logger.error(f"WORKFLOW: Graph processing failed. Error: {error_msg}")
+            logger.error("WORKFLOW: Graph processing failed. Error: %s", error_msg)
 
     except asyncio.TimeoutError:
         timed_out = True
         logger.error(
-            f"WORKFLOW: Scan {scan_id_str_log} exceeded "
-            f"{settings.SCAN_WORKFLOW_TIMEOUT_SECONDS}s timeout; cancelling workflow."
+            "WORKFLOW: Scan %s exceeded %ds timeout; cancelling workflow.",
+            scan_id_str_log,
+            settings.SCAN_WORKFLOW_TIMEOUT_SECONDS,
         )
-    except Exception as e:
+    except Exception:
         logger.error(
-            f"WORKFLOW: Exception during worker_workflow invocation: {e}",
+            "WORKFLOW: Exception during worker_workflow invocation",
             exc_info=True,
         )
 
@@ -337,13 +346,15 @@ async def _run_workflow_for_scan(
                 repo = ScanRepository(db)
                 await repo.update_status(scan_id_uuid, STATUS_FAILED)
             logger.info(
-                f"WORKFLOW: Set scan status to FAILED in DB for SID: {scan_id_str_log}"
-                + (" (timeout)" if timed_out else "")
+                "WORKFLOW: Set scan status to FAILED in DB for SID: %s%s",
+                scan_id_str_log,
+                " (timeout)" if timed_out else "",
             )
         except Exception as db_err:
             logger.error(
-                f"WORKFLOW: FAILED TO UPDATE STATUS IN DB for SID: {scan_id_str_log}. "
-                f"Error: {db_err}"
+                "WORKFLOW: FAILED TO UPDATE STATUS IN DB for SID: %s. Error: %s",
+                scan_id_str_log,
+                db_err,
             )
 
     # Best-effort checkpointer-thread cleanup for any scan now in a
@@ -361,7 +372,7 @@ async def _build_initial_state(
     try:
         body = json.loads(message.body.decode("utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
-        logger.error(f"MSG: Failed to decode message body: {e}", exc_info=True)
+        logger.error("MSG: Failed to decode message body: %s", e, exc_info=True)
         return None
 
     scan_id_str = body.get("scan_id")
@@ -372,7 +383,7 @@ async def _build_initial_state(
     try:
         scan_uuid = uuid.UUID(scan_id_str)
     except ValueError:
-        logger.error(f"MSG: Invalid scan_id UUID: {scan_id_str}")
+        logger.error("MSG: Invalid scan_id UUID: %s", scan_id_str)
         return None
 
     corr_id = message.correlation_id or body.get("correlation_id") or str(uuid.uuid4())
@@ -400,12 +411,12 @@ async def _build_initial_state(
     # regardless; this is mostly for logging).
     queue_name = message.routing_key or ""
     if queue_name == settings.RABBITMQ_REMEDIATION_QUEUE:
-        logger.info(f"MSG: REMEDIATION trigger for scan_id: {scan_uuid}")
+        logger.info("MSG: REMEDIATION trigger for scan_id: %s", scan_uuid)
         initial_state["scan_type"] = "AUDIT_AND_REMEDIATE"
     elif queue_name == settings.RABBITMQ_APPROVAL_QUEUE:
-        logger.info(f"MSG: Resuming ANALYSIS for scan_id: {scan_uuid}")
+        logger.info("MSG: Resuming ANALYSIS for scan_id: %s", scan_uuid)
     else:
-        logger.info(f"MSG: Starting new ANALYSIS for scan_id: {scan_uuid}")
+        logger.info("MSG: Starting new ANALYSIS for scan_id: %s", scan_uuid)
 
     return initial_state
 
@@ -419,8 +430,9 @@ async def _handle_message(message: AbstractIncomingMessage) -> None:
     `_run_workflow_for_scan` for UI visibility.
     """
     logger.info(
-        f"MSG: Received from queue '{message.routing_key}' "
-        f"(delivery_tag={message.delivery_tag})."
+        "MSG: Received from queue '%s' (delivery_tag=%s).",
+        _safe(message.routing_key),
+        message.delivery_tag,
     )
 
     async with message.process(requeue=False, ignore_processed=True):
@@ -434,18 +446,34 @@ async def _handle_message(message: AbstractIncomingMessage) -> None:
         if (message.routing_key or "") == settings.RABBITMQ_APPROVAL_QUEUE:
             try:
                 body = json.loads(message.body.decode("utf-8"))
-            except Exception:
-                body = {}
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                logger.error("MSG: Approval body parse failed: %s", e)
+                await message.reject(requeue=False)
+                return
+            if not isinstance(body, dict):
+                logger.error("MSG: Approval body is not a JSON object")
+                await message.reject(requeue=False)
+                return
+            kind = body.get("kind", "cost_approval")
+            if kind not in _KIND_TO_EXPECTED_STATUS:
+                logger.error("MSG: Unknown approval kind %r; rejecting", kind)
+                await message.reject(requeue=False)
+                return
+            if not isinstance(body.get("approved", True), bool) or not isinstance(
+                body.get("override_critical_secret", False), bool
+            ):
+                logger.error("MSG: Approval body has non-bool flag(s)")
+                await message.reject(requeue=False)
+                return
             # Forward the discriminator + decision verbatim. The kind
             # validation in `_run_workflow_for_scan` re-checks against
             # the scan's current pause status before resume; the worker
             # graph's `_route_after_prescan_approval` then uses
             # `approved` and `override_critical_secret` to pick the
-            # next node. Defaults preserve backward compat with the
-            # legacy cost-approval message shape (no `kind` field).
+            # next node.
             resume_payload = {
                 "scan_id": str(initial_state["scan_id"]),
-                "kind": body.get("kind", "cost_approval"),
+                "kind": kind,
                 "approved": body.get("approved", True),
                 "override_critical_secret": body.get("override_critical_secret", False),
                 "approver_user_id": body.get("user_id"),
@@ -467,9 +495,12 @@ class WorkerRunner:
     def __init__(self) -> None:
         self._connection: Optional[AbstractRobustConnection] = None
         self._stop_event = asyncio.Event()
-        self._backoff = _BACKOFF_START_SECONDS
+        self.__backoff = _BACKOFF_START_SECONDS
 
     def request_stop(self) -> None:
+        """MUST be called only from the asyncio event loop (signal handler attached
+        via loop.add_signal_handler). Only mutates self._stop_event (asyncio.Event
+        is thread-safe); never touch self.__backoff or self._connection here."""
         logger.info("WORKER: Stop requested.")
         self._stop_event.set()
 
@@ -485,18 +516,19 @@ class WorkerRunner:
                 raise
             except Exception as e:
                 logger.error(
-                    f"WORKER: Consume loop error: {e}. "
-                    f"Retrying in {self._backoff:.0f}s.",
+                    "WORKER: Consume loop error: %s. Retrying in %.0fs.",
+                    e,
+                    self.__backoff,
                     exc_info=True,
                 )
 
             if self._stop_event.is_set():
                 break
             try:
-                await asyncio.wait_for(self._stop_event.wait(), timeout=self._backoff)
+                await asyncio.wait_for(self._stop_event.wait(), timeout=self.__backoff)
             except asyncio.TimeoutError:
                 pass
-            self._backoff = min(self._backoff * 2, _BACKOFF_CAP_SECONDS)
+            self.__backoff = min(self.__backoff * 2, _BACKOFF_CAP_SECONDS)
 
         logger.info("WORKER: Run loop exited.")
 
@@ -507,7 +539,7 @@ class WorkerRunner:
         logger.info("WORKER: Connecting to RabbitMQ...")
         self._connection = await aio_pika.connect_robust(settings.RABBITMQ_URL)
         logger.info("WORKER: RabbitMQ connection established.")
-        self._backoff = _BACKOFF_START_SECONDS  # reset after successful connect
+        self.__backoff = _BACKOFF_START_SECONDS  # reset after successful connect
 
         try:
             channel = await self._connection.channel()
@@ -528,7 +560,7 @@ class WorkerRunner:
                 queues.append(queue_name)
 
             logger.info(
-                f"WORKER: Consuming from queues: {queues}. Waiting for messages…"
+                "WORKER: Consuming from queues: %s. Waiting for messages…", queues
             )
             await self._stop_event.wait()
         finally:
@@ -556,12 +588,12 @@ async def _async_main() -> None:
         try:
             await close_workflow_resources()
         except Exception as e:
-            logger.error(f"WORKER: Error during workflow resource cleanup: {e}")
+            logger.error("WORKER: Error during workflow resource cleanup: %s", e)
         # Flush any buffered Langfuse spans before the worker exits.
         try:
             flush_langfuse()
         except Exception as e:
-            logger.warning(f"WORKER: Error during Langfuse flush: {e}")
+            logger.warning("WORKER: Error during Langfuse flush: %s", e)
         logger.info("WORKER: Consumer has fully shut down.")
 
 
@@ -578,6 +610,6 @@ if __name__ == "__main__":
     try:
         start_worker_consumer()
     except Exception as e:
-        logger.critical(f"WORKER (__main__): Unrecoverable error: {e}", exc_info=True)
+        logger.critical("WORKER (__main__): Unrecoverable error: %s", e, exc_info=True)
     finally:
         logger.info("WORKER (__main__): Script execution finished.")

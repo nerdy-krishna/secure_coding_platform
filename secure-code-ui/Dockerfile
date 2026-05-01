@@ -19,10 +19,8 @@ COPY . .
 
 ARG VITE_API_BASE_URL
 ARG VITE_ALLOWED_HOSTS
-ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
-ENV VITE_ALLOWED_HOSTS=${VITE_ALLOWED_HOSTS}
 
-RUN npm run build
+RUN VITE_API_BASE_URL=${VITE_API_BASE_URL} VITE_ALLOWED_HOSTS=${VITE_ALLOWED_HOSTS} npm run build
 
 # ---------- serve --------------------------------------------------------
 FROM nginx:alpine
@@ -42,6 +40,11 @@ COPY nginx-https.conf /etc/nginx/nginx-https.conf
 
 COPY nginx-entrypoint.sh /docker-entrypoint.d/99-ssl-setup.sh
 RUN chmod +x /docker-entrypoint.d/99-ssl-setup.sh
+
+RUN addgroup -S nginx-app && adduser -S -G nginx-app nginx-app \
+    && chown -R nginx-app:nginx-app /usr/share/nginx/html /var/cache/nginx /var/log/nginx /etc/nginx \
+    && touch /var/run/nginx.pid && chown nginx-app:nginx-app /var/run/nginx.pid
+USER nginx-app
 
 EXPOSE 80 443
 

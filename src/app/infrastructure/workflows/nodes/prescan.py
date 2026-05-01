@@ -54,6 +54,9 @@ CONCURRENT_SCANNER_LIMIT = 5
 # Files larger than this are skipped during the prescan (M6 — defense
 # against pathological inputs that pin scanner CPU).
 PRESCAN_FILE_BYTE_LIMIT = 1024 * 1024
+# Maximum number of files passed to the prescan loop (V02.4.1 — caps
+# prescan walltime on hostile submissions with many small files).
+PRESCAN_MAX_FILES = 10_000
 
 
 async def deterministic_prescan_node(state: WorkerState) -> Dict[str, Any]:
@@ -106,6 +109,14 @@ async def deterministic_prescan_node(state: WorkerState) -> Dict[str, Any]:
             )
             continue
         eligible[path] = content
+
+    if len(eligible) > PRESCAN_MAX_FILES:
+        logger.warning(
+            "deterministic_prescan: clamping %d→%d files",
+            len(eligible),
+            PRESCAN_MAX_FILES,
+        )
+        eligible = dict(list(eligible.items())[:PRESCAN_MAX_FILES])
 
     if not eligible:
         logger.info(

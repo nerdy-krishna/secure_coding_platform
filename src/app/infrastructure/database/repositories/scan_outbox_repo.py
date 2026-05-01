@@ -8,10 +8,10 @@ HTTP request that creates the Scan; a sweep task re-publishes any row with
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.infrastructure.database import models as db_models
@@ -35,6 +35,14 @@ class ScanOutboxRepository:
         self.db.add(row)
         await self.db.commit()
         await self.db.refresh(row)
+        logger.info(
+            "scan_outbox.enqueued",
+            extra={
+                "outbox_id": str(row.id),
+                "scan_id": str(scan_id),
+                "queue_name": queue_name,
+            },
+        )
         return row
 
     async def mark_published(self, outbox_id: uuid.UUID) -> None:
@@ -45,6 +53,7 @@ class ScanOutboxRepository:
             .values(published_at=datetime.now(timezone.utc))
         )
         await self.db.commit()
+        logger.info("scan_outbox.published", extra={"outbox_id": str(outbox_id)})
 
     async def record_failed_attempt(self, outbox_id: uuid.UUID) -> None:
         """Increments attempts on a publish failure. Commits."""
@@ -54,6 +63,10 @@ class ScanOutboxRepository:
             .values(attempts=db_models.ScanOutbox.attempts + 1)
         )
         await self.db.commit()
+        logger.warning(
+            "scan_outbox.publish_attempt_failed",
+            extra={"outbox_id": str(outbox_id)},
+        )
 
     async def list_unpublished(
         self, older_than_seconds: int = 30, limit: int = 50
@@ -63,6 +76,12 @@ class ScanOutboxRepository:
         The age filter prevents the sweeper from racing the primary publish:
         we let the request handler try first and only fall back for rows that
         have been sitting around unpublished.
+
+        Rows are locked with FOR UPDATE SKIP LOCKED so that concurrent sweeper
+        replicas each claim a disjoint set of rows, eliminating the
+        duplicate-publish race.  Callers must commit or rollback the same
+        transaction that fetched the rows so the advisory lock is released only
+        after mark_published has run.
         """
         cutoff = datetime.now(timezone.utc).timestamp() - older_than_seconds
         stmt = (
@@ -74,6 +93,24 @@ class ScanOutboxRepository:
             )
             .order_by(db_models.ScanOutbox.created_at.asc())
             .limit(limit)
+            .with_for_update(skip_locked=True)
         )
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
+
+    async def purge_published(self, older_than_days: int) -> int:
+        """Deletes published outbox rows older than the given retention window.
+
+        Returns the number of rows deleted.  Intended to be called by the
+        outbox sweeper once per day to prevent indefinite accumulation of
+        already-published rows.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
+        stmt = (
+            delete(db_models.ScanOutbox)
+            .where(db_models.ScanOutbox.published_at.isnot(None))
+            .where(db_models.ScanOutbox.published_at < cutoff)
+        )
+        res = await self.db.execute(stmt)
+        await self.db.commit()
+        return res.rowcount or 0

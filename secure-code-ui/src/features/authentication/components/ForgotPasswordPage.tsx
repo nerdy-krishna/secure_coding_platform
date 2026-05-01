@@ -3,7 +3,7 @@
 // SCCAP password-reset request. Native form; authService.forgotPassword
 // unchanged.
 
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import { Link } from "react-router-dom";
 import { authService } from "../../../shared/api/authService";
 import { Icon } from "../../../shared/ui/Icon";
@@ -14,10 +14,28 @@ const ForgotPasswordPage: React.FC = () => {
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
+  const lastSubmitAtRef = useRef<number>(0);
+  const mountedAtRef = useRef<number>(Date.now());
+
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email) return;
+    if (Date.now() - mountedAtRef.current < 750) {
+      toast.error("Please wait a moment.");
+      return;
+    }
+    const now = Date.now();
+    if (now - lastSubmitAtRef.current < 5000) {
+      toast.error("Please wait a few seconds before retrying.");
+      return;
+    }
+    lastSubmitAtRef.current = now;
+    if (email.length > 320 || !EMAIL_RE.test(email)) {
+      toast.error("Please enter a valid email address.");
+      return;
+    }
     setLoading(true);
     try {
       await authService.forgotPassword(email);

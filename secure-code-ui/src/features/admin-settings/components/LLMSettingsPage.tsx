@@ -26,6 +26,10 @@ const LLM_PROVIDERS = [
 ] as const;
 type Provider = (typeof LLM_PROVIDERS)[number];
 
+// SECURITY (V15.1.5 dangerous functionality): api_key carries third-party LLM provider secrets.
+// The backend Fernet-encrypts at rest (see CLAUDE.md Repository conventions).
+// Frontend stores the cleartext only in component state for the duration of the form session;
+// on unmount the value is GC'd. Never log this field, never persist to localStorage.
 interface FormState {
   name: string;
   provider: Provider;
@@ -48,12 +52,19 @@ const EMPTY_FORM: FormState = {
 
 function axiosDetail(err: unknown): string {
   const e = err as {
-    response?: { data?: { detail?: string | { msg: string }[] } };
+    response?: { status?: number; data?: { detail?: string | { msg: string }[] } };
     message?: string;
   };
+  const status = e.response?.status ?? 0;
   const detail = e.response?.data?.detail;
-  if (Array.isArray(detail)) return detail.map((d) => d.msg).join(", ");
-  return detail || e.message || "Unknown error";
+  // Log verbose details for developers only; never surface raw backend internals in the UI.
+  const verbose = Array.isArray(detail)
+    ? detail.map((d) => d.msg).join(", ")
+    : detail || e.message || "Unknown error";
+  console.error("[LLMSettingsPage] backend error:", verbose);
+  if (status >= 500) return "Server error — please retry.";
+  if (status >= 400) return "Could not save the configuration.";
+  return "An unexpected error occurred.";
 }
 
 function parseAsUTC(dateString?: string | null): Date | null {
@@ -169,6 +180,22 @@ const LLMSettingsPage: React.FC = () => {
       toast.error("Please fill all required fields with valid values.");
       return;
     }
+    // V2.2.1 / V2.3.2: enforce field length and cost upper-bound limits.
+    if (
+      form.name.length > 100 ||
+      form.model_name.length > 200 ||
+      (form.tokenizer && form.tokenizer.length > 100) ||
+      input > 1000 ||
+      output > 1000
+    ) {
+      toast.error("Field exceeds allowed length or cost > $1000/M tokens.");
+      return;
+    }
+    // V2.2.1: provider allow-list check (defense in depth beyond <select>).
+    if (!(LLM_PROVIDERS as readonly string[]).includes(form.provider)) {
+      toast.error("Invalid provider.");
+      return;
+    }
     if (!editing && !form.api_key) {
       toast.error("API key is required for new configurations.");
       return;
@@ -184,8 +211,14 @@ const LLMSettingsPage: React.FC = () => {
       api_key: form.api_key,
     };
     if (editing) {
-      const updatePayload: LLMConfigurationUpdate = { ...payload };
-      if (!form.api_key) delete updatePayload.api_key;
+      // V15.3.3: explicit allowlist of mutable fields prevents mass-assignment bugs.
+      const updatePayload: LLMConfigurationUpdate = {
+        name: payload.name,
+        tokenizer: payload.tokenizer,
+        input_cost_per_million: payload.input_cost_per_million,
+        output_cost_per_million: payload.output_cost_per_million,
+        ...(form.api_key ? { api_key: payload.api_key } : {}),
+      };
       updateMutation.mutate({ id: editing.id, data: updatePayload });
     } else {
       createMutation.mutate(payload);
@@ -323,6 +356,9 @@ const LLMSettingsPage: React.FC = () => {
             or enterprise endpoints that don't match a public model name.
           </div>
           <Field label="API key">
+            <div style={{ fontSize: 11, color: "var(--fg-muted)", marginBottom: 4 }}>
+              Stored encrypted at rest. Never echoed back. Leave blank on edit to keep the existing key.
+            </div>
             <input
               className="sccap-input mono"
               type="password"
@@ -333,6 +369,8 @@ const LLMSettingsPage: React.FC = () => {
               }
               value={form.api_key}
               onChange={(e) => setForm({ ...form, api_key: e.target.value })}
+              autoComplete="off"
+              spellCheck={false}
             />
           </Field>
 
@@ -461,7 +499,7 @@ const LLMSettingsPage: React.FC = () => {
                         className="sccap-btn sccap-btn-icon sccap-btn-ghost"
                         aria-label="Edit"
                         onClick={() => setEditing(cfg)}
-                        disabled={editing?.id === cfg.id}
+                        disabled={deleteMutation.isPending || updateMutation.isPending || editing?.id === cfg.id}
                       >
                         <Icon.Edit size={12} />
                       </button>
@@ -469,6 +507,7 @@ const LLMSettingsPage: React.FC = () => {
                         className="sccap-btn sccap-btn-icon sccap-btn-ghost"
                         aria-label="Delete"
                         onClick={() => setConfirmDeleteId(cfg.id)}
+                        disabled={deleteMutation.isPending || updateMutation.isPending}
                       >
                         <Icon.Trash size={12} />
                       </button>

@@ -25,6 +25,10 @@ from fastembed import TextEmbedding
 # Same model name across PR1 and PR3 — see ADR-008.
 _MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 
+# V02.4.1 — hard caps to prevent hostile callers from pinning ONNX CPU.
+MAX_BATCH = 256
+MAX_CHARS_PER_TEXT = 8192
+
 _lock = threading.Lock()
 _embedder: Optional[TextEmbedding] = None
 
@@ -44,6 +48,10 @@ def embed(texts: List[str]) -> List[List[float]]:
     """Embed a batch of texts to 384-dim cosine-normalised float vectors."""
     if not texts:
         return []
+    if len(texts) > MAX_BATCH:
+        raise ValueError(f"embed batch exceeds {MAX_BATCH}")
+    if any(len(t) > MAX_CHARS_PER_TEXT for t in texts):
+        raise ValueError("embed input text too long")
     fn = _get_embedder()
     out: List[List[float]] = []
     for vec in fn.embed(texts):
