@@ -377,7 +377,7 @@ async def sccap_get_scan_status(scan_id: str) -> Dict[str, Any]:
                 },
             )
             scan_service = _build_query_service(ScanRepository(session))
-            scan = await scan_service.get_scan_status(uuid.UUID(scan_id))
+            scan = await scan_service.get_scan_status(uuid.UUID(scan_id), user)
             if scan.user_id != user.id and not user.is_superuser:
                 logger.warning(
                     "mcp.authz.denied",
@@ -425,7 +425,7 @@ async def sccap_get_scan_result(scan_id: str) -> Dict[str, Any]:
                 },
             )
             scan_service = _build_query_service(ScanRepository(session))
-            scan = await scan_service.get_scan_status(uuid.UUID(scan_id))
+            scan = await scan_service.get_scan_status(uuid.UUID(scan_id), user)
             if scan.user_id != user.id and not user.is_superuser:
                 logger.warning(
                     "mcp.authz.denied",

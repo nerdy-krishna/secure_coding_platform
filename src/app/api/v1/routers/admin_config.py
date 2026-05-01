@@ -21,13 +21,23 @@ from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
 from pydantic import AnyHttpUrl, BaseModel, Field, ValidationError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1 import models as api_models
 from app.infrastructure.auth.core import current_active_user
 from app.infrastructure.database import models as db_models
+from app.infrastructure.database.database import get_db
 from app.infrastructure.database.repositories.system_config_repo import (
     SystemConfigRepository,
 )
+
+
+def get_system_config_repo(
+    db: AsyncSession = Depends(get_db),
+) -> SystemConfigRepository:
+    """Per-request SystemConfigRepository (replaces the dropped class-level singleton)."""
+    return SystemConfigRepository(db)
+
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +77,7 @@ async def get_admin_user(current_user: db_models.User = Depends(current_active_u
 
 @router.get("/", response_model=List[api_models.SystemConfigurationRead])
 async def get_all_system_configs(
-    repo: SystemConfigRepository = Depends(SystemConfigRepository.get_instance),
+    repo: SystemConfigRepository = Depends(get_system_config_repo),
     current_user: db_models.User = Depends(get_admin_user),
 ):
     """
@@ -94,7 +104,7 @@ async def get_all_system_configs(
 async def set_system_config(
     key: str = Path(..., min_length=1, max_length=200, pattern=r"^[a-zA-Z0-9_.\-]+$"),
     config: api_models.SystemConfigurationUpdate = ...,
-    repo: SystemConfigRepository = Depends(SystemConfigRepository.get_instance),
+    repo: SystemConfigRepository = Depends(get_system_config_repo),
     current_user: db_models.User = Depends(get_admin_user),
 ):
     """
@@ -219,7 +229,7 @@ async def set_system_config(
 @router.delete("/{key}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_system_config(
     key: str = Path(..., min_length=1, max_length=200, pattern=r"^[a-zA-Z0-9_.\-]+$"),
-    repo: SystemConfigRepository = Depends(SystemConfigRepository.get_instance),
+    repo: SystemConfigRepository = Depends(get_system_config_repo),
     current_user: db_models.User = Depends(get_admin_user),
 ):
     """

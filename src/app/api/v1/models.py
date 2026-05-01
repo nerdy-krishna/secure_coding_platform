@@ -159,6 +159,8 @@ class SystemConfigurationCreate(SystemConfigurationBase):
 class SystemConfigurationUpdate(BaseModel):
     value: Optional[Dict[str, Any]] = None
     description: Optional[str] = None
+    is_secret: Optional[bool] = None
+    encrypted: Optional[bool] = None
 
 
 class SystemConfigurationRead(SystemConfigurationBase):
