@@ -120,8 +120,15 @@ def get_custom_cookie_jwt_strategy() -> CustomCookieJWTStrategy:
     """
     Returns the JWT strategy instance, configured from the central settings object.
     """
+    # SECRET_KEY is a Pydantic SecretStr; unwrap for the JWT signing layer.
+    _raw_secret = settings.SECRET_KEY
+    _secret = (
+        _raw_secret.get_secret_value()
+        if hasattr(_raw_secret, "get_secret_value")
+        else str(_raw_secret)
+    )
     return CustomCookieJWTStrategy(
-        secret=settings.SECRET_KEY,
+        secret=_secret,
         lifetime_seconds=settings.ACCESS_TOKEN_LIFETIME_SECONDS,
         refresh_token_lifetime_seconds=settings.REFRESH_TOKEN_LIFETIME_SECONDS,
     )

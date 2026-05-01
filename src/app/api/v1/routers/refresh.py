@@ -52,11 +52,17 @@ async def refresh_access_token(
             detail="No refresh token found.",
         )
 
+    # SECRET_KEY is a Pydantic SecretStr; unwrap for jwt.decode.
+    _secret_key = (
+        settings.SECRET_KEY.get_secret_value()
+        if hasattr(settings.SECRET_KEY, "get_secret_value")
+        else str(settings.SECRET_KEY)
+    )
     # Decode and validate the refresh token
     try:
         payload = jwt.decode(
             refresh_token,
-            settings.SECRET_KEY,
+            _secret_key,
             algorithms=[ALGORITHM],
             audience=AUDIENCE,
         )
@@ -143,7 +149,7 @@ async def refresh_access_token(
     }
     new_refresh_token = jwt.encode(
         new_refresh_payload,
-        settings.SECRET_KEY,
+        _secret_key,
         algorithm=ALGORITHM,
     )
     await strategy.write_refresh_token(response, new_refresh_token)
