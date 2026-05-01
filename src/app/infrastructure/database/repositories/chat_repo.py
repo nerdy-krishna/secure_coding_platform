@@ -1,6 +1,7 @@
 # src/app/infrastructure/database/repositories/chat_repo.py
 import logging
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 from sqlalchemy import func, select, update, delete
@@ -129,8 +130,26 @@ class ChatRepository:
             f"Adding '{role}' message to session {session_id}.",
             extra={"session_id": str(session_id), "role": role, "user_id": user_id},
         )
+        # V14.2.7 — stamp the retention expiry from the cached config.
+        from app.core.config_cache import (
+            RETENTION_KIND_CHAT_MESSAGE,
+            SystemConfigCache,
+        )
+
+        retention_days = SystemConfigCache.get_retention_days(
+            RETENTION_KIND_CHAT_MESSAGE
+        )
+        expires_at = (
+            datetime.now(timezone.utc) + timedelta(days=retention_days)
+            if retention_days > 0
+            else None
+        )
         message = db_models.ChatMessage(
-            session_id=session_id, role=role, content=content, cost=cost
+            session_id=session_id,
+            role=role,
+            content=content,
+            cost=cost,
+            expires_at=expires_at,
         )
         self.db.add(message)
         try:

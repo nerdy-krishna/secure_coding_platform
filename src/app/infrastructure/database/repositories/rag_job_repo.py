@@ -44,12 +44,25 @@ class RAGJobRepository:
         file_hash: str,
     ) -> db_models.RAGPreprocessingJob:
         """Creates a new job record in the database."""
+        # V14.2.7 — stamp retention expiry from the cached config.
+        from app.core.config_cache import (
+            RETENTION_KIND_RAG_JOB,
+            SystemConfigCache,
+        )
+
+        retention_days = SystemConfigCache.get_retention_days(RETENTION_KIND_RAG_JOB)
+        expires_at = (
+            datetime.now(timezone.utc) + timedelta(days=retention_days)
+            if retention_days > 0
+            else None
+        )
         job = db_models.RAGPreprocessingJob(
             user_id=user_id,
             framework_name=framework_name,
             llm_config_id=llm_config_id,
             original_file_hash=file_hash,
             status="PENDING",
+            expires_at=expires_at,
         )
         self.db.add(job)
         try:

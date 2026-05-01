@@ -4,7 +4,7 @@ import re
 import uuid
 import tiktoken
 from typing import List, Optional, Tuple
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from pydantic import BaseModel, Field
 
@@ -326,7 +326,21 @@ class ChatAgent:
                 output_tokens=llm_response.completion_tokens,
                 total_tokens=llm_response.total_tokens,
             )
-            db_interaction = db_models.LLMInteraction(**interaction.model_dump())
+            # V14.2.7 — stamp retention expiry from the cached config.
+            from app.core.config_cache import (
+                RETENTION_KIND_LLM_INTERACTION,
+                SystemConfigCache,
+            )
+
+            _retention_days = SystemConfigCache.get_retention_days(
+                RETENTION_KIND_LLM_INTERACTION
+            )
+            _payload = interaction.model_dump()
+            if _retention_days > 0:
+                _payload["expires_at"] = datetime.now(timezone.utc) + timedelta(
+                    days=_retention_days
+                )
+            db_interaction = db_models.LLMInteraction(**_payload)
             db.add(db_interaction)
             await db.commit()
             await db.refresh(db_interaction)

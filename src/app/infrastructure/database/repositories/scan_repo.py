@@ -376,7 +376,21 @@ class ScanRepository:
                 "agent_name": interaction_data.agent_name,
             },
         )
-        db_interaction = db_models.LLMInteraction(**interaction_data.model_dump())
+        # V14.2.7 — stamp retention expiry from the cached config.
+        from app.core.config_cache import (
+            RETENTION_KIND_LLM_INTERACTION,
+            SystemConfigCache,
+        )
+
+        retention_days = SystemConfigCache.get_retention_days(
+            RETENTION_KIND_LLM_INTERACTION
+        )
+        payload = interaction_data.model_dump()
+        if retention_days > 0:
+            payload["expires_at"] = datetime.datetime.now(
+                datetime.timezone.utc
+            ) + datetime.timedelta(days=retention_days)
+        db_interaction = db_models.LLMInteraction(**payload)
         self.db.add(db_interaction)
         try:
             await self.db.commit()

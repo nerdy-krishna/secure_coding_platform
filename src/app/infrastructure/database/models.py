@@ -288,6 +288,12 @@ class LLMInteraction(Base):
     timestamp: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    # V14.2.7 — retention expiry. Populated at insert from
+    # SystemConfigCache.get_retention_days("llm_interaction"); swept by
+    # retention_sweeper.
+    expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
 
     scan: Mapped[Optional["Scan"]] = relationship(back_populates="llm_interactions")
     chat_message: Mapped[Optional["ChatMessage"]] = relationship(
@@ -330,6 +336,12 @@ class ChatMessage(Base):
     cost: Mapped[Optional[float]] = mapped_column(DECIMAL(10, 8))
     timestamp: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
+    )
+    # V14.2.7 — retention expiry. Populated at insert from
+    # SystemConfigCache.get_retention_days("chat_message"); swept by
+    # retention_sweeper.
+    expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
     )
 
     session: Mapped["ChatSession"] = relationship(back_populates="messages")
@@ -438,6 +450,12 @@ class RAGPreprocessingJob(Base):
         DateTime(timezone=True), server_default=func.now()
     )
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    # V14.2.7 — retention expiry. Populated at insert from
+    # SystemConfigCache.get_retention_days("rag_job"); swept by
+    # retention_sweeper.
+    expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
 
     user: Mapped["User"] = relationship()
     llm_configuration: Mapped["LLMConfiguration"] = relationship()
