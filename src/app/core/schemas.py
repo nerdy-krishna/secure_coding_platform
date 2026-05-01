@@ -1,9 +1,16 @@
 # src/app/core/schemas.py
+#
+# WARNING: VulnerabilityFinding and LLMInteraction model attacker-influenced data —
+# `description`, `title`, `remediation`, `references`, `original_snippet`, `code`,
+# `file_path`, `raw_response`, `parsed_output` originate from LLM output and uploaded
+# code; downstream renderers must treat them as untrusted (HTML-escape, never log raw,
+# never use in shell/SQL).
+#
 from datetime import datetime, timezone
 from typing import Any, Dict, List, TypedDict, Optional, Literal
 import uuid
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 WorkflowMode = Literal["audit", "suggest", "remediate"]
 
@@ -34,40 +41,54 @@ class FixSuggestion(BaseModel):
         description="A brief description of the suggested code change."
     )
     original_snippet: str = Field(
-        description="The exact, original code snippet that is vulnerable and should be replaced."
+        max_length=200_000,
+        description="The exact, original code snippet that is vulnerable and should be replaced.",
     )
     code: str = Field(
-        description="The secure code snippet to replace the vulnerable part."
+        max_length=200_000,
+        description="The secure code snippet to replace the vulnerable part.",
     )
 
 
 class VulnerabilityFinding(BaseModel):
     id: Optional[int] = None
-    cwe: str = Field(description="The CWE ID for the vulnerability (e.g., 'CWE-22').")
-    title: str = Field(description="A concise, one-line title for the vulnerability.")
-    description: str = Field(
-        description="A detailed description of the vulnerability found."
+    cwe: str = Field(
+        pattern=r"^CWE-\d{1,5}$",
+        max_length=10,
+        description="The CWE ID for the vulnerability (e.g., 'CWE-22').",
     )
-    severity: str = Field(
-        description="The assessed severity (e.g., 'High', 'Medium', 'Low')."
+    title: str = Field(
+        max_length=200,
+        description="A concise, one-line title for the vulnerability.",
+    )
+    description: str = Field(
+        max_length=8000,
+        description="A detailed description of the vulnerability found.",
+    )
+    severity: Literal["Critical", "High", "Medium", "Low", "Informational"] = Field(
+        description="The assessed severity."
     )
     line_number: int = Field(
-        description="The line number in the code where the vulnerability occurs."
+        ge=1,
+        description="The line number in the code where the vulnerability occurs.",
     )
     remediation: str = Field(
-        description="A detailed explanation of how to fix the vulnerability."
+        max_length=8000,
+        description="A detailed explanation of how to fix the vulnerability.",
     )
-    confidence: str = Field(
-        description="The confidence level of the finding (e.g., 'High', 'Medium', 'Low')."
+    confidence: Literal["High", "Medium", "Low"] = Field(
+        description="The confidence level of the finding."
     )
     references: List[str] = Field(
-        default_factory=list, description="A list of URLs or reference links."
+        default_factory=list,
+        max_length=20,
+        description="A list of URLs or reference links.",
     )
     cvss_score: Optional[float] = Field(
-        None, description="The calculated CVSS 3.1 score."
+        None, ge=0.0, le=10.0, description="The calculated CVSS 3.1 score."
     )
     cvss_vector: Optional[str] = Field(None, description="The CVSS 3.1 vector string.")
-    file_path: str
+    file_path: str = Field(max_length=4096)
     fixes: Optional[FixSuggestion] = Field(
         default=None,
         description="The suggested code fix, including original and new snippets.",
@@ -78,6 +99,7 @@ class VulnerabilityFinding(BaseModel):
     )
     cve_id: Optional[str] = Field(
         default=None,
+        pattern=r"^CVE-\d{4}-\d{4,}$",
         description="CVE identifier (e.g. 'CVE-2024-12345') for findings derived from a known vulnerability database entry. Set by `osv_runner`; None for SAST/secret findings.",
     )
     agent_name: Optional[str] = Field(
@@ -100,6 +122,54 @@ class VulnerabilityFinding(BaseModel):
             "file/line. False when the same Semgrep rule still fires."
         ),
     )
+
+    @field_validator("references")
+    @classmethod
+    def validate_references(cls, v: List[str]) -> List[str]:
+        for ref in v:
+            if len(ref) > 2048:
+                raise ValueError(
+                    f"Reference URL exceeds 2048 characters: {ref[:80]}..."
+                )
+            if not ref.startswith(("http://", "https://")):
+                raise ValueError(
+                    f"Reference must start with http:// or https://: {ref[:80]}"
+                )
+        return v
+
+    @field_validator("file_path")
+    @classmethod
+    def validate_file_path(cls, v: str) -> str:
+        if ".." in v:
+            raise ValueError("file_path must not contain '..'")
+        return v
+
+    @model_validator(mode="after")
+    def validate_cross_fields(self) -> "VulnerabilityFinding":
+        # cvss_score and cvss_vector must both be present or both absent
+        if (self.cvss_score is None) != (self.cvss_vector is None):
+            raise ValueError(
+                "cvss_score and cvss_vector must both be set or both be None"
+            )
+        # Severity must be consistent with cvss_score band
+        if self.cvss_score is not None:
+            score = self.cvss_score
+            expected: Optional[str] = None
+            if score >= 9.0:
+                expected = "Critical"
+            elif score >= 7.0:
+                expected = "High"
+            elif score >= 4.0:
+                expected = "Medium"
+            elif score > 0.0:
+                expected = "Low"
+            else:
+                expected = "Informational"
+            if expected and self.severity != expected:
+                raise ValueError(
+                    f"severity '{self.severity}' is inconsistent with cvss_score {score:.1f} (expected '{expected}')"
+                )
+        return self
 
 
 class FixResult(BaseModel):
@@ -159,7 +229,9 @@ class LLMInteraction(BaseModel):
     prompt_context: Optional[Dict[str, Any]] = Field(
         None, description="The context data used to format the prompt."
     )
-    raw_response: str = Field(description="The raw text response from the LLM.")
+    raw_response: str = Field(
+        max_length=1_000_000, description="The raw text response from the LLM."
+    )
     parsed_output: Optional[Dict] = Field(
         None, description="The structured output after parsing the response."
     )

@@ -1,41 +1,51 @@
+import json
 import logging
 from typing import List, Optional
-from fastapi import Depends
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.infrastructure.database.database import AsyncSessionLocal
 from app.infrastructure.database import models as db_models
 from app.api.v1 import models as api_models
+from app.shared.lib.encryption import FernetEncrypt
 
 logger = logging.getLogger(__name__)
 
+_MAX_CONFIGS = 500
+
 
 class SystemConfigRepository:
-    _instance = None
 
     def __init__(self, db_session: AsyncSession):
         self.db = db_session
 
-    @classmethod
-    def get_instance(cls, db_session: AsyncSession = Depends(AsyncSessionLocal)):
-        if cls._instance is None:
-            cls._instance = SystemConfigRepository(db_session)
-        return cls._instance
-
     async def get_all(self) -> List[db_models.SystemConfiguration]:
         """Retrieves all system configurations."""
-        result = await self.db.execute(select(db_models.SystemConfiguration))
+        result = await self.db.execute(
+            select(db_models.SystemConfiguration).limit(_MAX_CONFIGS)
+        )
         return list(result.scalars().all())
 
     async def get_by_key(self, key: str) -> Optional[db_models.SystemConfiguration]:
-        """Retrieves a system configuration by its key."""
+        """Retrieves a system configuration by its key.
+
+        When the stored value carries an ``{"_encrypted": ...}`` envelope the
+        plaintext is decrypted before the model is returned so callers always
+        work with the original value.
+        """
         result = await self.db.execute(
             select(db_models.SystemConfiguration).filter(
                 db_models.SystemConfiguration.key == key
             )
         )
-        return result.scalars().first()
+        db_config = result.scalars().first()
+        if db_config is not None and db_config.encrypted:
+            stored = db_config.value
+            if isinstance(stored, dict) and "_encrypted" in stored:
+                db_config.value = json.loads(
+                    FernetEncrypt.decrypt(stored["_encrypted"])
+                )
+        return db_config
 
     async def set_value(
         self, config: api_models.SystemConfigurationCreate
@@ -44,20 +54,12 @@ class SystemConfigRepository:
         db_config = await self.get_by_key(config.key)
 
         value_to_store = config.value
-        # If encrypted flag is true, we should encrypt the value.
-        # However, value is a Dict. We might need to serialize it or encrypt specific fields?
-        # For simplicity in this iteration, if encrypted is True, we assume 'value' contains a 'secret' key
-        # or we serialize the whole JSON.
-        # Let's assume we encrypt the entire JSON string if needed, but JSONB column expects JSON.
-        # So we might need to store encrypted blob in a separate field or treat value as string?
-        # Actually, the model defines value as JSONB.
-        # If encrypted, we might store: {"encrypted_data": "..."}
-
         if config.encrypted:
-            # Basic logical handling: If validation passes, we store as is,
-            # but in a real scenario, we'd encrypt here.
-            # For now, let's assume the caller handles encryption or we do it here if it's a specific structure.
-            pass
+            # Encrypt the entire JSON-serialised value and wrap it in a sentinel
+            # envelope so the read path can reliably detect ciphertext at rest.
+            value_to_store = {
+                "_encrypted": FernetEncrypt.encrypt(json.dumps(config.value))
+            }
 
         if db_config:
             db_config.value = value_to_store
@@ -74,14 +76,39 @@ class SystemConfigRepository:
             )
             self.db.add(db_config)
 
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except SQLAlchemyError:
+            logger.error(
+                "system_config.set.failed",
+                extra={"key": config.key},
+                exc_info=True,
+            )
+            raise
         await self.db.refresh(db_config)
+        logger.info(
+            "system_config.set",
+            extra={
+                "key": config.key,
+                "is_secret": config.is_secret,
+                "encrypted": config.encrypted,
+            },
+        )
         return db_config
 
     async def delete(self, key: str) -> Optional[db_models.SystemConfiguration]:
         """Deletes a system configuration."""
         db_config = await self.get_by_key(key)
         if db_config:
+            logger.warning("system_config.delete", extra={"key": key})
             await self.db.delete(db_config)
-            await self.db.commit()
+            try:
+                await self.db.commit()
+            except SQLAlchemyError:
+                logger.error(
+                    "system_config.delete.failed",
+                    extra={"key": key},
+                    exc_info=True,
+                )
+                raise
         return db_config

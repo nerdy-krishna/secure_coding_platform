@@ -33,6 +33,9 @@ from app.shared.lib.scan_status import (
 
 logger = logging.getLogger(__name__)
 
+MAX_PAGE_SIZE = 100
+_VALID_SORT_ORDERS = {"asc", "desc"}
+
 
 class ScanQueryService:
     """Read-side scan service.
@@ -46,35 +49,92 @@ class ScanQueryService:
     def __init__(self, repo: ScanRepository):
         self.repo = repo
 
-    async def get_scan_status(self, scan_id: uuid.UUID) -> db_models.Scan:
+    async def get_scan_status(
+        self, scan_id: uuid.UUID, user: db_models.User
+    ) -> db_models.Scan:
         """Retrieves the status and basic details of a scan."""
-        logger.info("Getting scan status.", extra={"scan_id": str(scan_id)})
-        scan = await self.repo.get_scan(scan_id)
+        logger.info(
+            "Getting scan status.",
+            extra={"scan_id": str(scan_id), "actor_user_id": str(user.id)},
+        )
+        try:
+            scan = await self.repo.get_scan(scan_id)
+        except Exception:
+            logger.error(
+                "scan-query: read failed",
+                extra={"scan_id": str(scan_id), "actor_user_id": str(user.id)},
+                exc_info=True,
+            )
+            raise
         if not scan:
             logger.warning("Scan not found.", extra={"scan_id": str(scan_id)})
             raise HTTPException(status_code=404, detail="Scan not found")
+        if scan.user_id != user.id and not user.is_superuser:
+            logger.warning(
+                "scan-query: authorization denied",
+                extra={
+                    "scan_id": str(scan_id),
+                    "actor_user_id": str(user.id),
+                    "is_superuser": user.is_superuser,
+                    "action": "get_scan_status",
+                },
+            )
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Scan not found or not authorized.",
+            )
         return scan
 
     async def get_scan_result(
-        self, scan_id: uuid.UUID, user: db_models.User
+        self,
+        scan_id: uuid.UUID,
+        user: db_models.User,
+        include_source: bool = False,
     ) -> api_models.AnalysisResultDetailResponse:
         """
         Constructs the detailed analysis result for a given scan, including findings,
         code snapshots, and reports.
+
+        Pass ``include_source=True`` to hydrate ``original_code_map`` /
+        ``fixed_code_map``; omit it (the default) to return metadata +
+        findings only without fetching source bodies.
         """
-        logger.info(f"User {user.id} requesting full result for scan {scan_id}.")
-        scan = await self.repo.get_scan_with_details(scan_id)
+        logger.info(
+            "scan-query: full result requested",
+            extra={"actor_user_id": str(user.id), "scan_id": str(scan_id)},
+        )
+        try:
+            scan = await self.repo.get_scan_with_details(scan_id)
+        except Exception:
+            logger.error(
+                "scan-query: read failed",
+                extra={"scan_id": str(scan_id), "actor_user_id": str(user.id)},
+                exc_info=True,
+            )
+            raise
 
         if not scan or (scan.user_id != user.id and not user.is_superuser):
+            logger.warning(
+                "scan-query: authorization denied",
+                extra={
+                    "scan_id": str(scan_id),
+                    "actor_user_id": str(user.id),
+                    "is_superuser": user.is_superuser,
+                    "action": "get_result",
+                },
+            )
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Scan not found or not authorized.",
             )
 
         logger.debug(
-            f"[DEBUG] Fetched scan from DB. Findings loaded: {len(scan.findings)}. "
-            f"Summary loaded: {bool(scan.summary)}.",
-            extra={"scan_id": str(scan_id)},
+            "[DEBUG] Fetched scan from DB.",
+            extra={
+                "scan_id": str(scan_id),
+                "findings_count": len(scan.findings),
+                "has_summary": bool(scan.summary),
+            },
         )
 
         original_code_map = {}
@@ -87,21 +147,22 @@ class ScanQueryService:
             (s for s in scan.snapshots if s.snapshot_type == "POST_REMEDIATION"), None
         )
 
-        if original_snapshot:
-            hashes = list(original_snapshot.file_map.values())
-            content_map = await self.repo.get_source_files_by_hashes(hashes)
-            original_code_map = {
-                path: content_map.get(h, "")
-                for path, h in original_snapshot.file_map.items()
-            }
+        if include_source:
+            if original_snapshot:
+                hashes = list(original_snapshot.file_map.values())
+                content_map = await self.repo.get_source_files_by_hashes(hashes)
+                original_code_map = {
+                    path: content_map.get(h, "")
+                    for path, h in original_snapshot.file_map.items()
+                }
 
-        if remediated_snapshot:
-            hashes = list(remediated_snapshot.file_map.values())
-            content_map = await self.repo.get_source_files_by_hashes(hashes)
-            fixed_code_map = {
-                path: content_map.get(h, "")
-                for path, h in remediated_snapshot.file_map.items()
-            }
+            if remediated_snapshot:
+                hashes = list(remediated_snapshot.file_map.values())
+                content_map = await self.repo.get_source_files_by_hashes(hashes)
+                fixed_code_map = {
+                    path: content_map.get(h, "")
+                    for path, h in remediated_snapshot.file_map.items()
+                }
 
         summary_report_response = None
         if scan.summary:
@@ -162,9 +223,12 @@ class ScanQueryService:
                 len(f.findings) for f in summary_report_response.files_analyzed
             )
             logger.debug(
-                f"[DEBUG] Assembled final response. Files in report: {len(summary_report_response.files_analyzed)}. "
-                f"Total findings in response file list: {total_findings_in_response}.",
-                extra={"scan_id": str(scan_id)},
+                "[DEBUG] Assembled final response.",
+                extra={
+                    "scan_id": str(scan_id),
+                    "files_in_report": len(summary_report_response.files_analyzed),
+                    "total_findings_in_response": total_findings_in_response,
+                },
             )
         # --- END LOGGING BLOCK ---
 
@@ -186,6 +250,8 @@ class ScanQueryService:
         self, project_id: uuid.UUID, user_id: int, skip: int, limit: int
     ) -> api_models.PaginatedScanHistoryResponse:
         """Retrieves a paginated list of scan history for a project."""
+        skip = max(int(skip), 0)
+        limit = min(max(int(limit), 1), MAX_PAGE_SIZE)
         project = await self.repo.get_project_by_id(project_id)
         if not project or project.user_id != user_id:
             raise HTTPException(
@@ -213,6 +279,15 @@ class ScanQueryService:
         visible_user_ids: Optional[List[int]] = None,
     ) -> api_models.PaginatedScanHistoryResponse:
         """Retrieves a paginated list of all scans visible to the caller."""
+        skip = max(int(skip), 0)
+        limit = min(max(int(limit), 1), MAX_PAGE_SIZE)
+        if sort_order not in _VALID_SORT_ORDERS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid sort_order. Must be one of: {sorted(_VALID_SORT_ORDERS)}",
+            )
+        if search is not None and len(search) > 200:
+            raise HTTPException(status_code=400, detail="search too long")
 
         status_filters = []
         if status:
@@ -227,18 +302,26 @@ class ScanQueryService:
             elif status != "All":
                 status_filters = [status.upper().replace(" ", "_")]
 
-        total = await self.repo.get_scans_count_for_user(
-            user_id, search, status_filters, visible_user_ids=visible_user_ids
-        )
-        scans_raw = await self.repo.get_paginated_scans_for_user(
-            user_id,
-            skip,
-            limit,
-            search,
-            sort_order,
-            status_filters,
-            visible_user_ids=visible_user_ids,
-        )
+        try:
+            total = await self.repo.get_scans_count_for_user(
+                user_id, search, status_filters, visible_user_ids=visible_user_ids
+            )
+            scans_raw = await self.repo.get_paginated_scans_for_user(
+                user_id,
+                skip,
+                limit,
+                search,
+                sort_order,
+                status_filters,
+                visible_user_ids=visible_user_ids,
+            )
+        except Exception:
+            logger.error(
+                "scan-query: read failed",
+                extra={"actor_user_id": str(user_id)},
+                exc_info=True,
+            )
+            raise
 
         history_items = [
             api_models.ScanHistoryItem(
@@ -274,9 +357,21 @@ class ScanQueryService:
         self, scan_id: uuid.UUID, user: db_models.User
     ) -> List[db_models.LLMInteraction]:
         """Gets all LLM interactions for a given scan, ensuring user has access."""
-        logger.info(f"User {user.id} requesting LLM interactions for scan {scan_id}.")
+        logger.info(
+            "scan-query: LLM interactions requested",
+            extra={"actor_user_id": str(user.id), "scan_id": str(scan_id)},
+        )
         scan = await self.repo.get_scan(scan_id)
         if not scan or (scan.user_id != user.id and not user.is_superuser):
+            logger.warning(
+                "scan-query: authorization denied",
+                extra={
+                    "scan_id": str(scan_id),
+                    "actor_user_id": str(user.id),
+                    "is_superuser": user.is_superuser,
+                    "action": "llm_interactions",
+                },
+            )
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Scan not found or not authorized.",
@@ -293,12 +388,24 @@ class ScanQueryService:
         visible_user_ids: Optional[List[int]] = None,
     ) -> api_models.PaginatedProjectHistoryResponse:
         """Retrieves a paginated list of projects visible to the caller."""
-        total = await self.repo.get_projects_count(
-            user_id, search, visible_user_ids=visible_user_ids
-        )
-        projects = await self.repo.get_paginated_projects(
-            user_id, skip, limit, search, visible_user_ids=visible_user_ids
-        )
+        skip = max(int(skip), 0)
+        limit = min(max(int(limit), 1), MAX_PAGE_SIZE)
+        if search is not None and len(search) > 200:
+            raise HTTPException(status_code=400, detail="search too long")
+        try:
+            total = await self.repo.get_projects_count(
+                user_id, search, visible_user_ids=visible_user_ids
+            )
+            projects = await self.repo.get_paginated_projects(
+                user_id, skip, limit, search, visible_user_ids=visible_user_ids
+            )
+        except Exception:
+            logger.error(
+                "scan-query: read failed",
+                extra={"actor_user_id": str(user_id)},
+                exc_info=True,
+            )
+            raise
 
         project_items: List[api_models.ProjectHistoryItem] = []
         latest_terminal_scan_by_project: Dict[uuid.UUID, uuid.UUID] = {}
@@ -437,6 +544,15 @@ class ScanQueryService:
     async def delete_scan_by_id(self, scan_id: uuid.UUID, user: db_models.User):
         """Deletes a single scan, checking for superuser privileges."""
         if not user.is_superuser:
+            logger.warning(
+                "scan-query: authorization denied",
+                extra={
+                    "scan_id": str(scan_id),
+                    "actor_user_id": str(user.id),
+                    "is_superuser": user.is_superuser,
+                    "action": "delete_scan",
+                },
+            )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Only superusers can delete scans.",
@@ -449,11 +565,23 @@ class ScanQueryService:
             )
 
         await self.repo.delete_scan(scan_id)
-        logger.info(f"Superuser {user.id} deleted scan {scan_id}.")
+        logger.info(
+            "scan-query: scan deleted",
+            extra={"actor_user_id": str(user.id), "scan_id": str(scan_id)},
+        )
 
     async def delete_project_by_id(self, project_id: uuid.UUID, user: db_models.User):
         """Deletes a project and all its associated scans, for superusers only."""
         if not user.is_superuser:
+            logger.warning(
+                "scan-query: authorization denied",
+                extra={
+                    "actor_user_id": str(user.id),
+                    "is_superuser": user.is_superuser,
+                    "action": "delete_project",
+                    "project_id": str(project_id),
+                },
+            )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Only superusers can delete projects.",
@@ -467,5 +595,6 @@ class ScanQueryService:
 
         await self.repo.delete_project(project_id)
         logger.info(
-            f"Superuser {user.id} deleted project {project_id} and all associated scans."
+            "scan-query: project deleted",
+            extra={"actor_user_id": str(user.id), "project_id": str(project_id)},
         )

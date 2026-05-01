@@ -15,6 +15,7 @@ is part of the LangGraph checkpointer's on-disk contract — do not rename.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Dict, List
 
@@ -66,10 +67,24 @@ async def verify_patches_node(state: WorkerState) -> Dict[str, Any]:
     leaving `fix_verified=NULL` on every finding (the schema default,
     interpreted by the UI as "not verified").
     """
+    # V02.2.1: positive input bounds
+    MAX_PATCHED_FILES = 5000
+    MAX_FINDINGS = 50000
+    MAX_TOTAL_BYTES = 100 * 1024 * 1024  # 100 MiB
+
     scan_id = state["scan_id"]
     scan_type = state["scan_type"]
-    findings = list(state.get("findings") or [])
+    findings = list(state.get("findings") or [])[:MAX_FINDINGS]
     patched_files = state.get("patched_files") or {}
+
+    if len(patched_files) > MAX_PATCHED_FILES:
+        logger.warning(
+            "verify_patches: scan_id=%s patched_files count %d exceeds limit %d; aborting",
+            scan_id,
+            len(patched_files),
+            MAX_PATCHED_FILES,
+        )
+        return {}
 
     if scan_type != "REMEDIATE":
         return {}
@@ -90,21 +105,43 @@ async def verify_patches_node(state: WorkerState) -> Dict[str, Any]:
         )
         return {}
 
-    # Restrict the re-scan to files that were actually patched. Other
-    # files in the scan would also be in the POST_REMEDIATION snapshot
-    # but they're identical to the originals, so re-scanning them just
-    # burns CPU.
-    files_to_rescan = {path: content for path, content in patched_files.items()}
+    # V02.2.3: enforce that files_to_rescan is the intersection of
+    # patched_files and the paths referenced by applied semgrep findings.
+    # Any extra patched-file entries (not referenced by an applied finding)
+    # are silently dropped so the combined-data assumption is explicit.
+    applied_paths = {f.file_path for f in applied_semgrep}
+    extra = set(patched_files) - applied_paths
+    if extra:
+        logger.warning(
+            "verify_patches: scan_id=%s dropping %d patched_files not in applied_paths",
+            scan_id,
+            len(extra),
+        )
+    files_to_rescan = {p: c for p, c in patched_files.items() if p in applied_paths}
     if not files_to_rescan:
+        return {}
+
+    # V02.3.2: business-logic cap on aggregate size before staging.
+    total_bytes = sum(len(c) for c in files_to_rescan.values())
+    if total_bytes > MAX_TOTAL_BYTES:
+        logger.warning(
+            "verify_patches: scan_id=%s files_to_rescan total size %d bytes exceeds limit %d; aborting",
+            scan_id,
+            total_bytes,
+            MAX_TOTAL_BYTES,
+        )
         return {}
 
     # Re-stage + re-run Semgrep, swallow any subprocess error so the
     # scan still completes (verifier failure must not block remediation
     # results).
+    # V02.4.1: hard timeout so a runaway Semgrep subprocess can't stall the graph.
+    SEMGREP_VERIFY_TIMEOUT_SECONDS = 300
     try:
         with stage_files(files_to_rescan) as (staged_dir, original_paths):
-            post_findings: List[VulnerabilityFinding] = await run_semgrep(
-                staged_dir, original_paths
+            post_findings: List[VulnerabilityFinding] = await asyncio.wait_for(
+                run_semgrep(staged_dir, original_paths),
+                timeout=SEMGREP_VERIFY_TIMEOUT_SECONDS,
             )
     except Exception as exc:  # noqa: BLE001
         logger.warning(

@@ -1,17 +1,20 @@
 # src/app/config/config.py
-from pydantic import SecretStr, field_validator, Field
+import math
+import urllib.parse
+from typing import List, Literal, Optional
+
+from pydantic import SecretStr, field_validator, model_validator, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import List, Optional
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+        env_file=".env", env_file_encoding="utf-8", extra="ignore", frozen=True
     )
 
     # --- Database Configuration ---
     POSTGRES_USER: str
-    POSTGRES_PASSWORD: str
+    POSTGRES_PASSWORD: SecretStr
     POSTGRES_DB: str
     POSTGRES_HOST: str
     POSTGRES_PORT: int
@@ -27,18 +30,38 @@ class Settings(BaseSettings):
         if v:
             return v
         values = info.data
-        return f"postgresql+asyncpg://{values.get('POSTGRES_USER')}:{values.get('POSTGRES_PASSWORD')}@{values.get('POSTGRES_HOST')}:{values.get('POSTGRES_PORT')}/{values.get('POSTGRES_DB')}"
+        pw_obj = values.get("POSTGRES_PASSWORD")
+        pw = urllib.parse.quote(
+            (
+                pw_obj.get_secret_value()
+                if hasattr(pw_obj, "get_secret_value")
+                else (pw_obj or "")
+            ),
+            safe="",
+        )
+        user = urllib.parse.quote(values.get("POSTGRES_USER") or "", safe="")
+        return f"postgresql+asyncpg://{user}:{pw}@{values.get('POSTGRES_HOST')}:{values.get('POSTGRES_PORT')}/{values.get('POSTGRES_DB')}"
 
     @field_validator("ALEMBIC_DATABASE_URL", mode="before")
     def assemble_alembic_db_connection(cls, v, info):
         if v:
             return v
         values = info.data
-        return f"postgresql+asyncpg://{values.get('POSTGRES_USER')}:{values.get('POSTGRES_PASSWORD')}@{values.get('POSTGRES_HOST_ALEMBIC')}:{values.get('POSTGRES_PORT')}/{values.get('POSTGRES_DB')}"
+        pw_obj = values.get("POSTGRES_PASSWORD")
+        pw = urllib.parse.quote(
+            (
+                pw_obj.get_secret_value()
+                if hasattr(pw_obj, "get_secret_value")
+                else (pw_obj or "")
+            ),
+            safe="",
+        )
+        user = urllib.parse.quote(values.get("POSTGRES_USER") or "", safe="")
+        return f"postgresql+asyncpg://{user}:{pw}@{values.get('POSTGRES_HOST_ALEMBIC')}:{values.get('POSTGRES_PORT')}/{values.get('POSTGRES_DB')}"
 
     # --- RabbitMQ Configuration (UPDATED) ---
     RABBITMQ_DEFAULT_USER: str
-    RABBITMQ_DEFAULT_PASS: str
+    RABBITMQ_DEFAULT_PASS: SecretStr
     RABBITMQ_HOST: str
     RABBITMQ_URL: Optional[str] = None
 
@@ -52,21 +75,31 @@ class Settings(BaseSettings):
         if v:
             return v
         values = info.data
-        return f"amqp://{values.get('RABBITMQ_DEFAULT_USER')}:{values.get('RABBITMQ_DEFAULT_PASS')}@{values.get('RABBITMQ_HOST')}/"
+        pw_obj = values.get("RABBITMQ_DEFAULT_PASS")
+        pw = urllib.parse.quote(
+            (
+                pw_obj.get_secret_value()
+                if hasattr(pw_obj, "get_secret_value")
+                else (pw_obj or "")
+            ),
+            safe="",
+        )
+        user = urllib.parse.quote(values.get("RABBITMQ_DEFAULT_USER") or "", safe="")
+        return f"amqp://{user}:{pw}@{values.get('RABBITMQ_HOST')}/"
 
     # --- Email (SMTP) Configuration ---
     SMTP_HOST: Optional[str] = None
     SMTP_PORT: int = 587
     SMTP_USER: Optional[str] = None
-    SMTP_PASSWORD: Optional[str] = None
+    SMTP_PASSWORD: Optional[SecretStr] = None
     SMTP_FROM: Optional[str] = None
     SMTP_TLS: bool = True
     SMTP_SSL: bool = False
 
     # --- Security & Auth ---
-    SECRET_KEY: str
-    ENCRYPTION_KEY: str
-    ENVIRONMENT: str = "development"
+    SECRET_KEY: SecretStr
+    ENCRYPTION_KEY: SecretStr
+    ENVIRONMENT: Literal["development", "staging", "production"] = "development"
     ACCESS_TOKEN_LIFETIME_SECONDS: int = 60 * 60  # 60 minutes
     REFRESH_TOKEN_LIFETIME_SECONDS: int = 60 * 60 * 24 * 7  # 7 days
 
@@ -88,7 +121,7 @@ class Settings(BaseSettings):
         origins = self.ALLOWED_ORIGINS
         if origins and origins[0]:
             return origins[0].rstrip("/")
-        if self.ENVIRONMENT == "production":
+        if self.ENVIRONMENT not in {"development", "local", "test"}:
             raise RuntimeError(
                 "FRONTEND_BASE_URL is not set and ALLOWED_ORIGINS is empty. "
                 "Configure one of them so email links can be built."
@@ -97,24 +130,24 @@ class Settings(BaseSettings):
 
     # --- Rate Limiting (NEW) ---
     # Requests Per Minute (RPM) for each LLM provider.
-    # A value of 0 or less will effectively disable the rate limiter for that provider.
+    # Use Optional[int] = None to disable rate limiting for a provider instead of 0.
     OPENAI_REQUESTS_PER_MINUTE: int = Field(
-        default=60, description="Max RPM for OpenAI models."
+        default=60, ge=1, description="Max RPM for OpenAI models."
     )
     OPENAI_TOKENS_PER_MINUTE: int = Field(
-        default=30000, description="Max TPM for OpenAI models."
+        default=30000, ge=1, description="Max TPM for OpenAI models."
     )
     GOOGLE_REQUESTS_PER_MINUTE: int = Field(
-        default=60, description="Max RPM for Google models."
+        default=60, ge=1, description="Max RPM for Google models."
     )
     GOOGLE_TOKENS_PER_MINUTE: int = Field(
-        default=60000, description="Max TPM for Google models."
+        default=60000, ge=1, description="Max TPM for Google models."
     )
     ANTHROPIC_REQUESTS_PER_MINUTE: int = Field(
-        default=30, description="Max RPM for Anthropic models."
+        default=30, ge=1, description="Max RPM for Anthropic models."
     )
     ANTHROPIC_TOKENS_PER_MINUTE: int = Field(
-        default=20000, description="Max TPM for Anthropic models."
+        default=20000, ge=1, description="Max TPM for Anthropic models."
     )
 
     # --- Worker ---
@@ -149,6 +182,53 @@ class Settings(BaseSettings):
             )
         return v
 
+    @field_validator("SECRET_KEY")
+    def _validate_secret_key(cls, v: SecretStr) -> SecretStr:
+        raw = v.get_secret_value() if hasattr(v, "get_secret_value") else str(v)
+        if raw == "supersecretkey1234567890":
+            raise ValueError(
+                "SECRET_KEY is set to the .env.example placeholder; generate a real one "
+                "via `python scripts/generate_secrets.py random` and put it in .env, then restart."
+            )
+        if len(raw) < 32:
+            raise ValueError(
+                "SECRET_KEY must be at least 32 characters (>=128 bits). "
+                "Generate a real key via `python scripts/generate_secrets.py random`."
+            )
+        # Reject low-entropy keys (Shannon entropy < 3.5 bits/char)
+        if raw:
+            freq = {}
+            for c in raw:
+                freq[c] = freq.get(c, 0) + 1
+            entropy = -sum(
+                (f / len(raw)) * math.log2(f / len(raw)) for f in freq.values()
+            )
+            if entropy < 3.5:
+                raise ValueError(
+                    "SECRET_KEY has insufficient entropy. "
+                    "Generate a real key via `python scripts/generate_secrets.py random`."
+                )
+        return v
+
+    @field_validator("ENCRYPTION_KEY")
+    def _validate_encryption_key(cls, v: SecretStr) -> SecretStr:
+        from cryptography.fernet import Fernet  # noqa: PLC0415
+
+        raw = v.get_secret_value() if hasattr(v, "get_secret_value") else str(v)
+        if raw == "0" * 64:
+            raise ValueError(
+                "ENCRYPTION_KEY is set to an all-zero placeholder; generate a real Fernet key "
+                'via `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.'
+            )
+        try:
+            Fernet(raw.encode())
+        except Exception:
+            raise ValueError(
+                "ENCRYPTION_KEY must be a valid 32-byte url-safe base64 Fernet key. "
+                'Generate one via `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.'
+            )
+        return v
+
     # --- Observability (Langfuse v3, optional) ---
     # Disabled by default; opt in by setting LANGFUSE_ENABLED=true plus the
     # public/secret keys minted from the self-hosted Langfuse UI. When
@@ -156,9 +236,60 @@ class Settings(BaseSettings):
     # network traffic. See `app.infrastructure.observability` and the run
     # `langfuse-otel-observability`.
     LANGFUSE_ENABLED: bool = False
-    LANGFUSE_HOST: str = "http://langfuse-web:3000"
+    LANGFUSE_HOST: str = "https://langfuse-web:3000"
     LANGFUSE_PUBLIC_KEY: Optional[SecretStr] = None
     LANGFUSE_SECRET_KEY: Optional[SecretStr] = None
+
+    @field_validator("LANGFUSE_HOST")
+    def _validate_langfuse_host(cls, v: str) -> str:
+        # Enforce https for non-loopback hosts; loopback may use http for local dev
+        import ipaddress  # noqa: PLC0415
+
+        loopback_hostnames = {"localhost", "127.0.0.1", "::1"}
+        from urllib.parse import urlparse  # noqa: PLC0415
+
+        parsed = urlparse(v)
+        hostname = parsed.hostname or ""
+        is_loopback = hostname in loopback_hostnames
+        try:
+            is_loopback = is_loopback or ipaddress.ip_address(hostname).is_loopback
+        except ValueError:
+            pass
+        if not is_loopback and not v.startswith("https://"):
+            raise ValueError(
+                "LANGFUSE_HOST must use https:// for non-loopback hosts to prevent "
+                "LANGFUSE_PUBLIC_KEY/LANGFUSE_SECRET_KEY from leaking in plaintext."
+            )
+        return v
+
+    @field_validator("FRONTEND_BASE_URL")
+    def _validate_frontend_base_url(cls, v: Optional[str]) -> Optional[str]:
+        if v and not v.startswith("https://"):
+            raise ValueError(
+                "FRONTEND_BASE_URL must use https:// in all environments to prevent "
+                "insecure email links."
+            )
+        return v
+
+    @model_validator(mode="after")
+    def _model_invariants(self) -> "Settings":
+        # SMTP_TLS and SMTP_SSL are mutually exclusive (V02.2.3)
+        if self.SMTP_TLS and self.SMTP_SSL:
+            raise ValueError(
+                "SMTP_TLS and SMTP_SSL are mutually exclusive; set only one."
+            )
+        # Production invariants (V13.4.2)
+        if self.ENVIRONMENT == "production":
+            if self.DB_ECHO:
+                raise ValueError("DB_ECHO must be False in production.")
+            if self.LANGFUSE_ENABLED and (
+                self.LANGFUSE_PUBLIC_KEY is None or self.LANGFUSE_SECRET_KEY is None
+            ):
+                raise ValueError(
+                    "LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY must be set when "
+                    "LANGFUSE_ENABLED is True in production."
+                )
+        return self
 
 
 settings = Settings()  # type: ignore

@@ -42,15 +42,20 @@ class CustomCookieJWTStrategy(
         self.refresh_token_lifetime_seconds = refresh_token_lifetime_seconds
         self.cookie_name = "SecureCodePlatformRefresh"
         self.cookie_path = "/"
-        self.cookie_secure = settings.ENVIRONMENT == "production"
+        self.cookie_secure = not getattr(settings, "ALLOW_INSECURE_COOKIES", False)
         self.cookie_httponly = True
-        self.cookie_samesite: Literal["lax", "strict", "none"] = "lax"
+        self.cookie_samesite: Literal["lax", "strict", "none"] = "strict"
 
         logger.info(
-            f"CustomCookieJWTStrategy initialized. "
-            f"Refresh cookie: name={self.cookie_name}, path={self.cookie_path}, "
-            f"secure={self.cookie_secure}, httponly={self.cookie_httponly}, "
-            f"samesite={self.cookie_samesite}, max_age={self.refresh_token_lifetime_seconds}s"
+            "CustomCookieJWTStrategy initialized.",
+            extra={
+                "cookie_name": self.cookie_name,
+                "cookie_path": self.cookie_path,
+                "cookie_secure": self.cookie_secure,
+                "cookie_httponly": self.cookie_httponly,
+                "cookie_samesite": self.cookie_samesite,
+                "max_age": self.refresh_token_lifetime_seconds,
+            },
         )
 
     async def write_refresh_token(self, response: Response, token: str) -> None:
@@ -63,12 +68,33 @@ class CustomCookieJWTStrategy(
             httponly=self.cookie_httponly,
             samesite=self.cookie_samesite,  # This will now pass type checking
         )
-        logger.info(f"Refresh token cookie '{self.cookie_name}' set.")
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+        logger.info(
+            "auth: refresh token issued",
+            extra={
+                "cookie_name": self.cookie_name,
+                "max_age": self.refresh_token_lifetime_seconds,
+                "secure": self.cookie_secure,
+            },
+        )
 
     async def read_refresh_token(self, request: Request) -> Optional[str]:
         token = request.cookies.get(self.cookie_name)
         if token:
-            logger.debug(f"Refresh token read from cookie '{self.cookie_name}'.")
+            logger.debug(
+                "auth: refresh token read from cookie",
+                extra={"cookie_name": self.cookie_name},
+            )
+        else:
+            logger.warning(
+                "auth: refresh attempt with no cookie",
+                extra={
+                    "cookie_name": self.cookie_name,
+                    "path": request.url.path,
+                    "client_host": request.client.host if request.client else None,
+                },
+            )
         return token
 
     async def destroy_refresh_token(self, response: Response, request: Request) -> None:
@@ -81,7 +107,13 @@ class CustomCookieJWTStrategy(
             httponly=self.cookie_httponly,
             samesite=self.cookie_samesite,
         )
-        logger.info(f"Refresh token cookie '{self.cookie_name}' destroyed.")
+        response.headers["Clear-Site-Data"] = '"cache", "cookies", "storage"'
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+        logger.info(
+            "auth: refresh token destroyed",
+            extra={"cookie_name": self.cookie_name},
+        )
 
 
 def get_custom_cookie_jwt_strategy() -> CustomCookieJWTStrategy:

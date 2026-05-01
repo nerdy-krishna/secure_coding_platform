@@ -1,5 +1,8 @@
 # src/app/infrastructure/auth/manager.py
+import hashlib
 import logging
+import re
+import urllib.parse
 from typing import Optional
 
 from fastapi import Depends, Request
@@ -13,37 +16,101 @@ logger = logging.getLogger(__name__)
 
 
 class UserManager(IntegerIDMixin, BaseUserManager[User, int]):
-    reset_password_token_secret = settings.SECRET_KEY
-    verification_token_secret = settings.SECRET_KEY
+    # V06.4.3: Use dedicated secrets for reset and verification tokens, distinct
+    # from the session signing SECRET_KEY. Set RESET_TOKEN_SECRET and
+    # VERIFICATION_TOKEN_SECRET in .env; falls back to SECRET_KEY only if unset
+    # (legacy compatibility — production deployments MUST set distinct secrets).
+    reset_password_token_secret = getattr(
+        settings, "RESET_TOKEN_SECRET", settings.SECRET_KEY
+    )
+    verification_token_secret = getattr(
+        settings, "VERIFICATION_TOKEN_SECRET", settings.SECRET_KEY
+    )
 
     async def on_after_register(self, user: User, request: Optional[Request] = None):
-        logger.info(f"User {user.id} ({user.email}) has registered.")
+        # V16.2.5/V16.4.1: omit raw email; use hashed form for correlation
+        email_hash = hashlib.sha256(user.email.lower().encode()).hexdigest()[:12]
+        logger.info(
+            "user.registered",
+            extra={
+                "event": "user.registered",
+                "user_id": user.id,
+                "email_hash": email_hash,
+            },
+        )
         pass
 
     async def on_after_forgot_password(
         self, user: User, token: str, request: Optional[Request] = None
     ):
+        # V16.2.5/V16.2.1: structured log — no token fragment, no raw email
         logger.info(
-            f"User {user.id} ({user.email}) has requested a password reset. Token: {token[:6]}..."
+            "password.reset.requested",
+            extra={"event": "password.reset.requested", "user_id": user.id},
         )
 
         from app.infrastructure.email_service import send_password_reset_email
 
-        # Prefer the browser's Origin header so reset links land back on the
-        # exact host the user is already using; otherwise use the configured
-        # frontend URL. settings.frontend_base_url raises in prod if unset.
-        if request and request.headers.get("origin"):
-            reset_url_base = f"{request.headers['origin'].rstrip('/')}/reset-password"
-        else:
-            reset_url_base = f"{settings.frontend_base_url}/reset-password"
+        # V01.2.2/V01.3.3/V01.3.6/V02.2.1/V15.3.4: Only honour the Origin
+        # header if its host matches the configured allowlist. This prevents
+        # reset-URL poisoning via a forged Origin. Control characters, unknown
+        # schemes, and hosts not in the allowlist all fall through to the
+        # canonical frontend_base_url.
+        reset_url_base = f"{settings.frontend_base_url}/reset-password"
 
-        await send_password_reset_email(user.email, token, reset_url_base)
+        origin_header = request.headers.get("origin") if request else None
+        if origin_header:
+            # Reject control characters (CR/LF/NUL etc.)
+            if not any(ord(c) < 32 for c in origin_header):
+                parsed = urllib.parse.urlparse(origin_header)
+                origin_scheme = parsed.scheme.lower()
+                origin_host = parsed.netloc  # includes port if present
+
+                # Build the set of allowed hosts from settings
+                allowed_origins: set = set(settings.ALLOWED_ORIGINS)
+                # Also accept the canonical frontend base URL
+                allowed_origins.add(settings.frontend_base_url)
+                # Normalise: strip trailing slashes for comparison
+                allowed_stripped = {o.rstrip("/") for o in allowed_origins if o}
+
+                # Require http or https scheme and netloc matches allowlist regex
+                if (
+                    origin_scheme in {"http", "https"}
+                    and re.match(r"^[A-Za-z0-9.\-:]{1,255}$", origin_host)
+                    and origin_header.rstrip("/") in allowed_stripped
+                ):
+                    reset_url_base = f"{origin_header.rstrip('/')}/reset-password"
+                else:
+                    logger.warning(
+                        "password.reset.origin_rejected",
+                        extra={
+                            "event": "password.reset.origin_rejected",
+                            "user_id": user.id,
+                            "reason": "not in allowlist",
+                        },
+                    )
+
+        # V16.3.4: catch dispatch failures so errors are logged and don't
+        # silently swallow the failure without telemetry.
+        try:
+            await send_password_reset_email(user.email, token, reset_url_base)
+        except Exception:
+            logger.error(
+                "password_reset_email.dispatch_failed",
+                extra={
+                    "event": "password_reset_email.dispatch_failed",
+                    "user_id": user.id,
+                },
+                exc_info=True,
+            )
 
     async def on_after_request_verify(
         self, user: User, token: str, request: Optional[Request] = None
     ):
+        # V16.2.5/V16.2.1: structured log — no token fragment, no raw email
         logger.info(
-            f"User {user.id} ({user.email}) has requested a new verification token. Token: {token[:6]}..."
+            "verification.requested",
+            extra={"event": "verification.requested", "user_id": user.id},
         )
         pass
 

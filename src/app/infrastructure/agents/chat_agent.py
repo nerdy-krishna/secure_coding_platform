@@ -1,5 +1,6 @@
 # src/app/infrastructure/agents/chat_agent.py
 import logging
+import re
 import uuid
 import tiktoken
 from typing import List, Optional, Tuple
@@ -19,6 +20,7 @@ from app.infrastructure.database.repositories.prompt_template_repo import (
 from app.infrastructure.database.repositories.scan_repo import ScanRepository
 from app.infrastructure.database import AsyncSessionLocal as async_session_factory
 from app.infrastructure.llm_client import get_llm_client
+from app.infrastructure.observability.mask import mask as redact_secrets
 from app.infrastructure.rag.rag_client import get_rag_service
 
 logger = logging.getLogger(__name__)
@@ -31,6 +33,11 @@ SUMMARIZER_AGENT_NAME = "ChatSummarizerAgent"
 HISTORY_TOKEN_LIMIT = 4096
 # Number of recent messages to preserve in full detail.
 MESSAGES_TO_PRESERVE = 6
+
+# --- Input validation constants ---
+MAX_USER_QUESTION_LENGTH = 4000
+MAX_FRAMEWORKS_COUNT = 10
+_FRAMEWORK_NAME_RE = re.compile(r"^[A-Za-z0-9_\- ]{1,64}$")
 
 
 class ChatResponse(BaseModel):
@@ -73,17 +80,19 @@ class ChatAgent:
         session_id: uuid.UUID,
         history_to_summarize: List[db_models.ChatMessage],
         llm_config_id: uuid.UUID,
+        user_id: int,
     ) -> bool:
         """Internal method to perform the summarization call and update the DB."""
         llm_client = await get_llm_client(llm_config_id)
         if not llm_client:
             logger.error(
-                f"[{SUMMARIZER_AGENT_NAME}] Could not get LLM client for summarization."
+                "chat-agent: summarizer LLM client init failed",
+                extra={"agent": SUMMARIZER_AGENT_NAME},
             )
             return False
 
-        conversation_text = "\n".join(
-            [f"{msg.role}: {msg.content}" for msg in history_to_summarize]
+        conversation_text = redact_secrets(
+            "\n".join([f"{msg.role}: {msg.content}" for msg in history_to_summarize])
         )
         prompt = f"Concisely summarize the key points of the following conversation in a single paragraph:\n\n{conversation_text}"
 
@@ -94,7 +103,10 @@ class ChatAgent:
         if llm_response.error or not isinstance(
             llm_response.parsed_output, SummaryResponse
         ):
-            logger.error(f"[{SUMMARIZER_AGENT_NAME}] Failed to get summary from LLM.")
+            logger.error(
+                "chat-agent: summarizer failed to get summary from LLM",
+                extra={"agent": SUMMARIZER_AGENT_NAME},
+            )
             return False
 
         summary_text = llm_response.parsed_output.summary
@@ -103,7 +115,7 @@ class ChatAgent:
         async with async_session_factory() as db:
             chat_repo = ChatRepository(db)
             await chat_repo.replace_messages_with_summary(
-                session_id, message_ids_to_delete, summary_text
+                session_id, message_ids_to_delete, summary_text, user_id=user_id
             )
         return True
 
@@ -113,6 +125,7 @@ class ChatAgent:
         user_question: str,
         history: List[db_models.ChatMessage],
         llm_config_id: Optional[uuid.UUID],
+        user_id: int,
         frameworks: Optional[List[str]] = None,
     ) -> Tuple[str, Optional[int], Optional[float]]:
         """
@@ -121,14 +134,50 @@ class ChatAgent:
         Returns:
             A tuple containing (response_content, llm_interaction_id, cost).
         """
-        logger.info(f"[{AGENT_NAME}] Generating response for session {session_id}.")
+        logger.info(
+            "chat-agent: generating response",
+            extra={"agent": AGENT_NAME, "session_id": str(session_id)},
+        )
+
+        # Validate user_question
+        if not isinstance(user_question, str) or not user_question.strip():
+            return "Error: user_question must be a non-empty string.", None, None
+        if len(user_question) > MAX_USER_QUESTION_LENGTH:
+            return (
+                f"Error: user_question exceeds the maximum allowed length of {MAX_USER_QUESTION_LENGTH} characters.",
+                None,
+                None,
+            )
+
+        # Validate frameworks
+        if frameworks is not None:
+            if len(frameworks) > MAX_FRAMEWORKS_COUNT:
+                return (
+                    f"Error: Too many frameworks provided. Maximum allowed is {MAX_FRAMEWORKS_COUNT}.",
+                    None,
+                    None,
+                )
+            for fw in frameworks:
+                if (
+                    not isinstance(fw, str)
+                    or not fw
+                    or not _FRAMEWORK_NAME_RE.match(fw)
+                ):
+                    return (
+                        "Error: Each framework name must be a non-empty string of up to 64 alphanumeric, space, dash, or underscore characters.",
+                        None,
+                        None,
+                    )
 
         # Ensure we have an LLM config to work with
         effective_llm_config_id = (
             llm_config_id or await self._get_default_llm_config_id()
         )
         if not effective_llm_config_id:
-            logger.error(f"[{AGENT_NAME}] No LLM configuration available.")
+            logger.error(
+                "chat-agent: no LLM config available",
+                extra={"agent": AGENT_NAME},
+            )
             return "Error: The AI language model is not configured.", None, None
 
         # 1. Check if history needs summarization
@@ -137,12 +186,16 @@ class ChatAgent:
 
         if history_tokens > HISTORY_TOKEN_LIMIT and len(history) > MESSAGES_TO_PRESERVE:
             logger.info(
-                f"[{AGENT_NAME}] History for session {session_id} exceeds token limit. Triggering summarization."
+                "chat-agent: history exceeds token limit, triggering summarization",
+                extra={"agent": AGENT_NAME, "session_id": str(session_id)},
             )
             messages_to_summarize = history[:-MESSAGES_TO_PRESERVE]
 
             success = await self._summarize_history(
-                session_id, messages_to_summarize, effective_llm_config_id
+                session_id,
+                messages_to_summarize,
+                effective_llm_config_id,
+                user_id=user_id,
             )
             if success:
                 # Refresh history from DB after summarization
@@ -172,7 +225,8 @@ class ChatAgent:
                         rag_context = "\n".join(docs[0])
                 except Exception as e:
                     logger.error(
-                        f"[{AGENT_NAME}] Failed to query RAG service with framework filter: {e}"
+                        "chat-agent: failed to query RAG service with framework filter",
+                        extra={"agent": AGENT_NAME, "error": str(e)},
                     )
                     rag_context = (
                         "Warning: Could not retrieve filtered info from knowledge base."
@@ -201,7 +255,9 @@ class ChatAgent:
                 role="user", content=user_question, timestamp=datetime.now(timezone.utc)
             )
         )
-        history_str = "\n".join([f"{msg.role}: {msg.content}" for msg in history])
+        history_str = redact_secrets(
+            "\n".join([f"{msg.role}: {msg.content}" for msg in history])
+        )
 
         # Build framework context string for the prompt
         framework_context_str = "No specific frameworks selected."
@@ -215,7 +271,7 @@ class ChatAgent:
         final_prompt = base_prompt.format(
             history_str=history_str,
             rag_context=rag_context,
-            user_question=user_question,
+            user_question=redact_secrets(user_question),
             framework_context=framework_context_str,
         )
 
@@ -231,15 +287,16 @@ class ChatAgent:
             ai_response_content = llm_response.parsed_output.response
         elif llm_response.error:
             logger.error(
-                f"[{AGENT_NAME}] LLM error for session {session_id}: "
-                f"{llm_response.error}"
+                "chat-agent: LLM error",
+                extra={
+                    "agent": AGENT_NAME,
+                    "session_id": str(session_id),
+                    "llm_error": llm_response.error,
+                },
             )
-            # Surface the actual error in the chat so admins can diagnose
-            # without digging through container logs. Common culprits:
-            # invalid model name, rate limit, or provider auth failure.
             ai_response_content = (
                 "I am having trouble processing this request. "
-                f"Backend reported: {llm_response.error}"
+                "Please try again or contact your administrator."
             )
 
         # 7. Log interaction and return
@@ -252,7 +309,7 @@ class ChatAgent:
                 agent_name=AGENT_NAME,
                 prompt_template_name=CHAT_PROMPT_TEMPLATE_NAME,
                 prompt_context={
-                    "question": user_question,
+                    "question_length": len(user_question),
                     "history_length": len(history) - 1,
                     "rag_context_length": len(rag_context),
                     "frameworks": frameworks,

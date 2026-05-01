@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import threading
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -42,6 +43,26 @@ logger = logging.getLogger(__name__)
 # equivalent output to the prior chromadb-bundled ONNX path).
 VECTOR_SIZE = 384
 DISTANCE = qmodels.Distance.COSINE
+
+# V02.2.1 — positive-validation bounds for query entry points.
+MAX_N_RESULTS = 50
+MAX_QUERY_TEXTS = 32
+
+# V02.3.2 — cap on how many docs we retrieve per framework in a single scroll.
+MAX_FRAMEWORK_DOCS = 50_000
+
+# Allowlist of valid framework names (mirrors get_framework_stats usage).
+_ALLOWED_FRAMEWORKS = {"asvs", "proactive_controls", "cheatsheets"}
+
+# V02.4.1 — anti-automation semaphore: cap concurrent Qdrant calls at 8.
+_RAG_CALL_SEM = threading.Semaphore(8)
+
+
+class RAGUnavailableError(RuntimeError):
+    """Raised when a write to Qdrant fails so callers can branch gracefully.
+
+    V16.5.2 — domain-specific error for Qdrant backend unavailability.
+    """
 
 
 def _api_key() -> Optional[str]:
@@ -170,6 +191,10 @@ class QdrantStore:
                 host=settings.QDRANT_HOST,
                 port=settings.QDRANT_PORT,
                 api_key=_api_key(),
+                # V12.1.1 / V12.3.1 / V12.3.3 — enforce TLS so the API key
+                # is not sent over plaintext HTTP. Set QDRANT_USE_TLS=false
+                # only in local development environments.
+                https=getattr(settings, "QDRANT_USE_TLS", True),
                 # Default 5s; we don't want a slow Qdrant to stall scans.
                 timeout=10,
             )
@@ -216,9 +241,16 @@ class QdrantStore:
             )
             for doc_id, doc, meta, vec in zip(ids, documents, metadatas, embeddings)
         ]
-        self._client.upsert(
-            collection_name=SECURITY_GUIDELINES_COLLECTION, points=points
-        )
+        # V02.4.1 — cap concurrent Qdrant calls.
+        with _RAG_CALL_SEM:
+            try:
+                self._client.upsert(
+                    collection_name=SECURITY_GUIDELINES_COLLECTION, points=points
+                )
+            except Exception as e:
+                # V16.5.2 — log and re-raise as domain error so callers can branch.
+                logger.warning("qdrant_store: upsert failed: %s", e)
+                raise RAGUnavailableError(str(e)) from e
 
     def query_guidelines(
         self,
@@ -226,35 +258,55 @@ class QdrantStore:
         n_results: int = 5,
         where: Optional[Dict[str, Any]] = None,
     ) -> RAGQueryResult:
+        # V02.2.1 — positive-validation: reject out-of-range inputs.
+        if not query_texts or len(query_texts) > MAX_QUERY_TEXTS:
+            raise ValueError(
+                f"query_texts must be a non-empty list of at most {MAX_QUERY_TEXTS} items"
+            )
+        if n_results <= 0 or n_results > MAX_N_RESULTS:
+            raise ValueError(f"n_results must be between 1 and {MAX_N_RESULTS}")
+
         query_embeddings = embed(query_texts)
         flt = _translate_filter(where)
         ids_out: List[List[str]] = []
         docs_out: List[List[str]] = []
         metas_out: List[List[Dict[str, Any]]] = []
         dists_out: List[List[float]] = []
-        for vec in query_embeddings:
-            hits = self._client.search(
-                collection_name=SECURITY_GUIDELINES_COLLECTION,
-                query_vector=vec,
-                query_filter=flt,
-                limit=n_results,
-                with_payload=True,
-            )
-            ids_out.append([str(h.payload.get("_chroma_id", h.id)) for h in hits])
-            docs_out.append([str(h.payload.get("document", "")) for h in hits])
-            metas_out.append(
-                [
-                    {
-                        k: v
-                        for k, v in (h.payload or {}).items()
-                        if k not in ("_chroma_id", "document")
+        # V02.4.1 — cap concurrent Qdrant calls.
+        with _RAG_CALL_SEM:
+            for vec in query_embeddings:
+                try:
+                    hits = self._client.search(
+                        collection_name=SECURITY_GUIDELINES_COLLECTION,
+                        query_vector=vec,
+                        query_filter=flt,
+                        limit=n_results,
+                        with_payload=True,
+                    )
+                except Exception as e:
+                    # V16.5.2 — log and return empty result for graceful degradation.
+                    logger.warning("qdrant_store: search (guidelines) failed: %s", e)
+                    return {
+                        "ids": [],
+                        "documents": [],
+                        "metadatas": [],
+                        "distances": [],
                     }
-                    for h in hits
-                ]
-            )
-            # Qdrant returns similarity scores (cosine: higher = closer);
-            # Chroma returns distances. We expose distance = 1 - score.
-            dists_out.append([float(1.0 - (h.score or 0.0)) for h in hits])
+                ids_out.append([str(h.payload.get("_chroma_id", h.id)) for h in hits])
+                docs_out.append([str(h.payload.get("document", "")) for h in hits])
+                metas_out.append(
+                    [
+                        {
+                            k: v
+                            for k, v in (h.payload or {}).items()
+                            if k not in ("_chroma_id", "document")
+                        }
+                        for h in hits
+                    ]
+                )
+                # Qdrant returns similarity scores (cosine: higher = closer);
+                # Chroma returns distances. We expose distance = 1 - score.
+                dists_out.append([float(1.0 - (h.score or 0.0)) for h in hits])
         return {
             "ids": ids_out,
             "documents": docs_out,
@@ -265,31 +317,51 @@ class QdrantStore:
     def query_cwe_collection(
         self, query_texts: List[str], n_results: int = 3
     ) -> RAGQueryResult:
+        # V02.2.1 — positive-validation: reject out-of-range inputs.
+        if not query_texts or len(query_texts) > MAX_QUERY_TEXTS:
+            raise ValueError(
+                f"query_texts must be a non-empty list of at most {MAX_QUERY_TEXTS} items"
+            )
+        if n_results <= 0 or n_results > MAX_N_RESULTS:
+            raise ValueError(f"n_results must be between 1 and {MAX_N_RESULTS}")
+
         query_embeddings = embed(query_texts)
         ids_out: List[List[str]] = []
         docs_out: List[List[str]] = []
         metas_out: List[List[Dict[str, Any]]] = []
         dists_out: List[List[float]] = []
-        for vec in query_embeddings:
-            hits = self._client.search(
-                collection_name=CWE_COLLECTION_NAME,
-                query_vector=vec,
-                limit=n_results,
-                with_payload=True,
-            )
-            ids_out.append([str(h.payload.get("_chroma_id", h.id)) for h in hits])
-            docs_out.append([str(h.payload.get("document", "")) for h in hits])
-            metas_out.append(
-                [
-                    {
-                        k: v
-                        for k, v in (h.payload or {}).items()
-                        if k not in ("_chroma_id", "document")
+        # V02.4.1 — cap concurrent Qdrant calls.
+        with _RAG_CALL_SEM:
+            for vec in query_embeddings:
+                try:
+                    hits = self._client.search(
+                        collection_name=CWE_COLLECTION_NAME,
+                        query_vector=vec,
+                        limit=n_results,
+                        with_payload=True,
+                    )
+                except Exception as e:
+                    # V16.5.2 — log and return empty result for graceful degradation.
+                    logger.warning("qdrant_store: search (cwe) failed: %s", e)
+                    return {
+                        "ids": [],
+                        "documents": [],
+                        "metadatas": [],
+                        "distances": [],
                     }
-                    for h in hits
-                ]
-            )
-            dists_out.append([float(1.0 - (h.score or 0.0)) for h in hits])
+                ids_out.append([str(h.payload.get("_chroma_id", h.id)) for h in hits])
+                docs_out.append([str(h.payload.get("document", "")) for h in hits])
+                metas_out.append(
+                    [
+                        {
+                            k: v
+                            for k, v in (h.payload or {}).items()
+                            if k not in ("_chroma_id", "document")
+                        }
+                        for h in hits
+                    ]
+                )
+                dists_out.append([float(1.0 - (h.score or 0.0)) for h in hits])
         return {
             "ids": ids_out,
             "documents": docs_out,
@@ -298,25 +370,55 @@ class QdrantStore:
         }
 
     def get_by_framework(self, framework_name: str) -> Dict[str, Any]:
+        # V02.3.2 — validate framework_name against the known allow-list.
+        if framework_name not in _ALLOWED_FRAMEWORKS:
+            raise ValueError(
+                f"Unknown framework {framework_name!r}; must be one of {_ALLOWED_FRAMEWORKS}"
+            )
         flt = _translate_filter({"framework_name": {"$eq": framework_name}})
-        # Scroll until the framework is fully fetched; expected size is
-        # in the low thousands per framework.
-        hits, _ = self._client.scroll(
-            collection_name=SECURITY_GUIDELINES_COLLECTION,
-            scroll_filter=flt,
-            limit=10_000,
-            with_payload=True,
-        )
+        # V02.3.2 / V02.4.1 — paginate with a hard cap so a huge framework
+        # cannot drive unbounded memory or repeated large scrolls.
+        all_hits = []
+        offset = None
+        # V02.4.1 — cap concurrent Qdrant calls.
+        with _RAG_CALL_SEM:
+            while True:
+                try:
+                    batch, next_offset = self._client.scroll(
+                        collection_name=SECURITY_GUIDELINES_COLLECTION,
+                        scroll_filter=flt,
+                        limit=1_000,
+                        offset=offset,
+                        with_payload=True,
+                    )
+                except Exception as e:
+                    # V16.5.2 — log failure; return whatever we collected so far.
+                    logger.warning("qdrant_store: scroll (framework) failed: %s", e)
+                    break
+                all_hits.extend(batch)
+                if len(all_hits) >= MAX_FRAMEWORK_DOCS:
+                    # V02.3.2 — operator warning when cap is hit.
+                    logger.warning(
+                        "qdrant_store: get_by_framework %r hit MAX_FRAMEWORK_DOCS cap (%d); "
+                        "data may be truncated",
+                        framework_name,
+                        MAX_FRAMEWORK_DOCS,
+                    )
+                    all_hits = all_hits[:MAX_FRAMEWORK_DOCS]
+                    break
+                if next_offset is None:
+                    break
+                offset = next_offset
         return {
-            "ids": [str(h.payload.get("_chroma_id", h.id)) for h in hits],
-            "documents": [str(h.payload.get("document", "")) for h in hits],
+            "ids": [str(h.payload.get("_chroma_id", h.id)) for h in all_hits],
+            "documents": [str(h.payload.get("document", "")) for h in all_hits],
             "metadatas": [
                 {
                     k: v
                     for k, v in (h.payload or {}).items()
                     if k not in ("_chroma_id", "document")
                 }
-                for h in hits
+                for h in all_hits
             ],
         }
 
@@ -327,19 +429,51 @@ class QdrantStore:
         return stats
 
     def delete_by_framework(self, framework_name: str) -> int:
-        docs = self.get_by_framework(framework_name)
-        ids_to_delete = docs.get("ids", [])
-        if not ids_to_delete:
+        # V02.3.2 — validate framework_name.
+        if framework_name not in _ALLOWED_FRAMEWORKS:
+            raise ValueError(
+                f"Unknown framework {framework_name!r}; must be one of {_ALLOWED_FRAMEWORKS}"
+            )
+        # V02.3.3 — use a single server-side filter delete (atomic) instead
+        # of the prior query-then-delete two-call pattern which exposed a
+        # partial-delete window on failure.
+        flt = _translate_filter({"framework_name": {"$eq": framework_name}})
+        # Count first so we can return the affected row count.
+        count_result = self._client.count(
+            collection_name=SECURITY_GUIDELINES_COLLECTION,
+            count_filter=flt,
+            exact=True,
+        )
+        n = count_result.count if count_result else 0
+        if n == 0:
             return 0
-        self.delete(ids=ids_to_delete)
-        return len(ids_to_delete)
+        with _RAG_CALL_SEM:
+            try:
+                self._client.delete(
+                    collection_name=SECURITY_GUIDELINES_COLLECTION,
+                    points_selector=qmodels.FilterSelector(filter=flt),
+                )
+            except Exception as e:
+                # V16.5.2 — log and re-raise as domain error.
+                logger.warning(
+                    "qdrant_store: delete_by_framework %r failed: %s", framework_name, e
+                )
+                raise RAGUnavailableError(str(e)) from e
+        return n
 
     def delete(self, ids: List[str]) -> None:
         point_ids = [_qdrant_id(i) for i in ids]
-        self._client.delete(
-            collection_name=SECURITY_GUIDELINES_COLLECTION,
-            points_selector=qmodels.PointIdsList(points=point_ids),
-        )
+        # V02.4.1 — cap concurrent Qdrant calls.
+        with _RAG_CALL_SEM:
+            try:
+                self._client.delete(
+                    collection_name=SECURITY_GUIDELINES_COLLECTION,
+                    points_selector=qmodels.PointIdsList(points=point_ids),
+                )
+            except Exception as e:
+                # V16.5.2 — log and re-raise as domain error.
+                logger.warning("qdrant_store: delete failed: %s", e)
+                raise RAGUnavailableError(str(e)) from e
 
     def health_check(self) -> bool:
         try:

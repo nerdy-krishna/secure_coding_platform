@@ -26,6 +26,12 @@ interface FrameworkIngestionModalProps {
   llmConfigs: LLMConfiguration[];
 }
 
+/** Maximum permitted CSV upload size: 10 MB. Must match backend limit. */
+const MAX_FRAMEWORK_CSV_BYTES = 10 * 1024 * 1024; // 10 MB
+
+/** Accepted MIME types for CSV files (some browsers omit type for .csv). */
+const ACCEPTED_CSV_MIME_TYPES = ["text/csv", "application/vnd.ms-excel", ""];
+
 const SUPPORTED_LANGUAGES: { label: string; value: string }[] = [
   { label: "Python", value: "python" },
   { label: "JavaScript / TypeScript", value: "javascript" },
@@ -69,6 +75,34 @@ export const FrameworkIngestionModal: React.FC<FrameworkIngestionModalProps> = (
     }
   }, [visible, initialValues, llmConfigs]);
 
+  /**
+   * Validates a candidate CSV file for size, MIME type, and header shape.
+   * Returns an error message string on failure, or null when valid.
+   */
+  const validateCsvFile = async (f: File): Promise<string | null> => {
+    // Size check (V05.2.1 / V02.2.1)
+    if (f.size > MAX_FRAMEWORK_CSV_BYTES) {
+      return `CSV exceeds the 10 MB size limit (file is ${(f.size / 1024 / 1024).toFixed(1)} MB).`;
+    }
+    // MIME type check (V05.2.2)
+    const ext = f.name.split(".").pop()?.toLowerCase();
+    if (!ACCEPTED_CSV_MIME_TYPES.includes(f.type) || ext !== "csv") {
+      return "Only .csv files are accepted.";
+    }
+    // Header shape check — first 1 KB must contain id and document columns (V05.2.2)
+    try {
+      const preview = await f.slice(0, 1024).text();
+      const firstLine = preview.split(/\r?\n/).find((l) => l.trim() !== "") ?? "";
+      const headers = firstLine.split(",").map((h) => h.trim().toLowerCase());
+      if (!headers.includes("id") || !headers.includes("document")) {
+        return "CSV must contain at minimum the columns 'id' and 'document'.";
+      }
+    } catch {
+      return "Could not read the CSV file. Please try again.";
+    }
+    return null;
+  };
+
   const handleDownloadTemplate = () => {
     const csv =
       "id,document\n1,Authentication guidelines...\n2,Input validation rules...";
@@ -83,6 +117,10 @@ export const FrameworkIngestionModal: React.FC<FrameworkIngestionModalProps> = (
       toast.error("Framework name is required.");
       return;
     }
+    if (frameworkName.length > 64) {
+      toast.error("Framework name must be 64 characters or fewer.");
+      return;
+    }
     if (!/^[a-zA-Z0-9_-]+$/.test(frameworkName)) {
       toast.error(
         "Framework name may only contain letters, numbers, _ and -.",
@@ -93,15 +131,30 @@ export const FrameworkIngestionModal: React.FC<FrameworkIngestionModalProps> = (
       toast.error("Select an LLM configuration.");
       return;
     }
+    // Validate targetLanguages against allow-list (V02.2.1)
+    const allowedValues = SUPPORTED_LANGUAGES.map((l) => l.value);
+    if (targetLanguages.some((lang) => !allowedValues.includes(lang))) {
+      toast.error("One or more selected languages are not supported.");
+      return;
+    }
+    // Redundant file size/type guard before constructing FormData (V05.2.1 / V02.2.1)
+    if (file) {
+      const fileError = await validateCsvFile(file);
+      if (fileError) {
+        toast.error(fileError);
+        return;
+      }
+    }
     setLoading(true);
     try {
       let response: RAGJobStartResponse;
       if (file) {
-        const fd = new FormData();
-        fd.append("file", file);
-        fd.append("framework_name", frameworkName);
-        fd.append("llm_config_id", llmConfigId);
-        response = await ragService.startPreprocessing(fd, targetLanguages);
+        response = await ragService.startPreprocessing(
+          file,
+          frameworkName,
+          targetLanguages,
+          llmConfigId,
+        );
       } else if (isEdit) {
         response = await ragService.reprocessFramework(
           frameworkName,
@@ -116,15 +169,13 @@ export const FrameworkIngestionModal: React.FC<FrameworkIngestionModalProps> = (
       setJobData(response);
       setStep(1);
     } catch (err) {
-      const e = err as {
-        response?: { data?: { detail?: string } };
-        message?: string;
-      };
-      toast.error(
-        e.response?.data?.detail ||
-          e.message ||
-          "Failed to get cost estimate.",
-      );
+      // Log verbose detail for developer inspection only; never surface raw backend
+      // exception strings to the user (V13.4.6).
+      if (process.env.NODE_ENV !== "production") {
+        const e = err as { response?: { data?: { detail?: string } }; message?: string };
+        console.error("Cost estimate error:", e.response?.data?.detail ?? e.message ?? err);
+      }
+      toast.error("Could not estimate cost — please retry.");
     } finally {
       setLoading(false);
     }
@@ -239,6 +290,7 @@ export const FrameworkIngestionModal: React.FC<FrameworkIngestionModalProps> = (
               placeholder="e.g. custom_security_standard"
               value={frameworkName}
               onChange={(e) => setFrameworkName(e.target.value)}
+              maxLength={64}
               disabled={isEdit}
             />
           </label>
@@ -251,7 +303,18 @@ export const FrameworkIngestionModal: React.FC<FrameworkIngestionModalProps> = (
               <input
                 type="file"
                 accept=".csv"
-                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                onChange={async (e) => {
+                  const selected = e.target.files?.[0] ?? null;
+                  if (selected) {
+                    const err = await validateCsvFile(selected);
+                    if (err) {
+                      toast.error(err);
+                      e.target.value = "";
+                      return;
+                    }
+                  }
+                  setFile(selected);
+                }}
                 style={{ fontSize: 12 }}
               />
               <button
@@ -262,6 +325,9 @@ export const FrameworkIngestionModal: React.FC<FrameworkIngestionModalProps> = (
                 <Icon.Download size={12} /> Sample template
               </button>
             </div>
+            <span style={{ fontSize: 11, color: "var(--fg-subtle)" }}>
+              Max 10 MB. Expected schema: <span className="mono">id,document</span> (additional columns allowed).
+            </span>
             {!file && isEdit && (
               <span style={{ fontSize: 11, color: "var(--fg-subtle)" }}>
                 Leave empty to reuse existing documents from previous jobs.

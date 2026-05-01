@@ -48,7 +48,12 @@ const SMTPSettingsTab: React.FC = () => {
           await apiClient.get<SystemConfigRow[]>("/admin/system-config/");
         const smtp = response.data.find((c) => c.key === SMTP_CONFIG_KEY);
         if (smtp && smtp.value && typeof smtp.value === "object") {
-          setForm({ ...DEFAULTS, ...(smtp.value as Partial<SmtpSettings>) });
+          // V14.2.6: never populate the password field from the server response
+          // (write-only field — existing value stays on the server).
+          const settings = smtp.value as Partial<SmtpSettings>;
+          const nonSecret = { ...settings };
+          delete nonSecret.password;
+          setForm({ ...DEFAULTS, ...nonSecret, password: "" });
         }
       } catch {
         toast.error("Could not load current SMTP settings.");
@@ -62,13 +67,43 @@ const SMTPSettingsTab: React.FC = () => {
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
+
+    // V01.3.3: Reject CR/LF injection and overly long values in string fields.
+    for (const k of ["host", "user", "password", "from"] as const) {
+      const v = form[k];
+      if (typeof v === "string" && (v.length > 256 || /[\r\n]/.test(v))) {
+        toast.error(`Invalid value in ${k} (too long or contains CR/LF).`);
+        setSaving(false);
+        return;
+      }
+    }
+
+    // V12.3.1 / V02.2.3: Require exactly one transport-encryption flag to be set.
+    if (!form.tls && !form.ssl) {
+      toast.error("Enable STARTTLS or SSL — SCCAP refuses to send authenticated SMTP over cleartext.");
+      setSaving(false);
+      return;
+    }
+    if (form.tls && form.ssl) {
+      toast.error("STARTTLS and SSL are mutually exclusive — enable only one.");
+      setSaving(false);
+      return;
+    }
+
+    // V14.2.6: Omit password from the PUT body when the field was left blank
+    // (server retains the existing encrypted value).
+    const { password, ...nonPasswordFields } = form;
+    const valuePayload = password.length > 0
+      ? form
+      : nonPasswordFields;
+
     try {
       await apiClient.put(`/admin/system-config/${SMTP_CONFIG_KEY}`, {
         key: SMTP_CONFIG_KEY,
-        value: form,
+        value: valuePayload,
         description: "Dedicated SMTP Configuration",
         is_secret: true,
-        encrypted: false,
+        encrypted: true, // V13.3.1 / V14.2.4: Fernet-encrypt at rest.
       });
       toast.success("SMTP configuration saved.");
     } catch {
@@ -144,6 +179,7 @@ const SMTPSettingsTab: React.FC = () => {
             placeholder="smtp.sendgrid.net"
             value={form.host}
             onChange={(e) => setForm({ ...form, host: e.target.value })}
+            maxLength={256}
             required
           />
         </Field>
@@ -169,6 +205,7 @@ const SMTPSettingsTab: React.FC = () => {
               placeholder="noreply@domain.com"
               value={form.from}
               onChange={(e) => setForm({ ...form, from: e.target.value })}
+              maxLength={256}
               required
             />
           </Field>
@@ -180,18 +217,19 @@ const SMTPSettingsTab: React.FC = () => {
             placeholder="apikey or user@domain.com"
             value={form.user}
             onChange={(e) => setForm({ ...form, user: e.target.value })}
+            maxLength={256}
             required
           />
         </Field>
 
-        <Field label="Password">
+        <Field label="Password" hint="(leave blank to keep existing)">
           <input
             className="sccap-input"
             type="password"
-            placeholder="Enter password / API key"
+            placeholder="Enter new password / API key to update"
             value={form.password}
             onChange={(e) => setForm({ ...form, password: e.target.value })}
-            required
+            maxLength={256}
           />
         </Field>
 
@@ -203,15 +241,16 @@ const SMTPSettingsTab: React.FC = () => {
             alignItems: "center",
           }}
         >
+          {/* V12.3.1 / V02.2.3: Enforce mutual exclusion — turning one on turns the other off. */}
           <InlineToggle
             label="STARTTLS"
             value={form.tls}
-            onChange={(v) => setForm({ ...form, tls: v })}
+            onChange={(v) => setForm({ ...form, tls: v, ssl: v ? false : form.ssl })}
           />
           <InlineToggle
             label="SSL"
             value={form.ssl}
-            onChange={(v) => setForm({ ...form, ssl: v })}
+            onChange={(v) => setForm({ ...form, ssl: v, tls: v ? false : form.tls })}
           />
         </div>
 

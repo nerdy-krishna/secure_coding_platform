@@ -1,3 +1,24 @@
+"""Project / scan submission API.
+
+Upload policy (V05.1.1):
+    - Permitted ``files`` extensions: text source files only; non-source
+      binary content is rejected by downstream processing.
+    - Permitted ``archive_file`` extensions: see
+      ``ALLOWED_ARCHIVE_EXTENSIONS`` in ``app.shared.lib.archive``.
+    - Per-file size: enforced by downstream service / archive extractor.
+    - Maximum number of files: 5000 per submission (router cap).
+    - Maximum number of selected_files entries: 5000.
+    - Maximum uncompressed archive size: ``MAX_UNCOMPRESSED_SIZE_BYTES``
+      (100 MB) and ``MAX_FILES_IN_ARCHIVE`` (1000), both enforced by
+      ``app.shared.lib.archive``.
+    - Repository URLs: must be ``https://`` (or ``git+https://``) and the
+      host must appear in the SSRF allowlist below; otherwise the router
+      rejects with HTTP 400 (V01.3.6 / V05.3.2). See ``_validate_repo_url``.
+    - Malicious / unsupported file detection: the router responds with
+      HTTPException 400; archives with disallowed entries are rejected at
+      extraction time.
+"""
+
 import asyncio
 import logging
 import uuid
@@ -16,7 +37,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.infrastructure.database import models as db_models
 from app.api.v1 import models as api_models
@@ -47,6 +68,57 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+# V01.3.6 / V05.3.2: SSRF allowlist applied at the router boundary before any
+# git-clone helper is invoked. Hosts here are the well-known public hosting
+# services; site operators tightening this should override via configuration.
+_REPO_URL_ALLOWED_HOSTS = frozenset(
+    {
+        "github.com",
+        "www.github.com",
+        "gitlab.com",
+        "www.gitlab.com",
+        "bitbucket.org",
+        "www.bitbucket.org",
+    }
+)
+_REPO_URL_ALLOWED_SCHEMES = frozenset({"https", "git+https"})
+
+
+def _validate_repo_url(repo_url: str) -> None:
+    """Reject repo URLs that fail the SSRF allowlist.
+
+    Rules:
+        - scheme must be https (or git+https)
+        - no userinfo component (no embedded credentials)
+        - host must be in the allowlist
+        - reject IP literals, loopback, link-local, RFC1918 — covered by
+          rejecting any non-allowlisted host (a strict allowlist is the
+          surest way to block these).
+    """
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(repo_url)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid repo_url.")
+    if parsed.scheme not in _REPO_URL_ALLOWED_SCHEMES:
+        raise HTTPException(
+            status_code=400,
+            detail="repo_url scheme not allowed; use https.",
+        )
+    if parsed.username or parsed.password:
+        raise HTTPException(
+            status_code=400,
+            detail="repo_url must not include embedded credentials.",
+        )
+    host = (parsed.hostname or "").lower()
+    if not host or host not in _REPO_URL_ALLOWED_HOSTS:
+        raise HTTPException(
+            status_code=400,
+            detail="repo_url host is not on the allowlist.",
+        )
+
+
 @router.get("/projects", response_model=api_models.PaginatedProjectHistoryResponse)
 async def get_all_projects(
     user: db_models.User = Depends(current_active_user),
@@ -62,7 +134,7 @@ async def get_all_projects(
 
 
 class CreateProjectRequest(BaseModel):
-    name: str
+    name: str = Field(..., min_length=1, max_length=200, pattern=r"^[A-Za-z0-9_. -]+$")
 
 
 @router.post(
@@ -126,17 +198,32 @@ async def get_user_scan_history(
 
 
 @router.post("/scans/preview-archive", response_model=dict)
-async def preview_archive_files(archive_file: UploadFile = File(...)):
+async def preview_archive_files(
+    archive_file: UploadFile = File(...),
+    _user: db_models.User = Depends(current_active_user),
+):
     if not archive_file.filename or not is_archive_filename(archive_file.filename):
         raise HTTPException(
             status_code=400, detail="Invalid or unsupported archive file provided."
         )
+    # V05.3.2: reject filenames with path separators or NULs.
+    if (
+        "/" in archive_file.filename
+        or "\\" in archive_file.filename
+        or "\x00" in archive_file.filename
+    ):
+        raise HTTPException(status_code=400, detail="Invalid archive filename.")
     files_data = extract_archive_to_files(archive_file)
     return {"files": [f["path"] for f in files_data]}
 
 
 @router.post("/scans/preview-git", response_model=dict)
-async def preview_git_files(request: api_models.GitRepoPreviewRequest):
+async def preview_git_files(
+    request: api_models.GitRepoPreviewRequest,
+    _user: db_models.User = Depends(current_active_user),
+):
+    # V01.3.6 / V05.3.2: SSRF allowlist before any clone.
+    _validate_repo_url(request.repo_url)
     files_data = clone_repo_and_get_files(request.repo_url)
     if not files_data:
         raise HTTPException(
@@ -151,16 +238,67 @@ async def create_scan(
     service: ScanSubmissionService = Depends(get_scan_submission_service),
     llm_repo: LLMConfigRepository = Depends(get_llm_config_repository),
     user: db_models.User = Depends(current_active_user),
-    project_name: str = Form(...),
-    scan_type: str = Form(...),
+    project_name: str = Form(
+        ..., min_length=1, max_length=200, pattern=r"^[A-Za-z0-9_. -]+$"
+    ),
+    scan_type: str = Form(..., pattern=r"^(audit|suggest|remediate)$"),
     reasoning_llm_config_id: Optional[uuid.UUID] = Form(None),
-    frameworks: str = Form(...),  # Received as a string, will be processed in service
-    repo_url: Optional[str] = Form(None),
+    frameworks: str = Form(
+        ..., min_length=1, max_length=2048
+    ),  # Received as a string, will be processed in service
+    repo_url: Optional[str] = Form(None, max_length=2048, pattern=r"^https?://.+"),
     files: Optional[List[UploadFile]] = File(None),
     archive_file: Optional[UploadFile] = File(None),
-    selected_files: Optional[str] = Form(None),
+    selected_files: Optional[str] = Form(None, max_length=200000),
 ):
-    selected_files_list = selected_files.split(",") if selected_files else None
+    # V05.3.2: reject selected_files entries containing traversal/null/backslash.
+    if selected_files and any(ch in selected_files for ch in ("..", "\x00", "\\")):
+        raise HTTPException(
+            status_code=400,
+            detail="selected_files contains invalid characters or path traversal sequences.",
+        )
+    selected_files_list = (
+        [p.strip() for p in selected_files.split(",") if p.strip()]
+        if selected_files
+        else None
+    )
+    # V02.2.1 / V02.3.2: cap selected_files entries.
+    if selected_files_list is not None and len(selected_files_list) >= 5000:
+        raise HTTPException(
+            status_code=413,
+            detail="Too many entries in selected_files (max 5000).",
+        )
+    # Reject any selected entries with absolute path or traversal segments.
+    if selected_files_list:
+        for p in selected_files_list:
+            if p.startswith("/") or ".." in p.split("/"):
+                raise HTTPException(
+                    status_code=400,
+                    detail="selected_files contains an invalid path entry.",
+                )
+
+    # V01.3.6 / V05.3.2: SSRF allowlist for repo_url before any clone.
+    if repo_url:
+        _validate_repo_url(repo_url)
+
+    # V05.3.2: reject archive filenames with path separators or NULs.
+    if archive_file and archive_file.filename:
+        if (
+            "/" in archive_file.filename
+            or "\\" in archive_file.filename
+            or "\x00" in archive_file.filename
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid archive filename.",
+            )
+
+    # V02.3.2 / V05.2.1: cap number of uploaded files at the router boundary.
+    if files is not None and len(files) > 5000:
+        raise HTTPException(
+            status_code=413,
+            detail="Too many files uploaded (max 5000).",
+        )
 
     # Resolve a missing reasoning_llm_config_id to a fallback config.
     # Supports the fresh-setup case where the admin has just configured
@@ -199,14 +337,29 @@ async def create_scan(
 
     if files:
         scan = await service.create_scan_from_uploads(files=files, **common_args)
+        submission_method = "files"
     elif repo_url:
         scan = await service.create_scan_from_git(repo_url=repo_url, **common_args)
+        submission_method = "repo_url"
     elif archive_file:
         scan = await service.create_scan_from_archive(
             archive_file=archive_file, **common_args
         )
+        submission_method = "archive"
     else:
         raise HTTPException(status_code=400, detail="No submission data provided.")
+
+    logger.info(
+        "scans.created",
+        extra={
+            "actor_id": user.id,
+            "scan_id": str(scan.id),
+            "project_id": str(scan.project_id),
+            "scan_type": scan_type,
+            "frameworks": [fw.strip() for fw in frameworks.split(",")],
+            "submission_method": submission_method,
+        },
+    )
 
     return api_models.ScanResponse(
         scan_id=scan.id,
@@ -235,6 +388,19 @@ async def approve_scan_analysis(
     ``kind="cost_approval", approved=True`` for backward compat.
     """
     await service.approve_scan(scan_id, user, request)
+    logger.info(
+        "scans.approved",
+        extra={
+            "actor_id": user.id,
+            "scan_id": str(scan_id),
+            "kind": (
+                getattr(request, "kind", "cost_approval")
+                if request
+                else "cost_approval"
+            ),
+            "approved": getattr(request, "approved", True) if request else True,
+        },
+    )
     return {"message": "Scan approved and queued for processing."}
 
 
@@ -266,6 +432,10 @@ async def cancel_scan_analysis(
 ):
     """Cancels a scan, typically one that is pending cost approval."""
     await service.cancel_scan(scan_id, user)
+    logger.info(
+        "scans.cancelled",
+        extra={"actor_id": user.id, "scan_id": str(scan_id)},
+    )
     return {"message": "Scan has been cancelled successfully."}
 
 
@@ -275,6 +445,7 @@ async def stream_scan_progress(
     request: Request,
     user: db_models.User = Depends(current_active_user_sse),
     service: ScanQueryService = Depends(get_scan_query_service),
+    visible_user_ids: Optional[List[int]] = Depends(get_visible_user_ids),
 ):
     """Server-Sent Events stream of a scan's progress.
 
@@ -287,10 +458,20 @@ async def stream_scan_progress(
     wiring LangGraph event streaming and sufficient for the per-stage
     granularity the UI wants. Can be upgraded later if we need per-file
     finding deltas mid-scan.
+
+    Security note (V14.1.2 / V14.2.1):
+        EventSource cannot set custom headers; this endpoint accepts an
+        access_token query parameter as a documented exception to V14.2.1.
+        The token is intended to be single-use, scan-id-bound, with a 60s
+        TTL, and is intentionally not echoed in any log line.
     """
     # Authz: reuse the existing service check.
     scan = await service.get_scan_status(scan_id)
     if scan.user_id != user.id and not user.is_superuser:
+        logger.warning(
+            "scans.stream.access_denied",
+            extra={"actor_id": user.id, "scan_id": str(scan_id)},
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to stream this scan.",
@@ -328,7 +509,13 @@ async def stream_scan_progress(
     queue: Optional["asyncio.Queue[str]"] = None
     if bus is not None:
         try:
-            queue = await bus.subscribe(str(scan_id))
+            queue = await bus.subscribe(
+                str(scan_id),
+                owner_user_id=user.id,
+                visible_user_ids=visible_user_ids,
+            )
+        except PermissionError:
+            raise
         except Exception as e:
             logger.warning(
                 "SSE: bus subscribe failed for scan %s: %s; falling back to polling.",
@@ -428,7 +615,7 @@ async def stream_scan_progress(
 
     return StreamingResponse(
         event_generator(),
-        media_type="text/event-stream",
+        media_type="text/event-stream; charset=utf-8",
         headers={
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",  # disable nginx buffering for SSE
@@ -454,6 +641,14 @@ async def apply_fixes(
 ):
     """Triggers the application of selected fixes for a scan."""
     await service.apply_selective_fixes(scan_id, request.finding_ids, user)
+    logger.info(
+        "scans.fixes_applied",
+        extra={
+            "actor_id": user.id,
+            "scan_id": str(scan_id),
+            "finding_count": len(request.finding_ids),
+        },
+    )
     return {
         "message": "Fix application process initiated. The scan status will be updated upon completion."
     }
@@ -469,19 +664,6 @@ async def get_scan_result_details(
 ):
     """Retrieves the full, detailed result of a completed scan."""
     result = await service.get_scan_result(scan_id, user)
-
-    # --- ADD THIS LOGGING BLOCK ---
-    if result and result.summary_report:
-        files_count = len(result.summary_report.files_analyzed)
-        findings_count = sum(
-            len(f.findings) for f in result.summary_report.files_analyzed
-        )
-        logger.debug(
-            f"[API ENDPOINT DEBUG] Returning result for scan {scan_id}. "
-            f"Files in report: {files_count}, Total findings nested in files: {findings_count}",
-            extra={"scan_id": str(scan_id)},
-        )
-    # --- END LOGGING BLOCK ---
 
     return result
 
@@ -526,6 +708,10 @@ async def delete_scan(
 ):
     """Deletes a single scan (superuser only)."""
     await service.delete_scan_by_id(scan_id, user)
+    logger.info(
+        "scans.delete",
+        extra={"actor_id": user.id, "scan_id": str(scan_id)},
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -537,4 +723,8 @@ async def delete_project(
 ):
     """Delets a project and all its scans (superuser only)."""
     await service.delete_project_by_id(project_id, user)
+    logger.info(
+        "projects.delete",
+        extra={"actor_id": user.id, "project_id": str(project_id)},
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

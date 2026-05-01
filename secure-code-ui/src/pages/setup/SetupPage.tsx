@@ -3,6 +3,10 @@
 // SCCAP first-run setup wizard. Ported off antd Steps/Form/Radio/Select;
 // form state is a single useState object, step-level validation is done
 // in JS before advancing. Endpoint contract (/setup) unchanged.
+//
+// All bounds enforced here are advisory; the backend /setup endpoint MUST
+// re-validate every field with the same or stricter constraints (see backend
+// setup_router.py).
 
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -88,8 +92,16 @@ const SetupPage: React.FC = () => {
         return false;
       }
       if (form.deployment_type === "cloud") {
-        if (!form.frontend_url || !/^https?:\/\//.test(form.frontend_url)) {
-          setStepError("Enter a valid frontend URL (http[s]://…).");
+        if (!form.frontend_url || form.frontend_url.length > 512) {
+          setStepError("Enter the production frontend URL (max 512 characters).");
+          return false;
+        }
+        const isLocalhost =
+          /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/.*)?$/.test(form.frontend_url);
+        if (!isLocalhost && !/^https:\/\//i.test(form.frontend_url)) {
+          setStepError(
+            "Enter the production frontend URL with an https:// scheme. Cloud deployments must terminate TLS."
+          );
           return false;
         }
       }
@@ -99,14 +111,34 @@ const SetupPage: React.FC = () => {
         setStepError("Enter a valid admin email.");
         return false;
       }
+      if (form.admin_email.length > 254) {
+        setStepError("Admin email must be 254 characters or fewer.");
+        return false;
+      }
       if (!form.admin_password || form.admin_password.length < 8) {
         setStepError("Admin password must be at least 8 characters.");
+        return false;
+      }
+      if (form.admin_password.length > 256) {
+        setStepError("Admin password must be 256 characters or fewer.");
         return false;
       }
     }
     if (step === 3) {
       if (!form.llm_provider || !form.llm_model || !form.llm_api_key) {
         setStepError("LLM provider, model, and API key are required.");
+        return false;
+      }
+      if (form.llm_model.length > 128) {
+        setStepError("Model name must be 128 characters or fewer.");
+        return false;
+      }
+      if (!/^[A-Za-z0-9._/:-]+$/.test(form.llm_model)) {
+        setStepError("Model name may only contain letters, digits, and the characters . _ / : -");
+        return false;
+      }
+      if (form.llm_api_key.length > 4096) {
+        setStepError("API key must be 4096 characters or fewer.");
         return false;
       }
     }
@@ -247,7 +279,7 @@ const SetupPage: React.FC = () => {
               {form.deployment_type === "cloud" && (
                 <Field
                   label="Public frontend URL"
-                  hint="Where users will access the UI."
+                  hint="Where users will access the UI. HTTPS only."
                 >
                   <input
                     className="sccap-input"
@@ -347,6 +379,8 @@ const SetupPage: React.FC = () => {
                 <input
                   className="sccap-input mono"
                   placeholder="e.g. gpt-4o, claude-sonnet-4-6"
+                  pattern="[A-Za-z0-9._/:-]+"
+                  maxLength={128}
                   value={form.llm_model}
                   onChange={(e) =>
                     setForm({ ...form, llm_model: e.target.value })

@@ -14,7 +14,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AxiosError } from "axios";
 import { saveAs } from "file-saver";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   complianceService,
   type ComplianceControl,
@@ -48,6 +48,38 @@ function axiosErrorDetail(err: unknown): string {
     message?: string;
   };
   return e.response?.data?.detail || e.message || "Unknown error";
+}
+
+// Maximum file size for admin standard uploads (50 MB).
+const MAX_INGEST_BYTES = 50 * 1024 * 1024;
+
+// Minimum milliseconds between successive upload / fetch actions.
+const UPLOAD_COOLDOWN_MS = 2000;
+
+/**
+ * Validate that a URL is a well-formed https://github.com/... URL
+ * and does not exceed 512 characters.
+ */
+function isValidGithubUrl(value: string): boolean {
+  if (!value || value.length > 512) return false;
+  if (!value.startsWith("https://github.com/")) return false;
+  try {
+    new URL(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * CSV-safe escape: coerce to string, prefix formula-injection characters
+ * with a single quote, double embedded quotes, and wrap in double quotes.
+ */
+function csvEscape(v: unknown): string {
+  const s = String(v ?? "");
+  const formulaChars = /^[=+\-@\t\0]/;
+  const escaped = (formulaChars.test(s) ? `'${s}` : s).replace(/"/g, '""');
+  return `"${escaped}"`;
 }
 
 function formatWhen(iso: string | null): string {
@@ -467,6 +499,10 @@ const CompliancePage: React.FC = () => {
     isCustom: boolean;
     id?: string;
   } | null>(null);
+  const [typedDeleteName, setTypedDeleteName] = useState("");
+
+  // Ref to track the timestamp of the last upload action for cooldown enforcement.
+  const lastUploadRef = useRef<number>(0);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -566,15 +602,15 @@ const CompliancePage: React.FC = () => {
     if (!jobStatus?.processed_documents?.length) return;
     const { processed_documents, framework_name } = jobStatus;
     const metaKeys = Object.keys(processed_documents[0].metadata || {}).sort();
-    const header = ["id", "document", ...metaKeys].join(",");
+    const header = ["id", "document", ...metaKeys].map(csvEscape).join(",");
     const rows = processed_documents.map((doc: EnrichedDocument) => {
       const metaVals = metaKeys.map((k) => {
         const v = doc.metadata[k as keyof typeof doc.metadata] ?? "";
-        return `"${String(v).replace(/"/g, '""')}"`;
+        return csvEscape(v);
       });
       return [
-        `"${doc.id}"`,
-        `"${doc.enriched_content.replace(/"/g, '""')}"`,
+        csvEscape(doc.id),
+        csvEscape(doc.enriched_content),
         ...metaVals,
       ].join(",");
     });
@@ -584,6 +620,20 @@ const CompliancePage: React.FC = () => {
   };
 
   const handleUploadASVS = async (file: File) => {
+    if (Date.now() - lastUploadRef.current < UPLOAD_COOLDOWN_MS) {
+      toast.error("Please wait a moment before uploading again.");
+      return;
+    }
+    if (file.size > MAX_INGEST_BYTES) {
+      toast.error("File exceeds 50 MB limit.");
+      return;
+    }
+    const allowedCsvTypes = ["text/csv", "application/vnd.ms-excel", ""];
+    if (!allowedCsvTypes.includes(file.type)) {
+      toast.error("Invalid file type. Expected a CSV file.");
+      return;
+    }
+    lastUploadRef.current = Date.now();
     setIngestLoading("asvs");
     try {
       const res = await ragService.ingestASVS(
@@ -599,6 +649,20 @@ const CompliancePage: React.FC = () => {
   };
 
   const handleUploadLLMTop10 = async (file: File) => {
+    if (Date.now() - lastUploadRef.current < UPLOAD_COOLDOWN_MS) {
+      toast.error("Please wait a moment before uploading again.");
+      return;
+    }
+    if (file.size > MAX_INGEST_BYTES) {
+      toast.error("File exceeds 50 MB limit.");
+      return;
+    }
+    const allowedJsonTypes = ["application/json", "text/plain", ""];
+    if (!allowedJsonTypes.includes(file.type)) {
+      toast.error("Invalid file type. Expected a JSON file.");
+      return;
+    }
+    lastUploadRef.current = Date.now();
     setIngestLoading("llm_top10");
     try {
       const res = await ragService.ingestLLMTop10(file);
@@ -612,6 +676,20 @@ const CompliancePage: React.FC = () => {
   };
 
   const handleUploadAgenticTop10 = async (file: File) => {
+    if (Date.now() - lastUploadRef.current < UPLOAD_COOLDOWN_MS) {
+      toast.error("Please wait a moment before uploading again.");
+      return;
+    }
+    if (file.size > MAX_INGEST_BYTES) {
+      toast.error("File exceeds 50 MB limit.");
+      return;
+    }
+    const allowedJsonTypes = ["application/json", "text/plain", ""];
+    if (!allowedJsonTypes.includes(file.type)) {
+      toast.error("Invalid file type. Expected a JSON file.");
+      return;
+    }
+    lastUploadRef.current = Date.now();
     setIngestLoading("agentic_top10");
     try {
       const res = await ragService.ingestAgenticTop10(file);
@@ -625,6 +703,15 @@ const CompliancePage: React.FC = () => {
   };
 
   const handleFetchProactive = async () => {
+    if (!isValidGithubUrl(proactiveUrl)) {
+      toast.error("Enter an https://github.com/... URL (max 512 chars).");
+      return;
+    }
+    if (Date.now() - lastUploadRef.current < UPLOAD_COOLDOWN_MS) {
+      toast.error("Please wait a moment before fetching again.");
+      return;
+    }
+    lastUploadRef.current = Date.now();
     setIngestLoading("proactive");
     try {
       const res = await ragService.ingestProactiveControls(proactiveUrl);
@@ -641,6 +728,15 @@ const CompliancePage: React.FC = () => {
   };
 
   const handleFetchCheatsheets = async () => {
+    if (!isValidGithubUrl(cheatsheetUrl)) {
+      toast.error("Enter an https://github.com/... URL (max 512 chars).");
+      return;
+    }
+    if (Date.now() - lastUploadRef.current < UPLOAD_COOLDOWN_MS) {
+      toast.error("Please wait a moment before fetching again.");
+      return;
+    }
+    lastUploadRef.current = Date.now();
     setIngestLoading("cheatsheet");
     try {
       const res = await ragService.ingestCheatsheet(cheatsheetUrl);
@@ -1152,17 +1248,53 @@ const CompliancePage: React.FC = () => {
           gates prevent them from being user-reachable. */}
       {isAdmin && (
         <>
+          {/* Admin upload limits (visible note for screen readers + admins inspecting DOM) */}
+          <p
+            id="admin-upload-limits"
+            style={{
+              position: "absolute",
+              width: 1,
+              height: 1,
+              padding: 0,
+              margin: -1,
+              overflow: "hidden",
+              clip: "rect(0,0,0,0)",
+              whiteSpace: "nowrap",
+              border: 0,
+            }}
+          >
+            ASVS upload: CSV file (columns: id, document, …), max 50 MB.
+            LLM Top-10 upload: JSON file matching data/owasp/llm_top10_2025.json schema, max 50 MB.
+            Agentic Top-10 upload: JSON file matching the Agentic Top-10 schema, max 50 MB.
+          </p>
+
+          {/* ASVS CSV upload — max 50 MB, CSV only */}
           <input
             type="file"
             id="hidden-asvs-input"
             accept=".csv"
+            aria-describedby="admin-upload-limits"
             style={{ display: "none" }}
             onChange={(e) => {
               const file = e.target.files?.[0];
-              if (file) handleUploadASVS(file);
+              if (file) {
+                if (file.size > MAX_INGEST_BYTES) {
+                  toast.error("File exceeds 50 MB limit.");
+                  e.target.value = "";
+                  return;
+                }
+                const allowedCsvTypes = ["text/csv", "application/vnd.ms-excel", ""];
+                if (!allowedCsvTypes.includes(file.type)) {
+                  toast.error("Invalid file type. Expected a CSV file.");
+                  e.target.value = "";
+                  return;
+                }
+                handleUploadASVS(file);
+              }
               e.target.value = "";
             }}
           />
+          {/* LLM Top-10 JSON upload — max 50 MB, JSON only */}
           <input
             type="file"
             id="hidden-llm-top10-input"
@@ -1170,10 +1302,24 @@ const CompliancePage: React.FC = () => {
             style={{ display: "none" }}
             onChange={(e) => {
               const file = e.target.files?.[0];
-              if (file) handleUploadLLMTop10(file);
+              if (file) {
+                if (file.size > MAX_INGEST_BYTES) {
+                  toast.error("File exceeds 50 MB limit.");
+                  e.target.value = "";
+                  return;
+                }
+                const allowedJsonTypes = ["application/json", "text/plain", ""];
+                if (!allowedJsonTypes.includes(file.type)) {
+                  toast.error("Invalid file type. Expected a JSON file.");
+                  e.target.value = "";
+                  return;
+                }
+                handleUploadLLMTop10(file);
+              }
               e.target.value = "";
             }}
           />
+          {/* Agentic Top-10 JSON upload — max 50 MB, JSON only */}
           <input
             type="file"
             id="hidden-agentic-top10-input"
@@ -1181,7 +1327,20 @@ const CompliancePage: React.FC = () => {
             style={{ display: "none" }}
             onChange={(e) => {
               const file = e.target.files?.[0];
-              if (file) handleUploadAgenticTop10(file);
+              if (file) {
+                if (file.size > MAX_INGEST_BYTES) {
+                  toast.error("File exceeds 50 MB limit.");
+                  e.target.value = "";
+                  return;
+                }
+                const allowedJsonTypes = ["application/json", "text/plain", ""];
+                if (!allowedJsonTypes.includes(file.type)) {
+                  toast.error("Invalid file type. Expected a JSON file.");
+                  e.target.value = "";
+                  return;
+                }
+                handleUploadAgenticTop10(file);
+              }
               e.target.value = "";
             }}
           />
@@ -1217,7 +1376,7 @@ const CompliancePage: React.FC = () => {
                 <button
                   className="sccap-btn sccap-btn-primary sccap-btn-sm"
                   onClick={handleFetchProactive}
-                  disabled={ingestLoading === "proactive"}
+                  disabled={ingestLoading === "proactive" || !isValidGithubUrl(proactiveUrl)}
                 >
                   {ingestLoading === "proactive" ? "Fetching…" : "Start fetch"}
                 </button>
@@ -1234,6 +1393,9 @@ const CompliancePage: React.FC = () => {
                 onChange={(e) => setProactiveUrl(e.target.value)}
                 style={{ fontSize: 12 }}
               />
+              <span style={{ fontSize: 11, color: "var(--fg-subtle)" }}>
+                Must be an https://github.com/… URL (max 512 characters).
+              </span>
             </label>
           </Modal>
 
@@ -1252,7 +1414,7 @@ const CompliancePage: React.FC = () => {
                 <button
                   className="sccap-btn sccap-btn-primary sccap-btn-sm"
                   onClick={handleFetchCheatsheets}
-                  disabled={ingestLoading === "cheatsheet"}
+                  disabled={ingestLoading === "cheatsheet" || !isValidGithubUrl(cheatsheetUrl)}
                 >
                   {ingestLoading === "cheatsheet"
                     ? "Fetching…"
@@ -1271,12 +1433,15 @@ const CompliancePage: React.FC = () => {
                 onChange={(e) => setCheatsheetUrl(e.target.value)}
                 style={{ fontSize: 12 }}
               />
+              <span style={{ fontSize: 11, color: "var(--fg-subtle)" }}>
+                Must be an https://github.com/… URL (max 512 characters).
+              </span>
             </label>
           </Modal>
 
           <Modal
             open={confirmDelete !== null}
-            onClose={() => setConfirmDelete(null)}
+            onClose={() => { setConfirmDelete(null); setTypedDeleteName(""); }}
             title={
               confirmDelete?.isCustom
                 ? "Delete custom framework?"
@@ -1287,7 +1452,7 @@ const CompliancePage: React.FC = () => {
               <>
                 <button
                   className="sccap-btn sccap-btn-sm"
-                  onClick={() => setConfirmDelete(null)}
+                  onClick={() => { setConfirmDelete(null); setTypedDeleteName(""); }}
                   disabled={deleteCustomMutation.isPending}
                 >
                   Cancel
@@ -1302,19 +1467,31 @@ const CompliancePage: React.FC = () => {
                       handleDeleteStandard(confirmDelete.name);
                     }
                     setConfirmDelete(null);
+                    setTypedDeleteName("");
                   }}
-                  disabled={deleteCustomMutation.isPending}
+                  disabled={deleteCustomMutation.isPending || typedDeleteName !== confirmDelete?.name}
                 >
                   {deleteCustomMutation.isPending ? "Deleting…" : "Delete"}
                 </button>
               </>
             }
           >
-            <div style={{ color: "var(--fg-muted)", fontSize: 13 }}>
+            <div style={{ color: "var(--fg-muted)", fontSize: 13, marginBottom: 12 }}>
               {confirmDelete?.isCustom
                 ? `This removes the framework "${confirmDelete?.name}" and all of its ingested documents. The action cannot be undone.`
                 : `This removes every ingested document for "${confirmDelete?.name}". You can re-ingest from source at any time.`}
             </div>
+            <label style={{ display: "grid", gap: 4 }}>
+              <span style={{ fontSize: 12, color: "var(--fg-muted)" }}>
+                Type <strong>{confirmDelete?.name}</strong> to confirm:
+              </span>
+              <input
+                className="sccap-input"
+                value={typedDeleteName}
+                onChange={(e) => setTypedDeleteName(e.target.value)}
+                placeholder={confirmDelete?.name ?? ""}
+              />
+            </label>
           </Modal>
         </>
       )}

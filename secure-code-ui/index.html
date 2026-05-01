@@ -4,7 +4,10 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; object-src 'none'; base-uri 'none'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; frame-ancestors 'none';" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
     <!-- SCCAP design fonts: Inter Tight for UI, JetBrains Mono for code. -->
+    <!-- ADR-SEC-001: Google Fonts CSS is non-versioned by Google's URL contract; SRI cannot be applied. Risk accepted because the asset is locked behind connect-src/style-src in CSP and font-src restricts WOFF2 origins. Self-hosting is the recommended long-term fix. -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link

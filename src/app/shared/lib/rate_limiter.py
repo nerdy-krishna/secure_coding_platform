@@ -1,8 +1,11 @@
 # src/app/shared/lib/rate_limiter.py
 import asyncio
+import logging
 import time
 from collections import deque
 from typing import Deque, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 class AsyncRateLimiter:
@@ -11,12 +14,23 @@ class AsyncRateLimiter:
     and tokens-per-minute (TPM) limits using the token bucket algorithm.
     """
 
-    def __init__(self, requests_per_minute: int, tokens_per_minute: int):
-        # A rate of 0 or less disables the specific limiter.
-        self.rpm_limit = (
-            requests_per_minute if requests_per_minute > 0 else float("inf")
-        )
-        self.tpm_limit = tokens_per_minute if tokens_per_minute > 0 else float("inf")
+    def __init__(
+        self, requests_per_minute: int, tokens_per_minute: int, disabled: bool = False
+    ):
+        self.disabled = disabled
+        if not self.disabled:
+            if requests_per_minute <= 0 or tokens_per_minute <= 0:
+                raise ValueError(
+                    "AsyncRateLimiter requires positive RPM and TPM. "
+                    "To explicitly disable, instantiate with disabled=True."
+                )
+        self.rpm_limit = requests_per_minute if not self.disabled else float("inf")
+        self.tpm_limit = tokens_per_minute if not self.disabled else float("inf")
+
+        if self.disabled:
+            logger.warning(
+                "rate_limiter.disabled — both limits <=0, anti-automation control inactive"
+            )
 
         self.period = 60.0  # seconds
         # Each entry in the deque is a tuple: (timestamp, tokens_consumed)
@@ -29,7 +43,15 @@ class AsyncRateLimiter:
         If either the RPM or TPM limit has been reached, this method will
         asynchronously sleep until a permit becomes available.
         """
-        if self.rpm_limit == float("inf") and self.tpm_limit == float("inf"):
+        if not isinstance(tokens, int) or tokens < 0:
+            raise ValueError(
+                "AsyncRateLimiter.acquire: tokens must be a non-negative int"
+            )
+        if self.tpm_limit != float("inf") and tokens > self.tpm_limit:
+            raise ValueError(
+                f"AsyncRateLimiter.acquire: tokens={tokens} exceeds tpm_limit={self.tpm_limit}; request can never be satisfied"
+            )
+        if self.disabled:
             return  # Limiter is disabled
 
         async with self.lock:
@@ -71,4 +93,11 @@ class AsyncRateLimiter:
 
                 # Wait for the maximum of the two required wait times
                 time_to_wait = max(wait_time_for_rpm, wait_time_for_tpm, 0)
+                if time_to_wait > 0:
+                    logger.info(
+                        "rate_limiter.throttled wait=%.3fs current_requests=%d current_tokens=%d",
+                        time_to_wait,
+                        current_requests,
+                        current_tokens,
+                    )
                 await asyncio.sleep(time_to_wait)

@@ -18,6 +18,11 @@ export const authService = {
   loginUser: async (
     loginData: UserLoginData,
   ): Promise<TokenResponse> => {
+    // V02.2.1: client-side input bounds (server enforcement remains authoritative)
+    if (typeof loginData.username !== "string" || loginData.username.length > 254)
+      throw new Error("Invalid username");
+    if (typeof loginData.password !== "string" || loginData.password.length < 8 || loginData.password.length > 256)
+      throw new Error("Password must be 8-256 chars");
     const formData = new URLSearchParams();
     formData.append("username", loginData.username); // FastAPI Users uses 'username' which can be email
     formData.append("password", loginData.password);
@@ -47,10 +52,12 @@ export const authService = {
   registerUser: async (
     registerData: UserRegisterData,
   ): Promise<UserRead> => {
-    // FastAPI Users /auth/register endpoint expects JSON payload
+    // V08.2.3 / V15.3.3: explicit payload prevents mass-assignment of privileged fields
+    // (is_superuser, is_active, is_verified). Backend mass-assignment guards remain authoritative.
+    const payload = { email: registerData.email, password: registerData.password };
     const response = await apiClient.post<UserRead>(
       "/auth/register", // CORRECT PATH: relative to baseURL
-      registerData,
+      payload,
     );
     return response.data;
   },
@@ -69,15 +76,31 @@ export const authService = {
   },
 
   forgotPassword: async (email: string): Promise<void> => {
+    // V02.2.1: client-side email format and length check (server enforcement remains authoritative)
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || email.length > 254)
+      throw new Error("Invalid email");
     await apiClient.post("/auth/forgot-password", { email });
   },
 
   resetPassword: async (token: string, password: string): Promise<void> => {
+    // V02.2.1: client-side token and password bounds (server enforcement remains authoritative)
+    if (typeof token !== "string" || token.length < 8 || token.length > 1024)
+      throw new Error("Invalid reset token");
+    if (typeof password !== "string" || password.length < 8 || password.length > 256)
+      throw new Error("Password must be 8-256 chars");
     await apiClient.post("/auth/reset-password", { token, password });
   },
 
   adminCreateUser: async (userData: AdminUserCreate): Promise<UserRead> => {
-    const response = await apiClient.post<UserRead>("/admin/users", userData);
+    // V15.3.3: explicit payload prevents unintended mass-assignment; backend guards remain authoritative.
+    // Password is generated server-side; admin only supplies email + privilege flags.
+    const payload = {
+      email: userData.email,
+      is_superuser: userData.is_superuser,
+      is_active: userData.is_active,
+      is_verified: userData.is_verified,
+    };
+    const response = await apiClient.post<UserRead>("/admin/users", payload);
     return response.data;
   },
 

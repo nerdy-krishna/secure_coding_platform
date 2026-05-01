@@ -55,8 +55,21 @@ const TAB_DEFS: { id: SubmissionMode; icon: React.ReactNode; label: string }[] =
 
 const ARCHIVE_ACCEPT = ".zip,.tar,.tar.gz,.tgz";
 
+// V05.1.1 / V05.2.1 size caps (enforced at drop-time and again in handleSubmit)
+const MAX_FILE_BYTES = 50_000_000;     // 50 MB per file
+const MAX_TOTAL_BYTES = 200_000_000;   // 200 MB aggregate upload
+const MAX_ARCHIVE_BYTES = 500_000_000; // 500 MB compressed archive
+
+// V05.2.2 allowed source-code extensions for upload mode
+const ALLOWED_UPLOAD_EXTENSIONS = new Set([
+  ".py", ".js", ".ts", ".tsx", ".jsx", ".java", ".go", ".rb", ".php",
+  ".cs", ".c", ".cpp", ".h", ".hpp", ".swift", ".kt", ".yml", ".yaml",
+  ".json", ".toml", ".md", ".rs", ".scala", ".sh", ".bash", ".zsh",
+  ".css", ".scss", ".html", ".xml", ".sql", ".tf", ".hcl",
+]);
+
 const Dropzone: React.FC<{
-  onFiles: (files: File[]) => void;
+  onFiles: (files: File[]) => void | Promise<void>;
   multiple?: boolean;
   accept?: string;
   hint: string;
@@ -156,7 +169,11 @@ const SubmitPage: React.FC = () => {
     if (!llmConfigId) return false;
     if (selectedFrameworks.length === 0) return false;
     if (mode === "upload") return files.length > 0;
-    if (mode === "git") return repoUrl.trim().length > 0;
+    if (mode === "git") {
+      // V12.3.1: only HTTPS git URLs are accepted from the UI
+      const v = repoUrl.trim();
+      try { const u = new URL(v); return u.protocol === "https:"; } catch { return false; }
+    }
     if (mode === "archive") return archiveFile !== null;
     return false;
   }, [projectName, llmConfigId, selectedFrameworks, mode, files, repoUrl, archiveFile]);
@@ -169,13 +186,43 @@ const SubmitPage: React.FC = () => {
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
+
+    // V02.2.1: project name length + charset validation
+    const trimmedName = projectName.trim();
+    if (trimmedName.length > 100) { toast.error("Project name too long (max 100 characters)"); return; }
+    if (!/^[A-Za-z0-9 ._-]+$/.test(trimmedName)) { toast.error("Project name has invalid characters (use letters, numbers, spaces, . _ -)"); return; }
+
+    // V02.2.1 / V12.3.1: git URL must be https and within length limit
+    if (mode === "git") {
+      const v = repoUrl.trim();
+      if (v.length > 512) { toast.error("Repository URL too long (max 512 characters)"); return; }
+      try { const u = new URL(v); if (u.protocol !== "https:") { toast.error("Only HTTPS git URLs are accepted"); return; } }
+      catch { toast.error("Invalid repository URL"); return; }
+    }
+
+    // V02.2.1 / V05.2.1: per-file and aggregate size defense-in-depth check
+    if (mode === "upload") {
+      for (const f of files) {
+        if (f.size > MAX_FILE_BYTES) { toast.error(`File "${f.name}" exceeds 50 MB limit`); return; }
+      }
+      const totalSize = files.reduce((s, f) => s + f.size, 0);
+      if (totalSize > MAX_TOTAL_BYTES) { toast.error("Total upload size exceeds 200 MB limit"); return; }
+    }
+
+    // V02.2.1 / V05.2.1: archive size defense-in-depth check
+    if (mode === "archive" && archiveFile) {
+      if (archiveFile.size > MAX_ARCHIVE_BYTES) { toast.error("Archive exceeds 500 MB limit"); return; }
+    }
+
     setSubmitting(true);
     try {
       const payload = new FormData();
-      payload.append("project_name", projectName.trim());
+      payload.append("project_name", trimmedName);
       payload.append("scan_type", scanType);
       payload.append("reasoning_llm_config_id", llmConfigId);
-      payload.append("frameworks", selectedFrameworks.join(","));
+      // V02.2.1: intersect selectedFrameworks with the loaded allowlist before submitting
+      const safeFrameworks = selectedFrameworks.filter((n) => frameworks?.some((f) => f.name === n));
+      payload.append("frameworks", safeFrameworks.join(","));
       if (mode === "upload") {
         for (const f of files) payload.append("files", f);
       } else if (mode === "git") {
@@ -258,11 +305,41 @@ const SubmitPage: React.FC = () => {
               <div>
                 <Dropzone
                   multiple
-                  onFiles={(next) =>
-                    setFiles((prev) => [...prev, ...next])
-                  }
+                  onFiles={(next) => {
+                    // V05.2.2: extension allowlist
+                    const allowed: File[] = [];
+                    for (const f of next) {
+                      const ext = "." + f.name.split(".").pop()?.toLowerCase();
+                      if (!ALLOWED_UPLOAD_EXTENSIONS.has(ext)) {
+                        toast.error(`"${f.name}" has an unsupported extension and was skipped`);
+                        continue;
+                      }
+                      // V05.2.1: per-file size cap at drop time
+                      if (f.size > MAX_FILE_BYTES) {
+                        toast.error(`"${f.name}" exceeds 50 MB and was skipped`);
+                        continue;
+                      }
+                      allowed.push(f);
+                    }
+                    if (allowed.length === 0) return;
+                    setFiles((prev) => {
+                      // V05.2.1: aggregate size cap at drop time
+                      const currentTotal = prev.reduce((s, f) => s + f.size, 0);
+                      const accepted: File[] = [];
+                      let running = currentTotal;
+                      for (const f of allowed) {
+                        if (running + f.size > MAX_TOTAL_BYTES) {
+                          toast.error(`Adding "${f.name}" would exceed the 200 MB total limit; it was skipped`);
+                          continue;
+                        }
+                        running += f.size;
+                        accepted.push(f);
+                      }
+                      return [...prev, ...accepted];
+                    });
+                  }}
                   hint="Drop files here or click to browse"
-                  helper="Any number of source files. Binary files are ignored."
+                  helper="Up to 200 files, 50 MB each, 200 MB total. Supported source-code extensions only. Binary files are ignored; potentially-malicious files are quarantined and reported."
                 />
                 {files.length > 0 && (
                   <div
@@ -337,6 +414,14 @@ const SubmitPage: React.FC = () => {
                     style={{ paddingLeft: 32 }}
                   />
                 </div>
+                {/* V12.3.1: HTTPS-only gate */}
+                {repoUrl.trim().length > 0 && (() => {
+                  try { const u = new URL(repoUrl.trim()); if (u.protocol !== "https:") return (
+                    <div style={{ marginTop: 6, fontSize: 11.5, color: "var(--danger, #c0392b)" }}>
+                      HTTPS git URLs only — http://, git://, and ssh:// are not accepted from the UI.
+                    </div>
+                  ); } catch { return null; } return null;
+                })()}
                 <div
                   style={{
                     marginTop: 8,
@@ -352,11 +437,42 @@ const SubmitPage: React.FC = () => {
 
             {mode === "archive" && (
               <div>
+                {/* V05.2.3: server enforces max uncompressed size (2 GB) and file count (50 000)
+                    before extraction; it also rejects archives with a compressed:uncompressed
+                    ratio exceeding 1:100 and archives containing symlinks. This client-side
+                    check is a UX guard only — backend validation is authoritative. */}
                 <Dropzone
                   accept={ARCHIVE_ACCEPT}
-                  onFiles={(next) => setArchiveFile(next[0] ?? null)}
+                  onFiles={async (next) => {
+                    const file = next[0];
+                    if (!file) return;
+                    // V05.2.1: archive size cap at drop time
+                    if (file.size > MAX_ARCHIVE_BYTES) {
+                      toast.error("Archive exceeds the 500 MB limit");
+                      return;
+                    }
+                    // V05.2.2: magic-byte validation (zip / gzip / tar)
+                    try {
+                      const buf = await file.slice(0, 262).arrayBuffer();
+                      const bytes = new Uint8Array(buf);
+                      const isZip = bytes[0] === 0x50 && bytes[1] === 0x4B && bytes[2] === 0x03 && bytes[3] === 0x04;
+                      const isGzip = bytes[0] === 0x1F && bytes[1] === 0x8B;
+                      // ustar marker at offset 257
+                      const isTar = buf.byteLength >= 262 &&
+                        bytes[257] === 0x75 && bytes[258] === 0x73 && bytes[259] === 0x74 &&
+                        bytes[260] === 0x61 && bytes[261] === 0x72;
+                      if (!isZip && !isGzip && !isTar) {
+                        toast.error("File does not appear to be a valid zip, gzip, or tar archive");
+                        return;
+                      }
+                    } catch {
+                      toast.error("Could not read archive header; please try again");
+                      return;
+                    }
+                    setArchiveFile(file);
+                  }}
                   hint="Drop a .zip or .tar.gz"
-                  helper="Single archive, up to 500 MB."
+                  helper="Single .zip/.tar/.tar.gz, up to 500 MB compressed and 2 GB uncompressed. Symlinks are rejected by the server."
                 />
                 {archiveFile && (
                   <div

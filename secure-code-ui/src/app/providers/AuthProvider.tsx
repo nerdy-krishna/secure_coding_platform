@@ -12,7 +12,16 @@ import {
 } from "../../shared/types/api";
 import { AuthContext, type AuthContextType } from "./AuthContext";
 
+// SECURITY (V15.1.5 dangerous functionality): JWT access token is held in localStorage to enable
+// cross-tab silent refresh. This is XSS-recoverable; CSP + sanitised React rendering are the
+// compensating controls. See .agent/threat-model.md row "client-token-storage" for the explicit
+// risk acceptance.
 const ACCESS_TOKEN_KEY = "accessToken";
+
+// V02.4.1: Module-scoped timestamp to enforce a minimum 1-second interval between login attempts,
+// providing client-side anti-automation defense in depth (server rate-limiting remains authoritative).
+let lastLoginAt = 0;
+
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({
   children,
 }) => {
@@ -37,7 +46,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
         await apiClient.get<SetupStatusResponse>("/setup/status");
       setIsSetupCompleted(response.data.is_setup_completed);
     } catch (e) {
-      console.error("AuthProvider: Failed to check setup status:", e);
+      // V16.2.5: Never log the raw axios error — it contains the Bearer token in request headers.
+      console.error("AuthProvider: Failed to check setup status:", {
+        message: (e as { message?: string })?.message,
+        status: (e as { response?: { status?: number } })?.response?.status,
+      });
       // Wait for backend services to come up instead of assuming setup is incomplete
       setIsSetupCompleted(null);
     }
@@ -82,16 +95,27 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
       setUser(null);
       return;
     }
+    // V15.4.1: Capture the token value before the async call so we can guard against
+    // a concurrent interceptor refresh clobbering a newer token in the catch path.
+    const tokenAtRequestTime = localStorage.getItem(ACCESS_TOKEN_KEY);
     try {
       const response = await apiClient.get<UserRead>("/users/me");
       setUser(response.data);
     } catch (e) {
+      // V16.2.5: Never log the raw axios error — it contains the Bearer token in request headers.
       console.error(
         "AuthProvider: Failed to fetch user (token likely invalid/expired):",
-        e,
+        {
+          message: (e as { message?: string })?.message,
+          status: (e as { response?: { status?: number } })?.response?.status,
+        },
       );
-      setUser(null);
-      setAccessToken(null);
+      // V15.4.1: Only clear the token if it hasn't been replaced by a successful interceptor
+      // refresh that ran concurrently — prevents a stale error from clobbering the new token.
+      if (localStorage.getItem(ACCESS_TOKEN_KEY) === tokenAtRequestTime) {
+        setUser(null);
+        setAccessToken(null);
+      }
     }
   }, []);
 
@@ -113,6 +137,27 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
   }, [accessToken, fetchAndSetUser, checkSetupStatus]);
 
   const login = useCallback(async (credentials: UserLoginData) => {
+    // V02.4.1: Enforce minimum 1-second interval between login attempts (client-side defense in depth).
+    const now = Date.now();
+    if (now - lastLoginAt < 1000) {
+      setError("Please wait a moment before retrying.");
+      throw new Error("Please wait a moment before retrying.");
+    }
+    lastLoginAt = now;
+
+    // V02.2.1: Enforce non-empty and length bounds before sending credentials to the network.
+    // 320 chars = RFC-5321 max email length; 4096 chars = generous upper bound on password length.
+    if (
+      !credentials.username ||
+      credentials.username.length > 320 ||
+      !credentials.password ||
+      credentials.password.length > 4096
+    ) {
+      setError("Invalid credentials format");
+      setIsLoading(false);
+      throw new Error("client validation");
+    }
+
     setIsLoading(true);
     setError(null);
     try {
@@ -120,13 +165,19 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
       localStorage.setItem("accessToken", response.access_token);
       setAccessToken(response.access_token);
     } catch (err: unknown) {
-      console.error("AuthProvider: Login failed:", err);
+      // V16.2.5: Never log the raw axios error — it contains the Bearer token in request headers.
+      console.error("AuthProvider: Login failed:", {
+        message: (err as { message?: string })?.message,
+        status: (err as { response?: { status?: number } })?.response?.status,
+      });
       let errorMessage =
         "Login failed. Please check your username and password.";
       if (err instanceof AxiosError && err.response?.data?.detail) {
+        // V16.4.1: Sanitise backend-supplied strings to prevent log-forgery via CRLF injection.
+        const sanitise = (s: string) => s.replace(/[\r\n]/g, " ");
         errorMessage =
           typeof err.response.data.detail === "string"
-            ? err.response.data.detail
+            ? sanitise(err.response.data.detail)
             : JSON.stringify(err.response.data.detail);
       }
       setError(errorMessage);
@@ -145,12 +196,18 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
       try {
         return await authService.registerUser(credentials);
       } catch (err: unknown) {
-        console.error("AuthProvider: Registration failed:", err);
+        // V16.2.5: Never log the raw axios error — it contains the Bearer token in request headers.
+        console.error("AuthProvider: Registration failed:", {
+          message: (err as { message?: string })?.message,
+          status: (err as { response?: { status?: number } })?.response?.status,
+        });
         let errorMessage = "Registration failed. Please try again.";
         if (err instanceof AxiosError && err.response?.data?.detail) {
+          // V16.4.1: Sanitise backend-supplied strings to prevent log-forgery via CRLF injection.
+          const sanitise = (s: string) => s.replace(/[\r\n]/g, " ");
           errorMessage =
             typeof err.response.data.detail === "string"
-              ? err.response.data.detail
+              ? sanitise(err.response.data.detail)
               : "An unexpected error occurred.";
         }
         setError(errorMessage);
@@ -170,9 +227,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
         await authService.logoutUser();
       }
     } catch (err: unknown) {
+      // V16.2.5: Never log the raw axios error — it contains the Bearer token in request headers.
       console.error(
         "AuthProvider: API Logout failed but proceeding with client-side logout:",
-        err,
+        {
+          message: (err as { message?: string })?.message,
+          status: (err as { response?: { status?: number } })?.response?.status,
+        },
       );
     } finally {
       setAccessToken(null);

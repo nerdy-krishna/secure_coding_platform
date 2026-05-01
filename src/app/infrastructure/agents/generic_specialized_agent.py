@@ -3,6 +3,8 @@ import re
 import cvss
 from typing import Dict, Any, Optional, cast, List
 
+from app.infrastructure.observability.mask import mask as _mask_secrets
+
 from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
 
@@ -31,6 +33,20 @@ _CODE_BUNDLE_MARKER = "\x00<<<CODE_BUNDLE_PLACEHOLDER>>>\x00"
 
 
 _SCANNER_FINDINGS_DESCRIPTION_CAP = 200
+
+# V02.4.1 / V02.3.2 — per-file resource ceilings
+MAX_LLM_CALLS_PER_FILE = 80
+MAX_COST_PER_FILE_USD = 1.0
+MAX_FINDINGS_PER_FILE = 50
+
+# V02.2.3 — allowlist for RAG metadata filter keys
+_ALLOWED_FILTER_KEYS = {
+    "framework_name",
+    "cwe_id",
+    "language",
+    "category",
+    "scan_ready",
+}
 
 
 def _format_scanner_findings_block(findings: Optional[List[Any]]) -> str:
@@ -233,9 +249,11 @@ async def _get_cwe_from_description(
         ):
             return response.parsed_output.cwe_id
 
-    except Exception as e:
+    except Exception:
         logger.error(
-            f"Error during CWE assignment for '{finding.title}': {e}", exc_info=True
+            "agent: CWE assignment failed",
+            extra={"finding_title": finding.title},
+            exc_info=True,
         )
 
     return None
@@ -280,6 +298,12 @@ def _build_rag_filter(
     and_conditions: List[Dict[str, Any]] = [{"scan_ready": {"$eq": True}}]
     if metadata_filter:
         for key, value in metadata_filter.items():
+            if key not in _ALLOWED_FILTER_KEYS:
+                logger.warning(
+                    "RAG filter key rejected (not in allowlist)",
+                    extra={"key": key},
+                )
+                continue
             if isinstance(value, list):
                 if len(value) == 1:
                     and_conditions.append({key: {"$eq": value[0]}})
@@ -301,15 +325,30 @@ def _extract_patterns_from_doc(
     Prefers the language-specific block (`[[<LANG> PATTERNS]]`) when
     available, falls back to the generic `**Vulnerability Pattern (..)`
     / `**Secure Pattern (..)` headers.
+
+    V01.3.12: doc is capped at 64 KB before regex application to bound
+    worst-case backtracking. Bounded character classes replace open-ended
+    lazy `.*?` quantifiers to eliminate ReDoS on pathological inputs.
     """
-    vp_match = re.search(
-        r"\*\*Vulnerability Pattern \(.*?\):\*\*(.*?)(?=\*\*Secure Pattern|\[\[|\Z)",
-        doc,
-        re.DOTALL,
-    )
-    sp_match = re.search(
-        r"\*\*Secure Pattern \(.*?\):\*\*(.*?)(?=\[\[|\Z)", doc, re.DOTALL
-    )
+    # Cap document size to bound regex work (64 KB)
+    doc = doc[:65536]
+
+    try:
+        vp_match = re.search(
+            r"\*\*Vulnerability Pattern \([^)]{0,200}\):\*\*([^*\[]{0,8000})(?=\*\*Secure Pattern|\[\[|\Z)",
+            doc,
+            re.DOTALL,
+        )
+    except re.error:
+        vp_match = None
+    try:
+        sp_match = re.search(
+            r"\*\*Secure Pattern \([^)]{0,200}\):\*\*([^*\[]{0,8000})(?=\[\[|\Z)",
+            doc,
+            re.DOTALL,
+        )
+    except re.error:
+        sp_match = None
     gen_vp = vp_match.group(1).strip() if vp_match else ""
     gen_sp = sp_match.group(1).strip() if sp_match else ""
 
@@ -317,13 +356,26 @@ def _extract_patterns_from_doc(
     lang_sp = ""
     if target_lang != "GENERIC":
         lang_header = f"[[{target_lang} PATTERNS]]"
-        lang_match = re.search(
-            re.escape(lang_header) + r"(.*?)(?=\[\[|\Z)", doc, re.DOTALL
-        )
+        try:
+            lang_match = re.search(
+                re.escape(lang_header) + r"([^\[]{0,8000})(?=\[\[|\Z)", doc, re.DOTALL
+            )
+        except re.error:
+            lang_match = None
         if lang_match:
             lang_block = lang_match.group(1)
-            lvp = re.search(r"Vulnerable:\s*```(.*?)```", lang_block, re.DOTALL)
-            lsp = re.search(r"Secure:\s*```(.*?)```", lang_block, re.DOTALL)
+            try:
+                lvp = re.search(
+                    r"Vulnerable:\s*```([^`]{0,8000})```", lang_block, re.DOTALL
+                )
+            except re.error:
+                lvp = None
+            try:
+                lsp = re.search(
+                    r"Secure:\s*```([^`]{0,8000})```", lang_block, re.DOTALL
+                )
+            except re.error:
+                lsp = None
             if lvp:
                 lang_vp = lvp.group(1).strip()
             if lsp:
@@ -357,7 +409,8 @@ def _build_rag_context(
     )
     documents = retrieved_guidelines.get("documents", [[]])[0]
     logger.info(
-        f"[{agent_name}] RAG query retrieved {len(documents)} documents for context."
+        "agent: RAG retrieval done",
+        extra={"agent": agent_name, "doc_count": len(documents)},
     )
 
     target_lang = _detect_target_lang(filename)
@@ -395,10 +448,11 @@ def _build_finding_object(
     cvss_score = None
     try:
         cvss_score = cvss.CVSS3(initial_finding.cvss_vector).base_score
-    except Exception as e:
+    except Exception:
         logger.warning(
-            f"[{agent_name}] Failed to parse CVSS vector "
-            f"'{initial_finding.cvss_vector}': {e}"
+            "agent: CVSS vector parse failed",
+            extra={"agent": agent_name, "vector": initial_finding.cvss_vector},
+            exc_info=True,
         )
     return VulnerabilityFinding(
         cwe=cwe or "CWE-Unknown",
@@ -421,6 +475,44 @@ def _build_finding_object(
     )
 
 
+def _redact_for_persistence(raw: str) -> str:
+    """V16.2.5 / V14.2.4 — redact secrets and high-entropy strings from LLM
+    output before it is written to the llm_interactions table.  Uses the same
+    Gitleaks-style entropy/regex layer as the Langfuse observability path."""
+    if not raw:
+        return raw
+    try:
+        result = _mask_secrets(raw)
+        return result if isinstance(result, str) else raw
+    except Exception:
+        logger.warning(
+            "agent: redact_for_persistence failed; storing empty raw", exc_info=True
+        )
+        return ""
+
+
+def _redact_dict(d: Dict[str, Any]) -> Dict[str, Any]:
+    """Recursively redact string values in a dict (for parsed_output)."""
+    result: Dict[str, Any] = {}
+    for k, v in d.items():
+        if isinstance(v, str):
+            result[k] = _redact_for_persistence(v)
+        elif isinstance(v, dict):
+            result[k] = _redact_dict(v)
+        elif isinstance(v, list):
+            result[k] = [
+                (
+                    _redact_for_persistence(item)
+                    if isinstance(item, str)
+                    else (_redact_dict(item) if isinstance(item, dict) else item)
+                )
+                for item in v
+            ]
+        else:
+            result[k] = v
+    return result
+
+
 async def analysis_node(
     state: SpecializedAgentState, config: Dict[str, Any]
 ) -> Dict[str, Any]:
@@ -432,7 +524,7 @@ async def analysis_node(
     agent_description = agent_config.get("description")
     domain_query = agent_config.get("domain_query", {})
 
-    logger.info(f"DEBUG: [{agent_name}] domain_query: {domain_query}")
+    logger.debug("agent: domain_query loaded", extra={"agent": agent_name})
 
     if not agent_name or not domain_query or not agent_description:
         return {
@@ -444,14 +536,33 @@ async def analysis_node(
     code_bundle = state["code_snippet"]
     workflow_mode = state["workflow_mode"]
 
+    # V02.2.1 — validate and bound inputs before they reach prompt rendering
+    if not isinstance(filename, str) or len(filename) > 1024:
+        return {
+            "error": "Invalid analysis_node input: filename must be a str of at most 1024 chars"
+        }
+    if not isinstance(code_bundle, str) or len(code_bundle) > 200_000:
+        return {
+            "error": "Invalid analysis_node input: code_snippet must be a str of at most 200000 chars"
+        }
+    if workflow_mode not in {"audit", "remediate"}:
+        return {
+            "error": f"Invalid analysis_node input: workflow_mode '{workflow_mode}' not in {{'audit', 'remediate'}}"
+        }
+
     template_type = (
         "DETAILED_REMEDIATION" if workflow_mode == "remediate" else "QUICK_AUDIT"
     )
     response_model = InitialAnalysisResponse
 
     logger.info(
-        f"[{agent_name}] Assessing '{filename}' with template type '{template_type}'.",
-        extra={"scan_id": str(scan_id), "source_file_path": filename},
+        "agent: assessing file",
+        extra={
+            "agent": agent_name,
+            "template_type": template_type,
+            "scan_id": str(scan_id),
+            "source_file_path": filename,
+        },
     )
 
     rag_context = _build_rag_context(agent_name, domain_query, filename)
@@ -496,8 +607,12 @@ async def analysis_node(
     )
 
     logger.debug(
-        f"[{agent_name}] Cacheable prefix length: {len(system_prompt) if system_prompt else 0}; "
-        f"variable suffix length: {len(user_prompt)}"
+        "agent: prompt split",
+        extra={
+            "agent": agent_name,
+            "system_len": len(system_prompt) if system_prompt else 0,
+            "user_len": len(user_prompt),
+        },
     )
 
     llm_config_id = state.get("llm_config_id")
@@ -508,6 +623,11 @@ async def analysis_node(
     if not llm_client:
         return {"error": f"[{agent_name}] Failed to initialize LLM client."}
 
+    # V02.4.1 — per-file LLM call / cost ceilings
+    _llm_call_count = 0
+    _llm_accumulated_cost: float = 0.0
+
+    _llm_call_count += 1
     llm_response = await llm_client.generate_structured_output(
         prompt=user_prompt,
         response_model=response_model,
@@ -528,8 +648,8 @@ async def analysis_node(
         agent_name=agent_name,
         prompt_template_name=prompt_template.name,
         prompt_context=prompt_context_for_log,
-        raw_response=llm_response.raw_output,
-        parsed_output=parsed_output_dict,
+        raw_response=_redact_for_persistence(llm_response.raw_output or ""),
+        parsed_output=_redact_dict(parsed_output_dict) if parsed_output_dict else None,
         error=llm_response.error,
         file_path=filename,
         cost=llm_response.cost,
@@ -537,20 +657,52 @@ async def analysis_node(
         output_tokens=llm_response.completion_tokens,
         total_tokens=llm_response.total_tokens,
     )
+    # V02.4.1 — accumulate cost from initial analysis call
+    _llm_accumulated_cost += llm_response.cost or 0.0
+
     async with AsyncSessionLocal() as db:
         repo = ScanRepository(db)
         await repo.save_llm_interaction(interaction_data=interaction)
 
     if llm_response.error or not llm_response.parsed_output:
-        return {
-            "error": f"[{agent_name}] LLM failed to produce valid analysis: {llm_response.error}"
-        }
+        logger.error(
+            "agent: LLM failed to produce valid analysis",
+            extra={"agent": agent_name},
+            exc_info=False,
+        )
+        return {"error": f"[{agent_name}] LLM failed to produce valid analysis"}
 
     final_findings: List[VulnerabilityFinding] = []
     final_fixes: List[FixResult] = []
     initial_results = cast(InitialAnalysisResponse, llm_response.parsed_output)
 
+    # V02.3.2 — cap findings to avoid unbounded per-file LLM call chains
+    if len(initial_results.findings) > MAX_FINDINGS_PER_FILE:
+        logger.warning(
+            "agent: findings truncated to cap",
+            extra={
+                "agent": agent_name,
+                "original": len(initial_results.findings),
+                "cap": MAX_FINDINGS_PER_FILE,
+            },
+        )
+        initial_results.findings = initial_results.findings[:MAX_FINDINGS_PER_FILE]
+
     for initial_finding in initial_results.findings:
+        # V02.4.1 — check per-file LLM call / cost ceilings before each sub-call
+        if _llm_call_count >= MAX_LLM_CALLS_PER_FILE:
+            logger.warning(
+                "agent: LLM call ceiling reached; returning partial results",
+                extra={"agent": agent_name, "call_count": _llm_call_count},
+            )
+            break
+        if _llm_accumulated_cost >= MAX_COST_PER_FILE_USD:
+            logger.warning(
+                "agent: cost ceiling reached; returning partial results",
+                extra={"agent": agent_name, "cost_usd": _llm_accumulated_cost},
+            )
+            break
+        _llm_call_count += 1  # count CWE classification call
         cwe = await _get_cwe_from_description(llm_client, initial_finding)
         finding_obj = _build_finding_object(initial_finding, cwe, filename, agent_name)
 
@@ -561,12 +713,14 @@ async def analysis_node(
                 == initial_finding.fix.original_snippet.strip()
             ):
                 logger.warning(
-                    f"[{agent_name}] Discarding fix for {initial_finding.title} because the suggested fix is identical to the original snippet."
+                    "agent: discarding fix identical to original snippet",
+                    extra={"agent": agent_name},
                 )
                 continue
             # --- END STRICT DIFF CHECK ---
 
             code_for_verification = state.get("file_content_for_verification")
+            _llm_call_count += 1  # count fix-verification call
             verified_suggestion = await _verify_and_correct_snippet(
                 llm_client=llm_client,
                 code_to_search=code_for_verification or "",
@@ -579,13 +733,20 @@ async def analysis_node(
                 )
             else:
                 logger.warning(
-                    f"[{agent_name}] Discarding fix for CWE {cwe} in {filename} due to snippet verification failure."
+                    "agent: discarding fix due to snippet verification failure",
+                    extra={"agent": agent_name, "cwe": cwe},
                 )
 
         final_findings.append(finding_obj)
 
     logger.info(
-        f"[{agent_name}] Completed analysis for '{filename}'. Findings: {len(final_findings)}, Fixes: {len(final_fixes)}"
+        "agent: analysis complete",
+        extra={
+            "agent": agent_name,
+            "filename": filename,
+            "findings": len(final_findings),
+            "fixes": len(final_fixes),
+        },
     )
     return {"findings": final_findings, "fixes": final_fixes}
 
@@ -606,7 +767,8 @@ async def _verify_and_correct_snippet(
             break  # Failed last attempt
 
         logger.warning(
-            f"Snippet not found. Retrying with LLM correction (Attempt {attempt + 1}/3)."
+            "agent: snippet not found, retrying with LLM correction",
+            extra={"attempt": attempt + 1},
         )
         correction_prompt = f"""
         The following 'original_snippet' was not found in the 'source_code'.
@@ -631,15 +793,13 @@ async def _verify_and_correct_snippet(
                 original_snippet = (
                     correction_result.parsed_output.corrected_original_snippet
                 )
-                logger.info(
-                    f"Received corrected snippet from LLM: '{original_snippet[:60]}...'"
-                )
+                logger.info("agent: received corrected snippet from LLM")
             else:
                 logger.warning(
-                    "LLM failed to provide a corrected snippet on this attempt."
+                    "agent: LLM failed to provide corrected snippet on this attempt"
                 )
-        except Exception as e:
-            logger.error(f"Error during LLM snippet correction: {e}")
+        except Exception:
+            logger.error("agent: error during LLM snippet correction", exc_info=True)
 
     return None
 

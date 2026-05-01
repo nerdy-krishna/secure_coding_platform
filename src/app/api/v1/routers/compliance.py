@@ -8,9 +8,10 @@ file does not need to know — it just passes the list through to the
 service.
 """
 
+import logging
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.dependencies import get_visible_user_ids
@@ -24,6 +25,7 @@ from app.infrastructure.database.database import get_db
 from app.infrastructure.rag.rag_client import RAGService, get_rag_service
 
 router = APIRouter(prefix="/compliance", tags=["Compliance"])
+logger = logging.getLogger(__name__)
 
 
 def _service(
@@ -51,7 +53,9 @@ async def list_framework_stats(
 
 @router.get("/frameworks/{framework_name}/controls")
 async def list_framework_controls(
-    framework_name: str,
+    framework_name: str = Path(
+        ..., min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$"
+    ),
     user: db_models.User = Depends(current_active_user),
     service: ComplianceService = Depends(_service),
 ):
@@ -63,4 +67,10 @@ async def list_framework_controls(
     try:
         return await service.get_controls(framework_name)
     except ConnectionError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+        logger.warning(
+            "compliance.rag.unavailable",
+            extra={"framework_name": framework_name, "error": str(exc)},
+        )
+        raise HTTPException(
+            status_code=503, detail="Compliance backend temporarily unavailable."
+        )

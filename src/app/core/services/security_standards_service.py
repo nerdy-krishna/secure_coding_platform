@@ -13,6 +13,10 @@ from app.infrastructure.rag.rag_client import get_rag_service
 
 logger = logging.getLogger(__name__)
 
+# Resource-demanding GitHub fetch flows are capped per V15.1.3 to bound
+# the worst-case memory and time spent on a single ingestion call.
+_GITHUB_INGEST_FILE_CAP = 100
+
 
 class SecurityStandardsService:
     """
@@ -68,8 +72,11 @@ class SecurityStandardsService:
         """
         api_url = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}"
 
-        async with httpx.AsyncClient() as client:
-            headers = {"User-Agent": "SecureCodingPlatform/1.0"}
+        async with httpx.AsyncClient(
+            follow_redirects=False,
+            timeout=httpx.Timeout(connect=5.0, read=15.0, write=15.0, pool=5.0),
+        ) as client:
+            headers = {"User-Agent": "SecureCodingPlatform"}
             resp = await client.get(api_url, params={"ref": branch}, headers=headers)
 
             if resp.status_code == 404:
@@ -168,10 +175,10 @@ class SecurityStandardsService:
                 ids.append(f"asvs-{req_id}")
                 count += 1
 
-        except Exception as e:
-            logger.error(f"Failed to parse ASVS CSV: {e}")
+        except Exception:
+            logger.error("security-standards: failed to parse ASVS CSV", exc_info=True)
             raise HTTPException(
-                status_code=400, detail=f"Failed to parse CSV: {str(e)}"
+                status_code=400, detail="Failed to parse CSV. See server logs."
             )
 
         if not documents:
@@ -255,8 +262,13 @@ class SecurityStandardsService:
             ids = []
             count = 0
 
-            async with httpx.AsyncClient() as client:
-                for file_node in files:
+            async with httpx.AsyncClient(
+                follow_redirects=False,
+                timeout=httpx.Timeout(connect=5.0, read=15.0, write=15.0, pool=5.0),
+            ) as client:
+                for idx, file_node in enumerate(files):
+                    if idx >= _GITHUB_INGEST_FILE_CAP:
+                        break
                     name = file_node["name"].lower()
 
                     # Filter: Must start with 'c' and end with '.md'
@@ -345,9 +357,13 @@ class SecurityStandardsService:
                 "count": count,
             }
 
-        except Exception as e:
-            logger.error(f"Failed to fetch Proactive Controls: {e}")
-            raise HTTPException(status_code=500, detail=f"Failed to fetch: {str(e)}")
+        except Exception:
+            logger.error(
+                "security-standards: failed to fetch Proactive Controls", exc_info=True
+            )
+            raise HTTPException(
+                status_code=500, detail="Failed to fetch Proactive Controls."
+            )
 
     async def ingest_cheatsheets_github(
         self, repo_url: str, user_id: int
@@ -369,11 +385,14 @@ class SecurityStandardsService:
             ids = []
             count = 0
 
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(
+                follow_redirects=False,
+                timeout=httpx.Timeout(connect=5.0, read=15.0, write=15.0, pool=5.0),
+            ) as client:
                 for idx, file_node in enumerate(files):
                     # Safety limit: Cheatsheet repo is huge.
                     # Start with a reasonable limit to avoid timeout/rate-limits
-                    if idx >= 100:
+                    if idx >= _GITHUB_INGEST_FILE_CAP:
                         break
 
                     name = file_node["name"].lower()
@@ -449,9 +468,11 @@ class SecurityStandardsService:
                 "count": count,
             }
 
-        except Exception as e:
-            logger.error(f"Failed to fetch Cheatsheets: {e}")
-            raise HTTPException(status_code=500, detail=f"Failed to fetch: {str(e)}")
+        except Exception:
+            logger.error(
+                "security-standards: failed to fetch Cheatsheets", exc_info=True
+            )
+            raise HTTPException(status_code=500, detail="Failed to fetch Cheatsheets.")
 
     @staticmethod
     def _format_owasp_top10_doc(entry: Dict[str, Any]) -> str:
@@ -533,9 +554,14 @@ class SecurityStandardsService:
         content = await self._read_file_content(file)
         try:
             parsed = json.loads(content.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as e:
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            logger.error(
+                "security-standards: failed to parse JSON",
+                extra={"framework_name": framework_name},
+                exc_info=True,
+            )
             raise HTTPException(
-                status_code=400, detail=f"Failed to parse {framework_name} JSON: {e}"
+                status_code=400, detail=f"Failed to parse {framework_name} JSON."
             )
 
         # Validate the top-level shape so a typo'd file doesn't silently

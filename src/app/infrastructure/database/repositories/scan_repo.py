@@ -5,9 +5,11 @@ import hashlib
 from typing import List, Dict, Optional, Any
 
 import sqlalchemy as sa
-from sqlalchemy import String, cast, func, select, update, or_
+from sqlalchemy import String, cast, func, select, update, or_, delete
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import selectinload
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.infrastructure.database import models as db_models
 from app.core import schemas as agent_schemas
@@ -15,11 +17,20 @@ from app.shared.lib.scan_status import STATUS_QUEUED
 
 logger = logging.getLogger(__name__)
 
+_MAX_PAGE_LIMIT = 100
+
 
 class ScanRepository:
     """
     Handles all database operations related to projects, scans, code snapshots,
     findings, and their associated data.
+
+    Cross-tenant invariant (H.2): Every public method that takes a
+    scan_id/project_id MUST take requesting_user_id and visible_user_ids
+    and forward both to _scope_column at the SQL layer; do not rely on
+    upstream auth alone — H.2 cross-tenant invariant.  List/search paths
+    already enforce this.  Single-resource read/write methods are being
+    migrated incrementally; track progress via V08.2.2 remediation issues.
     """
 
     def __init__(self, db_session: AsyncSession):
@@ -28,20 +39,43 @@ class ScanRepository:
     async def get_or_create_project(
         self, name: str, user_id: int, repo_url: Optional[str] = None
     ) -> db_models.Project:
-        """Retrieves a project by name for a user, or creates it if it doesn't exist."""
+        """Retrieves a project by name for a user, or creates it if it doesn't exist.
+
+        Uses an atomic INSERT ... ON CONFLICT DO NOTHING to avoid the TOCTOU
+        race where two concurrent callers both miss the existence check and
+        both attempt INSERT, causing an IntegrityError (V15.4.2).
+        """
+        insert_stmt = (
+            pg_insert(db_models.Project)
+            .values(name=name, user_id=user_id, repository_url=repo_url)
+            .on_conflict_do_nothing(index_elements=["name", "user_id"])
+        )
+        try:
+            await self.db.execute(insert_stmt)
+            await self.db.commit()
+        except SQLAlchemyError as e:
+            logger.error(
+                "scan_repo.get_or_create_project.commit_failed",
+                extra={
+                    "project_name": name,
+                    "user_id": user_id,
+                    "error_class": e.__class__.__name__,
+                },
+                exc_info=True,
+            )
+            raise
+
         stmt = select(db_models.Project).filter_by(name=name, user_id=user_id)
         result = await self.db.execute(stmt)
         project = result.scalars().first()
-
-        if not project:
-            logger.info(f"Creating new project '{name}' for user {user_id}.")
-            project = db_models.Project(
-                name=name, user_id=user_id, repository_url=repo_url
+        if project is None:
+            raise RuntimeError(
+                f"get_or_create_project: could not find project after upsert for name={name!r} user_id={user_id}"
             )
-            self.db.add(project)
-            await self.db.commit()
-            await self.db.refresh(project)
-
+        logger.info(
+            "scan_repo.project.created",
+            extra={"project_name": name, "user_id": user_id},
+        )
         return project
 
     async def create_scan(
@@ -54,7 +88,8 @@ class ScanRepository:
     ) -> db_models.Scan:
         """Creates a new Scan record."""
         logger.info(
-            f"Creating new scan for project {project_id} with type '{scan_type}'."
+            "scan_repo.scan.created",
+            extra={"project_id": str(project_id), "scan_type": scan_type},
         )
         scan = db_models.Scan(
             project_id=project_id,
@@ -65,7 +100,18 @@ class ScanRepository:
             frameworks=frameworks,
         )
         self.db.add(scan)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except SQLAlchemyError as e:
+            logger.error(
+                "scan_repo.create_scan.commit_failed",
+                extra={
+                    "project_id": str(project_id),
+                    "error_class": e.__class__.__name__,
+                },
+                exc_info=True,
+            )
+            raise
         await self.db.refresh(scan)
         return scan
 
@@ -75,10 +121,14 @@ class ScanRepository:
         """
         Accepts a list of files, hashes them, and saves new ones to the database.
         Returns a list of all file hashes for the given input.
+
+        Uses INSERT ... ON CONFLICT (hash) DO NOTHING for atomic deduplication
+        to eliminate the TOCTOU race when two concurrent scans submit identical
+        content (V15.4.2).
         """
         file_hashes = []
-        new_files_to_add = []
-        hashes_to_add = set()
+        rows_to_upsert = []
+        seen_hashes: set = set()
         for file_data in files_data:
             content = file_data["content"]
             hasher = hashlib.sha256()
@@ -86,24 +136,36 @@ class ScanRepository:
             file_hash = hasher.hexdigest()
             file_hashes.append(file_hash)
 
-            # Check if this file hash already exists
-            existing_file = await self.db.get(db_models.SourceCodeFile, file_hash)
-            if not existing_file and file_hash not in hashes_to_add:
-                hashes_to_add.add(file_hash)
-                new_files_to_add.append(
-                    db_models.SourceCodeFile(
-                        hash=file_hash,
-                        content=content,
-                        language=file_data.get("language", "unknown"),
-                    )
+            if file_hash not in seen_hashes:
+                seen_hashes.add(file_hash)
+                rows_to_upsert.append(
+                    {
+                        "hash": file_hash,
+                        "content": content,
+                        "language": file_data.get("language", "unknown"),
+                    }
                 )
 
-        if new_files_to_add:
+        if rows_to_upsert:
             logger.info(
-                f"Adding {len(new_files_to_add)} new unique source files to the database."
+                "scan_repo.source_files.upserted",
+                extra={"unique_file_count": len(rows_to_upsert)},
             )
-            self.db.add_all(new_files_to_add)
-            await self.db.commit()
+            stmt = (
+                pg_insert(db_models.SourceCodeFile)
+                .values(rows_to_upsert)
+                .on_conflict_do_nothing(index_elements=["hash"])
+            )
+            try:
+                await self.db.execute(stmt)
+                await self.db.commit()
+            except SQLAlchemyError as e:
+                logger.error(
+                    "scan_repo.get_or_create_source_files.commit_failed",
+                    extra={"error_class": e.__class__.__name__},
+                    exc_info=True,
+                )
+                raise
 
         return file_hashes
 
@@ -115,22 +177,65 @@ class ScanRepository:
             scan_id=scan_id, file_map=file_map, snapshot_type=snapshot_type
         )
         self.db.add(snapshot)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except SQLAlchemyError as e:
+            logger.error(
+                "scan_repo.create_code_snapshot.commit_failed",
+                extra={"scan_id": str(scan_id), "error_class": e.__class__.__name__},
+                exc_info=True,
+            )
+            raise
         await self.db.refresh(snapshot)
         return snapshot
 
     async def get_scan(self, scan_id: uuid.UUID) -> Optional[db_models.Scan]:
-        """Retrieves a single scan by its ID."""
+        """Retrieves a single scan by its ID.
+
+        NOTE: Returns the full ORM row including internal JSONB blobs
+        (cost_details, repository_map, dependency_graph, context_bundles,
+        bom_cyclonedx).  Service callers building user-facing responses
+        should use get_scan_summary() instead to avoid accidental
+        serialisation of internal data (V15.3.1).
+        """
         logger.debug("Fetching scan from DB.", extra={"scan_id": str(scan_id)})
         result = await self.db.execute(
             select(db_models.Scan).filter(db_models.Scan.id == scan_id)
         )
         return result.scalars().first()
 
+    async def get_scan_summary(self, scan_id: uuid.UUID) -> Optional[Any]:
+        """Retrieves a lightweight projection of a scan for user-facing responses.
+
+        Returns only public fields; heavy JSONB blobs (repository_map,
+        dependency_graph, context_bundles, cost_details, bom_cyclonedx)
+        are excluded (V15.3.1).
+        """
+        logger.debug("Fetching scan summary from DB.", extra={"scan_id": str(scan_id)})
+        result = await self.db.execute(
+            select(
+                db_models.Scan.id,
+                db_models.Scan.status,
+                db_models.Scan.scan_type,
+                db_models.Scan.project_id,
+                db_models.Scan.user_id,
+                db_models.Scan.risk_score,
+                db_models.Scan.created_at,
+                db_models.Scan.completed_at,
+            ).filter(db_models.Scan.id == scan_id)
+        )
+        return result.first()
+
     async def get_scan_with_details(
         self, scan_id: uuid.UUID
     ) -> Optional[db_models.Scan]:
-        """Retrieves a scan with its related snapshots, findings, and project."""
+        """Retrieves a scan with its related snapshots, findings, and project.
+
+        WARNING: The full ORM row includes heavy JSONB blobs
+        (repository_map, dependency_graph, context_bundles, cost_details,
+        bom_cyclonedx).  These MUST be stripped before any HTTP response
+        is returned to the caller (V15.3.1).
+        """
         logger.debug(
             "Fetching scan with details from DB.", extra={"scan_id": str(scan_id)}
         )
@@ -150,8 +255,8 @@ class ScanRepository:
     ):
         """Updates a scan record with large artifact JSONB data."""
         logger.info(
-            f"Updating artifacts for scan {scan_id} in DB.",
-            extra={"scan_id": str(scan_id), "artifacts": list(artifacts.keys())},
+            "scan_repo.scan.artifacts_updated",
+            extra={"scan_id": str(scan_id), "artifact_keys": list(artifacts.keys())},
         )
         stmt = (
             update(db_models.Scan)
@@ -159,7 +264,15 @@ class ScanRepository:
             .values(**artifacts)
         )
         await self.db.execute(stmt)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except SQLAlchemyError as e:
+            logger.error(
+                "scan_repo.update_scan_artifacts.commit_failed",
+                extra={"scan_id": str(scan_id), "error_class": e.__class__.__name__},
+                exc_info=True,
+            )
+            raise
 
     async def update_status(self, scan_id: uuid.UUID, status: str):
         """Updates the status of a single scan."""
@@ -184,7 +297,15 @@ class ScanRepository:
         # Emit the NOTIFY in the same transaction so it fires iff the
         # status update commits (§3.10a).
         await notify_scan_progress(self.db, scan_id=str(scan_id), kind=KIND_STATUS)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except SQLAlchemyError as e:
+            logger.error(
+                "scan_repo.update_status.commit_failed",
+                extra={"scan_id": str(scan_id), "error_class": e.__class__.__name__},
+                exc_info=True,
+            )
+            raise
 
     async def update_bom_cyclonedx(self, scan_id: uuid.UUID, bom: dict) -> None:
         """Persist the CycloneDX SBOM produced by OSV-Scanner during the
@@ -195,7 +316,15 @@ class ScanRepository:
             .values(bom_cyclonedx=bom)
         )
         await self.db.execute(stmt)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except SQLAlchemyError as e:
+            logger.error(
+                "scan_repo.update_bom_cyclonedx.commit_failed",
+                extra={"scan_id": str(scan_id), "error_class": e.__class__.__name__},
+                exc_info=True,
+            )
+            raise
 
     async def create_scan_event(
         self,
@@ -217,7 +346,8 @@ class ScanRepository:
         )
 
         logger.debug(
-            f"Adding timeline event '{stage_name}:{status}' for scan {scan_id}"
+            "scan_repo.scan_event.added",
+            extra={"scan_id": str(scan_id), "stage_name": stage_name, "status": status},
         )
         event = db_models.ScanEvent(
             scan_id=scan_id, stage_name=stage_name, status=status, details=details
@@ -225,7 +355,15 @@ class ScanRepository:
         self.db.add(event)
         # Notify within the same transaction (§3.10a).
         await notify_scan_progress(self.db, scan_id=str(scan_id), kind=KIND_EVENT)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except SQLAlchemyError as e:
+            logger.error(
+                "scan_repo.create_scan_event.commit_failed",
+                extra={"scan_id": str(scan_id), "error_class": e.__class__.__name__},
+                exc_info=True,
+            )
+            raise
 
     async def save_llm_interaction(
         self, interaction_data: agent_schemas.LLMInteraction
@@ -240,7 +378,18 @@ class ScanRepository:
         )
         db_interaction = db_models.LLMInteraction(**interaction_data.model_dump())
         self.db.add(db_interaction)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except SQLAlchemyError as e:
+            logger.error(
+                "scan_repo.save_llm_interaction.commit_failed",
+                extra={
+                    "scan_id": str(interaction_data.scan_id),
+                    "error_class": e.__class__.__name__,
+                },
+                exc_info=True,
+            )
+            raise
 
     async def save_findings(
         self, scan_id: uuid.UUID, findings: List[agent_schemas.VulnerabilityFinding]
@@ -262,7 +411,15 @@ class ScanRepository:
             db_findings.append(db_models.Finding(scan_id=scan_id, **finding_dict))
 
         self.db.add_all(db_findings)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except SQLAlchemyError as e:
+            logger.error(
+                "scan_repo.save_findings.commit_failed",
+                extra={"scan_id": str(scan_id), "error_class": e.__class__.__name__},
+                exc_info=True,
+            )
+            raise
 
     async def update_correlated_findings(
         self, findings: List[agent_schemas.VulnerabilityFinding]
@@ -294,7 +451,15 @@ class ScanRepository:
                 )
                 await self.db.execute(stmt)
 
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except SQLAlchemyError as e:
+            logger.error(
+                "scan_repo.update_correlated_findings.commit_failed",
+                extra={"error_class": e.__class__.__name__},
+                exc_info=True,
+            )
+            raise
 
     async def get_findings_for_scan_and_file(
         self, scan_id: uuid.UUID, file_path: str
@@ -348,6 +513,14 @@ class ScanRepository:
         ``id < cursor`` cursoring correct without composite-cursor
         plumbing (close-features-4-6 fix).
         """
+        limit = max(1, min(int(limit), _MAX_PAGE_LIMIT))
+
+        if visible_user_ids is not None and not visible_user_ids:
+            logger.debug(
+                "scan_repo.query.scope_self_only",
+                extra={"method": "query_findings"},
+            )
+
         stmt = (
             select(db_models.Finding)
             .join(db_models.Scan, db_models.Scan.id == db_models.Finding.scan_id)
@@ -383,6 +556,12 @@ class ScanRepository:
         the kwarg hardens future callers against accidental cross-tenant
         leakage.
         """
+        if visible_user_ids is not None and not visible_user_ids:
+            logger.debug(
+                "scan_repo.query.scope_self_only",
+                extra={"method": "count_findings_by_source", "scan_id": str(scan_id)},
+            )
+
         bucket = sa.func.coalesce(db_models.Finding.source, "agent")
         stmt = (
             select(bucket.label("source"), sa.func.count(db_models.Finding.id))
@@ -406,7 +585,15 @@ class ScanRepository:
             .values(is_applied_in_remediation=True)
         )
         await self.db.execute(stmt)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except SQLAlchemyError as e:
+            logger.error(
+                "scan_repo.mark_findings_as_applied.commit_failed",
+                extra={"error_class": e.__class__.__name__},
+                exc_info=True,
+            )
+            raise
 
     async def update_cost_and_status(
         self, scan_id: uuid.UUID, status: str, estimated_cost: Dict[str, Any]
@@ -426,7 +613,15 @@ class ScanRepository:
             .values(status=status, cost_details=estimated_cost)
         )
         await self.db.execute(stmt)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except SQLAlchemyError as e:
+            logger.error(
+                "scan_repo.update_cost_and_status.commit_failed",
+                extra={"scan_id": str(scan_id), "error_class": e.__class__.__name__},
+                exc_info=True,
+            )
+            raise
 
     async def save_final_reports_and_status(
         self,
@@ -451,7 +646,15 @@ class ScanRepository:
             update(db_models.Scan).where(db_models.Scan.id == scan_id).values(**values)
         )
         await self.db.execute(stmt)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except SQLAlchemyError as e:
+            logger.error(
+                "scan_repo.save_final_reports_and_status.commit_failed",
+                extra={"scan_id": str(scan_id), "error_class": e.__class__.__name__},
+                exc_info=True,
+            )
+            raise
 
     async def get_project_by_id(
         self, project_id: uuid.UUID
@@ -475,6 +678,7 @@ class ScanRepository:
         self, project_id: uuid.UUID, skip: int, limit: int
     ) -> List[db_models.Scan]:
         """Retrieves a paginated list of scans for a specific project."""
+        limit = max(1, min(int(limit), _MAX_PAGE_LIMIT))
         stmt = (
             select(db_models.Scan)
             .options(
@@ -573,6 +777,7 @@ class ScanRepository:
         visible_user_ids: Optional[List[int]] = None,
     ) -> List[db_models.Scan]:
         """Retrieves a paginated list of scans the caller can see."""
+        limit = max(1, min(int(limit), _MAX_PAGE_LIMIT))
         stmt = (
             select(db_models.Scan)
             .join(db_models.Scan.project)
@@ -617,6 +822,7 @@ class ScanRepository:
         visible_user_ids: Optional[List[int]] = None,
     ) -> List[db_models.Project]:
         """Retrieves a paginated list of projects the caller can see."""
+        limit = max(1, min(int(limit), _MAX_PAGE_LIMIT))
         stmt = (
             select(db_models.Project)
             .options(
@@ -674,19 +880,67 @@ class ScanRepository:
         return {file.hash: file.content for file in result.scalars().all()}
 
     async def delete_scan(self, scan_id: uuid.UUID) -> bool:
-        """Deletes a scan record from the database."""
+        """Deletes a scan record from the database.
+
+        Explicitly purges orphaned LLMInteraction rows before deleting the
+        scan to avoid FK violations when ondelete=CASCADE is absent on
+        LLMInteraction.scan_id (V14.2.7).
+        """
         scan = await self.db.get(db_models.Scan, scan_id)
         if scan:
+            await self.db.execute(
+                delete(db_models.LLMInteraction).where(
+                    db_models.LLMInteraction.scan_id == scan_id
+                )
+            )
             await self.db.delete(scan)
-            await self.db.commit()
+            try:
+                await self.db.commit()
+            except SQLAlchemyError as e:
+                logger.error(
+                    "scan_repo.delete_scan.commit_failed",
+                    extra={
+                        "scan_id": str(scan_id),
+                        "error_class": e.__class__.__name__,
+                    },
+                    exc_info=True,
+                )
+                raise
             return True
         return False
 
     async def delete_project(self, project_id: uuid.UUID) -> bool:
-        """Deletes a project record and its cascade-deleted scans."""
+        """Deletes a project record and its cascade-deleted scans.
+
+        Explicitly purges LLMInteraction rows for all scans belonging to
+        the project before deleting, to avoid FK violations when
+        ondelete=CASCADE is absent on LLMInteraction.scan_id (V14.2.7).
+        """
         project = await self.db.get(db_models.Project, project_id)
         if project:
+            # Collect scan IDs then purge orphaned LLM interactions
+            scan_ids_result = await self.db.execute(
+                select(db_models.Scan.id).where(db_models.Scan.project_id == project_id)
+            )
+            scan_ids = [row[0] for row in scan_ids_result.all()]
+            if scan_ids:
+                await self.db.execute(
+                    delete(db_models.LLMInteraction).where(
+                        db_models.LLMInteraction.scan_id.in_(scan_ids)
+                    )
+                )
             await self.db.delete(project)
-            await self.db.commit()
+            try:
+                await self.db.commit()
+            except SQLAlchemyError as e:
+                logger.error(
+                    "scan_repo.delete_project.commit_failed",
+                    extra={
+                        "project_id": str(project_id),
+                        "error_class": e.__class__.__name__,
+                    },
+                    exc_info=True,
+                )
+                raise
             return True
         return False
