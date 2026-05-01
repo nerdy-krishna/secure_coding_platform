@@ -32,6 +32,8 @@ export interface UserGroup {
   created_by: number;
   member_count: number;
   members: UserGroupMember[];
+  /** V02.3.4 — current row version; pass back as `expected_version` on update. */
+  version?: number;
 }
 
 export interface UserGroupCreate {
@@ -42,6 +44,8 @@ export interface UserGroupCreate {
 export interface UserGroupUpdate {
   name?: string;
   description?: string | null;
+  /** V02.3.4 — row version the client read; backend rejects with 409 if stale. */
+  expected_version?: number;
 }
 
 /**
@@ -109,6 +113,11 @@ export const userGroupService = {
       name: payload.name,
       description: payload.description ?? null,
     };
+    // V02.3.4 — pass the row version the caller read so the backend can
+    // reject stale writes (409 + current_version in the body).
+    if (payload.expected_version !== undefined) {
+      safePayload.expected_version = payload.expected_version;
+    }
     const res = await apiClient.patch<UserGroup>(
       // V01.2.2: encode path segment
       `/admin/user-groups/${encodeURIComponent(id)}`,

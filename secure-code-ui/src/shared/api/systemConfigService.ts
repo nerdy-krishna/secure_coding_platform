@@ -36,6 +36,8 @@ interface SystemConfiguration {
     description?: string;
     is_secret: boolean;
     encrypted: boolean;
+    /** V02.3.4 — current row version; pass back as `expected_version` on update. */
+    version?: number;
 }
 
 interface SystemConfigurationUpdate {
@@ -43,6 +45,8 @@ interface SystemConfigurationUpdate {
     description?: string;
     is_secret?: boolean;
     encrypted?: boolean;
+    /** V02.3.4 — row version the client read; backend rejects with 409 if stale. */
+    expected_version?: number;
 }
 
 // --- Input-validation helpers (V2.2.1) ---
@@ -143,6 +147,11 @@ export const systemConfigService = {
         if (data.description !== undefined) payload.description = data.description;
         if (data.is_secret !== undefined) payload.is_secret = data.is_secret;
         if (data.encrypted !== undefined) payload.encrypted = data.encrypted;
+        // V02.3.4 — pass the row version the caller read so the backend can
+        // reject stale writes (409 + current_version in the body).
+        if (data.expected_version !== undefined) {
+            payload.expected_version = data.expected_version;
+        }
         // V2.2.1 — size-cap the serialised body
         if (JSON.stringify(payload).length > MAX_PAYLOAD_BYTES) {
             throw new Error(`System config payload exceeds the ${MAX_PAYLOAD_BYTES}-byte limit (V2.2.1).`);

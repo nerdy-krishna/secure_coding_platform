@@ -499,6 +499,8 @@ class SystemConfiguration(Base):
     encrypted: Mapped[bool] = mapped_column(
         sa.Boolean, server_default="false", nullable=False
     )
+    # V02.3.4 — optimistic-locking version counter; bumped on every UPDATE.
+    version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -523,6 +525,8 @@ class UserGroup(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     description: Mapped[Optional[str]] = mapped_column(Text)
     created_by: Mapped[int] = mapped_column(ForeignKey("user.id"), nullable=False)
+    # V02.3.4 — optimistic-locking version counter; bumped on every UPDATE.
+    version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

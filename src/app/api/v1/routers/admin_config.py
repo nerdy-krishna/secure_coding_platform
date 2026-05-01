@@ -143,7 +143,22 @@ async def set_system_config(
         }
 
     system_config = api_models.SystemConfigurationCreate(**create_data)
-    result = await repo.set_value(system_config)
+    # V02.3.4 — thread expected_version through to the repo for optimistic
+    # locking on UPDATEs. Insert path ignores the parameter.
+    from app.shared.lib.optimistic_lock import OptimisticLockError
+
+    try:
+        result = await repo.set_value(
+            system_config, expected_version=config.expected_version
+        )
+    except OptimisticLockError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "version_mismatch",
+                "current_version": e.current_version,
+            },
+        )
 
     logger.info(
         "admin.system_config.upserted",
