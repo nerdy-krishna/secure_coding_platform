@@ -5,6 +5,17 @@ estimate, and pauses on `interrupt()` for cost approval.
 
 The string name registered via `workflow.add_node("estimate_cost", ...)`
 is part of the LangGraph checkpointer's on-disk contract — do not rename.
+
+Security controls
+-----------------
+V02.3.5 (Level 3) — Dual-control for high-value approvals:
+    When the estimated cost meets or exceeds ``HIGH_VALUE_COST_USD`` the
+    interrupt payload carries ``requires_dual_approval=True``.  The
+    lifecycle service (``ScanLifecycleService.approve_scan``) is
+    responsible for enforcing that two *distinct* approver user-ids are
+    recorded before the LangGraph thread is resumed.  Lower-cost scans
+    continue to use the existing single-approver path
+    (``requires_dual_approval=False``).
 """
 
 from __future__ import annotations
@@ -36,13 +47,17 @@ logger = logging.getLogger(__name__)
 # guidelines / dependency context per chunk.
 CHUNK_ONLY_IF_LARGER_THAN = 150_000
 
+# V02.3.5 — estimated costs at or above this threshold require dual-control
+# approval (two distinct approver user-ids) before the scan may proceed.
+HIGH_VALUE_COST_USD = 50.0
+
 
 async def estimate_cost_node(state: WorkerState) -> Dict[str, Any]:
     """
     Performs a dry run of the analysis to generate a highly accurate cost estimate.
     """
     scan_id = state["scan_id"]
-    logger.info(f"Performing cost estimation dry run for scan {scan_id}.")
+    logger.info("Performing cost estimation dry run for scan %s.", scan_id)
 
     # --- REVISED GUARD CLAUSE BLOCK ---
     repository_map = state.get("repository_map")
@@ -117,6 +132,13 @@ async def estimate_cost_node(state: WorkerState) -> Dict[str, Any]:
             scan_id, STATUS_PENDING_APPROVAL, cost_details
         )
 
+    # V02.3.5 — flag high-value scans so the lifecycle service can enforce
+    # dual-control: two distinct approver user-ids must be recorded before
+    # the LangGraph thread is resumed.  Lower-cost scans use the existing
+    # single-approver path.
+    estimated_cost_usd = cost_details.get("estimated_cost_usd", 0.0)
+    requires_dual_approval = estimated_cost_usd >= HIGH_VALUE_COST_USD
+
     # Native LangGraph human-in-the-loop gate. The checkpointer persists
     # state here; execution resumes from this point when the approval
     # handler calls ainvoke(Command(resume=...)) on the same thread_id.
@@ -125,6 +147,7 @@ async def estimate_cost_node(state: WorkerState) -> Dict[str, Any]:
         {
             "scan_id": str(scan_id),
             "estimated_cost": cost_details,
+            "requires_dual_approval": requires_dual_approval,
         }
     )
 

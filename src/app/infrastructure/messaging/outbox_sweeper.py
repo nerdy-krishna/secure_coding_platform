@@ -32,7 +32,7 @@ async def _tick() -> None:
         )
         if not rows:
             return
-        logger.info(f"Outbox sweep: {len(rows)} unpublished row(s) to retry.")
+        logger.info("outbox_sweep.batch", extra={"count": len(rows)})
         for row in rows:
             try:
                 published = await publish_message(
@@ -42,14 +42,18 @@ async def _tick() -> None:
                 if published:
                     await repo.mark_published(row.id)
                     logger.info(
-                        f"Outbox sweep: re-published scan_id={row.scan_id} "
-                        f"(attempt={row.attempts + 1})."
+                        "outbox_sweep.republished",
+                        extra={
+                            "scan_id": str(row.scan_id),
+                            "attempts": row.attempts + 1,
+                        },
                     )
                 else:
                     await repo.record_failed_attempt(row.id)
-            except Exception as e:
+            except Exception:
                 logger.error(
-                    f"Outbox sweep: error re-publishing scan_id={row.scan_id}: {e}",
+                    "outbox_sweep.republish_failed",
+                    extra={"scan_id": str(row.scan_id)},
                     exc_info=True,
                 )
                 try:
@@ -61,14 +65,14 @@ async def _tick() -> None:
 async def run_outbox_sweeper(stop_event: asyncio.Event) -> None:
     """Main loop. Exits cleanly when stop_event is set."""
     logger.info(
-        "Outbox sweeper started "
-        f"(interval={SWEEP_INTERVAL_SECONDS}s, min_age={MIN_AGE_SECONDS}s)."
+        "outbox_sweeper.started",
+        extra={"interval": SWEEP_INTERVAL_SECONDS, "min_age": MIN_AGE_SECONDS},
     )
     while not stop_event.is_set():
         try:
             await _tick()
-        except Exception as e:
-            logger.error(f"Outbox sweeper tick failed: {e}", exc_info=True)
+        except Exception:
+            logger.error("outbox_sweep.tick_failed", exc_info=True)
 
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=SWEEP_INTERVAL_SECONDS)

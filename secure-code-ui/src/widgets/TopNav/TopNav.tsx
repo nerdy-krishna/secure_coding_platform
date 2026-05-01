@@ -57,6 +57,11 @@ export const TopNav: React.FC = () => {
   const { user } = useAuth();
   const isSuperuser = !!user?.is_superuser;
 
+  // V02.2.1 – runtime guard: reject any role value that is not in the
+  // allow-list (e.g. a corrupt localStorage entry) and fall back to 'user'.
+  const VALID_ROLES = ['user', 'admin'] as const;
+  const safeRole: SccapRole = (VALID_ROLES as readonly string[]).includes(role) ? role : 'user';
+
   // Effective nav: append Admin item when the user is actually a superuser.
   // Previewing "admin" role via Tweaks doesn't grant admin access; route
   // guards enforce that.
@@ -155,7 +160,7 @@ export const TopNav: React.FC = () => {
           >
             {theme === "light" ? <Icon.Moon size={16} /> : <Icon.Sun size={16} />}
           </button>
-          <RoleMenu role={role} setRole={setRole} email={user?.email} />
+          <RoleMenu role={safeRole} setRole={setRole} email={user?.email} />
         </div>
       </div>
     </header>

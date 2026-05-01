@@ -60,10 +60,10 @@ export const PrescanReviewCard: React.FC<Props> = ({
   }, [findings]);
 
   const counts = React.useMemo(() => {
-    const c: Record<string, number> = {};
+    const c = new Map<string, number>();
     for (const f of findings) {
       const k = f.severity || "Unknown";
-      c[k] = (c[k] || 0) + 1;
+      c.set(k, (c.get(k) ?? 0) + 1);
     }
     return c;
   }, [findings]);
@@ -114,7 +114,7 @@ export const PrescanReviewCard: React.FC<Props> = ({
               flexWrap: "wrap",
             }}
           >
-            {Object.entries(counts).map(([sev, n]) => (
+            {Array.from(counts.entries()).map(([sev, n]) => (
               <span key={sev} className={severityChipClass(sev)}>
                 {sev} · {n}
               </span>

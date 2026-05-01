@@ -38,7 +38,11 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const show = useCallback((text: string, tone: ToastTone = "info") => {
     const id = ++counter.current;
-    setItems((prev) => [...prev, { id, text, tone }]);
+    setItems((prev) => {
+      const last = prev[prev.length - 1];
+      if (last && last.text === text && last.tone === tone) return prev;
+      return [...prev, { id, text, tone }].slice(-5);
+    });
     setTimeout(() => {
       setItems((prev) => prev.filter((t) => t.id !== id));
     }, 4500);
