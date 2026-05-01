@@ -61,6 +61,9 @@ class UserGroupRead(BaseModel):
     created_by: int
     member_count: int
     members: List[MemberRead] = Field(default_factory=list)
+    # V02.3.4 — exposes the row's current version so the client can pass it
+    # back in a subsequent UserGroupUpdate as `expected_version`.
+    version: int = 1
 
 
 class UserGroupCreate(BaseModel):
@@ -71,6 +74,9 @@ class UserGroupCreate(BaseModel):
 class UserGroupUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=255)
     description: Optional[str] = None
+    # V02.3.4 — caller-supplied row version. Optional; when omitted the legacy
+    # unsafe-overwrite path is used.
+    expected_version: Optional[int] = Field(default=None, ge=1)
 
 
 class MemberAdd(BaseModel):
@@ -117,6 +123,7 @@ async def _hydrate(
         created_by=group.created_by,
         member_count=len(members),
         members=members,
+        version=getattr(group, "version", 1),
     )
 
 
@@ -177,9 +184,24 @@ async def update_group(
     repo: UserGroupRepository = Depends(_repo),
     db: AsyncSession = Depends(get_db),
 ) -> UserGroupRead:
-    group = await repo.update_group(
-        group_id, name=payload.name, description=payload.description
-    )
+    from app.shared.lib.optimistic_lock import OptimisticLockError
+
+    try:
+        group = await repo.update_group(
+            group_id,
+            name=payload.name,
+            description=payload.description,
+            expected_version=payload.expected_version,
+        )
+    except OptimisticLockError as e:
+        # V02.3.4 — surface the conflict so the frontend can refetch + retry.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "version_mismatch",
+                "current_version": e.current_version,
+            },
+        )
     if group is None:
         raise HTTPException(status_code=404, detail="Group not found.")
     logger.info(

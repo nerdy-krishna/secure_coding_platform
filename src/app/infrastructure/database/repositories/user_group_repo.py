@@ -13,13 +13,14 @@ import logging
 import uuid
 from typing import List, Optional, Set
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.infrastructure.database import models as db_models
+from app.shared.lib.optimistic_lock import OptimisticLockError
 
 logger = logging.getLogger(__name__)
 
@@ -65,10 +66,64 @@ class UserGroupRepository:
         *,
         name: Optional[str] = None,
         description: Optional[str] = None,
+        expected_version: Optional[int] = None,
     ) -> Optional[db_models.UserGroup]:
+        """Update a user group.
+
+        When `expected_version` is supplied, the write uses optimistic
+        locking: the row is updated only if its current `version` matches
+        the value the client read. On mismatch, raises
+        `OptimisticLockError(current_version=...)` (V02.3.4).
+        """
         group = await self.db.get(db_models.UserGroup, group_id)
         if group is None:
             return None
+
+        if expected_version is not None:
+            # V02.3.4 — conditional UPDATE with version match + bump.
+            new_values: dict = {
+                "version": db_models.UserGroup.version + 1,
+            }
+            if name is not None:
+                new_values["name"] = name
+            if description is not None:
+                new_values["description"] = description
+            stmt = (
+                update(db_models.UserGroup)
+                .where(db_models.UserGroup.id == group_id)
+                .where(db_models.UserGroup.version == expected_version)
+                .values(**new_values)
+            )
+            result = await self.db.execute(stmt)
+            if (result.rowcount or 0) == 0:
+                await self.db.rollback()
+                fresh = await self.db.get(db_models.UserGroup, group_id)
+                current = getattr(fresh, "version", 0) if fresh else 0
+                logger.warning(
+                    "user_group.optimistic_lock_conflict",
+                    extra={
+                        "group_id": str(group_id),
+                        "expected_version": expected_version,
+                        "current_version": current,
+                    },
+                )
+                raise OptimisticLockError(current_version=current)
+            try:
+                await self.db.commit()
+            except SQLAlchemyError:
+                logger.error(
+                    "user_group.updated.failed",
+                    extra={"group_id": str(group_id)},
+                    exc_info=True,
+                )
+                raise
+            refreshed = await self.db.get(db_models.UserGroup, group_id)
+            if refreshed is None:  # pragma: no cover
+                raise OptimisticLockError(current_version=0)
+            logger.info("user_group.updated", extra={"group_id": str(group_id)})
+            return refreshed
+
+        # Legacy path — no version check.
         if name is not None:
             group.name = name
         if description is not None:

@@ -161,9 +161,23 @@ class SystemConfigurationUpdate(BaseModel):
     description: Optional[str] = None
     is_secret: Optional[bool] = None
     encrypted: Optional[bool] = None
+    # V02.3.4 — optimistic-locking version the client expects to overwrite.
+    # Optional; when omitted the legacy unsafe-overwrite path is used.
+    expected_version: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Caller-supplied row version (read from a prior GET). When set, the "
+            "update is conditional: a 409 Conflict is returned if the row was "
+            "modified by another writer in the meantime."
+        ),
+    )
 
 
 class SystemConfigurationRead(SystemConfigurationBase):
+    # V02.3.4 — exposes the row's current version so the client can pass it
+    # back in a subsequent SystemConfigurationUpdate as `expected_version`.
+    version: int = 1
     created_at: datetime
     updated_at: datetime
 
