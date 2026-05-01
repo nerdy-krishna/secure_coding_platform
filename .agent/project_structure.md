@@ -97,7 +97,7 @@
         - **api/**: Axios client and API service modules.
         - **components/**: Reusable UI components (Buttons, Cards).
         - **hooks/**: Custom React hooks (useAuth, useToast).
-        - **lib/**: Utility functions (severityMappings, formatters). `safeUrl.ts` — `isSafeHttpUrl(u)` guard used when rendering attacker-controlled URLs (e.g. OSV finding `references` and CycloneDX BOM `externalReferences[].url`) as anchor links.
+        - **lib/**: Utility functions (severityMappings, formatters). `safeUrl.ts` — `isSafeHttpUrl(u)` guard used when rendering attacker-controlled URLs (e.g. OSV finding `references` and CycloneDX BOM `externalReferences[].url`) as anchor links. `redact.ts` — `redactSensitive()` client-side redaction helper (V16.2.5); recursively walks objects and replaces values whose key matches a sensitive-field pattern (api key, password, secret, token) or whose string value looks like a high-entropy credential with `'[REDACTED]'`; used by `LlmLogViewerPage` before rendering LLM log payloads.
         - **types/**: TypeScript type definitions (API models).
 - **Dockerfile**: Docker configuration for the frontend service.
 - **vite.config.ts**: Vite build configuration.
