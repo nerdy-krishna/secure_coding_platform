@@ -7,7 +7,6 @@ import os
 import uuid
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status
-from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from psycopg.errors import DuplicateColumn
 from starlette.responses import JSONResponse
@@ -105,13 +104,13 @@ async def lifespan(app: FastAPI):
                 update_logging_level(level_str)
                 logger.info(f"Initialized log level from DB: {level_str}")
             else:
-                # Default behavior
-                if not setup_done:
-                    # Setup phase: Force DEBUG
+                # V13.4.2: never auto-force DEBUG; DEBUG must be opt-in via an
+                # explicit env/settings flag so a partially provisioned host
+                # cannot leak request payloads / stack traces.
+                if getattr(settings, "DEBUG", False):
                     update_logging_level("DEBUG")
-                    logger.info("Setup not completed. Enforcing DEBUG log level.")
+                    logger.info("DEBUG flag set; using DEBUG log level.")
                 else:
-                    # Generic default
                     update_logging_level("INFO")
                     logger.info("No log level config found. Defaulting to INFO.")
 
@@ -178,6 +177,15 @@ async def lifespan(app: FastAPI):
             else:
                 logger.info("Setup not completed. Allowing all origins for setup mode.")
                 SystemConfigCache.set_cors_enabled(True)  # Enable CORS for setup
+
+            # V02.2.3: cross-validate combined config fields for consistency.
+            if (
+                SystemConfigCache.is_cors_enabled()
+                and not SystemConfigCache.get_allowed_origins()
+                and setup_done
+            ):
+                logger.warning("CORS enabled but allow-list empty; disabling CORS.")
+                SystemConfigCache.set_cors_enabled(False)
     except Exception as e:
         logger.error(f"Failed to initialize system config cache: {e}")
 
@@ -357,21 +365,36 @@ async def _combined_lifespan(app: FastAPI):
             yield
 
 
+# V13.4.5: gate /docs, /redoc, /openapi.json behind environment.
+# V13.4.6: avoid leaking real release versions in the public OpenAPI document.
+_is_production = str(getattr(settings, "ENVIRONMENT", "")).lower() == "production"
 app = FastAPI(
     title="SCCAP API",
-    version="0.1.0",
+    version="0",
     description="API for SCCAP — the Secure Coding & Compliance Automation Platform. Provides analysis, remediation, and compliance features.",
     lifespan=_combined_lifespan,
+    docs_url=None if _is_production else "/docs",
+    redoc_url=None if _is_production else "/redoc",
+    openapi_url=None if _is_production else "/openapi.json",
 )
 # Mount the MCP sub-app. MCP clients connect to /mcp; the REST API keeps
 # its /api/v1/* routes.
 app.mount("/mcp", _mcp_app)
 
 
+_CORR_ID_RE = __import__("re").compile(r"[A-Za-z0-9._:\-]{1,128}")
+
+
 @app.middleware("http")
 async def correlation_id_middleware(request: Request, call_next):
-    # Check for an existing correlation ID in the header, or create a new one
-    corr_id = request.headers.get("X-Correlation-ID") or str(uuid.uuid4())
+    # V02.2.1 / V04.2.4 / V04.2.5 / V14.2.4 / V16.4.1: validate the inbound
+    # X-Correlation-ID against a positive allow-list (length-capped, no CRLF,
+    # no control chars). Falls back to a fresh UUID when invalid or absent.
+    raw = request.headers.get("X-Correlation-ID") or ""
+    if raw and _CORR_ID_RE.fullmatch(raw):
+        corr_id = raw
+    else:
+        corr_id = str(uuid.uuid4())
 
     # Set the ID in the context variable so our logger can access it
     correlation_id_var.set(corr_id)
@@ -382,8 +405,14 @@ async def correlation_id_middleware(request: Request, call_next):
     # Add the correlation ID to the response headers
     response.headers["X-Correlation-ID"] = corr_id
 
+    # V14.3.2: prevent caching of authenticated API responses.
+    if request.url.path.startswith("/api/v1/"):
+        response.headers.setdefault("Cache-Control", "no-store")
+        response.headers.setdefault("Pragma", "no-cache")
+
     logger.info(
-        f"Request to {request.url.path} completed with status {response.status_code}"
+        "request.completed",
+        extra={"path": request.url.path, "status": response.status_code},
     )
     return response
 
@@ -398,20 +427,40 @@ _CORS_ALLOWED_HEADERS = (
 )
 
 
-def _resolve_allowed_origins() -> tuple[bool, list[str]]:
-    """Returns (allow_all, allowed_origins) based on current setup state and cache."""
-    if not SystemConfigCache.is_setup_completed():
-        return True, ["*"]
+def _is_valid_origin(value: str) -> bool:
+    """V02.2.1: structural validation of an Origin URL."""
+    try:
+        from urllib.parse import urlparse
 
-    # Base local/cloud origins from the env var are always permitted post-setup.
+        p = urlparse(value)
+        return p.scheme in ("http", "https") and bool(p.hostname) and not p.path
+    except Exception:
+        return False
+
+
+def _resolve_allowed_origins() -> tuple[bool, list[str]]:
+    """Returns (allow_all, allowed_origins) based on current setup state and cache.
+
+    V03.4.2: pre-setup phase no longer reflects arbitrary origins; the allow-list
+    is identical to the post-setup base allow-list to avoid wildcard-reflect-with-
+    credentials.
+    """
+    # Base local/cloud origins from the env var are always permitted.
     allowed_origins_str = os.getenv(
         "ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
     )
     origins = [o.strip() for o in allowed_origins_str.split(",") if o.strip()]
+    origins = [o for o in origins if _is_valid_origin(o)]
+
+    if not SystemConfigCache.is_setup_completed():
+        return False, origins
 
     # Admin-configured origins are additive, gated by the cors_enabled toggle.
     if SystemConfigCache.is_cors_enabled():
-        origins.extend(SystemConfigCache.get_allowed_origins())
+        db_origins = [
+            o for o in SystemConfigCache.get_allowed_origins() if _is_valid_origin(o)
+        ]
+        origins.extend(db_origins)
 
     return False, origins
 
@@ -425,16 +474,32 @@ class DynamicCORSMiddleware(BaseHTTPMiddleware):
     """
 
     async def dispatch(self, request: Request, call_next):
-        allow_all, allowed_origins = _resolve_allowed_origins()
+        _allow_all, allowed_origins = _resolve_allowed_origins()
         origin = request.headers.get("origin")
-        origin_permitted = bool(origin) and (allow_all or origin in allowed_origins)
+        # V03.4.2: never trust allow_all; always require origin to be in the list.
+        origin_permitted = bool(origin) and origin in allowed_origins
 
         if request.method == "OPTIONS":
             if origin_permitted:
-                response = PlainTextResponse("OK")
+                response = PlainTextResponse(
+                    "OK", media_type="text/plain; charset=utf-8"
+                )
             else:
+                # V16.3.3: log forbidden-origin preflight attempts.
+                logger.warning(
+                    "cors.preflight_rejected",
+                    extra={
+                        "origin": origin,
+                        "path": request.url.path,
+                        "method": request.method,
+                    },
+                )
                 # No CORS headers on a rejected preflight; the browser will block.
-                return PlainTextResponse("Forbidden", status_code=403)
+                return PlainTextResponse(
+                    "Forbidden",
+                    status_code=403,
+                    media_type="text/plain; charset=utf-8",
+                )
         else:
             response = await call_next(request)
 
@@ -443,6 +508,27 @@ class DynamicCORSMiddleware(BaseHTTPMiddleware):
             response.headers["Access-Control-Allow-Credentials"] = "true"
             response.headers["Access-Control-Allow-Methods"] = "*"
             response.headers["Access-Control-Allow-Headers"] = _CORS_ALLOWED_HEADERS
+
+        # V03.4.1: HSTS unconditionally on every response.
+        response.headers["Strict-Transport-Security"] = (
+            "max-age=31536000; includeSubDomains"
+        )
+        # V03.4.4: prevent MIME sniffing.
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        # V03.4.5: limit referrer leakage of sensitive paths.
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        # V03.4.3 + V03.4.6: global CSP with frame-ancestors lock-down.
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; object-src 'none'; base-uri 'none'; "
+            "frame-ancestors 'none'; "
+            "script-src 'self' https://cdn.jsdelivr.net; "
+            "style-src 'self' https://cdn.jsdelivr.net; "
+            "img-src 'self' data: https://fastapi.tiangolo.com; "
+            "connect-src 'self'"
+        )
+        # V03.4.8: COOP for HTML (docs/redoc) responses to prevent tabnabbing.
+        if response.headers.get("content-type", "").startswith("text/html"):
+            response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
 
         return response
 
@@ -455,13 +541,31 @@ logger.info("Dynamic CORS Middleware configured.")
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """Catches Pydantic validation errors and provides detailed logging."""
+    safe_errors = [
+        {"loc": e.get("loc"), "msg": e.get("msg"), "type": e.get("type")}
+        for e in exc.errors()
+    ]
     logger.error(
         "Pydantic Validation Error",
-        extra={"errors": exc.errors(), "url": str(request.url)},
+        extra={"errors": safe_errors, "url": str(request.url)},
     )
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content=jsonable_encoder({"detail": exc.errors()}),
+        content={"detail": "Request validation failed."},
+    )
+
+
+@app.exception_handler(Exception)
+async def _last_resort_handler(request: Request, exc: Exception):
+    """V16.5.4: last-resort handler — log details server-side, return generic message."""
+    logger.error(
+        "unhandled_exception",
+        extra={"path": request.url.path},
+        exc_info=True,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "An internal error occurred."},
     )
 
 

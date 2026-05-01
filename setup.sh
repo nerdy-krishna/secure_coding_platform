@@ -32,6 +32,7 @@ echo ""
 # 2. Environment Setup
 echo "[*] Setting up environment configuration..."
 
+exec 9>>.env.lock; flock -n 9 || { echo "[!] Another setup.sh is running; exiting."; exit 1; }
 if [ ! -f .env ]; then
     echo " -> Copying .env.example to .env..."
     cp .env.example .env
@@ -43,19 +44,28 @@ if [ ! -f .env ]; then
     RABBITMQ_DEFAULT_PASS=$(python3 scripts/generate_secrets.py random)
     QDRANT_API_KEY=$(python3 scripts/generate_secrets.py random)
 
+    # Escape sed replacement-side metacharacters (/, &, \) so that special
+    # characters in generated secrets are treated as literals (V01.2.9).
+    _esc() { printf '%s\n' "$1" | sed -e 's/[\/&]/\\&/g'; }
+    _SECRET_KEY=$(_esc "$SECRET_KEY")
+    _ENCRYPTION_KEY=$(_esc "$ENCRYPTION_KEY")
+    _POSTGRES_PASSWORD=$(_esc "$POSTGRES_PASSWORD")
+    _RABBITMQ_DEFAULT_PASS=$(_esc "$RABBITMQ_DEFAULT_PASS")
+    _QDRANT_API_KEY=$(_esc "$QDRANT_API_KEY")
+
     # Use sed based on OS (macOS sed requires empty extension for -i)
     if [[ "$OSTYPE" == "darwin"* ]]; then
-        sed -i '' "s/SECRET_KEY=supersecretkey1234567890/SECRET_KEY=$SECRET_KEY/" .env
-        sed -i '' "s/ENCRYPTION_KEY=.*$/ENCRYPTION_KEY=$ENCRYPTION_KEY/" .env
-        sed -i '' "s/POSTGRES_PASSWORD=postgres/POSTGRES_PASSWORD=$POSTGRES_PASSWORD/" .env
-        sed -i '' "s/RABBITMQ_DEFAULT_PASS=password/RABBITMQ_DEFAULT_PASS=$RABBITMQ_DEFAULT_PASS/" .env
-        sed -i '' "s|QDRANT_API_KEY=change-me-qdrant-key|QDRANT_API_KEY=$QDRANT_API_KEY|" .env
+        sed -i '' "s/SECRET_KEY=supersecretkey1234567890/SECRET_KEY=$_SECRET_KEY/" .env
+        sed -i '' "s/ENCRYPTION_KEY=.*$/ENCRYPTION_KEY=$_ENCRYPTION_KEY/" .env
+        sed -i '' "s/POSTGRES_PASSWORD=postgres/POSTGRES_PASSWORD=$_POSTGRES_PASSWORD/" .env
+        sed -i '' "s/RABBITMQ_DEFAULT_PASS=password/RABBITMQ_DEFAULT_PASS=$_RABBITMQ_DEFAULT_PASS/" .env
+        sed -i '' "s|QDRANT_API_KEY=change-me-qdrant-key|QDRANT_API_KEY=$_QDRANT_API_KEY|" .env
     else
-        sed -i "s/SECRET_KEY=supersecretkey1234567890/SECRET_KEY=$SECRET_KEY/" .env
-        sed -i "s/ENCRYPTION_KEY=.*$/ENCRYPTION_KEY=$ENCRYPTION_KEY/" .env
-        sed -i "s/POSTGRES_PASSWORD=postgres/POSTGRES_PASSWORD=$POSTGRES_PASSWORD/" .env
-        sed -i "s/RABBITMQ_DEFAULT_PASS=password/RABBITMQ_DEFAULT_PASS=$RABBITMQ_DEFAULT_PASS/" .env
-        sed -i "s|QDRANT_API_KEY=change-me-qdrant-key|QDRANT_API_KEY=$QDRANT_API_KEY|" .env
+        sed -i "s/SECRET_KEY=supersecretkey1234567890/SECRET_KEY=$_SECRET_KEY/" .env
+        sed -i "s/ENCRYPTION_KEY=.*$/ENCRYPTION_KEY=$_ENCRYPTION_KEY/" .env
+        sed -i "s/POSTGRES_PASSWORD=postgres/POSTGRES_PASSWORD=$_POSTGRES_PASSWORD/" .env
+        sed -i "s/RABBITMQ_DEFAULT_PASS=password/RABBITMQ_DEFAULT_PASS=$_RABBITMQ_DEFAULT_PASS/" .env
+        sed -i "s|QDRANT_API_KEY=change-me-qdrant-key|QDRANT_API_KEY=$_QDRANT_API_KEY|" .env
     fi
 
     echo "[+] .env created and configured with new secrets."
@@ -70,10 +80,12 @@ else
     if grep -q '^QDRANT_API_KEY=change-me-qdrant-key$' .env; then
         echo " -> Replacing placeholder QDRANT_API_KEY with a generated value..."
         QDRANT_API_KEY=$(python3 scripts/generate_secrets.py random)
+        _esc() { printf '%s\n' "$1" | sed -e 's/[\/&]/\\&/g'; }
+        _QDRANT_API_KEY=$(_esc "$QDRANT_API_KEY")
         if [[ "$OSTYPE" == "darwin"* ]]; then
-            sed -i '' "s|QDRANT_API_KEY=change-me-qdrant-key|QDRANT_API_KEY=$QDRANT_API_KEY|" .env
+            sed -i '' "s|QDRANT_API_KEY=change-me-qdrant-key|QDRANT_API_KEY=$_QDRANT_API_KEY|" .env
         else
-            sed -i "s|QDRANT_API_KEY=change-me-qdrant-key|QDRANT_API_KEY=$QDRANT_API_KEY|" .env
+            sed -i "s|QDRANT_API_KEY=change-me-qdrant-key|QDRANT_API_KEY=$_QDRANT_API_KEY|" .env
         fi
         echo "[+] QDRANT_API_KEY rotated."
     fi
@@ -90,6 +102,7 @@ else
         fi
     fi
 fi
+flock -u 9
 
 # 2.5. Deployment Configuration Prompt
 echo ""
@@ -128,14 +141,23 @@ while true; do
             echo "Would you like to auto-provision a free Let's Encrypt SSL Certificate?"
             echo "  1) Yes (I have a valid domain pointing to this server's IP)"
             echo "  2) No (I will access via IP or configure SSL manually)"
+            echo "     WARNING: Choosing No exposes your deployment over cleartext HTTP."
             echo "  0) Go Back"
             read -p "Your choice (1/2/0): " choice
             if [ "$choice" = "1" ]; then
                 SSL_ENABLED="true"
                 STATE=3
             elif [ "$choice" = "2" ]; then
-                SSL_ENABLED="false"
-                STATE=4
+                echo ""
+                echo "  [!] SECURITY WARNING: Running a cloud deployment without TLS transmits"
+                echo "      all data (including credentials) in cleartext over the public Internet."
+                read -p "  To confirm you accept this risk, type YES_I_UNDERSTAND_PLAINTEXT: " ssl_risk_confirm
+                if [ "$ssl_risk_confirm" = "YES_I_UNDERSTAND_PLAINTEXT" ]; then
+                    SSL_ENABLED="false"
+                    STATE=4
+                else
+                    echo "  Confirmation not accepted. Returning to SSL selection."
+                fi
             elif [ "$choice" = "0" ]; then
                 STATE=1
             else
@@ -149,6 +171,9 @@ while true; do
                 STATE=2
             elif [ -z "$choice" ]; then
                 echo "Domain cannot be blank. Please provide a valid domain or IP."
+            elif ! [[ "$choice" =~ ^[A-Za-z0-9]([A-Za-z0-9.\-]*[A-Za-z0-9])?$ ]] && \
+                 ! [[ "$choice" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+                echo "Invalid domain or IP. Use only letters, digits, dots, and hyphens."
             else
                 SSL_DOMAIN="$choice"
                 STATE=4
@@ -194,20 +219,25 @@ done
 
 echo ""
 echo "[*] Saving Configuration..."
+# Escape sed replacement-side metacharacters for any value written via sed (V01.2.9).
+_esc() { printf '%s\n' "$1" | sed -e 's/[\/&]/\\&/g'; }
+_DEPLOYMENT_TYPE=$(_esc "$DEPLOYMENT_TYPE")
+_SSL_ENABLED=$(_esc "$SSL_ENABLED")
+_SSL_DOMAIN=$(_esc "$SSL_DOMAIN")
 if grep -q "^DEPLOYMENT_TYPE=" .env; then
-    sed -i.bak "s/^DEPLOYMENT_TYPE=.*/DEPLOYMENT_TYPE=$DEPLOYMENT_TYPE/" .env
+    sed -i.bak "s/^DEPLOYMENT_TYPE=.*$/DEPLOYMENT_TYPE=$_DEPLOYMENT_TYPE/" .env
 else
     echo "DEPLOYMENT_TYPE=$DEPLOYMENT_TYPE" >> .env
 fi
 
 if grep -q "^SSL_ENABLED=" .env; then
-    sed -i.bak "s/^SSL_ENABLED=.*/SSL_ENABLED=$SSL_ENABLED/" .env
+    sed -i.bak "s/^SSL_ENABLED=.*$/SSL_ENABLED=$_SSL_ENABLED/" .env
 else
     echo "SSL_ENABLED=$SSL_ENABLED" >> .env
 fi
 
 if grep -q "^SSL_DOMAIN=" .env; then
-    sed -i.bak "s/^SSL_DOMAIN=.*/SSL_DOMAIN=$SSL_DOMAIN/" .env
+    sed -i.bak "s/^SSL_DOMAIN=.*$/SSL_DOMAIN=$_SSL_DOMAIN/" .env
 else
     if [ ! -z "$SSL_DOMAIN" ]; then
         echo "SSL_DOMAIN=$SSL_DOMAIN" >> .env
@@ -301,8 +331,11 @@ if [ "$daemon_confirm" = "YES" ]; then
     if ! command -v python3 >/dev/null 2>&1; then
         echo "[!] python3 unavailable; cannot merge JSON safely. Skipping."
     else
+        _SCCAP_DAEMON_TMP=$(mktemp /tmp/sccap-daemon.json.XXXXXX) || { echo '[!] mktemp failed'; exit 1; }
+        chmod 0600 "$_SCCAP_DAEMON_TMP"
+        trap 'rm -f "$_SCCAP_DAEMON_TMP"' EXIT
         _sccap_render_status=0
-        _sccap_render_daemon_json "/tmp/sccap-daemon.json.$$" || _sccap_render_status=$?
+        _sccap_render_daemon_json "$_SCCAP_DAEMON_TMP" || _sccap_render_status=$?
         case "$_sccap_render_status" in
             0)
                 # Backup any existing daemon.json before atomic install.
@@ -312,13 +345,13 @@ if [ "$daemon_confirm" = "YES" ]; then
                         echo "    Existing daemon.json backed up to $BACKUP_PATH"
                     else
                         echo "[!] Backup failed; aborting daemon.json change."
-                        rm -f "/tmp/sccap-daemon.json.$$"
+                        rm -f "$_SCCAP_DAEMON_TMP"
                         exit 1
                     fi
                 fi
                 if _sccap_with_root install -m 0644 -o root -g root \
-                       "/tmp/sccap-daemon.json.$$" /etc/docker/daemon.json; then
-                    rm -f "/tmp/sccap-daemon.json.$$"
+                       "$_SCCAP_DAEMON_TMP" /etc/docker/daemon.json; then
+                    rm -f "$_SCCAP_DAEMON_TMP"
                     if [[ "$OSTYPE" == "darwin"* ]]; then
                         echo "[+] daemon.json updated. Restart Docker Desktop manually to apply."
                     else
@@ -331,17 +364,17 @@ if [ "$daemon_confirm" = "YES" ]; then
                         fi
                     fi
                 else
-                    rm -f "/tmp/sccap-daemon.json.$$"
+                    rm -f "$_SCCAP_DAEMON_TMP"
                     echo "[!] daemon.json install failed; existing file untouched."
                 fi
                 ;;
             100)
                 echo "[+] daemon.json already had log-driver/log-opts; nothing to do."
-                rm -f "/tmp/sccap-daemon.json.$$"
+                rm -f "$_SCCAP_DAEMON_TMP"
                 ;;
             *)
                 echo "[!] daemon.json render failed (exit $_sccap_render_status); skipping."
-                rm -f "/tmp/sccap-daemon.json.$$"
+                rm -f "$_SCCAP_DAEMON_TMP"
                 ;;
         esac
     fi
@@ -400,7 +433,9 @@ else
     if [ "$SSL_ENABLED" = "true" ]; then
         echo "   -> https://$SSL_DOMAIN"
     else
-        echo "   -> http://<YOUR_SERVER_PUBLIC_IP>"
+        echo "Refusing to advertise a cleartext URL for cloud deployments."
+        echo "Re-run the wizard with SSL enabled (Let's Encrypt) or use Local mode for development."
+        exit 1
     fi
 fi
 echo ""
@@ -409,9 +444,9 @@ if [ "$DEPLOYMENT_TYPE" = "local" ]; then
     echo "   -> http://localhost:3000"
 else
     if [ "$SSL_ENABLED" = "true" ]; then
-        echo "   -> http://$SSL_DOMAIN:3000"
+        echo "   -> https://$SSL_DOMAIN:3000"
     else
-        echo "   -> http://<YOUR_SERVER_PUBLIC_IP>:3000"
+        echo "   Grafana not exposed publicly. Tunnel via SSH (-L 3000:localhost:3000) to reach the dashboard."
     fi
 fi
 echo ""
