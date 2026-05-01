@@ -26,6 +26,8 @@ from app.infrastructure.database.database import Base
 class User(SQLAlchemyBaseUserTable[int], Base):
     __tablename__ = "user"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # classification: PII / level=Restricted
+    # protection: must not appear in logs; access restricted to authenticated owner; retained per data-retention policy
     email: Mapped[str] = mapped_column(
         String(length=320), unique=True, index=True, nullable=False
     )
@@ -186,7 +188,8 @@ class Finding(Base):
     scan_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("scans.id"), nullable=False)
     file_path: Mapped[str] = mapped_column(Text, nullable=False)
     line_number: Mapped[Optional[int]] = mapped_column(Integer)
-    title: Mapped[str] = mapped_column(Text, nullable=False)
+    # V02.2.1: hard-capped at 512 characters at the persistence layer
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
     severity: Mapped[Optional[str]] = mapped_column(String(50))
     remediation: Mapped[Optional[str]] = mapped_column(Text)
@@ -212,6 +215,18 @@ class Finding(Base):
         sa.Boolean, nullable=True, default=None
     )
 
+    # V02.2.1: enforce maximum string lengths at the DB layer
+    __table_args__ = (
+        sa.CheckConstraint(
+            "length(description) <= 65535",
+            name="ck_findings_description_maxlen",
+        ),
+        sa.CheckConstraint(
+            "length(remediation) <= 65535",
+            name="ck_findings_remediation_maxlen",
+        ),
+    )
+
     scan: Mapped["Scan"] = relationship(back_populates="findings")
 
 
@@ -226,7 +241,12 @@ class LLMConfiguration(Base):
     provider: Mapped[str] = mapped_column(String(50), nullable=False)
     model_name: Mapped[str] = mapped_column(String(100), nullable=False)
     tokenizer: Mapped[Optional[str]] = mapped_column(String(100))
-    encrypted_api_key: Mapped[str] = mapped_column(Text, nullable=False)
+    # classification: Secret / level=Confidential
+    # protection: Fernet-encrypted at rest; must NOT be included in any LLMConfigurationRead Pydantic schema or API response
+    # V15.3.1: info={"sensitive": True} prevents accidental serialisation by downstream Pydantic adapters
+    encrypted_api_key: Mapped[str] = mapped_column(
+        Text, nullable=False, info={"sensitive": True}
+    )
     input_cost_per_million: Mapped[float] = mapped_column(
         DECIMAL(10, 6), nullable=False, server_default="0.0"
     )
@@ -251,8 +271,14 @@ class LLMInteraction(Base):
     agent_name: Mapped[str] = mapped_column(String(100), nullable=False)
     file_path: Mapped[Optional[str]] = mapped_column(Text)
     prompt_template_name: Mapped[Optional[str]] = mapped_column(String(100))
+    # classification: LLM-payload / level=Restricted (may contain PII or secrets)
+    # protection: redact via observability/mask before logs; retained per RETENTION_DAYS_LLM_INTERACTIONS then purged
     prompt_context: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB)
+    # classification: LLM-payload / level=Restricted (may contain PII or secrets)
+    # protection: redact via observability/mask before logs; retained per RETENTION_DAYS_LLM_INTERACTIONS then purged
     raw_response: Mapped[str] = mapped_column(Text, nullable=False)
+    # classification: LLM-payload / level=Restricted (may contain PII or secrets)
+    # protection: redact via observability/mask before logs; retained per RETENTION_DAYS_LLM_INTERACTIONS then purged
     parsed_output: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB)
     error: Mapped[Optional[str]] = mapped_column(Text)
     cost: Mapped[Optional[float]] = mapped_column(DECIMAL(10, 8))
@@ -298,6 +324,8 @@ class ChatMessage(Base):
         ForeignKey("chat_sessions.id"), nullable=False
     )
     role: Mapped[str] = mapped_column(String(20), nullable=False)
+    # classification: UserContent / level=Restricted
+    # protection: redact in logs; retained per RETENTION_DAYS_CHAT_MESSAGES then purged; must not appear in error responses
     content: Mapped[str] = mapped_column(Text, nullable=False)
     cost: Mapped[Optional[float]] = mapped_column(DECIMAL(10, 8))
     timestamp: Mapped[datetime] = mapped_column(
@@ -397,6 +425,9 @@ class RAGPreprocessingJob(Base):
     original_file_hash: Mapped[str] = mapped_column(
         String(64), nullable=False, index=True
     )
+    # classification: UserUpload / level=Restricted
+    # protection: NULL after status transitions to COMPLETED unless raw_content_retention_consent=True;
+    # purged via RAGJobRepository.purge_old_raw_content per RETENTION_DAYS_RAG_JOBS
     raw_content: Mapped[Optional[bytes]] = mapped_column(sa.LargeBinary, nullable=True)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="PENDING")
     estimated_cost: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB)
@@ -440,6 +471,8 @@ class CweOwaspMapping(Base):
 class SystemConfiguration(Base):
     __tablename__ = "system_configurations"
     key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    # classification: Config / level=Secret when is_secret=true
+    # protection: Fernet-encrypted when encrypted=true; never logged; redacted on non-admin API surfaces
     value: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
     is_secret: Mapped[bool] = mapped_column(
