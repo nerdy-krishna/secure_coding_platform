@@ -66,9 +66,15 @@ def get_mail_config() -> Optional[ConnectionConfig]:
             extra={"branch": "env_fallback"},
         )
         return None
+    # SMTP_PASSWORD is Optional[SecretStr]; fastapi-mail wants a plain string.
+    _smtp_password = (
+        settings.SMTP_PASSWORD.get_secret_value()
+        if hasattr(settings.SMTP_PASSWORD, "get_secret_value")
+        else str(settings.SMTP_PASSWORD or "")
+    )
     return ConnectionConfig(
         MAIL_USERNAME=settings.SMTP_USER,
-        MAIL_PASSWORD=settings.SMTP_PASSWORD,
+        MAIL_PASSWORD=_smtp_password,
         MAIL_FROM=settings.SMTP_FROM,
         MAIL_PORT=settings.SMTP_PORT,
         MAIL_SERVER=settings.SMTP_HOST,

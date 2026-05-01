@@ -3,7 +3,7 @@ import hashlib
 import logging
 import re
 import urllib.parse
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import Depends, Request
 from fastapi_users import BaseUserManager, IntegerIDMixin
@@ -15,16 +15,24 @@ from app.config.config import settings
 logger = logging.getLogger(__name__)
 
 
+def _unwrap_secret(value: Any) -> str:
+    """Unwrap a Pydantic SecretStr (or pass through plain str) for libraries
+    (fastapi-users, jose, etc.) that need the raw token-signing secret."""
+    if hasattr(value, "get_secret_value"):
+        return value.get_secret_value()
+    return str(value) if value is not None else ""
+
+
 class UserManager(IntegerIDMixin, BaseUserManager[User, int]):
     # V06.4.3: Use dedicated secrets for reset and verification tokens, distinct
     # from the session signing SECRET_KEY. Set RESET_TOKEN_SECRET and
     # VERIFICATION_TOKEN_SECRET in .env; falls back to SECRET_KEY only if unset
     # (legacy compatibility — production deployments MUST set distinct secrets).
-    reset_password_token_secret = getattr(
-        settings, "RESET_TOKEN_SECRET", settings.SECRET_KEY
+    reset_password_token_secret = _unwrap_secret(
+        getattr(settings, "RESET_TOKEN_SECRET", settings.SECRET_KEY)
     )
-    verification_token_secret = getattr(
-        settings, "VERIFICATION_TOKEN_SECRET", settings.SECRET_KEY
+    verification_token_secret = _unwrap_secret(
+        getattr(settings, "VERIFICATION_TOKEN_SECRET", settings.SECRET_KEY)
     )
 
     async def on_after_register(self, user: User, request: Optional[Request] = None):

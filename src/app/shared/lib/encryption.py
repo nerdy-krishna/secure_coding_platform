@@ -21,7 +21,13 @@ class FernetEncrypt:
     reassignment with ``with cls._lock: cls._fernet = Fernet(new_key_bytes)``.
     """
 
-    _key_str = settings.ENCRYPTION_KEY
+    # ENCRYPTION_KEY is a Pydantic SecretStr; unwrap before the base64 padding fix-up.
+    _raw_key = settings.ENCRYPTION_KEY
+    _key_str = (
+        _raw_key.get_secret_value()
+        if hasattr(_raw_key, "get_secret_value")
+        else str(_raw_key) if _raw_key else ""
+    )
     if not _key_str:
         raise ValueError(
             "ENCRYPTION_KEY environment variable not set. Please generate a new one."
