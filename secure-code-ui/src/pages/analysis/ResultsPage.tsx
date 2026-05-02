@@ -13,14 +13,16 @@
 // design's `.diff` / `.diff-row` utilities. Actions: SARIF download,
 // navigate to LLM logs, apply selective fix.
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { scanService } from "../../shared/api/scanService";
+import { useAuth } from "../../shared/hooks/useAuth";
 import { isSafeHttpUrl } from "../../shared/lib/safeUrl";
 import { isTerminalStatus } from "../../shared/lib/scanRoute";
 import { Icon } from "../../shared/ui/Icon";
 import { SevBar } from "../../shared/ui/DashboardPrimitives";
+import { Modal } from "../../shared/ui/Modal";
 import { useToast } from "../../shared/ui/Toast";
 import type {
   Finding,
@@ -67,6 +69,10 @@ const ResultsPage: React.FC = () => {
   const [search, setSearch] = useState("");
   const [selectedFindingId, setSelectedFindingId] = useState<number | null>(null);
   const [applyingId, setApplyingId] = useState<number | null>(null);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const { user } = useAuth();
+  const isSuperuser = !!user?.is_superuser;
 
   const { data, isLoading, isError, error } = useQuery<ScanResultResponse>({
     queryKey: ["scan-result", scanId],
@@ -137,6 +143,22 @@ const ResultsPage: React.FC = () => {
 
   const selected =
     filtered.find((f) => f.id === selectedFindingId) ?? filtered[0] ?? null;
+
+  const handleDelete = useCallback(async () => {
+    if (!scanId) return;
+    setDeleting(true);
+    try {
+      await scanService.deleteScan(scanId);
+      toast.info("Scan deleted.");
+      navigate("/account/dashboard");
+    } catch (err) {
+      const e = err as { message?: string };
+      toast.error(e.message || "Failed to delete scan");
+    } finally {
+      setDeleting(false);
+      setDeleteConfirmOpen(false);
+    }
+  }, [scanId, navigate, toast]);
 
 
   if (isLoading) {
@@ -232,6 +254,15 @@ const ResultsPage: React.FC = () => {
                 flexWrap: "wrap",
               }}
             >
+              {data.status === "CANCELLED" || data.status === "EXPIRED" ? (
+                <span className="chip">{data.status.toLowerCase()}</span>
+              ) : data.status === "FAILED" ||
+                data.status === "BLOCKED_PRE_LLM" ||
+                data.status === "BLOCKED_USER_DECLINE" ? (
+                <span className="chip chip-critical">
+                  {data.status.toLowerCase().replace(/_/g, " ")}
+                </span>
+              ) : null}
               <span>
                 {allFindings.length} finding
                 {allFindings.length === 1 ? "" : "s"}
@@ -252,10 +283,27 @@ const ResultsPage: React.FC = () => {
           <div style={{ display: "flex", gap: 8 }}>
             <button
               className="sccap-btn sccap-btn-sm"
+              onClick={() => navigate(`/analysis/scanning/${scanId}`)}
+              title="View the scan event timeline"
+            >
+              <Icon.Clock size={13} /> Timeline
+            </button>
+            <button
+              className="sccap-btn sccap-btn-sm"
               onClick={() => navigate(`/scans/${scanId}/llm-logs`)}
             >
               <Icon.Terminal size={13} /> LLM logs
             </button>
+            {isSuperuser && (
+              <button
+                className="sccap-btn sccap-btn-sm"
+                onClick={() => setDeleteConfirmOpen(true)}
+                disabled={deleting}
+                style={{ color: "var(--critical)" }}
+              >
+                <Icon.Alert size={13} /> {deleting ? "Deleting…" : "Delete"}
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -601,6 +649,36 @@ const ResultsPage: React.FC = () => {
           </div>
         )}
       </div>
+
+      <Modal
+        open={deleteConfirmOpen}
+        onClose={() => (deleting ? undefined : setDeleteConfirmOpen(false))}
+        title="Delete this scan permanently?"
+        footer={
+          <>
+            <button
+              className="sccap-btn"
+              onClick={() => setDeleteConfirmOpen(false)}
+              disabled={deleting}
+            >
+              Cancel
+            </button>
+            <button
+              className="sccap-btn sccap-btn-primary"
+              onClick={handleDelete}
+              disabled={deleting}
+              style={{ background: "var(--critical)" }}
+            >
+              {deleting ? "Deleting…" : "Delete scan"}
+            </button>
+          </>
+        }
+      >
+        <div style={{ color: "var(--fg)", fontSize: 13.5, lineHeight: 1.55 }}>
+          This removes the scan, its findings, and event log from the
+          database. The action cannot be undone.
+        </div>
+      </Modal>
     </div>
   );
 };

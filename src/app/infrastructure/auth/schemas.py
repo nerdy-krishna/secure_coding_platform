@@ -36,14 +36,20 @@ def _check_password_complexity(password: str) -> str:
 class UserRead(schemas.BaseUser[int]):
     """Schema for reading user data (response model).
 
-    Privileged flags (is_superuser, is_verified) are excluded from
-    serialisation so they are never leaked to non-admin clients.
+    `is_superuser` is intentionally serialised so the frontend can gate
+    admin-only UI off the user's own profile (the `/users/me` response).
+    Every endpoint that returns this schema is already appropriately
+    gated: `/users/me` returns the caller's own row; `/users/{id}` and
+    the `/admin/users` routes are superuser-only — there is no path that
+    leaks another user's privilege flag to a non-admin caller.
+
+    `is_verified` stays excluded — the frontend does not branch on it
+    and there is no need to expose mailbox-verification state to the
+    client.
     """
 
     model_config = ConfigDict(extra="ignore")
 
-    # Override privileged fields so they are excluded from API responses.
-    is_superuser: bool = Field(default=False, exclude=True)
     is_verified: bool = Field(default=False, exclude=True)
 
 
