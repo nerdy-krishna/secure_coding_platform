@@ -247,13 +247,39 @@ class ScanQueryService:
         )
 
     async def get_paginated_scans_for_project(
-        self, project_id: uuid.UUID, user_id: int, skip: int, limit: int
+        self,
+        project_id: uuid.UUID,
+        user: db_models.User,
+        skip: int,
+        limit: int,
+        visible_user_ids: Optional[List[int]] = None,
     ) -> api_models.PaginatedScanHistoryResponse:
-        """Retrieves a paginated list of scan history for a project."""
+        """Retrieves a paginated list of scan history for a project.
+
+        Authorization mirrors the rest of this service: superusers see
+        every project; regular users see projects they own or projects
+        owned by peers in a shared group (per the H.2 visibility scope).
+        """
         skip = max(int(skip), 0)
         limit = min(max(int(limit), 1), MAX_PAGE_SIZE)
         project = await self.repo.get_project_by_id(project_id)
-        if not project or project.user_id != user_id:
+        is_owner = bool(project) and project.user_id == user.id
+        is_admin = user.is_superuser
+        is_peer = (
+            bool(project)
+            and visible_user_ids is not None
+            and project.user_id in visible_user_ids
+        )
+        if not project or not (is_owner or is_admin or is_peer):
+            logger.warning(
+                "scan-query: authorization denied",
+                extra={
+                    "project_id": str(project_id),
+                    "actor_user_id": str(user.id),
+                    "is_superuser": user.is_superuser,
+                    "action": "get_project_scans",
+                },
+            )
             raise HTTPException(
                 status_code=404, detail="Project not found or not authorized."
             )
