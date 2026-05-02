@@ -133,6 +133,33 @@ const ScanRunningPage: React.FC = () => {
   // even if SSE reconnects after the `done` event.
   const notifiedRef = useRef<Record<string, boolean>>({});
 
+  // Seed `status` from a one-shot HTTP fetch on mount. The SSE stream
+  // emits live updates only and currently can't authenticate (cookie
+  // path not wired in `current_active_user_sse`); without this seed the
+  // page stays at the initial "QUEUED" string forever for any scan
+  // that's already terminal (CANCELLED / FAILED / COMPLETED) when the
+  // user lands here.
+  useEffect(() => {
+    if (!scanId) return;
+    let cancelled = false;
+    scanService
+      .getScanResult(scanId)
+      .then((r) => {
+        if (cancelled) return;
+        if (typeof r.status === "string" && r.status.length < 64) {
+          setStatus(r.status);
+        }
+      })
+      .catch(() => {
+        // Best-effort — leave the SSE stream to fill in if it can. The
+        // user will still see "Lost connection to the scan stream"
+        // below if both paths fail.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [scanId]);
+
   // Open the SSE stream on mount; close on unmount or when status goes terminal.
   useEffect(() => {
     if (!scanId) return;
@@ -467,51 +494,66 @@ const ScanRunningPage: React.FC = () => {
   }, [scanId, navigate, toast]);
 
   return (
-    <div
-      className="fade-in"
-      style={{ display: "grid", gridTemplateColumns: "1fr 360px", gap: 20 }}
-    >
-      <div style={{ display: "grid", gap: 16 }}>
-        <div>
-          <div
-            className={`chip ${isFailed ? "chip-critical" : "chip-info"}`}
-            style={{ marginBottom: 8 }}
-          >
-            {!isTerminal && (
-              <span
-                className="pulse-dot dot"
-                style={{ background: "currentColor" }}
-              />
-            )}
-            {isFailed ? <Icon.Alert size={11} /> : null}
-            Scan{" "}
-            <span style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>
-              {scanId?.slice(0, 8)}
-            </span>{" "}
-            · {fmtStatus(status)}
-          </div>
-          <h1 style={{ color: "var(--fg)" }}>
-            {isPendingPrescan
-              ? "Pre-LLM scan complete — review before continuing"
-              : isPendingApproval
-                ? "Ready to run — approve the estimated cost"
-                : status === "COMPLETED" || status === "REMEDIATION_COMPLETED"
-                  ? "Scan complete — redirecting to results…"
-                  : status === "BLOCKED_PRE_LLM"
-                    ? "Scan stopped — Critical secret detected"
-                    : status === "BLOCKED_USER_DECLINE"
-                      ? "Scan stopped at your request"
-                      : isFailed
-                        ? "Scan did not complete"
-                        : "Analyzing your code"}
-          </h1>
-          <div style={{ color: "var(--fg-muted)", marginTop: 4 }}>
-            You can leave this page — the scan continues in the background and
-            results appear on the Projects list when done.
-          </div>
+    <div className="fade-in" style={{ display: "grid", gap: 16 }}>
+      {/* Header — full width above the 2-col body so the Status card on
+          the right aligns with the Overall progress card on the left. */}
+      <div>
+        <button
+          className="sccap-btn sccap-btn-sm sccap-btn-ghost"
+          onClick={() => navigate(-1)}
+          style={{ marginBottom: 10 }}
+        >
+          <Icon.ChevronL size={12} /> Back
+        </button>
+        <div
+          className={`chip ${isFailed ? "chip-critical" : "chip-info"}`}
+          style={{ marginBottom: 8 }}
+        >
+          {!isTerminal && (
+            <span
+              className="pulse-dot dot"
+              style={{ background: "currentColor" }}
+            />
+          )}
+          {isFailed ? <Icon.Alert size={11} /> : null}
+          Scan{" "}
+          <span style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>
+            {scanId?.slice(0, 8)}
+          </span>{" "}
+          · {fmtStatus(status)}
         </div>
+        <h1 style={{ color: "var(--fg)" }}>
+          {isPendingPrescan
+            ? "Pre-LLM scan complete — review before continuing"
+            : isPendingApproval
+              ? "Ready to run — approve the estimated cost"
+              : status === "COMPLETED" || status === "REMEDIATION_COMPLETED"
+                ? "Scan complete — redirecting to results…"
+                : status === "BLOCKED_PRE_LLM"
+                  ? "Scan stopped — Critical secret detected"
+                  : status === "BLOCKED_USER_DECLINE"
+                    ? "Scan stopped at your request"
+                    : isFailed
+                      ? "Scan did not complete"
+                      : "Analyzing your code"}
+        </h1>
+        <div style={{ color: "var(--fg-muted)", marginTop: 4 }}>
+          You can leave this page — the scan continues in the background and
+          results appear on the Projects list when done.
+        </div>
+      </div>
 
-        {/* progress + stages */}
+      {/* Body — 2-col grid, content + sidebar. */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 360px",
+          gap: 20,
+          alignItems: "start",
+        }}
+      >
+        <div style={{ display: "grid", gap: 16 }}>
+          {/* progress + stages */}
         <div className="surface" style={{ padding: 24 }}>
           <div
             style={{
@@ -927,6 +969,7 @@ const ScanRunningPage: React.FC = () => {
           Back to dashboard
         </button>
       </aside>
+      </div>
 
       <Modal
         open={stopConfirmOpen}
