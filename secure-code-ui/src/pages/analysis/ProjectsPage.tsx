@@ -11,6 +11,7 @@ import React, { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useDebounce } from "../../shared/hooks/useDebounce";
 import { scanService } from "../../shared/api/scanService";
+import { scanRouteFor } from "../../shared/lib/scanRoute";
 import type {
   ProjectHistoryItem,
   ScanHistoryItem,
@@ -180,7 +181,7 @@ const ProjectsPage: React.FC = () => {
                 style={{ cursor: "pointer" }}
                 onClick={() => {
                   if (latest) {
-                    navigate(`/analysis/results/${latest.id}`);
+                    navigate(scanRouteFor(latest.id, latest.status));
                   } else {
                     navigate("/submission/submit");
                   }

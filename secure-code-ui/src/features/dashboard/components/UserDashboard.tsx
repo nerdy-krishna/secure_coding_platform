@@ -13,6 +13,7 @@ import type { DashboardStats } from "../../../shared/api/dashboardService";
 import { scanService } from "../../../shared/api/scanService";
 import type { ScanHistoryItem } from "../../../shared/types/api";
 import { useAuth } from "../../../shared/hooks/useAuth";
+import { scanRouteFor } from "../../../shared/lib/scanRoute";
 import { Icon } from "../../../shared/ui/Icon";
 import {
   MetricCard,
@@ -22,14 +23,6 @@ import {
   Spark,
 } from "../../../shared/ui/DashboardPrimitives";
 
-const TERMINAL_STATUSES = new Set([
-  "COMPLETED",
-  "REMEDIATION_COMPLETED",
-  "FAILED",
-  "CANCELLED",
-  "EXPIRED",
-]);
-
 const IN_PROGRESS_STATUSES = new Set([
   "QUEUED",
   "QUEUED_FOR_SCAN",
@@ -37,6 +30,7 @@ const IN_PROGRESS_STATUSES = new Set([
   "RUNNING_AGENTS",
   "GENERATING_REPORTS",
   "PENDING_COST_APPROVAL",
+  "PENDING_PRESCAN_APPROVAL",
 ]);
 
 function relativeTime(iso: string | null | undefined): string {
@@ -281,14 +275,11 @@ export const UserDashboard: React.FC = () => {
               </thead>
               <tbody>
                 {recent.map((s) => {
-                  const clickable = TERMINAL_STATUSES.has(s.status);
                   return (
                     <tr
                       key={s.id}
-                      onClick={() =>
-                        clickable && navigate(`/analysis/results/${s.id}`)
-                      }
-                      style={{ cursor: clickable ? "pointer" : "default" }}
+                      onClick={() => navigate(scanRouteFor(s.id, s.status))}
+                      style={{ cursor: "pointer" }}
                     >
                       <td>
                         <div
@@ -352,7 +343,7 @@ export const UserDashboard: React.FC = () => {
                           color: "var(--fg-subtle)",
                         }}
                       >
-                        {clickable && <Icon.ChevronR size={14} />}
+                        <Icon.ChevronR size={14} />
                       </td>
                     </tr>
                   );

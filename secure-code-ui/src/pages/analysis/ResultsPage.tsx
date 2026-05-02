@@ -13,11 +13,12 @@
 // design's `.diff` / `.diff-row` utilities. Actions: SARIF download,
 // navigate to LLM logs, apply selective fix.
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { scanService } from "../../shared/api/scanService";
 import { isSafeHttpUrl } from "../../shared/lib/safeUrl";
+import { isTerminalStatus } from "../../shared/lib/scanRoute";
 import { Icon } from "../../shared/ui/Icon";
 import { SevBar } from "../../shared/ui/DashboardPrimitives";
 import { useToast } from "../../shared/ui/Toast";
@@ -72,6 +73,16 @@ const ResultsPage: React.FC = () => {
     queryFn: () => scanService.getScanResult(scanId!),
     enabled: !!scanId,
   });
+
+  // If the scan isn't terminal yet (queued, running, or awaiting approval)
+  // the live progress + approval UI lives on /analysis/scanning/:id. Bounce
+  // there so deep-links from search/admin/back-button always end up where
+  // the user can act on the scan.
+  useEffect(() => {
+    if (data?.status && scanId && !isTerminalStatus(data.status)) {
+      navigate(`/analysis/scanning/${scanId}`, { replace: true });
+    }
+  }, [data?.status, scanId, navigate]);
 
   const applyFix = useMutation({
     mutationFn: (findingId: number) =>

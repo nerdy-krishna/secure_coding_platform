@@ -10,6 +10,7 @@ import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import { scanService } from "../../shared/api/scanService";
 import { useDebounce } from "../../shared/hooks/useDebounce";
+import { scanRouteFor } from "../../shared/lib/scanRoute";
 import { Icon } from "../../shared/ui/Icon";
 import type { ScanHistoryItem } from "../../shared/types/api";
 
@@ -244,7 +245,7 @@ const SubmissionHistoryPage: React.FC = () => {
                     <div
                       key={scan.id}
                       onClick={() =>
-                        navigate(`/analysis/results/${scan.id}`)
+                        navigate(scanRouteFor(scan.id, scan.status))
                       }
                       style={{
                         display: "grid",
