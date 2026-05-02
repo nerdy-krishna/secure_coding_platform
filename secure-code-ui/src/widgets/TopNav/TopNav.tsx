@@ -2,13 +2,13 @@
 //
 // The SCCAP top-nav shell. Port of the design bundle's AppShell.jsx,
 // adapted to the real app: React Router for active-item detection,
-// useAuth for logout + superuser gate, useTheme for theme + role state.
+// useAuth for logout + superuser gate, useTheme for theme toggle.
 
 import React, { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../../shared/hooks/useAuth";
 import { useNotificationPermission } from "../../shared/hooks/useNotificationPermission";
-import { useTheme, type SccapRole } from "../../app/providers/ThemeProvider";
+import { useTheme } from "../../app/providers/ThemeProvider";
 import { Icon } from "../../shared/ui/Icon";
 import { useToast } from "../../shared/ui/Toast";
 import { SearchCombobox } from "./SearchCombobox";
@@ -41,30 +41,14 @@ const ADMIN_ITEM: NavItem = {
   to: "/admin/system",
 };
 
-const ROLE_LABELS: Record<SccapRole, string> = {
-  user: "User",
-  admin: "Admin",
-};
-
-const ROLE_INITIALS: Record<SccapRole, string> = {
-  user: "US",
-  admin: "AD",
-};
-
 export const TopNav: React.FC = () => {
   const location = useLocation();
-  const { theme, toggleTheme, role, setRole } = useTheme();
+  const navigate = useNavigate();
+  const { theme, toggleTheme } = useTheme();
   const { user } = useAuth();
   const isSuperuser = !!user?.is_superuser;
 
-  // V02.2.1 – runtime guard: reject any role value that is not in the
-  // allow-list (e.g. a corrupt localStorage entry) and fall back to 'user'.
-  const VALID_ROLES = ['user', 'admin'] as const;
-  const safeRole: SccapRole = (VALID_ROLES as readonly string[]).includes(role) ? role : 'user';
-
   // Effective nav: append Admin item when the user is actually a superuser.
-  // Previewing "admin" role via Tweaks doesn't grant admin access; route
-  // guards enforce that.
   const items = isSuperuser ? [...NAV_ITEMS, ADMIN_ITEM] : NAV_ITEMS;
 
   const activeId =
@@ -146,8 +130,9 @@ export const TopNav: React.FC = () => {
           <SearchCombobox />
           <button
             className="sccap-btn sccap-btn-icon sccap-btn-ghost"
-            title="Settings"
-            aria-label="Settings"
+            title="Appearance settings"
+            aria-label="Appearance settings"
+            onClick={() => navigate("/account/settings/appearance")}
           >
             <Icon.Settings size={16} />
           </button>
@@ -160,7 +145,7 @@ export const TopNav: React.FC = () => {
           >
             {theme === "light" ? <Icon.Moon size={16} /> : <Icon.Sun size={16} />}
           </button>
-          <RoleMenu role={safeRole} setRole={setRole} email={user?.email} />
+          <UserMenu isSuperuser={isSuperuser} email={user?.email} />
         </div>
       </div>
     </header>
@@ -279,13 +264,12 @@ const Brand: React.FC = () => (
   </Link>
 );
 
-interface RoleMenuProps {
-  role: SccapRole;
-  setRole: (r: SccapRole) => void;
+interface UserMenuProps {
+  isSuperuser: boolean;
   email?: string;
 }
 
-const RoleMenu: React.FC<RoleMenuProps> = ({ role, setRole, email }) => {
+const UserMenu: React.FC<UserMenuProps> = ({ isSuperuser, email }) => {
   const [open, setOpen] = useState(false);
   const { logout } = useAuth();
   const navigate = useNavigate();
@@ -309,6 +293,14 @@ const RoleMenu: React.FC<RoleMenuProps> = ({ role, setRole, email }) => {
     navigate("/login", { replace: true });
   };
 
+  const goAppearance = () => {
+    setOpen(false);
+    navigate("/account/settings/appearance");
+  };
+
+  const label = isSuperuser ? "Admin" : "User";
+  const initials = isSuperuser ? "AD" : "US";
+
   return (
     <div ref={ref} style={{ position: "relative" }}>
       <button
@@ -331,11 +323,11 @@ const RoleMenu: React.FC<RoleMenuProps> = ({ role, setRole, email }) => {
             fontWeight: 600,
           }}
         >
-          {ROLE_INITIALS[role]}
+          {initials}
         </div>
         <div style={{ textAlign: "left", lineHeight: 1.15 }}>
           <div style={{ fontSize: 12.5, fontWeight: 500, color: "var(--fg)" }}>
-            {ROLE_LABELS[role]}
+            {label}
           </div>
           <div style={{ fontSize: 11, color: "var(--fg-subtle)" }}>
             {email ?? ""}
@@ -357,50 +349,32 @@ const RoleMenu: React.FC<RoleMenuProps> = ({ role, setRole, email }) => {
             zIndex: 30,
           }}
         >
-          <div
+          <button
+            role="menuitem"
+            onClick={goAppearance}
             style={{
-              padding: "6px 10px",
-              fontSize: 11,
-              color: "var(--fg-subtle)",
-              textTransform: "uppercase",
-              letterSpacing: ".06em",
+              display: "flex",
+              width: "100%",
+              alignItems: "center",
+              gap: 10,
+              padding: "8px 10px",
+              borderRadius: 6,
+              border: "none",
+              background: "transparent",
+              color: "var(--fg)",
+              cursor: "pointer",
+              fontFamily: "inherit",
+              fontSize: 13,
+              textAlign: "left",
             }}
           >
-            View as (preview)
-          </div>
-          {(["user", "admin"] as SccapRole[]).map((r) => (
-            <button
-              key={r}
-              role="menuitemradio"
-              aria-checked={role === r}
-              onClick={() => {
-                setRole(r);
-                setOpen(false);
-              }}
-              style={{
-                display: "flex",
-                width: "100%",
-                alignItems: "center",
-                gap: 10,
-                padding: "8px 10px",
-                borderRadius: 6,
-                border: "none",
-                background: role === r ? "var(--bg-soft)" : "transparent",
-                color: "var(--fg)",
-                cursor: "pointer",
-                textAlign: "left",
-                fontFamily: "inherit",
-                fontSize: 13,
-              }}
-            >
-              <span style={{ flex: 1 }}>{ROLE_LABELS[r]}</span>
-              {role === r && <Icon.Check size={14} />}
-            </button>
-          ))}
+            <Icon.Settings size={14} /> <span>Appearance</span>
+          </button>
           <div
             style={{ height: 1, background: "var(--border)", margin: "6px 0" }}
           />
           <button
+            role="menuitem"
             onClick={handleSignOut}
             style={{
               display: "flex",
@@ -415,6 +389,7 @@ const RoleMenu: React.FC<RoleMenuProps> = ({ role, setRole, email }) => {
               cursor: "pointer",
               fontFamily: "inherit",
               fontSize: 13,
+              textAlign: "left",
             }}
           >
             <Icon.Lock size={14} /> <span>Sign out</span>

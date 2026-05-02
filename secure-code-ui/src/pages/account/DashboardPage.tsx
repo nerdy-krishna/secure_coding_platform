@@ -2,8 +2,7 @@
 //
 // Role-aware dashboard router. H.3 dropped the enterprise variant and
 // narrowed roles to user + admin. The choice is driven by the real
-// `user.is_superuser` flag — role preview in Tweaks is cosmetic only,
-// real admin surfaces still require the backend-issued flag.
+// `user.is_superuser` flag, which is also what the route guards use.
 
 import React from "react";
 import { AdminSnapshot } from "../../features/dashboard/components/AdminSnapshot";

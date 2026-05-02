@@ -12,6 +12,7 @@ import { AuthProvider } from "./providers/AuthProvider";
 import { ToastProvider } from "../shared/ui/Toast";
 
 import LLMSettingsPage from "../features/admin-settings/components/LLMSettingsPage";
+import AppearanceSettingsPage from "../pages/account/AppearanceSettingsPage";
 import DashboardPage from "../pages/account/DashboardPage";
 import SubmissionHistoryPage from "../pages/account/SubmissionHistoryPage";
 import AdminFindingsPage from "../pages/admin/AdminFindingsPage";
@@ -157,6 +158,10 @@ function AppContent() {
           <Route path="/advisor" element={<SecurityAdvisorPage />} />
           <Route path="/compliance" element={<CompliancePage />} />
           <Route path="/account/history" element={<SubmissionHistoryPage />} />
+          <Route
+            path="/account/settings/appearance"
+            element={<AppearanceSettingsPage />}
+          />
         </Route>
 
         <Route element={<RouteGuard requires="superuser" />}>

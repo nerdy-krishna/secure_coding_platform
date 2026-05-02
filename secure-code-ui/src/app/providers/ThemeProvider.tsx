@@ -1,13 +1,10 @@
 // secure-code-ui/src/app/providers/ThemeProvider.tsx
 //
 // Manages the SCCAP theme mode + color-variation attributes on
-// document.documentElement. Mirrors the SCCAP design bundle's
-// `useTheme()` hook: persists theme + variant + optional accent
+// document.documentElement. Persists theme + variant + optional accent
 // override to localStorage and writes matching `data-theme` /
-// `data-variant` attributes so the token CSS picks them up.
-//
-// Phase G.0: mounted but not wired into any page yet. Phase G.1's
-// TopNav + Tweaks widgets consume `useTheme()` to toggle.
+// `data-variant` attributes so the token CSS picks them up. The user
+// edits these from the Appearance settings page.
 
 import React, {
   createContext,
@@ -20,22 +17,14 @@ import React, {
 
 export type SccapTheme = "light" | "dark";
 export type SccapVariant = "A" | "B";
-// H.3 collapsed roles to user + admin. Legacy `dev` / `enterprise`
-// values in localStorage are migrated on read (see readRole).
-export type SccapRole = "user" | "admin";
 
 interface ThemeContextValue {
   theme: SccapTheme;
   variant: SccapVariant;
   accent: string;
-  /** Previewed role — drives which dashboard variant + nav items render.
-   * Not a security gate; admin routes still require user.is_superuser at the
-   * route guard. Set by the Tweaks panel for design preview. */
-  role: SccapRole;
   setTheme: (theme: SccapTheme) => void;
   setVariant: (variant: SccapVariant) => void;
   setAccent: (accent: string) => void;
-  setRole: (role: SccapRole) => void;
   toggleTheme: () => void;
 }
 
@@ -52,14 +41,6 @@ function readStored<T extends string>(key: string, fallback: T, valid: readonly 
   if (typeof window === "undefined") return fallback;
   const raw = window.localStorage.getItem(key);
   return valid.includes(raw as T) ? (raw as T) : fallback;
-}
-
-function readRole(): SccapRole {
-  if (typeof window === "undefined") return "user";
-  const raw = window.localStorage.getItem(STORAGE_KEYS.role);
-  // Migrate legacy values from the pre-H.3 three-role era.
-  if (raw === "dev" || raw === "enterprise") return "user";
-  return raw === "admin" ? "admin" : "user";
 }
 
 // Allow-list regex for CSS color values accepted as accent overrides.
@@ -89,11 +70,14 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({
     readStored<SccapVariant>(STORAGE_KEYS.variant, "A", ["A", "B"]),
   );
   const [accent, setAccentState] = useState<string>(() => readAccent());
-  const [role, setRoleState] = useState<SccapRole>(() => readRole());
 
+  // Drop the legacy `sccap-role` localStorage entry from the cosmetic
+  // role-preview era — role is now derived solely from user.is_superuser.
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEYS.role, role);
-  }, [role]);
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(STORAGE_KEYS.role);
+    }
+  }, []);
 
   // Write attributes + persist on every change.
   useEffect(() => {
@@ -127,14 +111,12 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({
       theme,
       variant,
       accent,
-      role,
       setTheme: setThemeState,
       setVariant: setVariantState,
       setAccent: setAccentState,
-      setRole: setRoleState,
       toggleTheme,
     }),
-    [theme, variant, accent, role, toggleTheme],
+    [theme, variant, accent, toggleTheme],
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
