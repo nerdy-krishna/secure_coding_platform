@@ -13,10 +13,12 @@ import { useNavigate, useParams } from "react-router-dom";
 import { CriticalSecretOverrideModal } from "../../features/prescan-approval/CriticalSecretOverrideModal";
 import { PrescanReviewCard } from "../../features/prescan-approval/PrescanReviewCard";
 import { scanService } from "../../shared/api/scanService";
+import { useAuth } from "../../shared/hooks/useAuth";
 import { useNotificationPermission } from "../../shared/hooks/useNotificationPermission";
 import type { PrescanReviewResponse } from "../../shared/types/api";
 import { Icon } from "../../shared/ui/Icon";
 import { SectionHead } from "../../shared/ui/DashboardPrimitives";
+import { Modal } from "../../shared/ui/Modal";
 import { useToast } from "../../shared/ui/Toast";
 
 interface ScanEventMsg {
@@ -114,6 +116,11 @@ const ScanRunningPage: React.FC = () => {
   const [streamError, setStreamError] = useState<string | null>(null);
   const [approving, setApproving] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [stopConfirmOpen, setStopConfirmOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const { user } = useAuth();
+  const isSuperuser = !!user?.is_superuser;
   const [prescanReview, setPrescanReview] = useState<PrescanReviewResponse | null>(
     null,
   );
@@ -439,6 +446,23 @@ const ScanRunningPage: React.FC = () => {
       toast.error(e.message || "Failed to cancel scan");
     } finally {
       setCancelling(false);
+      setStopConfirmOpen(false);
+    }
+  }, [scanId, navigate, toast]);
+
+  const handleDelete = useCallback(async () => {
+    if (!scanId) return;
+    setDeleting(true);
+    try {
+      await scanService.deleteScan(scanId);
+      toast.info("Scan deleted.");
+      navigate("/account/dashboard");
+    } catch (err) {
+      const e = err as { message?: string };
+      toast.error(e.message || "Failed to delete scan");
+    } finally {
+      setDeleting(false);
+      setDeleteConfirmOpen(false);
     }
   }, [scanId, navigate, toast]);
 
@@ -876,6 +900,26 @@ const ScanRunningPage: React.FC = () => {
                   </>
                 )}
         </button>
+        {!isTerminal && (
+          <button
+            className="sccap-btn"
+            onClick={() => setStopConfirmOpen(true)}
+            disabled={cancelling}
+            style={{ color: "var(--critical)" }}
+          >
+            <Icon.X size={12} /> {cancelling ? "Stopping…" : "Stop scan"}
+          </button>
+        )}
+        {isSuperuser && (
+          <button
+            className="sccap-btn"
+            onClick={() => setDeleteConfirmOpen(true)}
+            disabled={deleting}
+            style={{ color: "var(--critical)" }}
+          >
+            <Icon.Alert size={12} /> {deleting ? "Deleting…" : "Delete scan"}
+          </button>
+        )}
         <button
           className="sccap-btn"
           onClick={() => navigate("/account/dashboard")}
@@ -883,6 +927,73 @@ const ScanRunningPage: React.FC = () => {
           Back to dashboard
         </button>
       </aside>
+
+      <Modal
+        open={stopConfirmOpen}
+        onClose={() => (cancelling ? undefined : setStopConfirmOpen(false))}
+        title="Stop this scan?"
+        footer={
+          <>
+            <button
+              className="sccap-btn"
+              onClick={() => setStopConfirmOpen(false)}
+              disabled={cancelling}
+            >
+              Keep running
+            </button>
+            <button
+              className="sccap-btn sccap-btn-primary"
+              onClick={handleCancel}
+              disabled={cancelling}
+              style={{ background: "var(--critical)" }}
+            >
+              {cancelling ? "Stopping…" : "Stop scan"}
+            </button>
+          </>
+        }
+      >
+        <div style={{ color: "var(--fg)", fontSize: 13.5, lineHeight: 1.55 }}>
+          The scan will transition to <b>CANCELLED</b>. Any partial progress is
+          discarded — no findings or fixes are produced. You can submit the
+          project again later.
+        </div>
+      </Modal>
+
+      <Modal
+        open={deleteConfirmOpen}
+        onClose={() => (deleting ? undefined : setDeleteConfirmOpen(false))}
+        title="Delete this scan permanently?"
+        footer={
+          <>
+            <button
+              className="sccap-btn"
+              onClick={() => setDeleteConfirmOpen(false)}
+              disabled={deleting}
+            >
+              Cancel
+            </button>
+            <button
+              className="sccap-btn sccap-btn-primary"
+              onClick={handleDelete}
+              disabled={deleting}
+              style={{ background: "var(--critical)" }}
+            >
+              {deleting ? "Deleting…" : "Delete scan"}
+            </button>
+          </>
+        }
+      >
+        <div style={{ color: "var(--fg)", fontSize: 13.5, lineHeight: 1.55 }}>
+          This removes the scan, its findings, and event log from the
+          database. The action cannot be undone.{" "}
+          {!isTerminal && (
+            <b style={{ color: "var(--critical)" }}>
+              The worker may still be processing this scan in the background —
+              consider stopping it first.
+            </b>
+          )}
+        </div>
+      </Modal>
     </div>
   );
 };
