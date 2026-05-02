@@ -11,7 +11,6 @@ import React, { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useDebounce } from "../../shared/hooks/useDebounce";
 import { scanService } from "../../shared/api/scanService";
-import { scanRouteFor } from "../../shared/lib/scanRoute";
 import type {
   ProjectHistoryItem,
   ScanHistoryItem,
@@ -180,11 +179,12 @@ const ProjectsPage: React.FC = () => {
                 className="sccap-card"
                 style={{ cursor: "pointer" }}
                 onClick={() => {
-                  if (latest) {
-                    navigate(scanRouteFor(latest.id, latest.status));
-                  } else {
-                    navigate("/submission/submit");
-                  }
+                  navigate(`/analysis/projects/${p.id}`, {
+                    state: {
+                      projectName: p.name,
+                      repoUrl: p.repository_url ?? null,
+                    },
+                  });
                 }}
               >
                 <div

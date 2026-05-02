@@ -24,6 +24,7 @@ import AgentManagementPage from "../pages/admin/AgentManagementPage";
 import FrameworkManagementPage from "../pages/admin/FrameworkManagementPage";
 import PromptManagementPage from "../pages/admin/PromptManagementPage";
 import LlmLogViewerPage from "../pages/analysis/LlmLogViewerPage";
+import ProjectDetailPage from "../pages/analysis/ProjectDetailPage";
 import ProjectsPage from "../pages/analysis/ProjectsPage";
 import ResultsPage from "../pages/analysis/ResultsPage";
 import LoginPage from "../pages/auth/LoginPage";
@@ -150,6 +151,10 @@ function AppContent() {
             element={<ScanRunningPage />}
           />
           <Route path="/analysis/results" element={<ProjectsPage />} />
+          <Route
+            path="/analysis/projects/:projectId"
+            element={<ProjectDetailPage />}
+          />
           <Route path="/analysis/results/:scanId" element={<ResultsPage />} />
           <Route
             path="/scans/:scanId/llm-logs"
