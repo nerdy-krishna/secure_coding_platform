@@ -62,6 +62,38 @@ class RedactionFilter(logging.Filter):
         return True
 
 
+# Built-in LogRecord attributes the formatter should NOT echo as "extras".
+# Anything else on the record came from a `logger.x("msg", extra={...})`
+# call site and is what we want to surface.
+_STANDARD_LOGRECORD_ATTRS: frozenset[str] = frozenset(
+    {
+        "args", "asctime", "created", "exc_info", "exc_text", "filename",
+        "funcName", "levelname", "levelno", "lineno", "message", "module",
+        "msecs", "msg", "name", "pathname", "process", "processName",
+        "relativeCreated", "stack_info", "thread", "threadName", "taskName",
+    }
+)
+
+# Cap total extras serialised per record so a runaway payload (e.g. a
+# huge validation-error blob) can't blow up Loki ingestion. Tuned for
+# the typical "errors": [...] list — generous, but bounded.
+_MAX_EXTRA_BYTES = 8192
+
+
+def _sanitise_log_value(value: Any) -> Any:
+    """Recursively scrub CR/LF from any string buried in the value, so
+    a multi-line payload can't smear across log lines (V16.4.1). Lists,
+    tuples, and dicts are walked; other types pass through untouched
+    and rely on `json.dumps(default=str)` for stringification."""
+    if isinstance(value, str):
+        return value.replace("\r", "\\r").replace("\n", "\\n")
+    if isinstance(value, dict):
+        return {k: _sanitise_log_value(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_sanitise_log_value(v) for v in value]
+    return value
+
+
 class JSONFormatter(logging.Formatter):
     """
     Custom logging formatter to output logs in a structured JSON format.
@@ -93,7 +125,39 @@ class JSONFormatter(logging.Formatter):
             exc_text = self.formatException(record.exc_info)
             log_object["exc_info"] = exc_text.replace("\r", "\\r").replace("\n", "\\n")
 
-        return json.dumps(log_object)
+        # Merge `extra={...}` kwargs from the call site. Standard logging
+        # attaches each `extra` key as a LogRecord attribute, so we walk
+        # `record.__dict__`, skip the built-ins, and emit the rest under
+        # their own JSON keys. Without this, every `logger.x("msg",
+        # extra={"errors": ...})` call line is logged with the headline
+        # only — the payload silently drops.
+        for attr, val in record.__dict__.items():
+            if attr in _STANDARD_LOGRECORD_ATTRS:
+                continue
+            if attr in log_object:
+                # Don't let an extras key clobber a standard field
+                # (timestamp / level / correlation_id / etc.).
+                continue
+            try:
+                serialised = json.dumps(
+                    _sanitise_log_value(val), default=str
+                )
+            except (TypeError, ValueError):
+                # Last-resort: stringify unknown objects rather than
+                # losing the whole log line to a serialisation error.
+                serialised = json.dumps(repr(val))
+            if len(serialised) > _MAX_EXTRA_BYTES:
+                # Replace oversized payloads with a marker rather than
+                # truncating mid-string (which would emit invalid JSON
+                # via json.loads on the consumer side).
+                log_object[attr] = (
+                    f"<extra '{attr}' dropped: "
+                    f"{len(serialised)} bytes > {_MAX_EXTRA_BYTES} cap>"
+                )
+            else:
+                log_object[attr] = json.loads(serialised)
+
+        return json.dumps(log_object, default=str)
 
 
 # Determine the running environment; default to "production" when unset (fail-safe) (V13.4.2)
