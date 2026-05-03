@@ -289,8 +289,24 @@ class ScanQueryService:
             project_id, skip, limit
         )
 
+        # Build ScanHistoryItem explicitly — `project_name` lives on the
+        # related Project row, not on Scan, so `from_orm(scan)` raises a
+        # `project_name: Field required` ValidationError. Mirrors the
+        # construction pattern used in `get_paginated_user_scans` and
+        # `get_user_scan_history` further down this file.
         history_items = [
-            api_models.ScanHistoryItem.from_orm(scan) for scan in scans_raw
+            api_models.ScanHistoryItem(
+                id=scan.id,
+                project_id=scan.project_id,
+                project_name=scan.project.name,
+                scan_type=scan.scan_type,
+                status=scan.status,
+                created_at=scan.created_at,
+                completed_at=scan.completed_at,
+                cost_details=scan.cost_details,
+                events=[api_models.ScanEventItem.from_orm(e) for e in scan.events],
+            )
+            for scan in scans_raw
         ]
         return api_models.PaginatedScanHistoryResponse(items=history_items, total=total)
 
