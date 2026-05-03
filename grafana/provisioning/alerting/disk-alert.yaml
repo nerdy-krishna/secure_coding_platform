@@ -33,7 +33,7 @@ groups:
               expr: |
                 quantile_over_time(0.95,
                   {service_name="disk-monitor"}
-                  | json
+                  | logfmt
                   | unwrap used_pct [5m]
                 )
               queryType: range
@@ -63,7 +63,7 @@ groups:
                 type: __expr__
                 uid: __expr__
               expression: $B >= 75
-              type: threshold
+              type: math
               refId: C
         noDataState: NoData
         execErrState: Error
@@ -94,7 +94,7 @@ groups:
               expr: |
                 quantile_over_time(0.95,
                   {service_name="disk-monitor"}
-                  | json
+                  | logfmt
                   | unwrap used_pct [5m]
                 )
               queryType: range
@@ -124,7 +124,7 @@ groups:
                 type: __expr__
                 uid: __expr__
               expression: $B >= 90
-              type: threshold
+              type: math
               refId: C
         noDataState: NoData
         execErrState: Error
@@ -189,7 +189,7 @@ groups:
                 type: __expr__
                 uid: __expr__
               expression: $B > 0
-              type: threshold
+              type: math
               refId: C
         noDataState: OK
         execErrState: Error

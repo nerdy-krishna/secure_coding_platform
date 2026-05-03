@@ -3,6 +3,10 @@ apiVersion: 1
 
 datasources:
   - name: Loki
+    # Pinned UID — `provisioning/alerting/disk-alert.yaml` references
+    # `datasourceUid: loki`. Without this pin Grafana auto-generates a
+    # random UID and the alert rules fail with "data source not found".
+    uid: loki
     type: loki
     access: proxy
     url: http://loki:3100

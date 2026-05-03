@@ -98,6 +98,8 @@ services:
       - rabbitmq_data:/var/lib/rabbitmq/
       - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
       - ./rabbitmq/definitions.json:/etc/rabbitmq/definitions.json:ro
+      - ./rabbitmq/init.sh:/usr/local/bin/rabbitmq-init.sh:ro
+    command: ["bash", "/usr/local/bin/rabbitmq-init.sh"]
     healthcheck:
       test: [ "CMD", "rabbitmq-diagnostics", "-q", "ping" ]
       interval: 10s
@@ -449,6 +451,7 @@ services:
     environment:
       - SSL_ENABLED=${SSL_ENABLED:-false}
       - SSL_DOMAIN=${SSL_DOMAIN:-}
+      - SSL_DEV_INSECURE=${SSL_DEV_INSECURE:-false}
     ports:
       - "80:80"
       - "443:443"
