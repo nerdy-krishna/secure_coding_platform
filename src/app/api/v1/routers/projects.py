@@ -241,7 +241,7 @@ async def create_scan(
     project_name: str = Form(
         ..., min_length=1, max_length=200, pattern=r"^[A-Za-z0-9_. -]+$"
     ),
-    scan_type: str = Form(..., pattern=r"^(audit|suggest|remediate)$"),
+    scan_type: str = Form(..., pattern=r"^(AUDIT|SUGGEST|REMEDIATE)$"),
     reasoning_llm_config_id: Optional[uuid.UUID] = Form(None),
     frameworks: str = Form(
         ..., min_length=1, max_length=2048

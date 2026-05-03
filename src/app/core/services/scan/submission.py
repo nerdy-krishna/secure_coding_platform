@@ -61,7 +61,7 @@ MAX_PATH_LEN: int = 1_024
 # ---------------------------------------------------------------------------
 # Input-validation allow-lists (V02.2.1)
 # ---------------------------------------------------------------------------
-_VALID_SCAN_TYPES: frozenset[str] = frozenset({"AUDIT", "AUDIT_AND_REMEDIATE"})
+_VALID_SCAN_TYPES: frozenset[str] = frozenset({"AUDIT", "SUGGEST", "REMEDIATE"})
 _VALID_FRAMEWORKS: frozenset[str] = frozenset(
     {"asvs", "proactive_controls", "cheatsheets", "llm_top10", "agentic_top10"}
 )

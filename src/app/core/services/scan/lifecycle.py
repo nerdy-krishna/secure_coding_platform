@@ -296,7 +296,7 @@ class ScanLifecycleService:
     async def apply_fixes_for_scan(
         self, scan_id: uuid.UUID, user: db_models.User
     ) -> None:
-        """Applies all suggested and verified fixes for a completed AUDIT_AND_REMEDIATE scan."""
+        """Applies all suggested and verified fixes for a completed REMEDIATE scan."""
         MAX_FIXES_PER_APPLY = 1000
 
         logger.info(
@@ -319,10 +319,10 @@ class ScanLifecycleService:
                 detail="Scan not found or not authorized.",
             )
 
-        if scan.scan_type != "AUDIT_AND_REMEDIATE" or scan.status != STATUS_COMPLETED:
+        if scan.scan_type != "REMEDIATE" or scan.status != STATUS_COMPLETED:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Fixes can only be applied to completed 'Audit & Remediate' scans.",
+                detail="Fixes can only be applied to completed 'Remediate' scans.",
             )
 
         original_snapshot = next(

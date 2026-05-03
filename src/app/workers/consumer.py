@@ -416,7 +416,7 @@ async def _build_initial_state(
     queue_name = message.routing_key or ""
     if queue_name == settings.RABBITMQ_REMEDIATION_QUEUE:
         logger.info("MSG: REMEDIATION trigger for scan_id: %s", scan_uuid)
-        initial_state["scan_type"] = "AUDIT_AND_REMEDIATE"
+        initial_state["scan_type"] = "REMEDIATE"
     elif queue_name == settings.RABBITMQ_APPROVAL_QUEUE:
         logger.info("MSG: Resuming ANALYSIS for scan_id: %s", scan_uuid)
     else:
