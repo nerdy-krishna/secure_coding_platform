@@ -181,9 +181,11 @@ trigger_chat.py
 # Claude Code / SCCAP harness — local tooling, not part of the app.
 # .claude/ holds per-session state, agent definitions, and worktrees;
 # .agent/ holds operational notes, runbooks, and per-run work products
-# from the SCCAP harness. None of this is needed to build or run SCCAP.
+# from the SCCAP harness; CLAUDE.md is the Claude-specific contributor
+# guide. None of this is needed to build or run SCCAP.
 .claude/
 .agent/
+CLAUDE.md
 
 # Diagram + log output from the swark generator — generated artefacts.
 swark-output/
