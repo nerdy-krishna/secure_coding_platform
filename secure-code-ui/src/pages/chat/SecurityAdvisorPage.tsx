@@ -71,7 +71,30 @@ const SecurityAdvisorPage: React.FC = () => {
   const [newLlmId, setNewLlmId] = useState<string>("");
   const [newFrameworks, setNewFrameworks] = useState<string[]>([]);
   const threadRef = useRef<HTMLDivElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const lastSendRef = useRef<number>(0);
+
+  const handleCopyMessage = async (content: string) => {
+    try {
+      await navigator.clipboard.writeText(content);
+      toast.info("Copied");
+    } catch {
+      toast.error("Copy failed");
+    }
+  };
+
+  const handleEditMessage = (content: string) => {
+    setDraft(content);
+    // Defer focus + cursor placement until after the controlled input
+    // has rendered the new value.
+    requestAnimationFrame(() => {
+      const ta = textareaRef.current;
+      if (ta) {
+        ta.focus();
+        ta.setSelectionRange(content.length, content.length);
+      }
+    });
+  };
 
   const { data: sessions = [], isLoading: loadingSessions } = useQuery<
     ChatSession[]
@@ -122,14 +145,36 @@ const SecurityAdvisorPage: React.FC = () => {
   const askMutation = useMutation({
     mutationFn: (question: string) =>
       chatService.askQuestion(activeSessionId!, question),
+    // Optimistic update: append the user's message to the cache so the
+    // bubble shows up instantly. The real (server-assigned) message
+    // arrives via the invalidate-refetch in onSuccess and replaces this
+    // temp one (negative id so it never collides with a real row).
+    onMutate: async (question: string) => {
+      const key = ["chatMessages", activeSessionId];
+      await queryClient.cancelQueries({ queryKey: key });
+      const previous = queryClient.getQueryData<ChatMessage[]>(key) ?? [];
+      const optimistic: ChatMessage = {
+        id: -Date.now(),
+        role: "user",
+        content: question,
+        timestamp: new Date().toISOString(),
+      };
+      queryClient.setQueryData<ChatMessage[]>(key, [...previous, optimistic]);
+      setDraft("");
+      return { previous, key };
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({
         queryKey: ["chatMessages", activeSessionId],
       });
-      setDraft("");
     },
-    onError: (err: Error) => {
+    onError: (err: Error, _vars, ctx) => {
       if (process.env.NODE_ENV !== "production") console.error("[askMutation]", err);
+      // Roll the optimistic append back so the failed message doesn't
+      // linger in the thread without a response.
+      if (ctx?.previous && ctx.key) {
+        queryClient.setQueryData(ctx.key, ctx.previous);
+      }
       toast.error("Ask failed");
     },
   });
@@ -453,20 +498,58 @@ const SecurityAdvisorPage: React.FC = () => {
                   <div
                     style={{
                       maxWidth: "70%",
-                      padding: "10px 14px",
-                      borderRadius: isUser
-                        ? "14px 14px 4px 14px"
-                        : "14px 14px 14px 4px",
-                      background: isUser
-                        ? "var(--primary)"
-                        : "var(--bg-soft)",
-                      color: isUser ? "var(--primary-ink)" : "var(--fg)",
-                      fontSize: 13.5,
-                      lineHeight: 1.55,
-                      whiteSpace: "pre-wrap",
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: isUser ? "flex-end" : "flex-start",
+                      gap: 4,
                     }}
                   >
-                    {m.content}
+                    <div
+                      style={{
+                        padding: "10px 14px",
+                        borderRadius: isUser
+                          ? "14px 14px 4px 14px"
+                          : "14px 14px 14px 4px",
+                        background: isUser
+                          ? "var(--primary)"
+                          : "var(--bg-soft)",
+                        color: isUser ? "var(--primary-ink)" : "var(--fg)",
+                        fontSize: 13.5,
+                        lineHeight: 1.55,
+                        whiteSpace: "pre-wrap",
+                      }}
+                    >
+                      {m.content}
+                    </div>
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: 4,
+                        opacity: 0.75,
+                      }}
+                    >
+                      <button
+                        className="sccap-btn sccap-btn-icon sccap-btn-ghost"
+                        title="Copy message"
+                        aria-label="Copy message"
+                        onClick={() => handleCopyMessage(m.content)}
+                        style={{ padding: 4 }}
+                      >
+                        <Icon.Copy size={12} />
+                      </button>
+                      {isUser && (
+                        <button
+                          className="sccap-btn sccap-btn-icon sccap-btn-ghost"
+                          title="Edit and resend"
+                          aria-label="Edit and resend"
+                          onClick={() => handleEditMessage(m.content)}
+                          disabled={askMutation.isPending}
+                          style={{ padding: 4 }}
+                        >
+                          <Icon.Edit size={12} />
+                        </button>
+                      )}
+                    </div>
                   </div>
                   {isUser && (
                     <div
@@ -545,6 +628,7 @@ const SecurityAdvisorPage: React.FC = () => {
             style={{ display: "flex", gap: 8, alignItems: "flex-end" }}
           >
             <textarea
+              ref={textareaRef}
               className="sccap-textarea"
               rows={2}
               placeholder={
