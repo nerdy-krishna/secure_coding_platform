@@ -10,6 +10,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    UniqueConstraint,
     func,
     DECIMAL,
     BIGINT,
@@ -41,6 +42,16 @@ class User(SQLAlchemyBaseUserTable[int], Base):
 
 class Project(Base):
     __tablename__ = "projects"
+    # `(user_id, name)` is the natural key the upsert in
+    # scan_repo.get_or_create_project relies on (V15.4.2 — atomic
+    # `INSERT ... ON CONFLICT DO NOTHING` to defeat the TOCTOU race
+    # between two concurrent submitters of the same project name).
+    # Without this constraint Postgres rejects the ON CONFLICT clause
+    # outright and every scan submission 500s.
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_projects_user_id_name"),
+    )
+
     id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
