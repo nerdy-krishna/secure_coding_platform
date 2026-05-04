@@ -157,6 +157,49 @@ const ScanRunningPage: React.FC = () => {
         if (r.cost_details) {
           setCostDetails(r.cost_details);
         }
+        // Seed the live-event-log + stage-progress from the DB.
+        // Terminal scans' SSE streams emit these once and close, so
+        // a user landing AFTER the scan finished otherwise sees
+        // "Waiting for events…" forever. SSE still tops up with any
+        // new events for an in-progress scan.
+        const seededEvents = r.events ?? [];
+        if (seededEvents.length > 0) {
+          // ScanEventItem has no `id` field — dedupe by
+          // (stage_name + timestamp). Synthesize an event_id from
+          // the timestamp so the SSE stream's later id-based dedupe
+          // doesn't conflict (SSE-emitted events overwrite by id).
+          setEvents((prev) => {
+            const fingerprint = (e: { stage_name?: string; timestamp?: string | null }) =>
+              `${e.stage_name ?? ""}|${e.timestamp ?? ""}`;
+            const seen = new Set(prev.map((e) => fingerprint(e)));
+            const merged = [...prev];
+            for (const e of seededEvents) {
+              if (!seen.has(fingerprint(e))) {
+                // Generated schema doesn't include `details` (it
+                // was added to the backend after the last codegen),
+                // so read it via a structural cast to keep TS happy
+                // until we regenerate api-generated.ts.
+                const withDetails = e as unknown as {
+                  details?: ScanEventMsg["details"];
+                };
+                merged.push({
+                  scan_id: scanId,
+                  event_id: -Date.parse(e.timestamp ?? "") || 0,
+                  stage_name: e.stage_name,
+                  status: e.status,
+                  timestamp: e.timestamp ?? null,
+                  details: withDetails.details ?? null,
+                });
+              }
+            }
+            return merged.slice(-500);
+          });
+          setSeenStages((prev) => {
+            const next = new Set(prev);
+            for (const e of seededEvents) next.add(e.stage_name);
+            return next;
+          });
+        }
       })
       .catch(() => {
         // Best-effort — leave the SSE stream to fill in if it can. The

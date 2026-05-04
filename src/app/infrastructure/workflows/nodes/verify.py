@@ -37,7 +37,7 @@ def _build_signature(file_path: str, cwe: str | None, line_number: int) -> str:
     is handled in `_still_detected` below by matching on file+cwe only
     (line numbers shift after a patch).
     """
-    return f"{file_path}|{cwe or 'CWE-Unknown'}|{line_number}"
+    return f"{file_path}|{cwe or 'CWE-0'}|{line_number}"
 
 
 def _still_detected(

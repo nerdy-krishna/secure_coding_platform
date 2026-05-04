@@ -465,7 +465,14 @@ def _build_finding_object(
             exc_info=True,
         )
     return VulnerabilityFinding(
-        cwe=cwe or "CWE-Unknown",
+        # Fallback for an agent that returned a finding without a
+        # mappable CWE. The model's `cwe` field is constrained to
+        # `^CWE-\\d{1,5}$` (max 10 chars), so the literal "CWE-Unknown"
+        # (the prior fallback, 11 chars + non-digits) failed validation
+        # and killed every such finding silently. CWE-0 is the
+        # recognised "no CWE applies" sentinel — keeps the row valid
+        # so the user sees the finding and can re-classify later.
+        cwe=cwe or "CWE-0",
         title=initial_finding.title,
         description=initial_finding.description,
         severity=initial_finding.severity,
@@ -595,7 +602,7 @@ async def analysis_node(
             "agent: skipped — invalid code_bundle",
             extra={
                 "agent": agent_name,
-                "filename": filename,
+                "source_file_path": filename,
                 "code_bundle_type": type(code_bundle).__name__,
                 "code_bundle_len": len(code_bundle) if isinstance(code_bundle, str) else None,
             },
@@ -801,11 +808,16 @@ async def analysis_node(
 
         final_findings.append(finding_obj)
 
+    # `filename` is a built-in LogRecord attribute (the source-file
+    # name of the log call site), so handing it via extra={...}
+    # raises `KeyError: "Attempt to overwrite 'filename' in LogRecord"`
+    # before the line is ever emitted. Use `source_file_path` here to
+    # match the convention the rest of this module uses.
     logger.info(
         "agent: analysis complete",
         extra={
             "agent": agent_name,
-            "filename": filename,
+            "source_file_path": filename,
             "findings": len(final_findings),
             "fixes": len(final_fixes),
         },

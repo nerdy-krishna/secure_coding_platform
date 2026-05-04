@@ -396,7 +396,7 @@ class ScanSubmissionService:
         """Handles submission from an archive file."""
         logger.info(
             "scan-submission: from archive",
-            extra={"filename": archive_file.filename},
+            extra={"archive_filename": archive_file.filename},
         )
         files_data = extract_archive_to_files(archive_file)
         return await self._process_and_launch_scan(files_data=files_data, **kwargs)

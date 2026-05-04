@@ -235,6 +235,11 @@ export interface ScanResultResponse {
   // ScanRunningPage so the user sees the number alongside the
   // "Approve & run" button. Null until cost-estimate runs.
   cost_details?: CostDetails | null;
+  // Stage-event audit trail. SSE emits these live for in-progress
+  // scans; the same list is included here so a terminal scan's page
+  // can seed the live-event-log deterministically on mount, instead
+  // of waiting for an SSE that may have already closed.
+  events?: ScanEventItem[];
 }
 
 // --- Prescan-approval gate (ADR-009 / G6). One row per deterministic-

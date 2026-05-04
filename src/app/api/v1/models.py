@@ -735,6 +735,13 @@ class AnalysisResultDetailResponse(BaseModel):
     # the Scan row so it's an opaque dict here. Non-null only when the
     # cost-estimate node has run; null for very-early-status scans.
     cost_details: Optional[Dict[str, Any]] = None
+    # Stage-event audit trail (QUEUED / QUEUED_FOR_SCAN / FILE_ANALYZED
+    # etc.). The SSE stream emits these live, but a terminal scan's
+    # stream emits them then immediately closes — so a user landing
+    # on a FAILED / COMPLETED scan can't reliably see historical
+    # events. Including them here lets ScanRunningPage seed the live-
+    # event-log deterministically on mount; SSE adds any new ones.
+    events: List["ScanEventItem"] = Field(default_factory=list)
 
     class Config:
         from_attributes = True
