@@ -144,13 +144,24 @@ const ResultsPage: React.FC = () => {
   const selected =
     filtered.find((f) => f.id === selectedFindingId) ?? filtered[0] ?? null;
 
+  const projectId = data?.summary_report?.project_id;
+  const projectName = data?.summary_report?.project_name;
+
   const handleDelete = useCallback(async () => {
     if (!scanId) return;
     setDeleting(true);
     try {
       await scanService.deleteScan(scanId);
       toast.info("Scan deleted.");
-      navigate("/account/dashboard");
+      queryClient.invalidateQueries({ queryKey: ["project-scans", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      if (projectId) {
+        navigate(`/analysis/projects/${projectId}`, {
+          state: projectName ? { projectName } : undefined,
+        });
+      } else {
+        navigate("/analysis/results");
+      }
     } catch (err) {
       const e = err as { message?: string };
       toast.error(e.message || "Failed to delete scan");
@@ -158,7 +169,7 @@ const ResultsPage: React.FC = () => {
       setDeleting(false);
       setDeleteConfirmOpen(false);
     }
-  }, [scanId, navigate, toast]);
+  }, [scanId, projectId, projectName, navigate, queryClient, toast]);
 
 
   if (isLoading) {
