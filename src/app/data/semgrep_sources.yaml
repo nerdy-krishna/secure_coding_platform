@@ -53,7 +53,7 @@ sources:
     license_spdx: AGPL-3.0
     author: Trail of Bits
 
-  - slug: 0xdea
+  - slug: "0xdea"
     display_name: 0xdea C/C++ Rules
     description: >
       Memory safety and audit rules for C and C++ codebases by Marco Ivaldi.
