@@ -8,15 +8,26 @@
 // all staged files are submitted. If selective exclusion is needed before
 // that lands, a lightweight tree can be added here.
 
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { frameworkService } from "../../shared/api/frameworkService";
 import { llmConfigService } from "../../shared/api/llmConfigService";
 import { scanService } from "../../shared/api/scanService";
 import { Icon } from "../../shared/ui/Icon";
 import { useToast } from "../../shared/ui/Toast";
-import type { FrameworkRead, LLMConfiguration } from "../../shared/types/api";
+import type {
+  FrameworkRead,
+  LLMConfiguration,
+  ProjectHistoryItem,
+} from "../../shared/types/api";
+import { RepoFileTree } from "../../features/submission/RepoFileTree";
+
+interface SubmitNavState {
+  projectName?: string;
+  projectId?: string;
+  repoUrl?: string | null;
+}
 
 type SubmissionMode = "upload" | "git" | "archive";
 type ScanType = "AUDIT" | "SUGGEST" | "REMEDIATE";
@@ -136,17 +147,32 @@ const Dropzone: React.FC<{
 
 const SubmitPage: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const toast = useToast();
+  const navState = (location.state ?? {}) as SubmitNavState;
 
   const [mode, setMode] = useState<SubmissionMode>("upload");
-  const [projectName, setProjectName] = useState("");
+  const [projectName, setProjectName] = useState<string>(navState.projectName ?? "");
+  // null = "Create new project" (free-text input visible). A non-null
+  // value is the id of the existing project the user picked from the
+  // dropdown — projectName is locked to that project's name.
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
+    navState.projectId ?? null,
+  );
   const [scanType, setScanType] = useState<ScanType>("AUDIT");
   const [llmConfigId, setLlmConfigId] = useState<string>("");
   const [selectedFrameworks, setSelectedFrameworks] = useState<string[]>([]);
   const [files, setFiles] = useState<File[]>([]);
   const [archiveFile, setArchiveFile] = useState<File | null>(null);
-  const [repoUrl, setRepoUrl] = useState("");
+  const [repoUrl, setRepoUrl] = useState<string>(navState.repoUrl ?? "");
   const [submitting, setSubmitting] = useState(false);
+  // Preview-tree state. `previewFiles` is the flat list returned by
+  // /scans/preview-git or /scans/preview-archive; `selectedFiles` is
+  // the user's pick (default: every file).
+  const [previewFiles, setPreviewFiles] = useState<string[] | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
 
   const { data: llmConfigs, isLoading: loadingLlms } = useQuery<LLMConfiguration[]>({
     queryKey: ["llmConfigs"],
@@ -158,11 +184,104 @@ const SubmitPage: React.FC = () => {
     queryFn: frameworkService.getFrameworks,
   });
 
+  // Existing-project picker: pulls the user's projects so the user
+  // doesn't have to re-type a name they've already created. The
+  // backend's `get_or_create_project` is idempotent on (user_id, name)
+  // so submitting with an existing name lands in the same project
+  // either way; the picker just makes that obvious in the UI.
+  const { data: projectsList, isLoading: loadingProjects } = useQuery({
+    queryKey: ["projects", "submit-picker"],
+    queryFn: () => scanService.getProjectHistory(1, 200),
+  });
+  const projects: ProjectHistoryItem[] = useMemo(
+    () => projectsList?.items ?? [],
+    [projectsList],
+  );
+
   React.useEffect(() => {
     if (!llmConfigId && llmConfigs && llmConfigs.length > 0) {
       setLlmConfigId(llmConfigs[0].id);
     }
   }, [llmConfigs, llmConfigId]);
+
+  // If the user arrived here via "New scan" on a project page, the
+  // navState carries a projectId but the projects list is async — when
+  // it lands, sync the projectName so the locked input shows the right
+  // value. (Cheap; runs once per projects-load given the dep list.)
+  useEffect(() => {
+    if (selectedProjectId) {
+      const match = projects.find((p) => p.id === selectedProjectId);
+      if (match && match.name !== projectName) {
+        setProjectName(match.name);
+        if (match.repository_url && !repoUrl) {
+          setRepoUrl(match.repository_url);
+        }
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projects, selectedProjectId]);
+
+  // Reset the preview tree whenever the source it came from changes.
+  // For git: a different URL is a different repo. For archive: a
+  // different file is a different tree. Stops stale paths from being
+  // submitted with the wrong source.
+  useEffect(() => {
+    setPreviewFiles(null);
+    setSelectedFiles(new Set());
+    setPreviewError(null);
+  }, [mode, repoUrl, archiveFile]);
+
+  const handlePreviewGit = async () => {
+    const v = repoUrl.trim();
+    if (!v) return;
+    try {
+      const u = new URL(v);
+      if (u.protocol !== "https:") {
+        toast.error("Only HTTPS git URLs are accepted");
+        return;
+      }
+    } catch {
+      toast.error("Invalid repository URL");
+      return;
+    }
+    setPreviewLoading(true);
+    setPreviewError(null);
+    try {
+      const list = await scanService.previewGitRepo(v);
+      setPreviewFiles(list);
+      setSelectedFiles(new Set(list));
+    } catch (err) {
+      const e = err as {
+        response?: { data?: { detail?: string } };
+        message?: string;
+      };
+      const detail =
+        e.response?.data?.detail ?? e.message ?? "Could not fetch the repo";
+      setPreviewError(typeof detail === "string" ? detail : "Could not fetch the repo");
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const handlePreviewArchive = async (f: File) => {
+    setPreviewLoading(true);
+    setPreviewError(null);
+    try {
+      const list = await scanService.previewArchive(f);
+      setPreviewFiles(list);
+      setSelectedFiles(new Set(list));
+    } catch (err) {
+      const e = err as {
+        response?: { data?: { detail?: string } };
+        message?: string;
+      };
+      const detail =
+        e.response?.data?.detail ?? e.message ?? "Could not read archive";
+      setPreviewError(typeof detail === "string" ? detail : "Could not read archive");
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
 
   const canSubmit = useMemo(() => {
     if (!projectName.trim()) return false;
@@ -172,11 +291,35 @@ const SubmitPage: React.FC = () => {
     if (mode === "git") {
       // V12.3.1: only HTTPS git URLs are accepted from the UI
       const v = repoUrl.trim();
-      try { const u = new URL(v); return u.protocol === "https:"; } catch { return false; }
+      try {
+        const u = new URL(v);
+        if (u.protocol !== "https:") return false;
+      } catch {
+        return false;
+      }
+      // If the user has fetched the tree, require at least one file
+      // selected — submitting with everything unchecked would queue
+      // an empty scan.
+      if (previewFiles && selectedFiles.size === 0) return false;
+      return true;
     }
-    if (mode === "archive") return archiveFile !== null;
+    if (mode === "archive") {
+      if (!archiveFile) return false;
+      if (previewFiles && selectedFiles.size === 0) return false;
+      return true;
+    }
     return false;
-  }, [projectName, llmConfigId, selectedFrameworks, mode, files, repoUrl, archiveFile]);
+  }, [
+    projectName,
+    llmConfigId,
+    selectedFrameworks,
+    mode,
+    files,
+    repoUrl,
+    archiveFile,
+    previewFiles,
+    selectedFiles,
+  ]);
 
   const toggleFramework = (name: string) => {
     setSelectedFrameworks((prev) =>
@@ -231,6 +374,23 @@ const SubmitPage: React.FC = () => {
         payload.append("archive_file", archiveFile);
       }
 
+      // For git + archive modes the user may have narrowed the
+      // submitted files via the preview tree. The backend accepts a
+      // comma-separated list in `selected_files`; omitting it means
+      // "everything", so we only send the field when a deliberate
+      // subset was picked (i.e. fewer entries than the full preview).
+      if (
+        (mode === "git" || mode === "archive") &&
+        previewFiles &&
+        selectedFiles.size > 0 &&
+        selectedFiles.size < previewFiles.length
+      ) {
+        payload.append(
+          "selected_files",
+          Array.from(selectedFiles).join(","),
+        );
+      }
+
       const response = await scanService.createScan(payload);
       toast.success("Scan submitted. Tracking progress…");
       navigate(`/analysis/scanning/${response.scan_id}`);
@@ -273,15 +433,55 @@ const SubmitPage: React.FC = () => {
               fontWeight: 500,
             }}
           >
-            Project name
+            Project
           </label>
-          <input
-            className="sccap-input"
-            value={projectName}
-            onChange={(e) => setProjectName(e.target.value)}
-            placeholder="e.g., payments-api"
-            autoFocus
-          />
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: 12,
+            }}
+          >
+            <select
+              className="sccap-select"
+              value={selectedProjectId ?? "__new__"}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === "__new__") {
+                  setSelectedProjectId(null);
+                  setProjectName("");
+                } else {
+                  setSelectedProjectId(v);
+                  const match = projects.find((p) => p.id === v);
+                  if (match) {
+                    setProjectName(match.name);
+                    if (match.repository_url) setRepoUrl(match.repository_url);
+                  }
+                }
+              }}
+              disabled={loadingProjects}
+            >
+              <option value="__new__">+ Create new project</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <input
+              className="sccap-input"
+              value={projectName}
+              onChange={(e) => setProjectName(e.target.value)}
+              placeholder="e.g., payments-api"
+              autoFocus={selectedProjectId === null && !projectName}
+              disabled={selectedProjectId !== null}
+            />
+          </div>
+          <div style={{ marginTop: 6, fontSize: 11, color: "var(--fg-subtle)" }}>
+            {selectedProjectId
+              ? "Scanning into an existing project — name is locked."
+              : "Pick an existing project or create a new one. Names are unique per user."}
+          </div>
         </div>
 
         <div className="surface" style={{ padding: 0, overflow: "hidden" }}>
@@ -432,6 +632,55 @@ const SubmitPage: React.FC = () => {
                   Public repos are cloned shallow; private repos require a PAT
                   configured in Admin → LLM settings.
                 </div>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 8,
+                    marginTop: 12,
+                    alignItems: "center",
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="sccap-btn sccap-btn-sm"
+                    onClick={handlePreviewGit}
+                    disabled={previewLoading || !repoUrl.trim()}
+                  >
+                    <Icon.Folder size={12} />{" "}
+                    {previewLoading
+                      ? "Fetching…"
+                      : previewFiles
+                        ? "Refresh file tree"
+                        : "Fetch file tree"}
+                  </button>
+                  {previewFiles && (
+                    <span style={{ fontSize: 11.5, color: "var(--fg-muted)" }}>
+                      {previewFiles.length} file
+                      {previewFiles.length === 1 ? "" : "s"} found — pick which
+                      to scan.
+                    </span>
+                  )}
+                </div>
+                {previewError && (
+                  <div
+                    style={{
+                      marginTop: 8,
+                      fontSize: 12,
+                      color: "var(--critical)",
+                    }}
+                  >
+                    {previewError}
+                  </div>
+                )}
+                {previewFiles && (
+                  <div style={{ marginTop: 12 }}>
+                    <RepoFileTree
+                      files={previewFiles}
+                      selected={selectedFiles}
+                      onChange={setSelectedFiles}
+                    />
+                  </div>
+                )}
               </div>
             )}
 
@@ -470,6 +719,10 @@ const SubmitPage: React.FC = () => {
                       return;
                     }
                     setArchiveFile(file);
+                    // Auto-fetch the tree as soon as a valid archive
+                    // is dropped — the user expects "drop archive →
+                    // see files" to be one step, not two.
+                    void handlePreviewArchive(file);
                   }}
                   hint="Drop a .zip or .tar.gz"
                   helper="Single .zip/.tar/.tar.gz, up to 500 MB compressed and 2 GB uncompressed. Symlinks are rejected by the server."
@@ -486,7 +739,11 @@ const SubmitPage: React.FC = () => {
                   >
                     <span className="mono">{archiveFile.name}</span>
                     <span
-                      onClick={() => setArchiveFile(null)}
+                      onClick={() => {
+                        setArchiveFile(null);
+                        setPreviewFiles(null);
+                        setSelectedFiles(new Set());
+                      }}
                       style={{
                         cursor: "pointer",
                         color: "var(--fg-subtle)",
@@ -495,6 +752,37 @@ const SubmitPage: React.FC = () => {
                     >
                       Remove
                     </span>
+                  </div>
+                )}
+                {previewLoading && (
+                  <div
+                    style={{
+                      marginTop: 8,
+                      fontSize: 12,
+                      color: "var(--fg-muted)",
+                    }}
+                  >
+                    Reading archive…
+                  </div>
+                )}
+                {previewError && (
+                  <div
+                    style={{
+                      marginTop: 8,
+                      fontSize: 12,
+                      color: "var(--critical)",
+                    }}
+                  >
+                    {previewError}
+                  </div>
+                )}
+                {previewFiles && (
+                  <div style={{ marginTop: 12 }}>
+                    <RepoFileTree
+                      files={previewFiles}
+                      selected={selectedFiles}
+                      onChange={setSelectedFiles}
+                    />
                   </div>
                 )}
               </div>

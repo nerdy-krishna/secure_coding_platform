@@ -149,7 +149,15 @@ const ProjectDetailPage: React.FC = () => {
           </div>
           <button
             className="sccap-btn sccap-btn-primary"
-            onClick={() => navigate("/submission/submit")}
+            onClick={() =>
+              navigate("/submission/submit", {
+                state: {
+                  projectId,
+                  projectName,
+                  repoUrl,
+                },
+              })
+            }
           >
             <Icon.Plus size={13} /> New scan
           </button>
@@ -199,7 +207,15 @@ const ProjectDetailPage: React.FC = () => {
           <button
             className="sccap-btn sccap-btn-primary"
             style={{ marginTop: 12 }}
-            onClick={() => navigate("/submission/submit")}
+            onClick={() =>
+              navigate("/submission/submit", {
+                state: {
+                  projectId,
+                  projectName,
+                  repoUrl,
+                },
+              })
+            }
           >
             <Icon.Plus size={13} /> Start a scan
           </button>
