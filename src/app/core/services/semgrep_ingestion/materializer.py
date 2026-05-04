@@ -18,7 +18,7 @@ async def materialize_rules(rules: list[db_models.SemgrepRule]) -> AsyncIterator
     Write each rule's raw_yaml into a temp directory as individual YAML files.
     Yields the directory Path. Cleans up on exit regardless of errors.
     """
-    tmpdir = Path(tempfile.mkdtemp(prefix="sccap_semgrep_", dir="/tmp"))
+    tmpdir = Path(tempfile.mkdtemp(prefix="sccap_semgrep_"))
     try:
         for rule in rules:
             fname = tmpdir / f"{rule.namespaced_id.replace('/', '_')}.yaml"
