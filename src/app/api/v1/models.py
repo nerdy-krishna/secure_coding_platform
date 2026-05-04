@@ -482,6 +482,12 @@ class VulnerabilityFindingResponse(BaseModel):
     line_number: int = Field(..., ge=0)
     remediation: str
     confidence: str
+    # Originating scanner/agent for the finding. Mirrors the DB
+    # `findings.source` column (bandit / semgrep / gitleaks / osv /
+    # NULL for legacy LLM-emitted rows). Surfaced so the results
+    # page can drive a per-source filter chip row off the same
+    # value the `source_counts` aggregate is computed from.
+    source: Optional[str] = None
     corroborating_agents: Optional[List[str]] = None
     cvss_score: Optional[float] = Field(default=None, ge=0.0, le=10.0)
     cvss_vector: Optional[str] = None

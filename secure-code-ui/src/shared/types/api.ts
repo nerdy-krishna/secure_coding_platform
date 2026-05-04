@@ -175,6 +175,11 @@ export interface Finding {
   line_number: number;
   remediation: string;
   confidence: string;
+  // Originating scanner/agent for the finding. Mirrors the
+  // `findings.source` column on the backend (bandit / semgrep /
+  // gitleaks / osv / null for legacy LLM-emitted rows). Used to
+  // drive the by-source filter chip row on ResultsPage.
+  source?: string | null;
   corroborating_agents?: string[];
   cvss_score?: number;
   cvss_vector?: string;

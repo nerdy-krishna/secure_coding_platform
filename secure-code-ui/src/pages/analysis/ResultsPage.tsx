@@ -68,6 +68,10 @@ const ResultsPage: React.FC = () => {
 
   const [sevFilter, setSevFilter] = useState<SeverityFilter>("all");
   const [search, setSearch] = useState("");
+  // Per-source filter chip — "all" or a specific scanner name like
+  // "bandit" / "gitleaks" / "semgrep" / "osv" / "agent". Driven by
+  // the by-source pill row below the summary card.
+  const [sourceFilter, setSourceFilter] = useState<string>("all");
   const [selectedFindingId, setSelectedFindingId] = useState<number | null>(null);
   const [applyingId, setApplyingId] = useState<number | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
@@ -128,6 +132,14 @@ const ResultsPage: React.FC = () => {
       allFindings.filter((f) => {
         if (sevFilter !== "all" && f.severity?.toLowerCase() !== sevFilter)
           return false;
+        if (sourceFilter !== "all") {
+          // Backend persists NULL `source` for legacy LLM-emitted rows
+          // and the source_counts aggregate buckets those under "agent",
+          // so the chip with `source=agent` should match findings with
+          // a missing source field.
+          const fSource = f.source ?? "agent";
+          if (fSource !== sourceFilter) return false;
+        }
         if (
           search &&
           !(
@@ -139,7 +151,7 @@ const ResultsPage: React.FC = () => {
           return false;
         return true;
       }),
-    [allFindings, sevFilter, search],
+    [allFindings, sevFilter, sourceFilter, search],
   );
 
   const selected =
@@ -474,7 +486,13 @@ const ResultsPage: React.FC = () => {
         ))}
       </div>
 
-      {/* Per-source counter row (sast-prescan-followups Group D2). */}
+      {/* Per-source filter row. Pills are buttons that filter the
+          findings list to that single source. The leading "All" pill
+          clears the filter; a "Clear" affordance appears once a
+          specific source is selected so the active state is unambiguous.
+          The aggregate counts come from the backend's `source_counts`
+          (sast-prescan-followups Group D2) so they include findings
+          excluded by the current sevFilter / search box. */}
       {data.source_counts && Object.keys(data.source_counts).length > 0 && (
         <div
           style={{
@@ -496,29 +514,95 @@ const ResultsPage: React.FC = () => {
           >
             By source:
           </span>
-          {Object.entries(data.source_counts).map(([source, count]) => {
-            const colorMap: Record<string, string> = {
+          {(() => {
+            const sourceColor: Record<string, string> = {
               bandit: "#3b82f6",
               semgrep: "#a855f7",
               gitleaks: "#dc2626",
+              osv: "#0891b2",
               agent: "#6b7280",
             };
-            return (
-              <span
-                key={source}
+            const totalFindings = Object.values(data.source_counts).reduce(
+              (sum, n) => sum + n,
+              0,
+            );
+            // Reusable pill-button. Active = colored background + white
+            // text. Inactive = transparent background + colored border +
+            // colored text, with a subtle hover lift.
+            const renderPill = (
+              key: string,
+              label: string,
+              count: number,
+              color: string,
+              active: boolean,
+              onClick: () => void,
+              ariaLabel: string,
+            ) => (
+              <button
+                key={key}
+                type="button"
+                onClick={onClick}
+                aria-pressed={active}
+                aria-label={ariaLabel}
                 style={{
                   padding: "4px 10px",
                   borderRadius: 12,
-                  background: colorMap[source] || "#6b7280",
-                  color: "white",
+                  border: `1px solid ${color}`,
+                  background: active ? color : "transparent",
+                  color: active ? "white" : color,
                   fontSize: 12,
                   fontWeight: 600,
+                  cursor: "pointer",
+                  transition: "all .12s var(--ease)",
+                  fontFamily: "inherit",
                 }}
               >
-                {source}: {count}
-              </span>
+                {label}: {count}
+              </button>
             );
-          })}
+            const pills: React.ReactNode[] = [];
+            // Leading "All" pill — neutral grey. Active state when
+            // no source filter is currently applied.
+            pills.push(
+              renderPill(
+                "__all__",
+                "all",
+                totalFindings,
+                "#6b7280",
+                sourceFilter === "all",
+                () => setSourceFilter("all"),
+                "Show findings from every source",
+              ),
+            );
+            for (const [source, count] of Object.entries(data.source_counts)) {
+              pills.push(
+                renderPill(
+                  source,
+                  source,
+                  count,
+                  sourceColor[source] || "#6b7280",
+                  sourceFilter === source,
+                  () =>
+                    setSourceFilter((prev) =>
+                      prev === source ? "all" : source,
+                    ),
+                  `Show only findings from ${source}`,
+                ),
+              );
+            }
+            return pills;
+          })()}
+          {sourceFilter !== "all" && (
+            <button
+              type="button"
+              onClick={() => setSourceFilter("all")}
+              className="sccap-btn sccap-btn-sm sccap-btn-ghost"
+              style={{ marginLeft: 4 }}
+              aria-label="Clear source filter"
+            >
+              <Icon.X size={11} /> Clear filter
+            </button>
+          )}
         </div>
       )}
 
