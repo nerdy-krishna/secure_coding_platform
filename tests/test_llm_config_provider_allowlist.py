@@ -24,7 +24,7 @@ def test_create_rejects_unknown_provider():
             name="bogus",
             provider="bogus-vendor",  # type: ignore[arg-type]
             model_name="some-model",
-            api_key="sk-test-1234567890",
+            api_key="placeholder",
         )
     errors = exc_info.value.errors()
     assert any(
@@ -48,7 +48,7 @@ def test_create_accepts_supported_providers(provider, model_name):
         name=f"{provider}-test",
         provider=provider,  # type: ignore[arg-type]
         model_name=model_name,
-        api_key="sk-test-1234567890",
+        api_key="placeholder",
     )
     assert cfg.provider == provider
     assert cfg.model_name == model_name
