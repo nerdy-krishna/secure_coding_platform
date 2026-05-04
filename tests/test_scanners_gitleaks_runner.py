@@ -28,10 +28,27 @@ from app.infrastructure.scanners.gitleaks_runner import (
 pytestmark = pytest.mark.asyncio
 
 
-def _fake_completed(stdout: str, returncode: int = 0) -> subprocess.CompletedProcess:
+def _fake_completed(returncode: int = 0) -> subprocess.CompletedProcess:
+    # Real gitleaks writes findings to --report-path, not stdout, so the
+    # mock CompletedProcess carries empty stdout. Tests deliver the
+    # payload by writing it to `report_path` from inside the mock.
     return subprocess.CompletedProcess(
-        args=["gitleaks"], returncode=returncode, stdout=stdout, stderr=""
+        args=["gitleaks"], returncode=returncode, stdout="", stderr=""
     )
+
+
+def _write_report_then_complete(payload: str):
+    """Build a mock for ``_invoke_gitleaks_sync(staged_dir, report_path)``
+    that writes ``payload`` to the report file (mirroring the real
+    gitleaks behavior under ``--report-path <file>``) and returns a
+    benign CompletedProcess.
+    """
+
+    def _impl(_staged: Path, report_path: Path) -> subprocess.CompletedProcess:
+        Path(report_path).write_text(payload, encoding="utf-8")
+        return _fake_completed()
+
+    return _impl
 
 
 async def test_gitleaks_finds_secret_and_emits_critical_severity(monkeypatch):
@@ -46,7 +63,9 @@ async def test_gitleaks_finds_secret_and_emits_critical_severity(monkeypatch):
         ]
     )
     monkeypatch.setattr(
-        gitleaks_runner, "_invoke_gitleaks_sync", lambda _d: _fake_completed(payload)
+        gitleaks_runner,
+        "_invoke_gitleaks_sync",
+        _write_report_then_complete(payload),
     )
     findings = await run_gitleaks(
         Path("/tmp/staged"),
@@ -70,7 +89,21 @@ async def test_gitleaks_finds_secret_and_emits_critical_severity(monkeypatch):
 
 async def test_gitleaks_returns_empty_for_no_findings(monkeypatch):
     monkeypatch.setattr(
-        gitleaks_runner, "_invoke_gitleaks_sync", lambda _d: _fake_completed("[]")
+        gitleaks_runner,
+        "_invoke_gitleaks_sync",
+        _write_report_then_complete("[]"),
+    )
+    assert await run_gitleaks(Path("/tmp/staged"), original_paths={}) == []
+
+
+async def test_gitleaks_returns_empty_when_report_file_is_empty(monkeypatch):
+    """Real-world case where gitleaks left the report file 0 bytes (no
+    leaks). The runner must treat that the same as ``[]``.
+    """
+    monkeypatch.setattr(
+        gitleaks_runner,
+        "_invoke_gitleaks_sync",
+        _write_report_then_complete(""),
     )
     assert await run_gitleaks(Path("/tmp/staged"), original_paths={}) == []
 
@@ -101,16 +134,18 @@ async def test_gitleaks_allowlist_drops_match_and_secret_and_fingerprint():
         assert forbidden not in dumped
 
 
-async def test_gitleaks_stdout_never_logged_above_debug(monkeypatch, caplog):
-    """Log discipline: stdout (which carries scanner output) is logged
-    only at DEBUG; INFO carries `(rc, duration_ms, stdout_bytes)` only.
+async def test_gitleaks_report_payload_never_logged_above_debug(monkeypatch, caplog):
+    """Log discipline: the JSON report (RuleID + path) is logged only
+    at DEBUG; INFO carries `(rc, duration_ms, report_bytes)` only.
     """
     sentinel = "GITLEAKS_RAW_PAYLOAD_DO_NOT_LOG"
     payload = json.dumps(
         [{"RuleID": sentinel, "File": "/x.py", "StartLine": 1, "Description": "x"}]
     )
     monkeypatch.setattr(
-        gitleaks_runner, "_invoke_gitleaks_sync", lambda _d: _fake_completed(payload)
+        gitleaks_runner,
+        "_invoke_gitleaks_sync",
+        _write_report_then_complete(payload),
     )
     with caplog.at_level(
         logging.INFO, logger="app.infrastructure.scanners.gitleaks_runner"
@@ -121,7 +156,7 @@ async def test_gitleaks_stdout_never_logged_above_debug(monkeypatch, caplog):
     )
     assert (
         sentinel not in info_messages
-    ), "raw stdout must not appear in INFO/WARNING logs"
+    ), "raw report must not appear in INFO/WARNING logs"
 
 
 async def test_gitleaks_description_is_html_escaped_and_truncated(monkeypatch):
@@ -130,7 +165,9 @@ async def test_gitleaks_description_is_html_escaped_and_truncated(monkeypatch):
         [{"RuleID": "test", "File": "/x.py", "StartLine": 1, "Description": long_msg}]
     )
     monkeypatch.setattr(
-        gitleaks_runner, "_invoke_gitleaks_sync", lambda _d: _fake_completed(payload)
+        gitleaks_runner,
+        "_invoke_gitleaks_sync",
+        _write_report_then_complete(payload),
     )
     findings = await run_gitleaks(Path("/tmp/staged"), original_paths={})
     assert len(findings) == 1
@@ -144,7 +181,7 @@ async def test_gitleaks_timeout_returns_low_not_critical(monkeypatch, caplog):
     the BLOCKED_PRE_LLM short-circuit. Hence Low severity.
     """
 
-    def _raise(_d):
+    def _raise(_staged, _report):
         raise subprocess.TimeoutExpired(
             cmd="gitleaks", timeout=GITLEAKS_TIMEOUT_SECONDS
         )
@@ -157,8 +194,28 @@ async def test_gitleaks_timeout_returns_low_not_critical(monkeypatch, caplog):
 
 
 async def test_gitleaks_binary_missing_returns_empty(monkeypatch):
-    def _raise(_d):
+    def _raise(_staged, _report):
         raise FileNotFoundError("gitleaks not installed")
 
     monkeypatch.setattr(gitleaks_runner, "_invoke_gitleaks_sync", _raise)
     assert await run_gitleaks(Path("/tmp/staged"), original_paths={}) == []
+
+
+async def test_gitleaks_unlinks_report_file_after_run(monkeypatch, tmp_path):
+    """The temp report file MUST be deleted after the run, even on the
+    happy path — leaving it would let a co-tenant on the worker host
+    read the redacted-but-still-sensitive JSON between scans.
+    """
+    captured: dict[str, Path] = {}
+
+    def _impl(_staged: Path, report_path: Path) -> subprocess.CompletedProcess:
+        captured["path"] = Path(report_path)
+        Path(report_path).write_text("[]", encoding="utf-8")
+        return _fake_completed()
+
+    monkeypatch.setattr(gitleaks_runner, "_invoke_gitleaks_sync", _impl)
+    await run_gitleaks(Path("/tmp/staged"), original_paths={})
+    assert "path" in captured, "mock was not invoked"
+    assert (
+        not captured["path"].exists()
+    ), f"report file leaked at {captured['path']}"

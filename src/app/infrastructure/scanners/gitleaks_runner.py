@@ -1,11 +1,19 @@
 """Gitleaks subprocess wrapper for the deterministic SAST pre-pass.
 
 Invokes ``gitleaks detect --no-git --config <pinned> --source
-<staged_dir> --redact --report-format json --report-path -`` and
-converts each result into a :class:`VulnerabilityFinding` carrying
-``source="gitleaks"``, ``confidence="High"``, ``severity="Critical"``
-(every secret is treated as Critical so the worker-graph short-circuit
-in ``deterministic_prescan_node`` triggers).
+<staged_dir> --redact --report-format json --report-path
+<tempfile>`` and converts each result into a
+:class:`VulnerabilityFinding` carrying ``source="gitleaks"``,
+``confidence="High"``, ``severity="Critical"`` (every secret is
+treated as Critical so the worker-graph short-circuit in
+``deterministic_prescan_node`` triggers).
+
+NOTE on report path: Gitleaks 8.21+ does NOT honor ``--report-path
+-`` as "write to stdout" — it treats ``-`` as a literal filename and
+silently writes the JSON there. The runner used to do that and
+swallowed every finding (stdout always 0 bytes). We now write to a
+short-lived ``tempfile.mkstemp`` path, read it back, and unlink it
+in a ``finally`` block.
 
 Hardening (per the sast-prescan-followups threat model):
 
@@ -41,7 +49,9 @@ import asyncio
 import html
 import json
 import logging
+import os
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -126,7 +136,9 @@ def _gitleaks_finding_to_vulnerability(
     )
 
 
-def _invoke_gitleaks_sync(staged_dir: Path) -> "subprocess.CompletedProcess[str]":
+def _invoke_gitleaks_sync(
+    staged_dir: Path, report_path: Path
+) -> "subprocess.CompletedProcess[str]":
     """Run Gitleaks via ``subprocess.run``. Pure sync; called from
     ``asyncio.to_thread``.
 
@@ -135,9 +147,10 @@ def _invoke_gitleaks_sync(staged_dir: Path) -> "subprocess.CompletedProcess[str]
       ignored.
     - ``--redact`` (N1) replaces the match value in Gitleaks output
       before it reaches our Python parser.
-    - ``--report-path -`` writes JSON to stdout (instead of a file).
-    - ``--`` separator before the staged path (M1 — though gitleaks
-      doesn't take positional args here, the discipline is consistent).
+    - ``--report-path <tempfile>`` — gitleaks 8.21+ does NOT support
+      ``-`` as a stdout sentinel; it writes to a literal file named
+      ``-``. We pass a real temp path and the caller reads + unlinks
+      it. ``capture_output`` still grabs stderr for logging.
     """
     return subprocess.run(  # noqa: S603 - args are a literal list
         [
@@ -152,7 +165,7 @@ def _invoke_gitleaks_sync(staged_dir: Path) -> "subprocess.CompletedProcess[str]
             "--report-format",
             "json",
             "--report-path",
-            "-",
+            str(report_path),
             "--no-banner",
             "--exit-code",
             "0",
@@ -205,58 +218,97 @@ async def run_gitleaks(
     """
     loop = asyncio.get_running_loop()
     started_at = loop.time()
-    try:
-        completed = await asyncio.to_thread(_invoke_gitleaks_sync, staged_dir)
-    except subprocess.TimeoutExpired:
-        logger.warning(
-            "scanner=gitleaks staged_dir=%s rc=-9 timeout=%ss",
-            staged_dir,
-            GITLEAKS_TIMEOUT_SECONDS,
-        )
-        return [_timeout_finding(staged_dir)]
-    except FileNotFoundError:
-        logger.error(
-            "scanner=gitleaks binary not found at %s; skipping prescan",
-            _gitleaks_binary(),
-        )
-        return []
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.exception("scanner=gitleaks unexpected failure: %s", exc)
-        return []
 
-    duration_ms = int((loop.time() - started_at) * 1000)
-    # NEVER log stdout above DEBUG — Gitleaks output may carry redacted
-    # but still suspicious tokens (RuleID, file path, partial line
-    # number) and operators should opt into seeing them.
-    logger.info(
-        "scanner=gitleaks staged_dir=%s rc=%d duration_ms=%d stdout_bytes=%d",
-        staged_dir,
-        completed.returncode,
-        duration_ms,
-        len(completed.stdout or ""),
-    )
-    logger.debug("scanner=gitleaks raw stderr=%r", completed.stderr)
-
-    if not completed.stdout:
-        return []
+    # Allocate a private temp file for gitleaks' JSON report. mkstemp
+    # creates the file with mode 0600 owned by the current user so a
+    # co-tenant on the worker container can't peek at the (redacted
+    # but still RuleID/path-bearing) JSON between write and read.
+    fd, report_path_str = tempfile.mkstemp(prefix="gitleaks-", suffix=".json")
+    os.close(fd)
+    report_path = Path(report_path_str)
 
     try:
-        # Gitleaks emits a JSON array (or null when there are no
-        # findings). Wrap the array path defensively.
-        payload: Any = json.loads(completed.stdout)
-    except json.JSONDecodeError as exc:
-        logger.warning("scanner=gitleaks JSON parse failed: %s", exc)
-        return []
-
-    if not isinstance(payload, list):
-        return []
-
-    findings: List[VulnerabilityFinding] = []
-    for raw_dict in payload:
         try:
-            raw = _GitleaksResult.model_validate(raw_dict)
-        except ValidationError as exc:
-            logger.warning("scanner=gitleaks dropped malformed result: %s", exc)
-            continue
-        findings.append(_gitleaks_finding_to_vulnerability(raw, original_paths))
-    return findings
+            completed = await asyncio.to_thread(
+                _invoke_gitleaks_sync, staged_dir, report_path
+            )
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "scanner=gitleaks staged_dir=%s rc=-9 timeout=%ss",
+                staged_dir,
+                GITLEAKS_TIMEOUT_SECONDS,
+            )
+            return [_timeout_finding(staged_dir)]
+        except FileNotFoundError:
+            logger.error(
+                "scanner=gitleaks binary not found at %s; skipping prescan",
+                _gitleaks_binary(),
+            )
+            return []
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.exception("scanner=gitleaks unexpected failure: %s", exc)
+            return []
+
+        # Read the JSON report from disk. Gitleaks creates an empty
+        # file (or omits the array) when nothing is found; treat both
+        # as "no findings".
+        try:
+            report_bytes = report_path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            logger.warning(
+                "scanner=gitleaks could not read report: %s path=%s",
+                exc,
+                report_path,
+            )
+            report_bytes = ""
+
+        duration_ms = int((loop.time() - started_at) * 1000)
+        # NEVER log report contents above DEBUG — Gitleaks output may
+        # carry redacted but still suspicious tokens (RuleID, file
+        # path, partial line number) and operators should opt into
+        # seeing them.
+        logger.info(
+            "scanner=gitleaks staged_dir=%s rc=%d duration_ms=%d report_bytes=%d",
+            staged_dir,
+            completed.returncode,
+            duration_ms,
+            len(report_bytes),
+        )
+        logger.debug("scanner=gitleaks raw stderr=%r", completed.stderr)
+
+        if not report_bytes.strip():
+            return []
+
+        try:
+            # Gitleaks emits a JSON array (or null when there are no
+            # findings). Wrap the array path defensively.
+            payload: Any = json.loads(report_bytes)
+        except json.JSONDecodeError as exc:
+            logger.warning("scanner=gitleaks JSON parse failed: %s", exc)
+            return []
+
+        if not isinstance(payload, list):
+            return []
+
+        findings: List[VulnerabilityFinding] = []
+        for raw_dict in payload:
+            try:
+                raw = _GitleaksResult.model_validate(raw_dict)
+            except ValidationError as exc:
+                logger.warning(
+                    "scanner=gitleaks dropped malformed result: %s", exc
+                )
+                continue
+            findings.append(
+                _gitleaks_finding_to_vulnerability(raw, original_paths)
+            )
+        return findings
+    finally:
+        try:
+            report_path.unlink(missing_ok=True)
+        except OSError as exc:  # pragma: no cover - defensive
+            logger.warning(
+                "scanner=gitleaks could not unlink report: %s path=%s",
+                exc,
+                report_path,
+            )

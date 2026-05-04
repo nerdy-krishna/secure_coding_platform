@@ -69,8 +69,13 @@ class VulnerabilityFinding(BaseModel):
         description="The assessed severity."
     )
     line_number: int = Field(
-        ge=1,
-        description="The line number in the code where the vulnerability occurs.",
+        ge=0,
+        description=(
+            "1-based line number where the vulnerability occurs. "
+            "0 is reserved for file-level findings that have no specific "
+            "line — e.g. OSV CVEs against a dependency manifest, gitleaks "
+            "matches without a StartLine, or scanner timeout placeholders."
+        ),
     )
     remediation: str = Field(
         max_length=8000,
