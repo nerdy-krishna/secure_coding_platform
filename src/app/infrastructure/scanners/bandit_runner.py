@@ -38,7 +38,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.core.schemas import VulnerabilityFinding
 
@@ -96,7 +96,17 @@ class _BanditResult(BaseModel):
 
     Pydantic strips any extra fields by default; this is the M5 / M7
     boundary — only these fields can flow into a `VulnerabilityFinding`.
+
+    NOTE: Bandit emits the CWE block under the JSON key `issue_cwe`,
+    not `cwe`. The previous version of this model bound to `cwe` only
+    so every result came back with `cwe=None`, the fallback string
+    `"CWE-unknown"` failed VulnerabilityFinding's pattern + length
+    validators, and the result was silently dropped. The
+    `populate_by_name=True` config + `validation_alias="issue_cwe"`
+    fixes the binding while keeping the attribute name short.
     """
+
+    model_config = ConfigDict(populate_by_name=True)
 
     filename: str
     line_number: int = 0
@@ -104,7 +114,7 @@ class _BanditResult(BaseModel):
     issue_severity: str = "LOW"
     issue_confidence: str = "LOW"
     issue_text: str = ""
-    cwe: Optional[_BanditCwe] = None
+    cwe: Optional[_BanditCwe] = Field(default=None, validation_alias="issue_cwe")
 
 
 class _BanditReport(BaseModel):
@@ -132,7 +142,13 @@ def _bandit_finding_to_vulnerability(
         staged = Path(raw.filename)
     file_path = original_paths.get(staged, raw.filename)
 
-    cwe = f"CWE-{raw.cwe.id}" if raw.cwe and raw.cwe.id is not None else "CWE-unknown"
+    # `CWE-0` is the recognised "no CWE applies" sentinel — keeps the
+    # finding valid against VulnerabilityFinding's regex
+    # (^CWE-\d{1,5}$, max_length=10). The previous fallback string
+    # "CWE-unknown" failed both validators and the result was silently
+    # dropped by the upstream `except (ValidationError, ValueError)`
+    # handler.
+    cwe = f"CWE-{raw.cwe.id}" if raw.cwe and raw.cwe.id is not None else "CWE-0"
     description = html.escape(raw.issue_text)[:DESCRIPTION_MAX_CHARS]
     title = (raw.test_id or "B000").strip()[:50]
 
@@ -193,7 +209,7 @@ def _timeout_finding(staged_dir: Path) -> VulnerabilityFinding:
     when Bandit exceeds the hard timeout (M6).
     """
     return VulnerabilityFinding(
-        cwe="CWE-unknown",
+        cwe="CWE-0",
         title="Bandit scanner timed out",
         description=html.escape(
             f"Bandit exceeded the {BANDIT_TIMEOUT_SECONDS}s timeout while scanning the project."

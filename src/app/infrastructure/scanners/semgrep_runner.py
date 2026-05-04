@@ -123,7 +123,7 @@ def _extract_cwe(metadata: _SemgrepMetadata) -> str:
     """
     raw = metadata.cwe
     if raw is None:
-        return "CWE-unknown"
+        return "CWE-0"
     candidates: List[str] = []
     if isinstance(raw, str):
         candidates = [raw]
@@ -133,7 +133,7 @@ def _extract_cwe(metadata: _SemgrepMetadata) -> str:
         match = _CWE_PATTERN.search(candidate)
         if match:
             return f"CWE-{match.group(1)}"
-    return "CWE-unknown"
+    return "CWE-0"
 
 
 def _semgrep_finding_to_vulnerability(
@@ -211,7 +211,7 @@ def _timeout_finding(staged_dir: Path) -> VulnerabilityFinding:
     when Semgrep exceeds the hard timeout (M6).
     """
     return VulnerabilityFinding(
-        cwe="CWE-unknown",
+        cwe="CWE-0",
         title="Semgrep scanner timed out",
         description=html.escape(
             f"Semgrep exceeded the {SEMGREP_TIMEOUT_SECONDS}s timeout while scanning the project."

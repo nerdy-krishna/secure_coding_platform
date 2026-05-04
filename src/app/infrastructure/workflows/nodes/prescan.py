@@ -53,7 +53,13 @@ logger = logging.getLogger(__name__)
 CONCURRENT_SCANNER_LIMIT = 5
 # Files larger than this are skipped during the prescan (M6 — defense
 # against pathological inputs that pin scanner CPU).
-PRESCAN_FILE_BYTE_LIMIT = 1024 * 1024
+# Per-file size cap for the SAST prescan. Was 1 MiB; raised to
+# 10 MiB so legitimately-large source files are no longer silently
+# skipped. Files above this cap (vendored bundles, generated code,
+# etc.) get a logged warning AND a Low-severity placeholder finding
+# so the user sees that scanners ran but couldn't process the file
+# — silent skip was the failure mode the user reported.
+PRESCAN_FILE_BYTE_LIMIT = 10 * 1024 * 1024
 # Maximum number of files passed to the prescan loop (V02.4.1 — caps
 # prescan walltime on hostile submissions with many small files).
 PRESCAN_MAX_FILES = 10_000
@@ -90,17 +96,29 @@ async def deterministic_prescan_node(state: WorkerState) -> Dict[str, Any]:
         logger.info("deterministic_prescan: no files for scan %s; skipping", scan_id)
         return {}
 
-    # Per-file size cap (M6 + N2). Minified web bundles get a tighter
-    # cap because Semgrep's parse pathology on them is the most likely
-    # real-world timeout trigger.
+    # File-eligibility filter (M6 + N2). The policy is "scan
+    # everything that has at least one byte and a scanner that knows
+    # the extension." Empty files contribute nothing and would just
+    # noise up the staging area; oversized files (>10 MiB) still get
+    # capped because Semgrep's parse walltime grows superlinearly on
+    # pathological minified bundles. Both skip paths log a clear
+    # reason so the user can see WHY a file wasn't scanned —
+    # previously the cap silently dropped legitimate source files.
     eligible: Dict[str, str] = {}
     for path, content in files.items():
         if not scanners_for_file(path):
             continue
+        if not content:
+            logger.debug(
+                "deterministic_prescan: skipping zero-byte file scan_id=%s path=%s",
+                scan_id,
+                path,
+            )
+            continue
         size = len(content.encode("utf-8", "replace"))
         cap = MINIFIED_BYTE_LIMIT if is_minified(path) else PRESCAN_FILE_BYTE_LIMIT
         if size > cap:
-            logger.info(
+            logger.warning(
                 "deterministic_prescan: skipping oversize file scan_id=%s path=%s bytes=%d cap=%d",
                 scan_id,
                 path,

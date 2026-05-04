@@ -58,9 +58,14 @@ _GITLEAKS_EXTENSIONS = _SEMGREP_EXTENSIONS | {
     ".properties",
 }
 
-# Per-file size cap (bytes) for minified bundles — Semgrep on a 5 MB
-# minified JS file is the most likely real-world timeout trigger.
-MINIFIED_BYTE_LIMIT = 256 * 1024
+# Per-file size cap (bytes) for minified bundles. Semgrep's parse
+# walltime on a multi-MB minified JS file is the most likely real-
+# world timeout trigger, so we keep a cap — but at 10 MiB rather
+# than the historical 256 KiB. The old cap silently skipped
+# legitimate files; the policy now is "scan everything that isn't
+# pathologically large." Hostile inputs above this cap still get a
+# clear log line so the user knows the file was skipped.
+MINIFIED_BYTE_LIMIT = 10 * 1024 * 1024
 
 _MINIFIED_SUFFIXES = (".min.js", ".bundle.js", ".min.css")
 

@@ -67,7 +67,7 @@ def _format_scanner_findings_block(findings: Optional[List[Any]]) -> str:
     lines: List[str] = []
     for f in findings:
         source = getattr(f, "source", None) or "unknown"
-        cwe = getattr(f, "cwe", None) or "CWE-unknown"
+        cwe = getattr(f, "cwe", None) or "CWE-0"
         file_path = getattr(f, "file_path", None) or "?"
         line_number = getattr(f, "line_number", None) or 0
         severity = getattr(f, "severity", None) or "?"

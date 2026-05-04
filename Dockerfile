@@ -129,6 +129,11 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         curl \
         ca-certificates \
+        # Gitleaks shells out to `git` (even when scanning a non-git
+        # tree, for working-tree status); without it on $PATH it
+        # fails fast with `exec: "git": executable file not found`
+        # and the whole secret-scan pass returns 0 findings silently.
+        git \
     && rm -rf /var/lib/apt/lists/*
 
 # --- Gitleaks v8.21.2 ---
@@ -158,8 +163,28 @@ RUN set -eux; \
 # /app/.venv. The runner finds the binary via shutil.which / explicit path.
 RUN set -eux; \
     python -m venv /opt/semgrep-venv; \
-    /opt/semgrep-venv/bin/pip install --no-cache-dir "semgrep==1.95.0"; \
-    ln -s /opt/semgrep-venv/bin/semgrep /usr/local/bin/semgrep
+    # `setuptools` provides pkg_resources, which Semgrep 1.95.0's
+    # opentelemetry-instrumentation transitive dep imports at module
+    # load time. Python 3.12 venvs no longer install setuptools by
+    # default; without it Semgrep crashes with
+    # `ModuleNotFoundError: No module named 'pkg_resources'` before
+    # it can emit any results.
+    # Pin setuptools <81 — setuptools 81 deprecated pkg_resources
+    # and 82+ removed it entirely. Semgrep's
+    # opentelemetry-instrumentation transitive dep still imports it
+    # at module load, so a fresh `pip install setuptools` (which
+    # picks the latest) breaks Semgrep with
+    # `ModuleNotFoundError: pkg_resources`. Reassess when Semgrep
+    # bumps its tracing deps off pkg_resources.
+    /opt/semgrep-venv/bin/pip install --no-cache-dir "setuptools<81" "semgrep==1.95.0"; \
+    ln -s /opt/semgrep-venv/bin/semgrep /usr/local/bin/semgrep; \
+    # Semgrep's CLI shells out to `pysemgrep` (its Python sub-binary)
+    # via execvp, which needs the binary on $PATH. Without this
+    # symlink the runner exits with `Unix_error: No such file or
+    # directory execvp pysemgrep` and stdout is empty; the worker
+    # logs `scanner=semgrep rc=2 stdout_bytes=0` and the whole
+    # Semgrep pass produces 0 findings.
+    ln -s /opt/semgrep-venv/bin/pysemgrep /usr/local/bin/pysemgrep
 
 # --- OSV-Scanner v2.3.5 ---
 # https://github.com/google/osv-scanner/releases/tag/v2.3.5
