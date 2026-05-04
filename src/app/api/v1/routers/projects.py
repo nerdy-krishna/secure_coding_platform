@@ -59,6 +59,7 @@ from app.api.v1.dependencies import (
     get_scan_submission_service,
     get_llm_config_repository,
     get_visible_user_ids,
+    get_visible_user_ids_sse,
 )
 from app.infrastructure.database.repositories.llm_config_repo import LLMConfigRepository
 from app.shared.lib.git import clone_repo_and_get_files
@@ -485,7 +486,7 @@ async def stream_scan_progress(
     request: Request,
     user: db_models.User = Depends(current_active_user_sse),
     service: ScanQueryService = Depends(get_scan_query_service),
-    visible_user_ids: Optional[List[int]] = Depends(get_visible_user_ids),
+    visible_user_ids: Optional[List[int]] = Depends(get_visible_user_ids_sse),
 ):
     """Server-Sent Events stream of a scan's progress.
 

@@ -2,7 +2,7 @@ from typing import List, Optional
 
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.infrastructure.auth.core import current_active_user
+from app.infrastructure.auth.core import current_active_user, current_active_user_sse
 from app.infrastructure.database import models as db_models
 from app.infrastructure.database.database import get_db
 from app.infrastructure.database.repositories.llm_config_repo import LLMConfigRepository
@@ -135,6 +135,23 @@ async def get_visible_user_ids(
     Returns `None` for admins (no filter) and `[user.id, ...peers]` for
     regular users. Used by routers to pass through to scan_service /
     scan_repo methods that support scoped listing.
+    """
+    return await scan_scope.visible_user_ids(user, repo)
+
+
+async def get_visible_user_ids_sse(
+    user: db_models.User = Depends(current_active_user_sse),
+    repo: UserGroupRepository = Depends(get_user_group_repository),
+) -> Optional[List[int]]:
+    """SSE variant of `get_visible_user_ids`.
+
+    EventSource flows authenticate via the scan-stream JWT (see
+    `current_active_user_sse`), which the regular `current_active_user`
+    dep doesn't accept. The original dep would re-run the regular auth
+    path against the SSE token and fail with 401 even after the route's
+    own auth dep had already succeeded — that broke the live event log
+    for every scan. This variant resolves the user via the SSE-aware
+    auth dep so both share FastAPI's per-request dep cache.
     """
     return await scan_scope.visible_user_ids(user, repo)
 
