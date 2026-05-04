@@ -439,6 +439,46 @@ async def cancel_scan_analysis(
     return {"message": "Scan has been cancelled successfully."}
 
 
+@router.post("/scans/{scan_id}/stream-token", response_model=dict)
+async def issue_scan_stream_token(
+    scan_id: uuid.UUID,
+    user: db_models.User = Depends(current_active_user),
+    service: ScanQueryService = Depends(get_scan_query_service),
+    visible_user_ids: Optional[List[int]] = Depends(get_visible_user_ids),
+):
+    """Mint a short-TTL JWT for the SSE stream of this scan.
+
+    EventSource cannot send Authorization headers, so the frontend
+    POSTs here (with the regular Bearer header), gets back a token,
+    and appends it to the stream URL as `?access_token=…`. The token
+    is audience-tagged "sse:scan-stream", scan-id-bound, and 60s-TTL —
+    it cannot be substituted for a regular access token at any other
+    endpoint, and cannot be replayed against a different scan.
+
+    Authorization mirrors the SSE endpoint itself (owner / admin /
+    peer per H.2). Re-checked at the stream URL even if a stale token
+    survives, so this is defence-in-depth, not the only gate.
+    """
+    from app.infrastructure.auth.sse_token import mint_scan_stream_token
+
+    scan = await service.get_scan_status(scan_id, user)
+    is_owner = scan.user_id == user.id
+    is_admin = user.is_superuser
+    is_peer = visible_user_ids is not None and scan.user_id in visible_user_ids
+    if not (is_owner or is_admin or is_peer):
+        logger.warning(
+            "scans.stream_token.access_denied",
+            extra={"actor_id": user.id, "scan_id": str(scan_id)},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to stream this scan.",
+        )
+
+    token, expires_in = mint_scan_stream_token(user.id, scan_id)
+    return {"access_token": token, "expires_in": expires_in}
+
+
 @router.get("/scans/{scan_id}/stream")
 async def stream_scan_progress(
     scan_id: uuid.UUID,

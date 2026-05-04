@@ -286,6 +286,24 @@ export const scanService = {
   },
 
   /**
+   * Mints a short-TTL JWT for the SSE stream of a scan. EventSource
+   * cannot send Authorization headers, so the backend accepts this
+   * token via ?access_token=… on the stream URL. The token is
+   * audience-tagged "sse:scan-stream", scan-id-bound, and 60s-TTL —
+   * leaked tokens cannot be replayed against other scans or other
+   * endpoints.
+   */
+  getStreamToken: async (
+    scanId: string,
+  ): Promise<{ access_token: string; expires_in: number }> => {
+    const response = await apiClient.post<{
+      access_token: string;
+      expires_in: number;
+    }>(`/scans/${encodeURIComponent(scanId)}/stream-token`);
+    return response.data;
+  },
+
+  /**
    * Triggers the application of selected fixes for a completed scan.
    * V01.2.2: scanId encoded. V02.3.4: idempotency key forwarded as header.
    * Backend MUST treat duplicate X-Idempotency-Key values as a no-op

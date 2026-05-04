@@ -1,5 +1,6 @@
 # src/app/infrastructure/auth/core.py
 import logging
+import uuid
 from typing import Optional
 
 from fastapi import Depends, HTTPException, Query, Request, status
@@ -10,6 +11,7 @@ from app.infrastructure.auth.backend import (
     get_custom_cookie_jwt_strategy,
 )
 from app.infrastructure.auth.manager import UserManager, get_user_manager
+from app.infrastructure.auth.sse_token import verify_scan_stream_token
 from app.infrastructure.database.models import User
 
 logger = logging.getLogger(__name__)
@@ -75,7 +77,31 @@ async def current_active_user_sse(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
 
     user: Optional[User] = None
-    if token:
+    # Try the scan-stream-bound token format first. EventSource clients
+    # request a token via POST /scans/{id}/stream-token and pass it as
+    # ?access_token=…; that token is audience-tagged and bound to this
+    # scan, so it CANNOT be substituted for a regular access token.
+    # If verification fails (wrong audience / scan / signature / TTL)
+    # we fall through to the regular fastapi-users access-token path
+    # so curl smoke tests with a normal Bearer header still work.
+    scan_id_str = request.path_params.get("scan_id") if request else None
+    if token and scan_id_str:
+        try:
+            scan_id_uuid = uuid.UUID(scan_id_str)
+            user_id = verify_scan_stream_token(token, scan_id_uuid)
+            user = await user_manager.get(user_id)
+            method = "sse_token"
+        except (HTTPException, ValueError):
+            user = None
+        except Exception:
+            logger.error(
+                "sse.auth.sse_token_read_failed",
+                extra={"method": "sse_token", "client_ip": client_ip},
+                exc_info=True,
+            )
+            user = None
+
+    if user is None and token:
         # V16.3.4: Catch unexpected errors from token decoding and log them.
         try:
             user = await strategy.read_token(token, user_manager)

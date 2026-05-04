@@ -134,54 +134,66 @@ class ScanLifecycleService:
                     ),
                 )
 
-        async with self.repo.db.begin_nested():
-            # Audit trail for the override path (M10): if the operator is
-            # honoring an override on a Critical Gitleaks finding, persist
-            # a scan_event so the decision is auditable.
-            if (
-                request.kind == "prescan_approval"
-                and request.approved
-                and request.override_critical_secret
-            ):
-                await self.repo.create_scan_event(
-                    scan_id=scan_id,
-                    stage_name="PRESCAN_OVERRIDE_CRITICAL_SECRET",
-                    status="COMPLETED",
-                )
+        # NOTE: Each repo method below commits its own transaction (see
+        # update_status / create_scan_event / outbox.enqueue). Wrapping
+        # them in `begin_nested()` does NOT make the sequence atomic —
+        # the inner commits close the parent transaction and the next
+        # call dies with `InvalidRequestError: Can't operate on closed
+        # transaction`. So we run each step on its own and accept the
+        # narrow window where a crash between (1) and (2) could leave
+        # the scan at QUEUED_FOR_SCAN with no outbox row. The recovery
+        # is observable: the worker won't resume, the UI shows a stuck
+        # status, and the user can re-approve. Proper transaction
+        # discipline (caller-managed commits in repos) is a wider
+        # refactor tracked separately.
 
-            # Audit trail for the decline path: operator chose Stop on the
-            # prescan card. The worker then routes to `user_decline_node`
-            # which sets STATUS_BLOCKED_USER_DECLINE.
-            if request.kind == "prescan_approval" and not request.approved:
-                await self.repo.create_scan_event(
-                    scan_id=scan_id,
-                    stage_name="PRESCAN_USER_DECLINED",
-                    status="COMPLETED",
-                )
-
-            # For cost_approval and prescan_approval-approve, the next
-            # worker phase actually progresses so transitioning to
-            # QUEUED_FOR_SCAN is a reasonable intermediate. For
-            # prescan_approval-decline, leave the status as
-            # PENDING_PRESCAN_APPROVAL — the worker's user_decline_node
-            # will set BLOCKED_USER_DECLINE within milliseconds of resume.
-            if not (request.kind == "prescan_approval" and not request.approved):
-                await self.repo.update_status(scan_id, STATUS_QUEUED_FOR_SCAN)
-                await self.repo.create_scan_event(
-                    scan_id=scan_id, stage_name="QUEUED_FOR_SCAN", status="COMPLETED"
-                )
-            approval_payload = {
-                "scan_id": str(scan_id),
-                "action": "resume_analysis",
-                "kind": request.kind,
-                "approved": request.approved,
-                "override_critical_secret": request.override_critical_secret,
-            }
-            outbox_row = await self.outbox.enqueue(
+        # Audit trail for the override path (M10): if the operator is
+        # honoring an override on a Critical Gitleaks finding, persist
+        # a scan_event so the decision is auditable.
+        if (
+            request.kind == "prescan_approval"
+            and request.approved
+            and request.override_critical_secret
+        ):
+            await self.repo.create_scan_event(
                 scan_id=scan_id,
-                queue_name=settings.RABBITMQ_APPROVAL_QUEUE,
-                payload=approval_payload,
+                stage_name="PRESCAN_OVERRIDE_CRITICAL_SECRET",
+                status="COMPLETED",
             )
+
+        # Audit trail for the decline path: operator chose Stop on the
+        # prescan card. The worker then routes to `user_decline_node`
+        # which sets STATUS_BLOCKED_USER_DECLINE.
+        if request.kind == "prescan_approval" and not request.approved:
+            await self.repo.create_scan_event(
+                scan_id=scan_id,
+                stage_name="PRESCAN_USER_DECLINED",
+                status="COMPLETED",
+            )
+
+        # For cost_approval and prescan_approval-approve, the next
+        # worker phase actually progresses so transitioning to
+        # QUEUED_FOR_SCAN is a reasonable intermediate. For
+        # prescan_approval-decline, leave the status as
+        # PENDING_PRESCAN_APPROVAL — the worker's user_decline_node
+        # will set BLOCKED_USER_DECLINE within milliseconds of resume.
+        if not (request.kind == "prescan_approval" and not request.approved):
+            await self.repo.update_status(scan_id, STATUS_QUEUED_FOR_SCAN)
+            await self.repo.create_scan_event(
+                scan_id=scan_id, stage_name="QUEUED_FOR_SCAN", status="COMPLETED"
+            )
+        approval_payload = {
+            "scan_id": str(scan_id),
+            "action": "resume_analysis",
+            "kind": request.kind,
+            "approved": request.approved,
+            "override_critical_secret": request.override_critical_secret,
+        }
+        outbox_row = await self.outbox.enqueue(
+            scan_id=scan_id,
+            queue_name=settings.RABBITMQ_APPROVAL_QUEUE,
+            payload=approval_payload,
+        )
         published = await publish_message(
             settings.RABBITMQ_APPROVAL_QUEUE,
             approval_payload,
