@@ -16,7 +16,7 @@ from sqlalchemy import (
     BIGINT,
     ARRAY,
 )
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB, ARRAY as PG_ARRAY
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from fastapi_users.db import SQLAlchemyBaseUserTable
 
@@ -370,6 +370,9 @@ class Framework(Base):
         String(255), nullable=False, unique=True, index=True
     )
     description: Mapped[str] = mapped_column(Text, nullable=False)
+    # Optional URL pointing to where this framework's source documents live.
+    # Informational — admins can update it if the upstream location changes.
+    source_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     agents: Mapped[List["Agent"]] = relationship(
         secondary="framework_agent_mappings", back_populates="frameworks"
     )
@@ -578,3 +581,114 @@ class UserGroupMembership(Base):
     )
 
     group: Mapped["UserGroup"] = relationship("UserGroup", back_populates="memberships")
+
+
+# ---------------------------------------------------------------------------
+# Semgrep Rule Ingestion (post-deploy, admin-triggered)
+# ---------------------------------------------------------------------------
+
+
+class SemgrepRuleSource(Base):
+    __tablename__ = "semgrep_rule_sources"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    slug: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    repo_url: Mapped[str] = mapped_column(Text, nullable=False)
+    branch: Mapped[str] = mapped_column(String(128), nullable=False, server_default="main")
+    subpath: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    license_spdx: Mapped[str] = mapped_column(String(64), nullable=False)
+    author: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    enabled: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default="false")
+    auto_sync: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default="false")
+    # Cron expression — user-editable. Default: Sunday 03:00 UTC.
+    sync_cron: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, server_default="0 3 * * 0")
+
+    last_synced_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_commit_sha: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    # never | success | failed | running
+    last_sync_status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="never")
+    last_sync_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    rule_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    rules: Mapped[List["SemgrepRule"]] = relationship(
+        "SemgrepRule", back_populates="source", cascade="all, delete-orphan"
+    )
+    sync_runs: Mapped[List["SemgrepSyncRun"]] = relationship(
+        "SemgrepSyncRun", back_populates="source", cascade="all, delete-orphan"
+    )
+
+
+class SemgrepRule(Base):
+    __tablename__ = "semgrep_rules"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("semgrep_rule_sources.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # <source_slug>.<original_rule_id> — globally unique across all sources.
+    namespaced_id: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    original_id: Mapped[str] = mapped_column(Text, nullable=False)
+    relative_path: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Postgres arrays — GIN-indexed for overlap queries (&&).
+    languages: Mapped[List[str]] = mapped_column(PG_ARRAY(Text), nullable=False, server_default="{}")
+    severity: Mapped[str] = mapped_column(String(16), nullable=False, server_default="WARNING", index=True)
+    category: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    technology: Mapped[List[str]] = mapped_column(PG_ARRAY(Text), nullable=False, server_default="{}")
+    cwe: Mapped[List[str]] = mapped_column(PG_ARRAY(Text), nullable=False, server_default="{}")
+    owasp: Mapped[List[str]] = mapped_column(PG_ARRAY(Text), nullable=False, server_default="{}")
+    confidence: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    likelihood: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    impact: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    message: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+
+    raw_yaml: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    # sha256 of canonical rule body — used for dedup and change detection.
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    license_spdx: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    enabled: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default="true")
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    source: Mapped["SemgrepRuleSource"] = relationship("SemgrepRuleSource", back_populates="rules")
+
+    __table_args__ = (
+        UniqueConstraint("source_id", "content_hash", name="uq_semgrep_rules_source_hash"),
+    )
+
+
+class SemgrepSyncRun(Base):
+    __tablename__ = "semgrep_sync_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("semgrep_rule_sources.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # running | success | failed
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="running")
+    commit_sha_before: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    commit_sha_after: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    rules_added: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    rules_updated: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    rules_removed: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    rules_invalid: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # "manual:<user_id>" or "cron"
+    triggered_by: Mapped[str] = mapped_column(String(64), nullable=False, server_default="manual")
+
+    source: Mapped["SemgrepRuleSource"] = relationship("SemgrepRuleSource", back_populates="sync_runs")

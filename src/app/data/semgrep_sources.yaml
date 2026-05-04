@@ -1,0 +1,189 @@
+# src/app/data/semgrep_sources.yaml
+#
+# Seed registry of third-party Semgrep rule sources.
+# Loaded by POST /api/v1/admin/rule-sources/seed (upserts rows into
+# semgrep_rule_source without overwriting enabled/auto_sync on existing rows).
+# All sources ship disabled — the admin explicitly enables what they want.
+#
+# License note: AGPL / GPL / CC-BY-NC sources are stored and tagged but
+# excluded from scans by default (not in the default allowed_licenses list).
+# NOASSERTION sources are also excluded by default.
+
+sources:
+
+  # --- Tier 1: broad, multi-language, well-maintained ---
+
+  - slug: community
+    display_name: Semgrep Community Rules
+    description: >
+      Official multi-language security and best-practice rules from Semgrep Inc
+      and community contributors. Covers Python, JavaScript/TypeScript, Java, Go,
+      Ruby, PHP, C/C++, C#, and more. This source supersedes the bundled
+      p/security-audit ruleset — enable it to restore and extend that coverage.
+    repo_url: https://github.com/semgrep/semgrep-rules
+    branch: develop
+    subpath: null
+    license_spdx: Semgrep-Rules-License-1.0
+    author: Semgrep, Inc.
+
+  - slug: gitlab
+    display_name: GitLab SAST Rules
+    description: >
+      Rules used in GitLab's own SAST product. Broad language coverage across
+      Python, Java, JavaScript, Ruby, C, C++, Go, and Kotlin. MIT-licensed and
+      actively maintained by the GitLab Security Research team.
+    repo_url: https://gitlab.com/gitlab-org/security-products/sast-rules
+    branch: main
+    subpath: null
+    license_spdx: MIT
+    author: GitLab
+
+  # --- Tier 2: language / framework specialists ---
+
+  - slug: trailofbits
+    display_name: Trail of Bits Rules
+    description: >
+      Audit-grade rules from Trail of Bits security research. Focuses on
+      high-confidence, low-noise findings in Python, Go, and Solidity. Note:
+      AGPL-3.0 licensed — excluded from scans by default unless you add
+      AGPL-3.0 to the allowed licenses list.
+    repo_url: https://github.com/trailofbits/semgrep-rules
+    branch: main
+    subpath: null
+    license_spdx: AGPL-3.0
+    author: Trail of Bits
+
+  - slug: 0xdea
+    display_name: 0xdea C/C++ Rules
+    description: >
+      Memory safety and audit rules for C and C++ codebases by Marco Ivaldi.
+      Targets use-after-free, buffer overflows, format string bugs, and other
+      low-level vulnerability classes. MIT-licensed.
+    repo_url: https://github.com/0xdea/semgrep-rules
+    branch: main
+    subpath: null
+    license_spdx: MIT
+    author: Marco Ivaldi
+
+  - slug: dgryski
+    display_name: dgryski Go Rules
+    description: >
+      Go-specific rules covering common bugs, race conditions, and best-practice
+      violations. Maintained by Damian Gryski. MIT-licensed.
+    repo_url: https://github.com/dgryski/semgrep-go
+    branch: master
+    subpath: null
+    license_spdx: MIT
+    author: Damian Gryski
+
+  - slug: elttam
+    display_name: elttam Rules
+    description: >
+      Java-heavy audit rules used internally at elttam during engagements.
+      Covers deserialization, SSRF, injection, and other common Java
+      vulnerability patterns. MIT-licensed.
+    repo_url: https://github.com/elttam/semgrep-rules
+    branch: main
+    subpath: null
+    license_spdx: MIT
+    author: elttam
+
+  - slug: kondukto
+    display_name: Kondukto Rules
+    description: >
+      Rules used internally at Kondukto. License is unasserted (NOASSERTION) —
+      excluded from scans by default unless you explicitly add NOASSERTION to
+      the allowed licenses list and accept the associated risk.
+    repo_url: https://github.com/kondukto-io/semgrep-rules
+    branch: main
+    subpath: null
+    license_spdx: NOASSERTION
+    author: Kondukto
+
+  - slug: apiiro
+    display_name: Apiiro Malicious Code Ruleset
+    description: >
+      Detects malicious code patterns (backdoors, data exfiltration, supply-chain
+      attacks) across Python, JavaScript, Java, Go, Ruby, and more. MIT-licensed.
+    repo_url: https://github.com/apiiro/malicious-code-ruleset
+    branch: main
+    subpath: null
+    license_spdx: MIT
+    author: Apiiro
+
+  - slug: decurity
+    display_name: Decurity Smart Contract Rules
+    description: >
+      Solidity, Cairo, and Rust rules for DeFi and Web3 security audits.
+      Maintained by Decurity. CC-BY-NC-SA-4.0 — excluded by default.
+    repo_url: https://github.com/Decurity/semgrep-smart-contracts
+    branch: master
+    subpath: null
+    license_spdx: CC-BY-NC-SA-4.0
+    author: Decurity
+
+  - slug: mindedsecurity
+    display_name: Minded Security Android Rules
+    description: >
+      Android-specific Java rules for mobile security reviews. Maintained by
+      Minded Security. GPL-3.0 — excluded from scans by default.
+    repo_url: https://github.com/mindedsecurity/semgrep-rules-android-security
+    branch: main
+    subpath: null
+    license_spdx: GPL-3.0
+    author: Minded Security
+
+  - slug: akabe1
+    display_name: akabe1 Mobile Rules
+    description: >
+      Swift and Java mobile-focused security rules. License is unasserted
+      (NOASSERTION) — excluded by default.
+    repo_url: https://github.com/akabe1/akabe1-semgrep-rules
+    branch: main
+    subpath: null
+    license_spdx: NOASSERTION
+    author: akabe1
+
+  - slug: atlassian-labs
+    display_name: Atlassian Labs Rules
+    description: >
+      Java security and quality rules from Atlassian. LGPL-2.1 — included in
+      the default allowed licenses list.
+    repo_url: https://github.com/atlassian-labs/semgrep-rules
+    branch: main
+    subpath: null
+    license_spdx: LGPL-2.1
+    author: Atlassian Labs
+
+  - slug: dotta
+    display_name: Dotta Rules
+    description: >
+      PHP, Kotlin, and Java security rules by Federico Dotta. MIT-licensed.
+    repo_url: https://github.com/federicodotta/semgrep-rules
+    branch: main
+    subpath: null
+    license_spdx: MIT
+    author: Federico Dotta
+
+  - slug: njsscan
+    display_name: njsscan (Node.js)
+    description: >
+      Node.js and Express security rules from the njsscan project by Ajin Abraham.
+      Covers injection, insecure dependencies, prototype pollution, and more.
+      LGPL-3.0 — included in the default allowed licenses list.
+    repo_url: https://github.com/ajinabraham/njsscan
+    branch: master
+    subpath: njsscan/rules/semantic_grep
+    license_spdx: LGPL-3.0
+    author: Ajin Abraham
+
+  - slug: mobsfscan
+    display_name: mobsfscan (Mobile)
+    description: >
+      Android and iOS (Swift/Objective-C) security rules from the MobSF project.
+      LGPL-3.0 — included in the default allowed licenses list.
+    repo_url: https://github.com/MobSF/mobsfscan
+    branch: main
+    subpath: mobsfscan/rules/semgrep
+    license_spdx: LGPL-3.0
+    author: MobSF

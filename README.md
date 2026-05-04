@@ -52,6 +52,13 @@ the deep analysis. Remediation is a separate, opt-in step.
   frameworks (including CSV / git-URL RAG ingestion), agents, prompt
   templates, system config, SMTP, and runtime logs. A shared Admin
   sub-nav keeps every surface one click apart.
+- **Semgrep Rule Ingestion** — admins configure public git repos as
+  rule sources via a dedicated *Semgrep Rules* tab. Rules are stored in
+  Postgres; syncs run on demand or on a configurable cron schedule.
+  Semgrep runs exclusively on DB-ingested rules — no bundled pack. The
+  submission page shows a live Scan Readiness panel; if no rules cover
+  the detected languages, a single-step wizard prompts the admin to
+  enable a source before submitting.
 - **Encrypted secrets** — every LLM API key and SMTP password is
   Fernet-encrypted at rest with the installation's `ENCRYPTION_KEY`.
 
@@ -129,9 +136,17 @@ troubleshooting.
    the rest of the app until this is done.
 3. **Create user groups (optional)** — under *Admin → Groups*, grant
    teams of users visibility into each other's scans.
-4. **Submit a scan** from *Submit*, approve the cost estimate, and
+4. **Enable Semgrep rules (post-deploy)** — Semgrep runs exclusively
+   on rules ingested from public rule repos (no bundled pack). On a
+   fresh deploy Semgrep produces zero findings until an admin enables
+   at least one source. Go to *Admin → Frameworks → Semgrep Rules tab*,
+   click **Load built-in sources**, enable one or more sources, and
+   click **Sync Now**. See
+   [`docs/rule-source-ingestion.md`](docs/rule-source-ingestion.md) for
+   the full operator guide.
+5. **Submit a scan** from *Submit*, approve the cost estimate, and
    review findings when analysis completes.
-5. **Ask the Advisor** — start a conversation from *Advisor*,
+6. **Ask the Advisor** — start a conversation from *Advisor*,
    optionally scoped to a project so the context rail surfaces the
    relevant findings and files.
 

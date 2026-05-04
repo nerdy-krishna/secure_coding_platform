@@ -4,10 +4,13 @@
 // CRUD stays on frameworkService (/admin/frameworks/); presentation is
 // ported to SCCAP primitives — card grid, chip-style agent mappings,
 // multi-select via a lightweight chip-list component.
+//
+// Tab bar switches between "Frameworks" and "Semgrep Rules" views.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AxiosError } from "axios";
 import React, { useEffect, useMemo, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { agentService } from "../../shared/api/agentService";
 import { frameworkService } from "../../shared/api/frameworkService";
 import type {
@@ -19,22 +22,35 @@ import type {
 import { Icon } from "../../shared/ui/Icon";
 import { Modal } from "../../shared/ui/Modal";
 import { useToast } from "../../shared/ui/Toast";
+import SemgrepRulesTab from "../../features/semgrep/SemgrepRulesTab";
+
+type PageTab = "frameworks" | "semgrep";
 
 interface FormState {
   name: string;
   description: string;
+  source_url: string;
   agent_ids: string[];
 }
 
-const EMPTY_FORM: FormState = { name: "", description: "", agent_ids: [] };
+const EMPTY_FORM: FormState = { name: "", description: "", source_url: "", agent_ids: [] };
 
 const FrameworkManagementPage: React.FC = () => {
   const toast = useToast();
   const queryClient = useQueryClient();
+  const location = useLocation();
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<FrameworkRead | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  // Derive initial tab from ?tab= query param (e.g. /admin/frameworks?tab=semgrep)
+  const initialTab = (): PageTab => {
+    const params = new URLSearchParams(location.search);
+    const t = params.get("tab");
+    return t === "semgrep" ? "semgrep" : "frameworks";
+  };
+  const [activeTab, setActiveTab] = useState<PageTab>(initialTab);
 
   const { data: frameworks, isLoading, isError, error } = useQuery<
     FrameworkRead[],
@@ -60,6 +76,7 @@ const FrameworkManagementPage: React.FC = () => {
       setForm({
         name: editing.name,
         description: editing.description,
+        source_url: (editing as FrameworkRead & { source_url?: string | null }).source_url ?? "",
         agent_ids: editing.agents.map((a) => a.id),
       });
       setModalOpen(true);
@@ -88,9 +105,12 @@ const FrameworkManagementPage: React.FC = () => {
   };
 
   const createMutation = useMutation({
-    mutationFn: async (data: FrameworkCreate & { agent_ids: string[] }) => {
-      const { agent_ids, ...rest } = data;
-      const fw = await frameworkService.createFramework(rest);
+    mutationFn: async (data: FrameworkCreate & { agent_ids: string[]; source_url?: string | null }) => {
+      const { agent_ids, source_url, ...rest } = data;
+      // Cast to include source_url which the backend accepts but the generated type doesn't model yet
+      const fw = await frameworkService.createFramework(
+        { ...rest, ...(source_url != null ? { source_url } : {}) } as FrameworkCreate
+      );
       if (agent_ids.length > 0) {
         await frameworkService.updateAgentMappings(fw.id, agent_ids);
       }
@@ -107,10 +127,11 @@ const FrameworkManagementPage: React.FC = () => {
   const updateMutation = useMutation({
     mutationFn: async (data: {
       id: string;
-      values: FrameworkUpdate;
+      values: FrameworkUpdate & { source_url?: string | null };
       agent_ids: string[];
     }) => {
-      const fw = await frameworkService.updateFramework(data.id, data.values);
+      // Cast to include source_url which the backend accepts but the generated type doesn't model yet
+      const fw = await frameworkService.updateFramework(data.id, data.values as FrameworkUpdate);
       return frameworkService.updateAgentMappings(fw.id, data.agent_ids);
     },
     onSuccess: () => {
@@ -162,13 +183,14 @@ const FrameworkManagementPage: React.FC = () => {
     if (editing) {
       updateMutation.mutate({
         id: editing.id,
-        values: { name: form.name, description: form.description },
+        values: { name: form.name, description: form.description, source_url: form.source_url || null },
         agent_ids: safeAgentIds,
       });
     } else {
       createMutation.mutate({
         name: form.name,
         description: form.description,
+        source_url: form.source_url || null,
         agent_ids: safeAgentIds,
       });
     }
@@ -202,23 +224,51 @@ const FrameworkManagementPage: React.FC = () => {
       >
         <div>
           <h1 style={{ color: "var(--fg)" }}>
-            <Icon.Shield size={18} /> Frameworks
+            <Icon.Shield size={18} /> Frameworks &amp; Rules
           </h1>
           <div style={{ color: "var(--fg-muted)", marginTop: 4 }}>
-            Security frameworks and the agents mapped to each.
+            Security frameworks, agent mappings, and Semgrep rule sources.
           </div>
         </div>
-        <button
-          className="sccap-btn sccap-btn-primary"
-          onClick={() => {
-            setEditing(null);
-            setForm(EMPTY_FORM);
-            setModalOpen(true);
-          }}
-        >
-          <Icon.Plus size={13} /> Create framework
-        </button>
+        {activeTab === "frameworks" && (
+          <button
+            className="sccap-btn sccap-btn-primary"
+            onClick={() => {
+              setEditing(null);
+              setForm(EMPTY_FORM);
+              setModalOpen(true);
+            }}
+          >
+            <Icon.Plus size={13} /> Create framework
+          </button>
+        )}
       </div>
+
+      {/* Tab bar */}
+      <div
+        className="sccap-tabs"
+        style={{ borderBottom: "1px solid var(--border)", paddingBottom: 0 }}
+      >
+        {(["frameworks", "semgrep"] as PageTab[]).map((tab) => (
+          <div
+            key={tab}
+            className={"sccap-tab " + (activeTab === tab ? "active" : "")}
+            onClick={() => setActiveTab(tab)}
+            style={{ cursor: "pointer" }}
+          >
+            {tab === "frameworks" ? (
+              <><Icon.Shield size={13} /> Frameworks</>
+            ) : (
+              <><Icon.Code size={13} /> Semgrep Rules</>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {activeTab === "semgrep" ? (
+        <SemgrepRulesTab />
+      ) : (
+        <>
 
       {isLoading ? (
         <div
@@ -410,6 +460,18 @@ const FrameworkManagementPage: React.FC = () => {
               maxLength={1024}
             />
           </label>
+          <label style={{ display: "grid", gap: 6 }}>
+            <span style={{ fontSize: 12, color: "var(--fg-muted)" }}>
+              Source URL (optional)
+            </span>
+            <input
+              className="sccap-input"
+              placeholder="https://..."
+              value={form.source_url}
+              onChange={(e) => setForm({ ...form, source_url: e.target.value })}
+              maxLength={512}
+            />
+          </label>
           <div style={{ display: "grid", gap: 6 }}>
             <span style={{ fontSize: 12, color: "var(--fg-muted)" }}>
               Associated agents
@@ -505,6 +567,8 @@ const FrameworkManagementPage: React.FC = () => {
           scans will no longer apply its agent mappings.
         </div>
       </Modal>
+      </>
+      )}
     </div>
   );
 };

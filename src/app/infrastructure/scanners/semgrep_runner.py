@@ -56,7 +56,6 @@ def _semgrep_binary() -> str:
 
 
 SEMGREP_TIMEOUT_SECONDS = 120
-SEMGREP_CONFIG_PATH = "/app/scanners/configs/semgrep/security-audit.yml"
 DESCRIPTION_MAX_CHARS = 200
 
 # Semgrep severity strings → SCCAP severity bucket (Title-cased,
@@ -171,14 +170,16 @@ def _semgrep_finding_to_vulnerability(
     )
 
 
-def _invoke_semgrep_sync(staged_dir: Path) -> "subprocess.CompletedProcess[str]":
+def _invoke_semgrep_sync(
+    staged_dir: Path, config_path: Path
+) -> "subprocess.CompletedProcess[str]":
     """Run Semgrep via ``subprocess.run``. Pure sync; called from
     ``asyncio.to_thread`` so the event loop is not blocked.
 
     - ``shell=False`` and the args are a literal list (M1 / N2).
-    - ``--config`` is pinned (N2). ``--no-git-ignore`` so an
-      attacker-supplied ``.gitignore`` cannot mask findings.
-      ``--metrics=off`` disables phone-home.
+    - ``--config`` points to the caller-supplied materialized rule dir
+      (N2). ``--no-git-ignore`` so an attacker-supplied ``.gitignore``
+      cannot mask findings. ``--metrics=off`` disables phone-home.
       ``--disable-version-check`` avoids a network call mid-scan.
     - ``--`` precedes the staged path so even if it begins with ``-``
       it cannot be re-interpreted as a flag (M1).
@@ -189,7 +190,7 @@ def _invoke_semgrep_sync(staged_dir: Path) -> "subprocess.CompletedProcess[str]"
         [
             _semgrep_binary(),
             "--config",
-            SEMGREP_CONFIG_PATH,
+            str(config_path),
             "--metrics=off",
             "--disable-version-check",
             "--no-git-ignore",
@@ -233,18 +234,28 @@ def _timeout_finding(staged_dir: Path) -> VulnerabilityFinding:
 
 
 async def run_semgrep(
-    staged_dir: Path, original_paths: Dict[Path, str]
+    staged_dir: Path,
+    original_paths: Dict[Path, str],
+    config_path: Optional[Path] = None,
 ) -> List[VulnerabilityFinding]:
     """Run Semgrep against ``staged_dir`` and return findings.
+
+    ``config_path`` must be a directory of materialized YAML rule files
+    from the DB ingestion layer. Pass ``None`` to skip Semgrep entirely
+    (0 rules ingested for the detected languages).
 
     Returns an empty list when Semgrep finds nothing or fails to
     parse. On timeout, returns a single Low-severity placeholder so
     the caller has at least one observable signal. Never raises.
     """
+    if config_path is None:
+        logger.info("scanner=semgrep skipped — no config_path (0 ingested rules)")
+        return []
+
     loop = asyncio.get_running_loop()
     started_at = loop.time()
     try:
-        completed = await asyncio.to_thread(_invoke_semgrep_sync, staged_dir)
+        completed = await asyncio.to_thread(_invoke_semgrep_sync, staged_dir, config_path)
     except subprocess.TimeoutExpired:
         logger.warning(
             "scanner=semgrep staged_dir=%s rc=-9 timeout=%ss",

@@ -13,7 +13,7 @@ from app.infrastructure.database import models as db_models
 
 logger = logging.getLogger(__name__)
 
-_ALLOWED_FIELDS = {"name", "description"}
+_ALLOWED_FIELDS = {"name", "description", "source_url"}
 
 
 def _validate(name: str, description: str) -> None:
@@ -38,7 +38,7 @@ class FrameworkRepository:
         self, framework_data: api_models.FrameworkCreate
     ) -> db_models.Framework:
         """Creates a new Framework in the database."""
-        raw = framework_data.model_dump()
+        raw = framework_data.model_dump(exclude_none=True)
         _validate(raw.get("name", ""), raw.get("description", ""))
         payload = {k: v for k, v in raw.items() if k in _ALLOWED_FIELDS}
         db_framework = db_models.Framework(**payload)

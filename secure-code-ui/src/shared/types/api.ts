@@ -358,3 +358,126 @@ export interface LLMInteractionResponse {
 
 // --- Setup --------------------------------------------------------------
 export type SetupStatusResponse = Schemas["SetupStatusResponse"];
+
+// --- Semgrep Rule Ingestion ---
+
+export interface RuleSourceRead {
+  id: string;
+  slug: string;
+  display_name: string;
+  description: string;
+  repo_url: string;
+  branch: string;
+  subpath: string | null;
+  license_spdx: string;
+  author: string;
+  sync_cron: string | null;
+  enabled: boolean;
+  auto_sync: boolean;
+  last_synced_at: string | null;
+  last_commit_sha: string | null;
+  last_sync_status: "never" | "running" | "success" | "failed";
+  last_sync_error: string | null;
+  rule_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RuleSourceCreate {
+  slug: string;
+  display_name: string;
+  description: string;
+  repo_url: string;
+  branch: string;
+  subpath?: string | null;
+  license_spdx: string;
+  author: string;
+}
+
+export interface RuleSourceUpdate {
+  display_name?: string;
+  description?: string;
+  repo_url?: string;
+  branch?: string;
+  subpath?: string | null;
+  license_spdx?: string;
+  author?: string;
+  sync_cron?: string | null;
+  enabled?: boolean;
+  auto_sync?: boolean;
+}
+
+export interface SyncRunRead {
+  id: string;
+  source_id: string;
+  started_at: string;
+  finished_at: string | null;
+  status: "running" | "success" | "failed";
+  commit_sha_before: string | null;
+  commit_sha_after: string | null;
+  rules_added: number;
+  rules_updated: number;
+  rules_removed: number;
+  rules_invalid: number;
+  error: string | null;
+  triggered_by: string;
+}
+
+export interface RuleRead {
+  id: string;
+  source_id: string;
+  namespaced_id: string;
+  original_id: string;
+  languages: string[];
+  severity: string;
+  category: string | null;
+  technology: string[];
+  cwe: string[];
+  owasp: string[];
+  confidence: string | null;
+  message: string;
+  license_spdx: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PaginatedSyncRunsResponse {
+  items: SyncRunRead[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface PaginatedRulesResponse {
+  items: RuleRead[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface IngestionSettingsRead {
+  allowed_licenses: string[];
+  workdir: string;
+  global_enabled: boolean;
+  max_rules_per_scan: number;
+  sweep_interval_seconds: number;
+}
+
+export interface IngestionSettingsUpdate {
+  allowed_licenses?: string[];
+  workdir?: string;
+  global_enabled?: boolean;
+  max_rules_per_scan?: number;
+  sweep_interval_seconds?: number;
+}
+
+export interface ScanCoverageEntry {
+  covered: boolean;
+  enabled_rule_count: number;
+  recommended_sources: RuleSourceRead[];
+}
+
+export interface ScanCoverageResponse {
+  coverage: Record<string, ScanCoverageEntry>;
+}

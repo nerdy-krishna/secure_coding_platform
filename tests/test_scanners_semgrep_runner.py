@@ -16,12 +16,16 @@ from pathlib import Path
 
 import pytest
 
+from pathlib import Path as _Path
+
 from app.infrastructure.scanners import semgrep_runner
 from app.infrastructure.scanners.semgrep_runner import (
     DESCRIPTION_MAX_CHARS,
     SEMGREP_TIMEOUT_SECONDS,
     run_semgrep,
 )
+
+_FAKE_CONFIG = _Path("/tmp/fake-rules")
 
 
 pytestmark = pytest.mark.asyncio
@@ -54,11 +58,12 @@ async def test_semgrep_finds_known_issue(monkeypatch):
         }
     )
     monkeypatch.setattr(
-        semgrep_runner, "_invoke_semgrep_sync", lambda _d: _fake_completed(payload)
+        semgrep_runner, "_invoke_semgrep_sync", lambda _d, _cfg: _fake_completed(payload)
     )
     findings = await run_semgrep(
         Path("/tmp/staged"),
         original_paths={Path("/tmp/staged/handlers/user.js"): "handlers/user.js"},
+        config_path=_FAKE_CONFIG,
     )
     assert len(findings) == 1
     f = findings[0]
@@ -74,17 +79,22 @@ async def test_semgrep_returns_empty_for_clean_payload(monkeypatch):
     monkeypatch.setattr(
         semgrep_runner,
         "_invoke_semgrep_sync",
-        lambda _d: _fake_completed(_semgrep_payload()),
+        lambda _d, _cfg: _fake_completed(_semgrep_payload()),
     )
-    assert await run_semgrep(Path("/tmp/staged"), original_paths={}) == []
+    assert await run_semgrep(Path("/tmp/staged"), original_paths={}, config_path=_FAKE_CONFIG) == []
+
+
+async def test_semgrep_returns_empty_when_no_config_path():
+    """If config_path is None (0 ingested rules), run_semgrep must return [] without invoking semgrep."""
+    assert await run_semgrep(Path("/tmp/staged"), original_paths={}, config_path=None) == []
 
 
 async def test_semgrep_timeout_returns_low_severity_placeholder(monkeypatch, caplog):
-    def _raise(_d):
+    def _raise(_d, _cfg):
         raise subprocess.TimeoutExpired(cmd="semgrep", timeout=SEMGREP_TIMEOUT_SECONDS)
 
     monkeypatch.setattr(semgrep_runner, "_invoke_semgrep_sync", _raise)
-    findings = await run_semgrep(Path("/tmp/staged"), original_paths={})
+    findings = await run_semgrep(Path("/tmp/staged"), original_paths={}, config_path=_FAKE_CONFIG)
     assert len(findings) == 1
     assert findings[0].severity == "Low"
     assert findings[0].source == "semgrep"
@@ -110,9 +120,9 @@ async def test_semgrep_description_is_html_escaped_and_truncated(monkeypatch):
         }
     )
     monkeypatch.setattr(
-        semgrep_runner, "_invoke_semgrep_sync", lambda _d: _fake_completed(payload)
+        semgrep_runner, "_invoke_semgrep_sync", lambda _d, _cfg: _fake_completed(payload)
     )
-    findings = await run_semgrep(Path("/tmp/staged"), original_paths={})
+    findings = await run_semgrep(Path("/tmp/staged"), original_paths={}, config_path=_FAKE_CONFIG)
     assert len(findings) == 1
     assert len(findings[0].description) <= DESCRIPTION_MAX_CHARS
     assert "<script>" not in findings[0].description
@@ -120,8 +130,8 @@ async def test_semgrep_description_is_html_escaped_and_truncated(monkeypatch):
 
 
 async def test_semgrep_binary_missing_returns_empty(monkeypatch):
-    def _raise(_d):
+    def _raise(_d, _cfg):
         raise FileNotFoundError("semgrep not installed")
 
     monkeypatch.setattr(semgrep_runner, "_invoke_semgrep_sync", _raise)
-    assert await run_semgrep(Path("/tmp/staged"), original_paths={}) == []
+    assert await run_semgrep(Path("/tmp/staged"), original_paths={}, config_path=_FAKE_CONFIG) == []

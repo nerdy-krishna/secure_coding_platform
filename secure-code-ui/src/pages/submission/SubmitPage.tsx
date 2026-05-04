@@ -14,14 +14,19 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { frameworkService } from "../../shared/api/frameworkService";
 import { llmConfigService } from "../../shared/api/llmConfigService";
 import { scanService } from "../../shared/api/scanService";
+import { ruleSourcesService } from "../../shared/api/ruleSourcesService";
 import { Icon } from "../../shared/ui/Icon";
 import { useToast } from "../../shared/ui/Toast";
 import type {
   FrameworkRead,
   LLMConfiguration,
   ProjectHistoryItem,
+  ScanCoverageResponse,
 } from "../../shared/types/api";
+import { useAuth } from "../../shared/hooks/useAuth";
 import { RepoFileTree } from "../../features/submission/RepoFileTree";
+import ScanReadinessPanel from "../../features/semgrep/ScanReadinessPanel";
+import ScanCoverageWizard from "../../features/semgrep/ScanCoverageWizard";
 
 interface SubmitNavState {
   projectName?: string;
@@ -145,10 +150,46 @@ const Dropzone: React.FC<{
   );
 };
 
+// Extension → Semgrep language name mapping
+const EXT_TO_LANG: Record<string, string> = {
+  ".py": "python",
+  ".js": "javascript",
+  ".mjs": "javascript",
+  ".cjs": "javascript",
+  ".ts": "typescript",
+  ".tsx": "typescript",
+  ".jsx": "javascript",
+  ".java": "java",
+  ".go": "go",
+  ".rb": "ruby",
+  ".php": "php",
+  ".cs": "csharp",
+  ".c": "c",
+  ".h": "c",
+  ".cpp": "cpp",
+  ".cc": "cpp",
+  ".hpp": "cpp",
+};
+
+function detectLanguages(fileNames: string[]): string[] {
+  const langs = new Set<string>();
+  for (const name of fileNames) {
+    const ext = "." + name.split(".").pop()?.toLowerCase();
+    const lang = EXT_TO_LANG[ext];
+    if (lang) langs.add(lang);
+  }
+  return Array.from(langs);
+}
+
+function coverageKey(languages: string[]): string {
+  return "sccap_coverage_dismissed_" + [...languages].sort().join(",");
+}
+
 const SubmitPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const toast = useToast();
+  const { user } = useAuth();
   const navState = (location.state ?? {}) as SubmitNavState;
 
   const [mode, setMode] = useState<SubmissionMode>("upload");
@@ -173,6 +214,11 @@ const SubmitPage: React.FC = () => {
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
+
+  // Semgrep coverage wizard state
+  const [coverageWizardOpen, setCoverageWizardOpen] = useState(false);
+  const [coverageData, setCoverageData] = useState<ScanCoverageResponse | null>(null);
+  const [coverageLanguages, setCoverageLanguages] = useState<string[]>([]);
 
   const { data: llmConfigs, isLoading: loadingLlms } = useQuery<LLMConfiguration[]>({
     queryKey: ["llmConfigs"],
@@ -327,7 +373,8 @@ const SubmitPage: React.FC = () => {
     );
   };
 
-  const handleSubmit = async () => {
+  // Shared submission logic (called after coverage check or on skip)
+  const doSubmit = async () => {
     if (!canSubmit) return;
 
     // V02.2.1: project name length + charset validation
@@ -374,11 +421,6 @@ const SubmitPage: React.FC = () => {
         payload.append("archive_file", archiveFile);
       }
 
-      // For git + archive modes the user may have narrowed the
-      // submitted files via the preview tree. The backend accepts a
-      // comma-separated list in `selected_files`; omitting it means
-      // "everything", so we only send the field when a deliberate
-      // subset was picked (i.e. fewer entries than the full preview).
       if (
         (mode === "git" || mode === "archive") &&
         previewFiles &&
@@ -407,6 +449,44 @@ const SubmitPage: React.FC = () => {
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const handleSubmit = async () => {
+    if (!canSubmit) return;
+
+    // Detect languages from uploaded files for coverage check
+    const fileNames =
+      mode === "upload"
+        ? files.map((f) => f.name)
+        : mode === "archive" && previewFiles
+          ? previewFiles
+          : mode === "git" && previewFiles
+            ? previewFiles
+            : [];
+
+    const langs = detectLanguages(fileNames);
+    const key = coverageKey(langs);
+    const dismissed = langs.length === 0 || sessionStorage.getItem(key) === "1";
+
+    if (!dismissed && langs.length > 0) {
+      try {
+        const cov = await ruleSourcesService.checkCoverage(langs);
+        const hasUncovered = langs.some((l) => {
+          const e = cov.coverage[l];
+          return e && !e.covered;
+        });
+        if (hasUncovered) {
+          setCoverageData(cov);
+          setCoverageLanguages(langs);
+          setCoverageWizardOpen(true);
+          return; // Wait for wizard decision
+        }
+      } catch {
+        // Ignore coverage check failures; don't block submission
+      }
+    }
+
+    await doSubmit();
   };
 
   return (
@@ -993,6 +1073,7 @@ const SubmitPage: React.FC = () => {
       </div>
 
       <aside style={{ display: "grid", gap: 16, alignContent: "start" }}>
+        <ScanReadinessPanel />
         <div className="sccap-card">
           <h4 style={{ marginBottom: 10, color: "var(--fg)" }}>
             What we scan for
@@ -1059,6 +1140,24 @@ const SubmitPage: React.FC = () => {
           </div>
         </div>
       </aside>
+
+      <ScanCoverageWizard
+        open={coverageWizardOpen}
+        languages={coverageLanguages}
+        coverage={coverageData}
+        isSuperuser={!!user?.is_superuser}
+        onSkip={() => {
+          // Mark as dismissed for this set of languages for the session
+          sessionStorage.setItem(coverageKey(coverageLanguages), "1");
+          setCoverageWizardOpen(false);
+          void doSubmit();
+        }}
+        onProceed={() => {
+          setCoverageWizardOpen(false);
+          void doSubmit();
+        }}
+        onClose={() => setCoverageWizardOpen(false)}
+      />
     </div>
   );
 };

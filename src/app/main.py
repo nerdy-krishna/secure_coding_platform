@@ -332,6 +332,68 @@ async def lifespan(app: FastAPI):
         name="retention-sweeper",
     )
 
+    # --- Semgrep ingestion: reset stuck runs + upsert config defaults ---
+    try:
+        from app.infrastructure.database.repositories.semgrep_rule_repo import (
+            SemgrepRuleRepository,
+        )
+
+        async with AsyncSessionLocal() as db:
+            async with db.begin():
+                await SemgrepRuleRepository(db).reset_stuck_runs()
+
+        # Upsert semgrep_ingestion.* system config keys with defaults so the
+        # GET /admin/rule-sources/settings endpoint always has something to return.
+        from app.infrastructure.database import models as db_models
+
+        _SEMGREP_CONFIG_DEFAULTS = {
+            "semgrep_ingestion.global_enabled": {"value": True},
+            "semgrep_ingestion.workdir": {"value": "/var/lib/sccap/semgrep-rules"},
+            "semgrep_ingestion.sweep_interval_seconds": {"value": 900},
+            "semgrep_ingestion.max_rules_per_scan": {"value": 5000},
+            "semgrep_ingestion.allowed_licenses": {
+                "licenses": [
+                    "MIT",
+                    "Apache-2.0",
+                    "BSD-2-Clause",
+                    "BSD-3-Clause",
+                    "MPL-2.0",
+                    "LGPL-2.0",
+                    "LGPL-2.1",
+                    "LGPL-3.0",
+                    "Semgrep-Rules-License-1.0",
+                ]
+            },
+        }
+        from sqlalchemy import select as _sa_select
+
+        async with AsyncSessionLocal() as db:
+            async with db.begin():
+                for key, default_val in _SEMGREP_CONFIG_DEFAULTS.items():
+                    existing = await db.scalar(
+                        _sa_select(db_models.SystemConfiguration).where(
+                            db_models.SystemConfiguration.key == key
+                        )
+                    )
+                    if existing is None:
+                        db.add(
+                            db_models.SystemConfiguration(key=key, value=default_val)
+                        )
+        logger.info("semgrep_ingestion: config defaults upserted")
+    except Exception as exc:
+        logger.error("semgrep_ingestion: startup init failed: %s", exc, exc_info=True)
+
+    # --- Start the Semgrep sync sweeper ---
+    from app.infrastructure.messaging.semgrep_sync_sweeper import (
+        run_semgrep_sync_sweeper,
+    )
+
+    semgrep_sweeper_stop = asyncio.Event()
+    semgrep_sweeper_task = asyncio.create_task(
+        run_semgrep_sync_sweeper(semgrep_sweeper_stop),
+        name="semgrep-sync-sweeper",
+    )
+
     # --- Start the scan-progress LISTEN/NOTIFY bus (§3.10a) ---
     # Replaces the per-SSE-client 1 Hz Postgres poll with a single
     # LISTEN connection per app process that fans out scan-status /
@@ -362,6 +424,7 @@ async def lifespan(app: FastAPI):
     prescan_sweeper_stop.set()
     findings_source_sweeper_stop.set()
     retention_sweeper_stop.set()
+    semgrep_sweeper_stop.set()
     if progress_bus is not None:
         try:
             await progress_bus.stop()
@@ -396,6 +459,13 @@ async def lifespan(app: FastAPI):
         retention_sweeper_task.cancel()
     except Exception as e:
         logger.warning(f"retention_sweeper shutdown error: {e}")
+    try:
+        await asyncio.wait_for(semgrep_sweeper_task, timeout=5)
+    except asyncio.TimeoutError:
+        logger.warning("semgrep_sync_sweeper did not stop within 5s; cancelling.")
+        semgrep_sweeper_task.cancel()
+    except Exception as e:
+        logger.warning(f"semgrep_sync_sweeper shutdown error: {e}")
 
     from app.infrastructure.messaging.publisher import close_publisher
 
@@ -679,8 +749,14 @@ app.include_router(dashboard_router, prefix="/api/v1", tags=["Dashboard"])
 app.include_router(search_router, prefix="/api/v1", tags=["Search"])
 
 from app.api.v1.routers.admin_users import router as admin_users_router  # noqa: E402
+from app.api.v1.routers.admin_rule_sources import router as rule_sources_router  # noqa: E402
+from app.api.v1.routers.scan_coverage import router as scan_coverage_router  # noqa: E402
 
 app.include_router(admin_users_router, prefix="/api/v1")
+app.include_router(
+    rule_sources_router, prefix="/api/v1/admin", tags=["Admin: Rule Sources"]
+)
+app.include_router(scan_coverage_router, prefix="/api/v1", tags=["Scan Coverage"])
 
 
 # --- Include FastAPI Users Authentication Routers ---

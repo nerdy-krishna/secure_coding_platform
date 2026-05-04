@@ -289,6 +289,11 @@ class FrameworkBase(BaseModel):
         description="A brief description of the framework.",
         max_length=2000,
     )
+    source_url: Optional[str] = Field(
+        None,
+        description="URL pointing to where this framework's source documents live.",
+        max_length=2048,
+    )
 
 
 class FrameworkCreate(FrameworkBase):
@@ -298,6 +303,7 @@ class FrameworkCreate(FrameworkBase):
 class FrameworkUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    source_url: Optional[str] = Field(None, max_length=2048)
 
 
 class FrameworkRead(FrameworkBase):
@@ -874,3 +880,133 @@ class ProjectHistoryItem(BaseModel):
 class PaginatedProjectHistoryResponse(BaseModel):
     items: List[ProjectHistoryItem]
     total: int
+
+
+# ---------------------------------------------------------------------------
+# Semgrep Rule Ingestion schemas
+# ---------------------------------------------------------------------------
+
+class RuleSourceBase(BaseModel):
+    display_name: str = Field(..., min_length=1, max_length=255)
+    description: str = Field(..., min_length=1, max_length=4000)
+    repo_url: str = Field(..., min_length=1, max_length=2048)
+    branch: str = Field("main", min_length=1, max_length=128)
+    subpath: Optional[str] = Field(None, max_length=1024)
+    license_spdx: str = Field(..., min_length=1, max_length=64)
+    author: str = Field(..., min_length=1, max_length=255)
+
+
+class RuleSourceCreate(RuleSourceBase):
+    slug: str = Field(..., min_length=1, max_length=64, pattern=r"^[a-z0-9_-]+$")
+
+
+class RuleSourceUpdate(BaseModel):
+    display_name: Optional[str] = Field(None, min_length=1, max_length=255)
+    description: Optional[str] = Field(None, min_length=1, max_length=4000)
+    repo_url: Optional[str] = Field(None, min_length=1, max_length=2048)
+    branch: Optional[str] = Field(None, min_length=1, max_length=128)
+    subpath: Optional[str] = Field(None, max_length=1024)
+    license_spdx: Optional[str] = Field(None, min_length=1, max_length=64)
+    author: Optional[str] = Field(None, min_length=1, max_length=255)
+    sync_cron: Optional[str] = Field(None, max_length=64)
+    enabled: Optional[bool] = None
+    auto_sync: Optional[bool] = None
+
+
+class RuleSourceRead(RuleSourceBase):
+    id: uuid.UUID
+    slug: str
+    sync_cron: Optional[str]
+    enabled: bool
+    auto_sync: bool
+    last_synced_at: Optional[datetime]
+    last_commit_sha: Optional[str]
+    last_sync_status: str
+    last_sync_error: Optional[str]
+    rule_count: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class SyncRunRead(BaseModel):
+    id: uuid.UUID
+    source_id: uuid.UUID
+    started_at: datetime
+    finished_at: Optional[datetime]
+    status: str
+    commit_sha_before: Optional[str]
+    commit_sha_after: Optional[str]
+    rules_added: int
+    rules_updated: int
+    rules_removed: int
+    rules_invalid: int
+    error: Optional[str]
+    triggered_by: str
+
+    class Config:
+        from_attributes = True
+
+
+class RuleRead(BaseModel):
+    id: uuid.UUID
+    source_id: uuid.UUID
+    namespaced_id: str
+    original_id: str
+    languages: List[str]
+    severity: str
+    category: Optional[str]
+    technology: List[str]
+    cwe: List[str]
+    owasp: List[str]
+    confidence: Optional[str]
+    message: str
+    license_spdx: str
+    enabled: bool
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class PaginatedSyncRunsResponse(BaseModel):
+    items: List[SyncRunRead]
+    total: int
+    page: int
+    page_size: int
+
+
+class PaginatedRulesResponse(BaseModel):
+    items: List[RuleRead]
+    total: int
+    page: int
+    page_size: int
+
+
+class IngestionSettingsRead(BaseModel):
+    allowed_licenses: List[str]
+    workdir: str
+    global_enabled: bool
+    max_rules_per_scan: int
+    sweep_interval_seconds: int
+
+
+class IngestionSettingsUpdate(BaseModel):
+    allowed_licenses: Optional[List[str]] = None
+    workdir: Optional[str] = Field(None, max_length=1024)
+    global_enabled: Optional[bool] = None
+    max_rules_per_scan: Optional[int] = Field(None, ge=1, le=50000)
+    sweep_interval_seconds: Optional[int] = Field(None, ge=60, le=86400)
+
+
+class ScanCoverageEntry(BaseModel):
+    covered: bool
+    enabled_rule_count: int
+    recommended_sources: List[RuleSourceRead]
+
+
+class ScanCoverageResponse(BaseModel):
+    coverage: dict[str, ScanCoverageEntry]

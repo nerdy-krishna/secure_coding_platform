@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from langgraph.types import interrupt
 
@@ -33,6 +33,7 @@ from app.infrastructure.scanners.gitleaks_runner import run_gitleaks
 from app.infrastructure.scanners.osv_runner import run_osv
 from app.infrastructure.scanners.registry import (
     MINIFIED_BYTE_LIMIT,
+    _SEMGREP_EXTENSIONS,
     is_minified,
     scanners_for_file,
 )
@@ -46,6 +47,40 @@ from app.shared.lib.scan_status import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Maps file extension → Semgrep language name used in rule `languages:` lists.
+_EXT_TO_SEMGREP_LANG: dict[str, str] = {
+    ".py": "python",
+    ".pyi": "python",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".java": "java",
+    ".go": "go",
+    ".rb": "ruby",
+    ".php": "php",
+    ".cs": "csharp",
+    ".c": "c",
+    ".cpp": "cpp",
+    ".cc": "cpp",
+    ".h": "c",
+    ".hpp": "cpp",
+}
+
+
+def _derive_languages(file_paths: "Iterable[str]") -> list[str]:
+    """Return deduplicated Semgrep language names from the set of file extensions."""
+    from pathlib import PurePosixPath
+
+    langs: set[str] = set()
+    for p in file_paths:
+        ext = PurePosixPath(p).suffix.lower()
+        lang = _EXT_TO_SEMGREP_LANG.get(ext)
+        if lang:
+            langs.add(lang)
+    return list(langs)
+
 
 # Bounds parallel SAST scanner subprocess invocations in the
 # `deterministic_prescan_node`. Mirrors the LLM-side cap so a worker
@@ -143,6 +178,37 @@ async def deterministic_prescan_node(state: WorkerState) -> Dict[str, Any]:
         )
         return {}
 
+    # Derive languages from eligible file extensions and select matching
+    # Semgrep rules from the DB. If 0 rules are found, Semgrep is skipped
+    # for this scan rather than falling back to the bundled pack.
+    languages = _derive_languages(eligible.keys())
+    semgrep_config_path: Optional[Any] = None  # Path or None
+    _semgrep_rules = []
+    if languages:
+        try:
+            from app.core.services.semgrep_ingestion.selector import select_rules_for_scan
+
+            async with AsyncSessionLocal() as _db:
+                _semgrep_rules = await select_rules_for_scan(
+                    languages=languages,
+                    technologies=[],
+                    db=_db,
+                )
+            if not _semgrep_rules:
+                logger.info(
+                    "deterministic_prescan: semgrep skipped — 0 ingested rules for "
+                    "scan_id=%s languages=%s",
+                    scan_id,
+                    languages,
+                )
+        except Exception as _exc:
+            logger.warning(
+                "deterministic_prescan: semgrep rule selection failed, skipping semgrep "
+                "scan_id=%s err=%s",
+                scan_id,
+                _exc,
+            )
+
     # Single shared semaphore covers all SAST scanner subprocesses in
     # this prescan invocation (N9). Each scanner walks the staged tree
     # itself, so we get one subprocess.run call per scanner per scan,
@@ -158,9 +224,21 @@ async def deterministic_prescan_node(state: WorkerState) -> Dict[str, Any]:
                 async with semaphore:
                     return await coro_factory()
 
+            if _semgrep_rules:
+                from app.core.services.semgrep_ingestion.materializer import materialize_rules as _mat
+
+                async def _run_semgrep_materialized():
+                    async with _mat(_semgrep_rules) as _cfg_dir:
+                        return await run_semgrep(staged_dir, original_paths, config_path=_cfg_dir)
+
+                semgrep_task = _gated(_run_semgrep_materialized)
+            else:
+                # 0 ingested rules — pass None so run_semgrep returns [] without subprocess
+                semgrep_task = _gated(lambda: run_semgrep(staged_dir, original_paths, config_path=None))
+
             scanner_tasks = [
                 _gated(lambda: run_bandit(staged_dir, original_paths)),
-                _gated(lambda: run_semgrep(staged_dir, original_paths)),
+                semgrep_task,
                 _gated(lambda: run_gitleaks(staged_dir, original_paths)),
                 _gated(lambda: run_osv(staged_dir, original_paths, scan_id=scan_id)),
             ]
