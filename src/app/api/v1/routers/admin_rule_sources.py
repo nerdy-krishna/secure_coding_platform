@@ -89,6 +89,7 @@ async def update_settings(
 
 @router.post("/seed", response_model=list[api_models.RuleSourceRead])
 async def seed_sources(
+    db: AsyncSession = Depends(get_db),
     _user: db_models.User = Depends(current_superuser),
 ):
     """Upsert the bundled semgrep_sources.yaml into the DB."""
@@ -99,7 +100,9 @@ async def seed_sources(
         "admin.rule_sources.seeded",
         extra={"count": len(results), "actor_id": str(_user.id)},
     )
-    return results
+    # Re-fetch from the current session so FastAPI can serialize the objects
+    # (refresh_source_seed uses its own session which closes before we return)
+    return await SemgrepRuleRepository(db).list_sources()
 
 
 # --------------------------------------------------------------------------
@@ -130,6 +133,7 @@ async def create_source(
         )
     source = await repo.upsert_source(payload.model_dump())
     await db.commit()
+    await db.refresh(source)
     logger.info(
         "admin.rule_sources.created",
         extra={"slug": source.slug, "actor_id": str(_user.id)},
@@ -161,6 +165,7 @@ async def update_source(
     if not source:
         raise HTTPException(status_code=404, detail="Source not found.")
     await db.commit()
+    await db.refresh(source)
     logger.info(
         "admin.rule_sources.updated",
         extra={"source_id": str(source_id), "actor_id": str(_user.id)},

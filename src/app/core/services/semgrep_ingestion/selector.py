@@ -46,7 +46,7 @@ async def _load_ingestion_settings(db: AsyncSession) -> dict[str, Any]:
     )
     global_enabled = rows.get("semgrep_ingestion.global_enabled", {}).get("value", True)
     workdir = rows.get("semgrep_ingestion.workdir", {}).get(
-        "value", "/var/lib/sccap/semgrep-rules"
+        "value", "/tmp/sccap-semgrep-rules"
     )
     sweep_interval = rows.get("semgrep_ingestion.sweep_interval_seconds", {}).get(
         "value", 900

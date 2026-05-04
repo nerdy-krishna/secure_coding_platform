@@ -97,11 +97,21 @@ RUN --mount=type=cache,target=/home/appuser/.cache/pypoetry,uid=1001,gid=1001 \
 FROM base AS api
 
 # git is needed by GitPython for the repo-clone submission path in
-# scan_service.create_scan_from_git.
+# scan_service.create_scan_from_git, and for the semgrep rule ingestion
+# sync which clones rule repos via GitPython in BackgroundTasks.
 USER root
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
+
+# --- Semgrep (API) ---
+# Needed for `semgrep --validate` in the rule-ingestion sync path.
+# Same isolated-venv approach as the worker stage (rich version conflict).
+RUN set -eux; \
+    python -m venv /opt/semgrep-venv; \
+    /opt/semgrep-venv/bin/pip install --no-cache-dir "setuptools<81" "semgrep==1.95.0"; \
+    ln -s /opt/semgrep-venv/bin/semgrep /usr/local/bin/semgrep; \
+    ln -s /opt/semgrep-venv/bin/pysemgrep /usr/local/bin/pysemgrep
 USER appuser
 
 COPY --chown=appuser:appuser --from=api-builder /app/.venv /app/.venv
