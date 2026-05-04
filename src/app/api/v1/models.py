@@ -886,6 +886,7 @@ class PaginatedProjectHistoryResponse(BaseModel):
 # Semgrep Rule Ingestion schemas
 # ---------------------------------------------------------------------------
 
+
 class RuleSourceBase(BaseModel):
     display_name: str = Field(..., min_length=1, max_length=255)
     description: str = Field(..., min_length=1, max_length=4000)

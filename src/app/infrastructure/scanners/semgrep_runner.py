@@ -255,7 +255,9 @@ async def run_semgrep(
     loop = asyncio.get_running_loop()
     started_at = loop.time()
     try:
-        completed = await asyncio.to_thread(_invoke_semgrep_sync, staged_dir, config_path)
+        completed = await asyncio.to_thread(
+            _invoke_semgrep_sync, staged_dir, config_path
+        )
     except subprocess.TimeoutExpired:
         logger.warning(
             "scanner=semgrep staged_dir=%s rc=-9 timeout=%ss",

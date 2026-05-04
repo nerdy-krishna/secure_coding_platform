@@ -23,7 +23,9 @@ async def materialize_rules(rules: list[db_models.SemgrepRule]) -> AsyncIterator
         for rule in rules:
             fname = tmpdir / f"{rule.namespaced_id.replace('/', '_')}.yaml"
             rule_doc = {"rules": [rule.raw_yaml]}
-            fname.write_text(yaml.safe_dump(rule_doc, default_flow_style=False), encoding="utf-8")
+            fname.write_text(
+                yaml.safe_dump(rule_doc, default_flow_style=False), encoding="utf-8"
+            )
         logger.debug(
             "semgrep.materializer.written",
             extra={"rule_count": len(rules), "tmpdir": str(tmpdir)},
@@ -31,4 +33,5 @@ async def materialize_rules(rules: list[db_models.SemgrepRule]) -> AsyncIterator
         yield tmpdir
     finally:
         import shutil
+
         shutil.rmtree(tmpdir, ignore_errors=True)

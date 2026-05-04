@@ -3,7 +3,15 @@ import logging
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Query,
+    Response,
+    status,
+)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,7 +19,9 @@ from app.api.v1 import models as api_models
 from app.infrastructure.auth.core import current_superuser
 from app.infrastructure.database import models as db_models
 from app.infrastructure.database.database import get_db
-from app.infrastructure.database.repositories.semgrep_rule_repo import SemgrepRuleRepository
+from app.infrastructure.database.repositories.semgrep_rule_repo import (
+    SemgrepRuleRepository,
+)
 from app.core.services.semgrep_ingestion.selector import _load_ingestion_settings
 
 logger = logging.getLogger(__name__)
@@ -19,17 +29,27 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/rule-sources")
 
 _SETTING_KEY_MAP = {
-    "allowed_licenses": ("semgrep_ingestion.allowed_licenses", lambda v: {"licenses": v}),
+    "allowed_licenses": (
+        "semgrep_ingestion.allowed_licenses",
+        lambda v: {"licenses": v},
+    ),
     "workdir": ("semgrep_ingestion.workdir", lambda v: {"value": v}),
     "global_enabled": ("semgrep_ingestion.global_enabled", lambda v: {"value": v}),
-    "max_rules_per_scan": ("semgrep_ingestion.max_rules_per_scan", lambda v: {"value": v}),
-    "sweep_interval_seconds": ("semgrep_ingestion.sweep_interval_seconds", lambda v: {"value": v}),
+    "max_rules_per_scan": (
+        "semgrep_ingestion.max_rules_per_scan",
+        lambda v: {"value": v},
+    ),
+    "sweep_interval_seconds": (
+        "semgrep_ingestion.sweep_interval_seconds",
+        lambda v: {"value": v},
+    ),
 }
 
 
 # --------------------------------------------------------------------------
 # Settings
 # --------------------------------------------------------------------------
+
 
 @router.get("/settings", response_model=api_models.IngestionSettingsRead)
 async def get_settings(
@@ -66,20 +86,26 @@ async def update_settings(
 # Seed
 # --------------------------------------------------------------------------
 
+
 @router.post("/seed", response_model=list[api_models.RuleSourceRead])
 async def seed_sources(
     _user: db_models.User = Depends(current_superuser),
 ):
     """Upsert the bundled semgrep_sources.yaml into the DB."""
     from app.core.services.semgrep_ingestion.sync_service import refresh_source_seed
+
     results = await refresh_source_seed()
-    logger.info("admin.rule_sources.seeded", extra={"count": len(results), "actor_id": str(_user.id)})
+    logger.info(
+        "admin.rule_sources.seeded",
+        extra={"count": len(results), "actor_id": str(_user.id)},
+    )
     return results
 
 
 # --------------------------------------------------------------------------
 # Source CRUD
 # --------------------------------------------------------------------------
+
 
 @router.get("/", response_model=list[api_models.RuleSourceRead])
 async def list_sources(
@@ -89,7 +115,9 @@ async def list_sources(
     return await SemgrepRuleRepository(db).list_sources()
 
 
-@router.post("/", response_model=api_models.RuleSourceRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/", response_model=api_models.RuleSourceRead, status_code=status.HTTP_201_CREATED
+)
 async def create_source(
     payload: api_models.RuleSourceCreate,
     db: AsyncSession = Depends(get_db),
@@ -97,10 +125,15 @@ async def create_source(
 ):
     repo = SemgrepRuleRepository(db)
     if await repo.get_source_by_slug(payload.slug):
-        raise HTTPException(status_code=409, detail="A source with this slug already exists.")
+        raise HTTPException(
+            status_code=409, detail="A source with this slug already exists."
+        )
     source = await repo.upsert_source(payload.model_dump())
     await db.commit()
-    logger.info("admin.rule_sources.created", extra={"slug": source.slug, "actor_id": str(_user.id)})
+    logger.info(
+        "admin.rule_sources.created",
+        extra={"slug": source.slug, "actor_id": str(_user.id)},
+    )
     return source
 
 
@@ -128,7 +161,10 @@ async def update_source(
     if not source:
         raise HTTPException(status_code=404, detail="Source not found.")
     await db.commit()
-    logger.info("admin.rule_sources.updated", extra={"source_id": str(source_id), "actor_id": str(_user.id)})
+    logger.info(
+        "admin.rule_sources.updated",
+        extra={"source_id": str(source_id), "actor_id": str(_user.id)},
+    )
     return source
 
 
@@ -142,13 +178,17 @@ async def delete_source(
     if not deleted:
         raise HTTPException(status_code=404, detail="Source not found.")
     await db.commit()
-    logger.info("admin.rule_sources.deleted", extra={"source_id": str(source_id), "actor_id": str(_user.id)})
+    logger.info(
+        "admin.rule_sources.deleted",
+        extra={"source_id": str(source_id), "actor_id": str(_user.id)},
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # --------------------------------------------------------------------------
 # Sync trigger
 # --------------------------------------------------------------------------
+
 
 @router.post("/{source_id}/sync", status_code=status.HTTP_202_ACCEPTED)
 async def trigger_sync(
@@ -164,16 +204,22 @@ async def trigger_sync(
     if not source:
         raise HTTPException(status_code=404, detail="Source not found.")
     if source.last_sync_status == "running":
-        raise HTTPException(status_code=409, detail="A sync is already running for this source.")
+        raise HTTPException(
+            status_code=409, detail="A sync is already running for this source."
+        )
 
     background_tasks.add_task(run_sync, source_id, f"manual:{_user.id}")
-    logger.info("admin.rule_sources.sync_triggered", extra={"source_id": str(source_id), "actor_id": str(_user.id)})
+    logger.info(
+        "admin.rule_sources.sync_triggered",
+        extra={"source_id": str(source_id), "actor_id": str(_user.id)},
+    )
     return {"detail": "Sync enqueued.", "source_id": str(source_id)}
 
 
 # --------------------------------------------------------------------------
 # Sync runs
 # --------------------------------------------------------------------------
+
 
 @router.get("/{source_id}/runs", response_model=api_models.PaginatedSyncRunsResponse)
 async def list_sync_runs(
@@ -195,6 +241,7 @@ async def list_sync_runs(
 # --------------------------------------------------------------------------
 # Rules browse
 # --------------------------------------------------------------------------
+
 
 @router.get("/{source_id}/rules", response_model=api_models.PaginatedRulesResponse)
 async def list_rules(

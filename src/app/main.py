@@ -749,8 +749,12 @@ app.include_router(dashboard_router, prefix="/api/v1", tags=["Dashboard"])
 app.include_router(search_router, prefix="/api/v1", tags=["Search"])
 
 from app.api.v1.routers.admin_users import router as admin_users_router  # noqa: E402
-from app.api.v1.routers.admin_rule_sources import router as rule_sources_router  # noqa: E402
-from app.api.v1.routers.scan_coverage import router as scan_coverage_router  # noqa: E402
+from app.api.v1.routers.admin_rule_sources import (  # noqa: E402
+    router as rule_sources_router,
+)
+from app.api.v1.routers.scan_coverage import (  # noqa: E402
+    router as scan_coverage_router,
+)
 
 app.include_router(admin_users_router, prefix="/api/v1")
 app.include_router(

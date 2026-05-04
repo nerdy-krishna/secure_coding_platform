@@ -33,7 +33,6 @@ from app.infrastructure.scanners.gitleaks_runner import run_gitleaks
 from app.infrastructure.scanners.osv_runner import run_osv
 from app.infrastructure.scanners.registry import (
     MINIFIED_BYTE_LIMIT,
-    _SEMGREP_EXTENSIONS,
     is_minified,
     scanners_for_file,
 )
@@ -182,11 +181,12 @@ async def deterministic_prescan_node(state: WorkerState) -> Dict[str, Any]:
     # Semgrep rules from the DB. If 0 rules are found, Semgrep is skipped
     # for this scan rather than falling back to the bundled pack.
     languages = _derive_languages(eligible.keys())
-    semgrep_config_path: Optional[Any] = None  # Path or None
     _semgrep_rules = []
     if languages:
         try:
-            from app.core.services.semgrep_ingestion.selector import select_rules_for_scan
+            from app.core.services.semgrep_ingestion.selector import (
+                select_rules_for_scan,
+            )
 
             async with AsyncSessionLocal() as _db:
                 _semgrep_rules = await select_rules_for_scan(
@@ -225,16 +225,22 @@ async def deterministic_prescan_node(state: WorkerState) -> Dict[str, Any]:
                     return await coro_factory()
 
             if _semgrep_rules:
-                from app.core.services.semgrep_ingestion.materializer import materialize_rules as _mat
+                from app.core.services.semgrep_ingestion.materializer import (
+                    materialize_rules as _mat,
+                )
 
                 async def _run_semgrep_materialized():
                     async with _mat(_semgrep_rules) as _cfg_dir:
-                        return await run_semgrep(staged_dir, original_paths, config_path=_cfg_dir)
+                        return await run_semgrep(
+                            staged_dir, original_paths, config_path=_cfg_dir
+                        )
 
                 semgrep_task = _gated(_run_semgrep_materialized)
             else:
                 # 0 ingested rules — pass None so run_semgrep returns [] without subprocess
-                semgrep_task = _gated(lambda: run_semgrep(staged_dir, original_paths, config_path=None))
+                semgrep_task = _gated(
+                    lambda: run_semgrep(staged_dir, original_paths, config_path=None)
+                )
 
             scanner_tasks = [
                 _gated(lambda: run_bandit(staged_dir, original_paths)),

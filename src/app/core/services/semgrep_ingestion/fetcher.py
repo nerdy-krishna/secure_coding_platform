@@ -40,6 +40,7 @@ def _sync_clone_or_pull(repo_url: str, branch: str, dest: Path) -> str:
                 extra={"dest": str(dest), "error": str(exc)},
             )
             import shutil
+
             shutil.rmtree(dest, ignore_errors=True)
 
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -58,15 +59,15 @@ def _sync_clone_or_pull(repo_url: str, branch: str, dest: Path) -> str:
     return sha
 
 
-async def clone_or_pull(
-    source: db_models.SemgrepRuleSource, workdir: Path
-) -> str:
+async def clone_or_pull(source: db_models.SemgrepRuleSource, workdir: Path) -> str:
     """Clone or update the rule repo. Returns HEAD SHA."""
     _validate_repo_url(source.repo_url)
     dest = workdir / source.slug
     try:
         sha = await asyncio.wait_for(
-            asyncio.to_thread(_sync_clone_or_pull, source.repo_url, source.branch, dest),
+            asyncio.to_thread(
+                _sync_clone_or_pull, source.repo_url, source.branch, dest
+            ),
             timeout=_CLONE_TIMEOUT,
         )
     except asyncio.TimeoutError:

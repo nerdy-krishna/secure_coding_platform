@@ -8,7 +8,9 @@ import logging
 from datetime import datetime, timezone
 
 from app.infrastructure.database.database import AsyncSessionLocal
-from app.infrastructure.database.repositories.semgrep_rule_repo import SemgrepRuleRepository
+from app.infrastructure.database.repositories.semgrep_rule_repo import (
+    SemgrepRuleRepository,
+)
 from app.core.services.semgrep_ingestion.selector import _load_ingestion_settings
 
 logger = logging.getLogger(__name__)
@@ -22,13 +24,17 @@ def _is_cron_due(cron_expr: str | None, last_synced_at: datetime | None) -> bool
         return False
     try:
         from croniter import croniter
+
         now = datetime.now(tz=timezone.utc)
         base = last_synced_at or datetime(2000, 1, 1, tzinfo=timezone.utc)
         ci = croniter(cron_expr, base)
         next_run = ci.get_next(datetime)
         return next_run <= now
     except Exception as exc:
-        logger.warning("semgrep_sync_sweeper.cron_parse_error", extra={"expr": cron_expr, "error": str(exc)})
+        logger.warning(
+            "semgrep_sync_sweeper.cron_parse_error",
+            extra={"expr": cron_expr, "error": str(exc)},
+        )
         return False
 
 
@@ -45,7 +51,8 @@ async def _tick() -> None:
         sources = await repo.list_sources()
 
     due = [
-        s for s in sources
+        s
+        for s in sources
         if s.enabled and s.auto_sync and _is_cron_due(s.sync_cron, s.last_synced_at)
     ]
     if not due:

@@ -37,7 +37,9 @@ def _extract_cwe(val: Any) -> list[str]:
     return result
 
 
-def _normalize_rule(raw_rule: dict, source: db_models.SemgrepRuleSource, relative_path: str) -> dict | None:
+def _normalize_rule(
+    raw_rule: dict, source: db_models.SemgrepRuleSource, relative_path: str
+) -> dict | None:
     rule_id = raw_rule.get("id")
     if not rule_id or not isinstance(rule_id, str):
         return None
@@ -93,7 +95,10 @@ def parse_rule_file(
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8", errors="replace"))
     except yaml.YAMLError as exc:
-        logger.debug("semgrep.parser.yaml_error", extra={"path": relative_path, "error": str(exc)})
+        logger.debug(
+            "semgrep.parser.yaml_error",
+            extra={"path": relative_path, "error": str(exc)},
+        )
         return []
 
     if not isinstance(raw, dict):

@@ -1,16 +1,15 @@
 # src/app/core/services/semgrep_ingestion/sync_service.py
-import asyncio
 import logging
 import traceback
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.infrastructure.database import models as db_models
 from app.infrastructure.database.database import AsyncSessionLocal
-from app.infrastructure.database.repositories.semgrep_rule_repo import SemgrepRuleRepository
+from app.infrastructure.database.repositories.semgrep_rule_repo import (
+    SemgrepRuleRepository,
+)
 
 from .fetcher import clone_or_pull
 from .parser import parse_rule_file
@@ -30,7 +29,8 @@ def _walk_rule_files(root: Path, subpath: str | None) -> list[Path]:
     if not scan_root.exists():
         return []
     return [
-        p for p in scan_root.rglob("*")
+        p
+        for p in scan_root.rglob("*")
         if p.suffix.lower() in _YAML_EXTS
         and not p.name.endswith(_SKIP_SUFFIXES)
         and p.is_file()
@@ -123,21 +123,25 @@ async def run_sync(source_id: uuid.UUID, triggered_by: str) -> None:
             repo = SemgrepRuleRepository(db)
             source = await repo.get_source_by_id(source_id)
             if not source:
-                logger.error("semgrep.sync.source_not_found", extra={"source_id": str(source_id)})
+                logger.error(
+                    "semgrep.sync.source_not_found", extra={"source_id": str(source_id)}
+                )
                 return
 
             # Prevent concurrent syncs on the same source via advisory lock
             lock_key = source_id.int & 0x7FFFFFFFFFFFFFFF  # Postgres bigint range
             try:
                 await db.execute(
-                    __import__("sqlalchemy").text(f"SELECT pg_try_advisory_xact_lock({lock_key})")
+                    __import__("sqlalchemy").text(
+                        f"SELECT pg_try_advisory_xact_lock({lock_key})"
+                    )
                 )
             except Exception:
                 pass  # advisory locks are best-effort
 
             # Mark source as running
             source.last_sync_status = "running"
-            run = await repo.create_sync_run(source_id=source_id, triggered_by=triggered_by)
+            await repo.create_sync_run(source_id=source_id, triggered_by=triggered_by)
             await db.flush()
 
         # Main sync in a separate transaction so we can commit incrementally
@@ -154,7 +158,9 @@ async def run_sync(source_id: uuid.UUID, triggered_by: str) -> None:
             try:
                 await _run_sync_inner(source, run_result, repo, workdir)
             except Exception as exc:
-                err_msg = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()[-1000:]}"
+                err_msg = (
+                    f"{type(exc).__name__}: {exc}\n{traceback.format_exc()[-1000:]}"
+                )
                 logger.error(
                     "semgrep.sync.failed",
                     extra={"source": source.slug, "error": str(exc)},
@@ -170,10 +176,11 @@ async def run_sync(source_id: uuid.UUID, triggered_by: str) -> None:
 def _load_seed_sources() -> list[dict]:
     """Parse semgrep_sources.yaml. Returns list of source dicts."""
     import yaml as _yaml
-    from importlib.resources import files
 
     try:
-        seed_path = Path(__file__).parent.parent.parent.parent / "data" / "semgrep_sources.yaml"
+        seed_path = (
+            Path(__file__).parent.parent.parent.parent / "data" / "semgrep_sources.yaml"
+        )
         raw = _yaml.safe_load(seed_path.read_text(encoding="utf-8"))
         return raw.get("sources", [])
     except Exception as exc:
@@ -189,15 +196,17 @@ async def refresh_source_seed() -> list[db_models.SemgrepRuleSource]:
         async with db.begin():
             repo = SemgrepRuleRepository(db)
             for sd in sources_data:
-                source = await repo.upsert_source({
-                    "slug": sd["slug"],
-                    "display_name": sd["display_name"],
-                    "description": sd.get("description", ""),
-                    "repo_url": sd["repo_url"],
-                    "branch": sd.get("branch", "main"),
-                    "subpath": sd.get("subpath"),
-                    "license_spdx": sd["license_spdx"],
-                    "author": sd.get("author", ""),
-                })
+                source = await repo.upsert_source(
+                    {
+                        "slug": sd["slug"],
+                        "display_name": sd["display_name"],
+                        "description": sd.get("description", ""),
+                        "repo_url": sd["repo_url"],
+                        "branch": sd.get("branch", "main"),
+                        "subpath": sd.get("subpath"),
+                        "license_spdx": sd["license_spdx"],
+                        "author": sd.get("author", ""),
+                    }
+                )
                 results.append(source)
     return results

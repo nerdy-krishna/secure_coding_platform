@@ -16,6 +16,7 @@ def _semgrep_binary() -> str:
 
 def _sync_validate(file_path: str) -> tuple[bool, str]:
     import subprocess
+
     try:
         result = subprocess.run(
             [_semgrep_binary(), "--validate", "--config", file_path, "--metrics=off"],

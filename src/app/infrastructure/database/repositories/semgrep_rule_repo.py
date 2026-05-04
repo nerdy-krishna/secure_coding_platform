@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 from sqlalchemy import select, func, and_, or_, text
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.infrastructure.database import models as db_models
@@ -23,19 +22,29 @@ class SemgrepRuleRepository:
 
     async def list_sources(self) -> List[db_models.SemgrepRuleSource]:
         result = await self.db.execute(
-            select(db_models.SemgrepRuleSource).order_by(db_models.SemgrepRuleSource.display_name)
+            select(db_models.SemgrepRuleSource).order_by(
+                db_models.SemgrepRuleSource.display_name
+            )
         )
         return list(result.scalars().all())
 
-    async def get_source_by_id(self, source_id: uuid.UUID) -> Optional[db_models.SemgrepRuleSource]:
+    async def get_source_by_id(
+        self, source_id: uuid.UUID
+    ) -> Optional[db_models.SemgrepRuleSource]:
         result = await self.db.execute(
-            select(db_models.SemgrepRuleSource).where(db_models.SemgrepRuleSource.id == source_id)
+            select(db_models.SemgrepRuleSource).where(
+                db_models.SemgrepRuleSource.id == source_id
+            )
         )
         return result.scalars().first()
 
-    async def get_source_by_slug(self, slug: str) -> Optional[db_models.SemgrepRuleSource]:
+    async def get_source_by_slug(
+        self, slug: str
+    ) -> Optional[db_models.SemgrepRuleSource]:
         result = await self.db.execute(
-            select(db_models.SemgrepRuleSource).where(db_models.SemgrepRuleSource.slug == slug)
+            select(db_models.SemgrepRuleSource).where(
+                db_models.SemgrepRuleSource.slug == slug
+            )
         )
         return result.scalars().first()
 
@@ -44,8 +53,15 @@ class SemgrepRuleRepository:
         existing = await self.get_source_by_slug(data["slug"])
         if existing:
             # Update mutable metadata fields; never touch enabled/auto_sync/sync_cron
-            for field in ("display_name", "description", "repo_url", "branch", "subpath",
-                          "license_spdx", "author"):
+            for field in (
+                "display_name",
+                "description",
+                "repo_url",
+                "branch",
+                "subpath",
+                "license_spdx",
+                "author",
+            ):
                 if field in data:
                     setattr(existing, field, data[field])
             await self.db.flush()
@@ -63,8 +79,16 @@ class SemgrepRuleRepository:
         if not source:
             return None
         allowed = {
-            "display_name", "description", "repo_url", "branch", "subpath",
-            "license_spdx", "author", "sync_cron", "enabled", "auto_sync",
+            "display_name",
+            "description",
+            "repo_url",
+            "branch",
+            "subpath",
+            "license_spdx",
+            "author",
+            "sync_cron",
+            "enabled",
+            "auto_sync",
         }
         for k, v in updates.items():
             if k in allowed:
@@ -133,7 +157,9 @@ class SemgrepRuleRepository:
             )
         count_stmt = select(func.count()).select_from(stmt.subquery())
         total = (await self.db.execute(count_stmt)).scalar_one()
-        stmt = stmt.order_by(db_models.SemgrepRule.severity.desc(), db_models.SemgrepRule.namespaced_id)
+        stmt = stmt.order_by(
+            db_models.SemgrepRule.severity.desc(), db_models.SemgrepRule.namespaced_id
+        )
         stmt = stmt.offset((page - 1) * page_size).limit(page_size)
         rows = list((await self.db.execute(stmt)).scalars().all())
         return rows, total
@@ -179,6 +205,7 @@ class SemgrepRuleRepository:
 
         # Join with source to filter enabled sources
         from sqlalchemy.orm import aliased
+
         src = aliased(db_models.SemgrepRuleSource)
 
         stmt = (
@@ -221,6 +248,7 @@ class SemgrepRuleRepository:
         Returns {lang: {covered: bool, enabled_rule_count: int, recommended_sources: [...]}}
         """
         from sqlalchemy.orm import aliased
+
         src = aliased(db_models.SemgrepRuleSource)
 
         summary: dict = {}
@@ -282,7 +310,9 @@ class SemgrepRuleRepository:
         self, run_id: uuid.UUID, updates: dict
     ) -> Optional[db_models.SemgrepSyncRun]:
         result = await self.db.execute(
-            select(db_models.SemgrepSyncRun).where(db_models.SemgrepSyncRun.id == run_id)
+            select(db_models.SemgrepSyncRun).where(
+                db_models.SemgrepSyncRun.id == run_id
+            )
         )
         run = result.scalars().first()
         if not run:

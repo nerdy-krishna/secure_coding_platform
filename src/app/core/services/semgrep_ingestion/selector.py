@@ -5,7 +5,9 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.infrastructure.database import models as db_models
-from app.infrastructure.database.repositories.semgrep_rule_repo import SemgrepRuleRepository
+from app.infrastructure.database.repositories.semgrep_rule_repo import (
+    SemgrepRuleRepository,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +30,7 @@ DEFAULT_MAX_RULES_PER_SCAN = 5000
 async def _load_ingestion_settings(db: AsyncSession) -> dict[str, Any]:
     """Read semgrep_ingestion.* keys from system_configurations. Returns defaults if not set."""
     from sqlalchemy import select
+
     result = await db.execute(
         select(db_models.SystemConfiguration).where(
             db_models.SystemConfiguration.key.like("semgrep_ingestion.%")
@@ -49,8 +52,12 @@ async def _load_ingestion_settings(db: AsyncSession) -> dict[str, Any]:
         "value", 900
     )
     return {
-        "allowed_licenses": allowed if isinstance(allowed, list) else DEFAULT_ALLOWED_LICENSES,
-        "max_rules_per_scan": int(max_rules) if max_rules else DEFAULT_MAX_RULES_PER_SCAN,
+        "allowed_licenses": (
+            allowed if isinstance(allowed, list) else DEFAULT_ALLOWED_LICENSES
+        ),
+        "max_rules_per_scan": (
+            int(max_rules) if max_rules else DEFAULT_MAX_RULES_PER_SCAN
+        ),
         "global_enabled": bool(global_enabled),
         "workdir": str(workdir),
         "sweep_interval_seconds": int(sweep_interval) if sweep_interval else 900,
