@@ -10,6 +10,7 @@ import { useAuth } from "../../shared/hooks/useAuth";
 import { useNotificationPermission } from "../../shared/hooks/useNotificationPermission";
 import { useTheme } from "../../app/providers/ThemeProvider";
 import { Icon } from "../../shared/ui/Icon";
+import { useToast } from "../../shared/ui/Toast";
 import { SearchCombobox } from "./SearchCombobox";
 
 interface NavItem {
@@ -157,25 +158,58 @@ const NotificationOptInButton: React.FC = () => {
   //   N2 — `request()` is invoked ONLY from this click handler, never
   //   in a useEffect. The button hides itself once the user is in a
   //   non-default state (granted / denied / dismissed) so we don't nag.
-  // (2026-05-04) Quiet status indicator only. The previous design
-  // popped a full "Enable notifications" pill in the top nav of every
-  // page — too noisy, easy to miss the dismiss-X. The explicit opt-in
-  // flow now lives on the Appearance settings page; the TopNav just
-  // renders a small bell when notifications are on, so the user has
-  // visual confirmation of the state without being prompted on every
-  // navigation.
-  const { supported, permission } = useNotificationPermission();
+  const { supported, permission, dismissed, request, dismiss } =
+    useNotificationPermission();
+  const toast = useToast();
+
   if (!supported) return null;
-  if (permission !== "granted") return null;
+
+  // Granted: show a quiet "on" indicator (no action). Denied / dismissed:
+  // hide the opt-in entirely. Default: show the opt-in pair.
+  if (permission === "granted") {
+    return (
+      <button
+        className="sccap-btn sccap-btn-icon sccap-btn-ghost"
+        title="Desktop notifications are on"
+        aria-label="Desktop notifications enabled"
+        disabled
+      >
+        <Icon.Bell size={16} />
+      </button>
+    );
+  }
+  if (permission === "denied" || dismissed) return null;
+
+  const handleEnable = async () => {
+    const result = await request();
+    if (result === "granted") {
+      toast.success("Desktop notifications on");
+    } else if (result === "denied") {
+      toast.warn("Notifications blocked — re-enable in browser site settings");
+    }
+  };
+
   return (
-    <button
-      className="sccap-btn sccap-btn-icon sccap-btn-ghost"
-      title="Desktop notifications are on (manage in Appearance settings)"
-      aria-label="Desktop notifications enabled"
-      disabled
-    >
-      <Icon.Bell size={16} />
-    </button>
+    <div style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+      <button
+        className="sccap-btn sccap-btn-ghost"
+        onClick={handleEnable}
+        title="Get a desktop notification when scans finish"
+        style={{ padding: "4px 10px", fontSize: 12, gap: 6 }}
+      >
+        <Icon.Bell size={14} />
+        <span>Enable notifications</span>
+      </button>
+      <button
+        className="sccap-btn sccap-btn-icon sccap-btn-ghost"
+        onClick={dismiss}
+        title="No thanks (don't ask again)"
+        aria-label="Dismiss notifications opt-in"
+        style={{ fontSize: 11 }}
+      >
+        ✕
+      </button>
+    </div>
   );
 };
 
