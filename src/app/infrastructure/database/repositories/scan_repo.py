@@ -418,12 +418,33 @@ class ScanRepository:
     async def save_findings(
         self, scan_id: uuid.UUID, findings: List[agent_schemas.VulnerabilityFinding]
     ):
-        """Saves a list of vulnerability findings for a scan."""
+        """Inserts vulnerability findings for a scan and hydrates the
+        DB-assigned ``id`` back onto each input Pydantic schema.
+
+        Hydrating ``id`` matters for the deterministic-prescan pipeline:
+        the LangGraph state carries the same finding objects through to
+        ``save_results_node``, which uses the presence of an ``id`` to
+        decide whether the row is fresh (insert) or already persisted
+        (update only). Without this hydration, the results node re-
+        inserts every prescan finding a second time.
+
+        Findings whose ``id`` is already populated are skipped — they
+        were inserted by an earlier call (LangGraph node re-entry on
+        resume) and re-inserting would dupe the row. This makes
+        ``save_findings`` idempotent against the input list.
+        """
         if not findings:
             return
 
-        db_findings = []
-        for f in findings:
+        # Skip already-persisted findings (id already set) — defends
+        # against double-insert when a node calling this is re-entered
+        # by LangGraph after an interrupt() resume.
+        new_findings = [f for f in findings if f.id is None]
+        if not new_findings:
+            return
+
+        db_findings: List[db_models.Finding] = []
+        for f in new_findings:
             # For new findings, ensure ID is not set
             finding_dict = f.model_dump(exclude_unset=True, exclude={"id"})
 
@@ -444,6 +465,13 @@ class ScanRepository:
                 exc_info=True,
             )
             raise
+
+        # Hydrate the DB-assigned ids back onto the input Pydantic
+        # schemas, in order. SQLAlchemy populates `db_findings[i].id`
+        # after `add_all` + commit; we pair by index since both lists
+        # were built in the same iteration.
+        for schema, row in zip(new_findings, db_findings):
+            schema.id = row.id
 
     async def update_correlated_findings(
         self, findings: List[agent_schemas.VulnerabilityFinding]

@@ -220,6 +220,23 @@ async def deterministic_prescan_node(state: WorkerState) -> Dict[str, Any]:
                 e,
             )
 
+    # Persist the deterministic findings HERE — exactly once per scan.
+    # This used to live inside `pending_prescan_approval_node` (just
+    # before its `interrupt()`), but LangGraph re-enters interrupted
+    # nodes from the top on resume, so the body ran a second time
+    # whenever the operator clicked Continue / Stop on the prescan
+    # card and `save_findings` inserted the same rows a second time.
+    # The downstream `user_decline_node` / `blocked_pre_llm_node` then
+    # ran a third save, and `save_results_node` (SUGGEST/AUDIT) a
+    # fourth — every prescan finding ended up duped 3-4× in the DB.
+    # Keeping the persist in this node, which never re-enters because
+    # it has no `interrupt()`, fixes the lot. `save_findings` also
+    # hydrates `id` back onto each schema so the downstream nodes can
+    # detect "already persisted" rows and skip re-inserting them.
+    if prescan_findings:
+        async with AsyncSessionLocal() as db:
+            await ScanRepository(db).save_findings(scan_id, prescan_findings)
+
     return {"findings": prescan_findings, "bom_cyclonedx": bom_cyclonedx}
 
 
@@ -262,11 +279,10 @@ async def blocked_pre_llm_node(state: WorkerState) -> Dict[str, Any]:
             scan_id,
         )
 
+    # Findings were already persisted by `deterministic_prescan_node`;
+    # do NOT re-save here (would dupe rows). Just flip the status.
     async with AsyncSessionLocal() as db:
-        repo = ScanRepository(db)
-        if findings:
-            await repo.save_findings(scan_id, findings)
-        await repo.update_status(scan_id, STATUS_BLOCKED_PRE_LLM)
+        await ScanRepository(db).update_status(scan_id, STATUS_BLOCKED_PRE_LLM)
     return {}
 
 
@@ -277,9 +293,10 @@ async def user_decline_node(state: WorkerState) -> Dict[str, Any]:
     "I rejected the secret" from "I just don't want to pay for an LLM
     scan right now".
 
-    Persists the deterministic findings produced by the pre-pass so
-    the operator can review them on the scan-results page even though
-    no LLM augmentation ran. ADR-009 / G7.
+    The deterministic findings are already persisted by
+    ``deterministic_prescan_node`` so the operator can review them on
+    the scan-results page even though no LLM augmentation ran (ADR-009
+    / G7). This node only updates the status.
     """
     scan_id = state["scan_id"]
     findings = state.get("findings") or []
@@ -289,10 +306,7 @@ async def user_decline_node(state: WorkerState) -> Dict[str, Any]:
         len(findings),
     )
     async with AsyncSessionLocal() as db:
-        repo = ScanRepository(db)
-        if findings:
-            await repo.save_findings(scan_id, findings)
-        await repo.update_status(scan_id, STATUS_BLOCKED_USER_DECLINE)
+        await ScanRepository(db).update_status(scan_id, STATUS_BLOCKED_USER_DECLINE)
     return {}
 
 
@@ -317,14 +331,17 @@ async def pending_prescan_approval_node(state: WorkerState) -> Dict[str, Any]:
         for f in findings
     )
 
-    # Persist findings + status BEFORE the interrupt so the SSE stream
-    # and the prescan-approval card have everything they need while
-    # the worker thread is parked at `interrupt()`.
+    # Findings were already persisted by `deterministic_prescan_node`
+    # (which runs once per scan and never re-enters). This node IS
+    # re-entered on every resume — its body executes again when the
+    # operator clicks Continue / Stop — so a `save_findings` call
+    # here would insert the same rows a second time. Update status
+    # only; the prescan card on the UI already sees the persisted
+    # findings via the standard scans/{id}/result endpoint.
     async with AsyncSessionLocal() as db:
-        repo = ScanRepository(db)
-        if findings:
-            await repo.save_findings(scan_id, findings)
-        await repo.update_status(scan_id, STATUS_PENDING_PRESCAN_APPROVAL)
+        await ScanRepository(db).update_status(
+            scan_id, STATUS_PENDING_PRESCAN_APPROVAL
+        )
 
     logger.info(
         "pending_prescan_approval: scan_id=%s findings=%d critical_secret=%s — pausing for operator",

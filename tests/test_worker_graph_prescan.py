@@ -8,8 +8,16 @@ in isolation and rely on:
 
 - The graph wiring being verified at code-review / manual-smoke time.
 - The node never calling ``interrupt()`` (asserted structurally below).
-- Persistence happening at ``save_results_node`` (single save site;
-  unchanged by this PR).
+- Persistence happening EXACTLY ONCE per scan, in this node
+  (``deterministic_prescan_node``). It used to live in the downstream
+  ``pending_prescan_approval_node`` / ``user_decline_node`` /
+  ``blocked_pre_llm_node`` / ``save_results_node`` — but those run
+  multiple times per scan (LangGraph re-enters interrupted nodes from
+  the top on resume, and ``save_results_node`` runs alongside the
+  prescan rows again at the end), and each `save_findings` call was
+  inserting the same prescan row another time. Three or four duped
+  rows per finding showed up on the results page. Pinning persistence
+  to this single never-re-entered node fixes that.
 """
 
 from __future__ import annotations
@@ -82,7 +90,34 @@ async def test_prescan_returns_findings_with_source_bandit_for_real_python(monke
     """Integration of the node + Bandit subprocess. Requires the
     `bandit` binary to be present in the worker venv (it is in the
     runtime Docker image; locally pip-installed during dev).
+
+    Stubs the persist path because the node now writes to the DB
+    inline; the test scan_id isn't seeded as a row, so a real
+    ``save_findings`` would FK-violate.
     """
+
+    class _StubRepo:
+        def __init__(self, *_a, **_k):
+            pass
+
+        async def save_findings(self, *_a, **_k):
+            pass
+
+        async def update_bom_cyclonedx(self, *_a, **_k):
+            pass
+
+    class _StubSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return False
+
+    from app.infrastructure.workflows.nodes import prescan as prescan_mod
+
+    monkeypatch.setattr(prescan_mod, "ScanRepository", _StubRepo)
+    monkeypatch.setattr(prescan_mod, "AsyncSessionLocal", lambda: _StubSession())
+
     state = _state(
         files={
             "vuln.py": (
@@ -94,9 +129,19 @@ async def test_prescan_returns_findings_with_source_bandit_for_real_python(monke
     )
     result = await worker_graph.deterministic_prescan_node(state)
     findings = result.get("findings", [])
-    assert findings, "Expected Bandit to flag at least one issue"
+    assert findings, "Expected the deterministic pre-pass to flag at least one issue"
     assert all(isinstance(f, VulnerabilityFinding) for f in findings)
-    assert all(f.source == "bandit" for f in findings)
+    # Semgrep's bundled `security-audit` pack also matches
+    # `subprocess.call(..., shell=True)` via its `subprocess-shell-true`
+    # rule, so the prescan output is a mix of bandit + semgrep here.
+    # Assert that at least one bandit row is present rather than
+    # forcing all rows to be bandit.
+    assert any(
+        f.source == "bandit" for f in findings
+    ), "Bandit must flag the shell=True call regardless of which other scanners corroborate"
+    assert all(
+        f.source in {"bandit", "semgrep"} for f in findings
+    ), "Only bandit + semgrep should fire on this snippet (no secrets, no manifest)"
     assert all(f.confidence == "High" for f in findings)
 
 
@@ -148,28 +193,96 @@ async def test_prescan_failure_continues_to_estimate_cost(monkeypatch, caplog):
     assert "prescan_failed" in msgs
 
 
-async def test_prescan_does_not_persist_findings_in_node(monkeypatch):
-    """Persistence is deferred to ``save_results_node`` (single save
-    site). The prescan node must not open its own session-and-save.
+async def test_prescan_persists_findings_exactly_once_in_node(monkeypatch):
+    """Persistence is now pinned to this node — the previous fan-out to
+    ``pending_prescan_approval_node`` / ``user_decline_node`` /
+    ``blocked_pre_llm_node`` / ``save_results_node`` was duplicating
+    every prescan row 3-4× (LangGraph re-enters interrupted nodes from
+    the top on resume, so a `save_findings` call before the interrupt
+    ran twice). This test asserts the new contract: when the prescan
+    node returns non-empty findings, it MUST call save_findings, and
+    must do so exactly once.
     """
-    saw_save = False
+    saw_save_calls: list[Any] = []
 
-    class _RaisingScanRepository:
+    class _CountingScanRepository:
         def __init__(self, *_args, **_kwargs):
             pass
 
-        async def save_findings(self, *_args, **_kwargs):
-            nonlocal saw_save
-            saw_save = True
+        async def save_findings(self, scan_id, findings):
+            saw_save_calls.append((scan_id, list(findings)))
 
-    # Post-split the prescan node looks up `ScanRepository` from its
-    # own module namespace (`nodes.prescan`), not from `worker_graph`.
+        async def update_bom_cyclonedx(self, *_a, **_k):
+            pass
+
+    class _StubSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return False
+
     from app.infrastructure.workflows.nodes import prescan as prescan_mod
 
-    monkeypatch.setattr(prescan_mod, "ScanRepository", _RaisingScanRepository)
-    state = _state(files={"x.py": "y = 1\n"})
+    monkeypatch.setattr(prescan_mod, "ScanRepository", _CountingScanRepository)
+    monkeypatch.setattr(prescan_mod, "AsyncSessionLocal", lambda: _StubSession())
+
+    # A real Python file with a clear Bandit hit so we exercise the
+    # "findings non-empty → must persist" branch.
+    state = _state(
+        files={
+            "vuln.py": (
+                "import subprocess\n"
+                "def run(user_input):\n"
+                "    subprocess.call(user_input, shell=True)\n"
+            )
+        }
+    )
+    result = await worker_graph.deterministic_prescan_node(state)
+    findings = result.get("findings", [])
+    assert findings, "Expected Bandit to flag at least one issue"
+    assert (
+        len(saw_save_calls) == 1
+    ), f"prescan must persist exactly once per scan, got {len(saw_save_calls)} calls"
+    assert saw_save_calls[0][1] == findings, (
+        "save_findings must be called with the same findings list returned "
+        "in state — that's how downstream nodes get back the DB-assigned ids"
+    )
+
+
+async def test_prescan_skips_persist_when_no_findings(monkeypatch):
+    """The persist call is gated on findings being non-empty so a clean
+    pre-pass doesn't open a DB session for nothing.
+    """
+    saw_save_calls: list[Any] = []
+
+    class _CountingScanRepository:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def save_findings(self, scan_id, findings):
+            saw_save_calls.append((scan_id, list(findings)))
+
+        async def update_bom_cyclonedx(self, *_a, **_k):
+            pass
+
+    class _StubSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return False
+
+    from app.infrastructure.workflows.nodes import prescan as prescan_mod
+
+    monkeypatch.setattr(prescan_mod, "ScanRepository", _CountingScanRepository)
+    monkeypatch.setattr(prescan_mod, "AsyncSessionLocal", lambda: _StubSession())
+
+    state = _state(files={"clean.py": "x = 1\n"})
     await worker_graph.deterministic_prescan_node(state)
-    assert saw_save is False, "deterministic_prescan_node must not save findings itself"
+    assert (
+        saw_save_calls == []
+    ), "prescan must not call save_findings when findings is empty"
 
 
 async def test_prescan_node_does_not_call_interrupt():
