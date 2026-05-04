@@ -224,6 +224,11 @@ export interface SummaryReport {
 export interface ScanResultResponse {
   scan_id: string;
   status: string;
+  // Always-present project pointers (top-level on the backend response).
+  // Populated even when `summary_report` is null because the scan never
+  // produced one (queued / cancelled / failed early).
+  project_id: string;
+  project_name: string;
   summary_report?: SummaryReport;
   original_code_map?: { [filePath: string]: string };
   fixed_code_map?: { [filePath: string]: string };

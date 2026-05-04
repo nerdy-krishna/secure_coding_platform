@@ -144,8 +144,14 @@ const ResultsPage: React.FC = () => {
   const selected =
     filtered.find((f) => f.id === selectedFindingId) ?? filtered[0] ?? null;
 
-  const projectId = data?.summary_report?.project_id;
-  const projectName = data?.summary_report?.project_name;
+  // Prefer the always-present top-level project pointers (backend
+  // populates these from the Scan row even when `summary_report` is
+  // null because the scan never reached report-generation — e.g. a
+  // CANCELLED scan the user opened from the project page). Fall back
+  // to the report's copy for older API payloads served from cache.
+  const projectId = data?.project_id ?? data?.summary_report?.project_id;
+  const projectName =
+    data?.project_name ?? data?.summary_report?.project_name;
 
   const handleDelete = useCallback(async () => {
     if (!scanId) return;
@@ -206,10 +212,41 @@ const ResultsPage: React.FC = () => {
   const riskScore = report?.overall_risk_score?.score;
   const riskLabel = typeof riskScore === "number" ? riskScore : riskScore || "—";
 
+  // Navigate back to the project this scan belongs to. Prefers the
+  // top-level pointers (always present), falls back to the summary
+  // report (also fine on completed scans). When neither is known
+  // (extremely-early failure), bounces to the projects index.
+  const goToProject = () => {
+    if (projectId) {
+      navigate(`/analysis/projects/${projectId}`, {
+        state: projectName ? { projectName } : undefined,
+      });
+    } else {
+      navigate("/analysis/results");
+    }
+  };
+  // Display name for the project — prefer the top-level field over the
+  // report copy so an in-progress / cancelled scan still shows it.
+  const displayProjectName =
+    projectName ?? report?.project_name ?? null;
+
   return (
     <div className="fade-in" style={{ display: "grid", gap: 16 }}>
       {/* header */}
       <div>
+        {/* Back button — prominent so users coming from the project page
+            see an obvious way home. Falls through to the projects grid
+            if the project pointer is somehow missing. */}
+        <button
+          className="sccap-btn sccap-btn-sm sccap-btn-ghost"
+          onClick={goToProject}
+          style={{ marginBottom: 10 }}
+        >
+          <Icon.ChevronL size={12} />{" "}
+          {displayProjectName
+            ? `Back to ${displayProjectName}`
+            : "Back to projects"}
+        </button>
         <div
           style={{
             display: "flex",
@@ -224,10 +261,19 @@ const ResultsPage: React.FC = () => {
             className="sccap-btn sccap-btn-sm sccap-btn-ghost"
             onClick={() => navigate("/analysis/results")}
           >
-            <Icon.ChevronL size={12} /> Projects
+            Projects
           </button>
           <span>/</span>
-          <span>{report?.project_name ?? "…"}</span>
+          {projectId ? (
+            <button
+              className="sccap-btn sccap-btn-sm sccap-btn-ghost"
+              onClick={goToProject}
+            >
+              {displayProjectName ?? "…"}
+            </button>
+          ) : (
+            <span>{displayProjectName ?? "…"}</span>
+          )}
           <span>/</span>
           <span style={{ color: "var(--fg)", fontFamily: "var(--font-mono)" }}>
             {scanId?.slice(0, 8)}
@@ -243,7 +289,7 @@ const ResultsPage: React.FC = () => {
         >
           <div>
             <h1 style={{ color: "var(--fg)" }}>
-              {report?.project_name ?? "Scan"}{" "}
+              {displayProjectName ?? "Scan"}{" "}
               <span
                 style={{
                   color: "var(--fg-subtle)",

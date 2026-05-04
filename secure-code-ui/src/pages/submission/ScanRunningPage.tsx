@@ -9,6 +9,7 @@
 // fixed stage list that mirrors the worker graph.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { CriticalSecretOverrideModal } from "../../features/prescan-approval/CriticalSecretOverrideModal";
 import { PrescanReviewCard } from "../../features/prescan-approval/PrescanReviewCard";
@@ -102,6 +103,7 @@ function fmtStatus(status: string): string {
 const ScanRunningPage: React.FC = () => {
   const { scanId } = useParams<{ scanId: string }>();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const toast = useToast();
   const notificationPerm = useNotificationPermission();
   const [status, setStatus] = useState<string>("QUEUED");
@@ -124,6 +126,14 @@ const ScanRunningPage: React.FC = () => {
   const [stopConfirmOpen, setStopConfirmOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // Project pointers seeded from the one-shot getScanResult call below.
+  // Used to route back to the scan's project page after delete instead
+  // of bouncing the user to the dashboard (a queued/failed scan has no
+  // summary_report, so we can't pull these from the report payload).
+  const [projectInfo, setProjectInfo] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
   const { user } = useAuth();
   const isSuperuser = !!user?.is_superuser;
   const [prescanReview, setPrescanReview] = useState<PrescanReviewResponse | null>(
@@ -153,6 +163,12 @@ const ScanRunningPage: React.FC = () => {
         if (cancelled) return;
         if (typeof r.status === "string" && r.status.length < 64) {
           setStatus(r.status);
+        }
+        if (r.project_id) {
+          setProjectInfo({
+            id: r.project_id,
+            name: r.project_name || "Project",
+          });
         }
         if (r.cost_details) {
           setCostDetails(r.cost_details);
@@ -544,7 +560,17 @@ const ScanRunningPage: React.FC = () => {
     try {
       await scanService.cancelScan(scanId);
       toast.info("Scan cancelled.");
-      navigate("/account/dashboard");
+      queryClient.invalidateQueries({
+        queryKey: ["project-scans", projectInfo?.id],
+      });
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      if (projectInfo) {
+        navigate(`/analysis/projects/${projectInfo.id}`, {
+          state: { projectName: projectInfo.name },
+        });
+      } else {
+        navigate("/analysis/results");
+      }
     } catch (err) {
       const e = err as { message?: string };
       toast.error(e.message || "Failed to cancel scan");
@@ -552,7 +578,7 @@ const ScanRunningPage: React.FC = () => {
       setCancelling(false);
       setStopConfirmOpen(false);
     }
-  }, [scanId, navigate, toast]);
+  }, [scanId, projectInfo, navigate, queryClient, toast]);
 
   const handleDelete = useCallback(async () => {
     if (!scanId) return;
@@ -560,7 +586,17 @@ const ScanRunningPage: React.FC = () => {
     try {
       await scanService.deleteScan(scanId);
       toast.info("Scan deleted.");
-      navigate("/account/dashboard");
+      queryClient.invalidateQueries({
+        queryKey: ["project-scans", projectInfo?.id],
+      });
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      if (projectInfo) {
+        navigate(`/analysis/projects/${projectInfo.id}`, {
+          state: { projectName: projectInfo.name },
+        });
+      } else {
+        navigate("/analysis/results");
+      }
     } catch (err) {
       const e = err as { message?: string };
       toast.error(e.message || "Failed to delete scan");
@@ -568,7 +604,7 @@ const ScanRunningPage: React.FC = () => {
       setDeleting(false);
       setDeleteConfirmOpen(false);
     }
-  }, [scanId, navigate, toast]);
+  }, [scanId, projectInfo, navigate, queryClient, toast]);
 
   return (
     <div className="fade-in" style={{ display: "grid", gap: 16 }}>

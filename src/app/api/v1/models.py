@@ -720,6 +720,12 @@ class SummaryReportResponse(BaseModel):
 
 class AnalysisResultDetailResponse(BaseModel):
     status: str
+    # Always-present pointers to the scan's owning project. Top-level
+    # so callers (e.g. ScanRunningPage) can route back to the project
+    # even when `summary_report` is null because the scan never reached
+    # report-generation (still queued, cancelled, failed early).
+    project_id: uuid.UUID
+    project_name: str = "N/A"
     summary_report: Optional[SummaryReportResponse] = None
     text_report: Optional[str] = None
     original_code_map: Optional[Dict[str, str]] = None
