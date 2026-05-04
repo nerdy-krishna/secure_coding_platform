@@ -524,9 +524,31 @@ async def analysis_node(
     agent_description = agent_config.get("description")
     domain_query = agent_config.get("domain_query", {})
 
-    logger.debug("agent: domain_query loaded", extra={"agent": agent_name})
+    # Promoted from DEBUG → INFO so the analysis path is observable in
+    # production logs. Every silent-return below was historically
+    # invisible, which let scans complete with 0 LLM calls go unnoticed
+    # for weeks. Each guard now logs why it skipped so the failure
+    # mode is grep-able.
+    logger.info(
+        "agent: invocation entered",
+        extra={
+            "agent": agent_name,
+            "has_description": bool(agent_description),
+            "has_domain_query": bool(domain_query),
+            "domain_query_keys": list(domain_query.keys()) if isinstance(domain_query, dict) else None,
+        },
+    )
 
     if not agent_name or not domain_query or not agent_description:
+        logger.warning(
+            "agent: skipped — missing config",
+            extra={
+                "agent": agent_name,
+                "missing_name": not bool(agent_name),
+                "missing_description": not bool(agent_description),
+                "missing_domain_query": not bool(domain_query),
+            },
+        )
         return {
             "error": "analysis_node requires 'name', 'description', and 'domain_query' in its config."
         }
@@ -538,14 +560,35 @@ async def analysis_node(
 
     # V02.2.1 — validate and bound inputs before they reach prompt rendering
     if not isinstance(filename, str) or len(filename) > 1024:
+        logger.warning(
+            "agent: skipped — invalid filename",
+            extra={
+                "agent": agent_name,
+                "filename_type": type(filename).__name__,
+                "filename_len": len(filename) if isinstance(filename, str) else None,
+            },
+        )
         return {
             "error": "Invalid analysis_node input: filename must be a str of at most 1024 chars"
         }
     if not isinstance(code_bundle, str) or len(code_bundle) > 200_000:
+        logger.warning(
+            "agent: skipped — invalid code_bundle",
+            extra={
+                "agent": agent_name,
+                "filename": filename,
+                "code_bundle_type": type(code_bundle).__name__,
+                "code_bundle_len": len(code_bundle) if isinstance(code_bundle, str) else None,
+            },
+        )
         return {
             "error": "Invalid analysis_node input: code_snippet must be a str of at most 200000 chars"
         }
     if workflow_mode not in {"audit", "remediate"}:
+        logger.warning(
+            "agent: skipped — invalid workflow_mode",
+            extra={"agent": agent_name, "workflow_mode": workflow_mode},
+        )
         return {
             "error": f"Invalid analysis_node input: workflow_mode '{workflow_mode}' not in {{'audit', 'remediate'}}"
         }

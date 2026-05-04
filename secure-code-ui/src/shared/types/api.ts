@@ -231,6 +231,10 @@ export interface ScanResultResponse {
   // results page (sast-prescan-followups Group D2). Empty object when
   // the scan has no findings.
   source_counts?: { [source: string]: number };
+  // Estimate produced by the cost node before approval. Surfaced on
+  // ScanRunningPage so the user sees the number alongside the
+  // "Approve & run" button. Null until cost-estimate runs.
+  cost_details?: CostDetails | null;
 }
 
 // --- Prescan-approval gate (ADR-009 / G6). One row per deterministic-

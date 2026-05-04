@@ -133,15 +133,46 @@ async def analyze_files_parallel_node(state: WorkerState) -> Dict[str, Any]:
     ) -> Dict[str, List[Any]]:
         file_content = live_codebase.get(file_path)
         if not file_content:
+            logger.warning(
+                "analyze: skipping file — empty content",
+                extra={"scan_id": str(scan_id), "file_path": file_path},
+            )
             return {"findings": [], "fixes": []}
 
         chunks = chunk_file(file_path, file_content)
         if not chunks:
+            logger.warning(
+                "analyze: skipping file — no chunks produced",
+                extra={
+                    "scan_id": str(scan_id),
+                    "file_path": file_path,
+                    "in_repo_map": file_path in repository_map.files,
+                    "repo_map_keys_sample": list(repository_map.files.keys())[:5],
+                },
+            )
             return {"findings": [], "fixes": []}
 
         relevant_agents = resolve_agents_for_file(file_path, all_relevant_agents)
         if not relevant_agents:
+            logger.warning(
+                "analyze: skipping file — no relevant agents",
+                extra={
+                    "scan_id": str(scan_id),
+                    "file_path": file_path,
+                    "all_agents_count": len(all_relevant_agents),
+                },
+            )
             return {"findings": [], "fixes": []}
+
+        logger.info(
+            "analyze: file accepted for analysis",
+            extra={
+                "scan_id": str(scan_id),
+                "file_path": file_path,
+                "chunk_count": len(chunks),
+                "agent_count": len(relevant_agents),
+            },
+        )
 
         dep_summary = build_dep_summary(file_path)
 

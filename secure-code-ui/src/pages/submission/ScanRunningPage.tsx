@@ -114,6 +114,11 @@ const ScanRunningPage: React.FC = () => {
     Record<string, FileProgressItem>
   >({});
   const [streamError, setStreamError] = useState<string | null>(null);
+  const [costDetails, setCostDetails] = useState<{
+    total_estimated_cost?: number;
+    total_input_tokens?: number;
+    predicted_output_tokens?: number;
+  } | null>(null);
   const [approving, setApproving] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [stopConfirmOpen, setStopConfirmOpen] = useState(false);
@@ -148,6 +153,9 @@ const ScanRunningPage: React.FC = () => {
         if (cancelled) return;
         if (typeof r.status === "string" && r.status.length < 64) {
           setStatus(r.status);
+        }
+        if (r.cost_details) {
+          setCostDetails(r.cost_details);
         }
       })
       .catch(() => {
@@ -739,10 +747,24 @@ const ScanRunningPage: React.FC = () => {
                 }}
               >
                 Cost estimate ready
+                {typeof costDetails?.total_estimated_cost === "number" && (
+                  <span
+                    style={{
+                      marginLeft: 10,
+                      color: "var(--fg)",
+                      fontSize: 16,
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    · ${costDetails.total_estimated_cost.toFixed(4)}
+                  </span>
+                )}
               </div>
               <div style={{ color: "var(--fg)", fontSize: 13 }}>
-                Review the estimate on the Projects page, then approve to run
-                the full analysis.
+                {typeof costDetails?.total_input_tokens === "number" &&
+                typeof costDetails?.predicted_output_tokens === "number"
+                  ? `~${costDetails.total_input_tokens.toLocaleString()} input tokens + ~${costDetails.predicted_output_tokens.toLocaleString()} predicted output tokens. Approve to run the full analysis.`
+                  : "Approve to run the full analysis."}
               </div>
             </div>
             <div style={{ display: "flex", gap: 8 }}>

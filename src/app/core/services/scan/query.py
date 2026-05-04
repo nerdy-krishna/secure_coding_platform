@@ -244,6 +244,7 @@ class ScanQueryService:
             original_code_map=original_code_map or None,
             fixed_code_map=fixed_code_map or None,
             source_counts=source_counts,
+            cost_details=scan.cost_details,
         )
 
     async def get_paginated_scans_for_project(

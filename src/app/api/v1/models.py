@@ -729,6 +729,12 @@ class AnalysisResultDetailResponse(BaseModel):
     # LLM-emitted findings whose `source` is NULL. Empty dict when no
     # findings exist.
     source_counts: Dict[str, int] = Field(default_factory=dict)
+    # The estimate produced by the cost node before the user is asked
+    # to approve. Surfaced on the ScanRunningPage so the user sees the
+    # number alongside the "Approve & run" button. Stored as JSONB on
+    # the Scan row so it's an opaque dict here. Non-null only when the
+    # cost-estimate node has run; null for very-early-status scans.
+    cost_details: Optional[Dict[str, Any]] = None
 
     class Config:
         from_attributes = True
