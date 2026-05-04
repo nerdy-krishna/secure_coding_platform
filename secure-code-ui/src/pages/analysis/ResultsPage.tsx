@@ -27,10 +27,47 @@ import { Modal } from "../../shared/ui/Modal";
 import { useToast } from "../../shared/ui/Toast";
 import type {
   Finding,
+  PrescanFindingItem,
   ScanResultResponse,
   SubmittedFile,
   SummaryReport,
 } from "../../shared/types/api";
+
+const PRESCAN_BLOCKED_STATUSES = new Set([
+  "BLOCKED_USER_DECLINE",
+  "BLOCKED_PRE_LLM",
+]);
+
+function normaliseSeverity(raw?: string | null): string {
+  switch ((raw ?? "").toUpperCase()) {
+    case "CRITICAL":
+    case "ERROR":
+      return "CRITICAL";
+    case "HIGH":
+      return "HIGH";
+    case "WARNING":
+    case "MEDIUM":
+      return "MEDIUM";
+    default:
+      return "LOW";
+  }
+}
+
+function prescanToFinding(item: PrescanFindingItem): Finding {
+  return {
+    id: item.id,
+    file_path: item.file_path,
+    title: item.title,
+    cwe: item.cwe ?? "",
+    description: item.description ?? "",
+    severity: normaliseSeverity(item.severity),
+    line_number: item.line_number ?? 0,
+    remediation: "",
+    confidence: "",
+    source: item.source ?? undefined,
+    references: [],
+  };
+}
 
 type SeverityFilter = "all" | "critical" | "high" | "medium" | "low";
 
@@ -85,6 +122,15 @@ const ResultsPage: React.FC = () => {
     enabled: !!scanId,
   });
 
+  const isPrescanBlocked =
+    !!data?.status && PRESCAN_BLOCKED_STATUSES.has(data.status);
+
+  const { data: prescanData } = useQuery({
+    queryKey: ["prescan-findings", scanId],
+    queryFn: () => scanService.getPrescanReview(scanId!),
+    enabled: !!scanId && isPrescanBlocked,
+  });
+
   // If the scan isn't terminal yet (queued, running, or awaiting approval)
   // the live progress + approval UI lives on /analysis/scanning/:id. Bounce
   // there so deep-links from search/admin/back-button always end up where
@@ -105,13 +151,17 @@ const ResultsPage: React.FC = () => {
     onError: (err: Error) => toast.error(err.message || "Apply failed"),
   });
 
-  const allFindings = useMemo(
-    () =>
-      flattenFindings(data?.summary_report).sort(
-        (a, b) => severityRank(b.severity) - severityRank(a.severity),
-      ),
-    [data],
-  );
+  const allFindings = useMemo(() => {
+    const llmFindings = flattenFindings(data?.summary_report);
+    // For scans stopped before the LLM phase (BLOCKED_USER_DECLINE /
+    // BLOCKED_PRE_LLM), llmFindings is always empty. Show prescan findings
+    // instead so the user can see what the deterministic scanners found.
+    const base =
+      llmFindings.length === 0 && isPrescanBlocked && prescanData?.findings
+        ? prescanData.findings.map(prescanToFinding)
+        : llmFindings;
+    return base.sort((a, b) => severityRank(b.severity) - severityRank(a.severity));
+  }, [data, isPrescanBlocked, prescanData]);
 
   const severityCounts = useMemo(() => {
     const counts = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, INFORMATIONAL: 0 };
@@ -603,6 +653,30 @@ const ResultsPage: React.FC = () => {
               <Icon.X size={11} /> Clear filter
             </button>
           )}
+        </div>
+      )}
+
+      {/* Prescan-only banner — shown when scan was stopped before LLM phase */}
+      {isPrescanBlocked && allFindings.length > 0 && (
+        <div
+          className="sccap-card"
+          style={{
+            background: "var(--info-weak)",
+            borderColor: "var(--info)",
+            padding: "10px 14px",
+            fontSize: 12.5,
+            color: "var(--fg-muted)",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
+          <Icon.Alert size={13} style={{ color: "var(--info)", flexShrink: 0 }} />
+          <span>
+            These are deterministic pre-scan findings (Bandit, Semgrep, Gitleaks, OSV).
+            The scan was stopped before LLM analysis — no AI-generated findings or
+            fixes are available. Review and fix these issues, then re-submit.
+          </span>
         </div>
       )}
 
