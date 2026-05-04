@@ -130,14 +130,14 @@ async def analyze_files_parallel_node(state: WorkerState) -> Dict[str, Any]:
 
     async def analyze_one_file(
         file_path: str,
-    ) -> Dict[str, List[Any]]:
+    ) -> Dict[str, Any]:
         file_content = live_codebase.get(file_path)
         if not file_content:
             logger.warning(
                 "analyze: skipping file — empty content",
                 extra={"scan_id": str(scan_id), "file_path": file_path},
             )
-            return {"findings": [], "fixes": []}
+            return {"findings": [], "fixes": [], "agent_calls": 0, "agent_failures": 0}
 
         chunks = chunk_file(file_path, file_content)
         if not chunks:
@@ -150,7 +150,7 @@ async def analyze_files_parallel_node(state: WorkerState) -> Dict[str, Any]:
                     "repo_map_keys_sample": list(repository_map.files.keys())[:5],
                 },
             )
-            return {"findings": [], "fixes": []}
+            return {"findings": [], "fixes": [], "agent_calls": 0, "agent_failures": 0}
 
         relevant_agents = resolve_agents_for_file(file_path, all_relevant_agents)
         if not relevant_agents:
@@ -162,7 +162,7 @@ async def analyze_files_parallel_node(state: WorkerState) -> Dict[str, Any]:
                     "all_agents_count": len(all_relevant_agents),
                 },
             )
-            return {"findings": [], "fixes": []}
+            return {"findings": [], "fixes": [], "agent_calls": 0, "agent_failures": 0}
 
         logger.info(
             "analyze: file accepted for analysis",
@@ -178,6 +178,13 @@ async def analyze_files_parallel_node(state: WorkerState) -> Dict[str, Any]:
 
         file_findings: List[VulnerabilityFinding] = []
         file_fixes: List[FixResult] = []
+        # Counters surfaced upstream — used by the parent node to
+        # mark the scan FAILED if every agent invocation across every
+        # file blew up (e.g. rate-limiter not initialised, LLM API
+        # key invalid, RAG outage). 0 findings on a clean codebase
+        # is fine; 0 findings because every LLM call raised is not.
+        file_agent_calls = 0
+        file_agent_failures = 0
 
         # Verified-findings prompt prefix (B4): pass the per-file
         # SAST scanner findings into the agent so it can avoid
@@ -227,6 +234,7 @@ async def analyze_files_parallel_node(state: WorkerState) -> Dict[str, Any]:
             # were completing with 0 findings even though 17 agent
             # tasks were dispatched. Surface each outcome so we can
             # see *what* came back from the LangGraph subagent calls.
+            file_agent_calls += len(agent_results)
             for idx, r in enumerate(agent_results):
                 agent_name = (
                     relevant_agents[idx].get("name", "?")
@@ -234,6 +242,7 @@ async def analyze_files_parallel_node(state: WorkerState) -> Dict[str, Any]:
                     else "?"
                 )
                 if isinstance(r, BaseException):
+                    file_agent_failures += 1
                     logger.error(
                         "agent: ainvoke raised",
                         extra={
@@ -246,6 +255,7 @@ async def analyze_files_parallel_node(state: WorkerState) -> Dict[str, Any]:
                     )
                     continue
                 if r is None:
+                    file_agent_failures += 1
                     logger.warning(
                         "agent: ainvoke returned None",
                         extra={
@@ -299,7 +309,12 @@ async def analyze_files_parallel_node(state: WorkerState) -> Dict[str, Any]:
         except Exception as e:
             logger.warning("FILE_ANALYZED event emit failed for %s: %s", file_path, e)
 
-        return {"findings": file_findings, "fixes": file_fixes}
+        return {
+            "findings": file_findings,
+            "fixes": file_fixes,
+            "agent_calls": file_agent_calls,
+            "agent_failures": file_agent_failures,
+        }
 
     # All files analyzed in parallel. Concurrency across files is bounded
     # inside each run_agent_with_sem invocation (the same semaphore gates
@@ -309,14 +324,20 @@ async def analyze_files_parallel_node(state: WorkerState) -> Dict[str, Any]:
 
     all_scan_findings: List[VulnerabilityFinding] = []
     all_proposed_fixes: List[FixResult] = []
+    total_agent_calls = 0
+    total_agent_failures = 0
+    failed_file_tasks = 0
     for r in file_results:
         if isinstance(r, BaseException):
+            failed_file_tasks += 1
             logger.error(
                 "File analysis task failed for scan %s: %s", scan_id, r, exc_info=r
             )
             continue
         all_scan_findings.extend(r.get("findings", []))
         all_proposed_fixes.extend(r.get("fixes", []))
+        total_agent_calls += int(r.get("agent_calls") or 0)
+        total_agent_failures += int(r.get("agent_failures") or 0)
 
     # Carry forward any findings already on state (e.g. deterministic
     # SAST findings from the prescan node) so they survive to
@@ -325,12 +346,43 @@ async def analyze_files_parallel_node(state: WorkerState) -> Dict[str, Any]:
     prior_findings = state.get("findings") or []
 
     logger.info(
-        "Single-pass analysis complete for scan %s: %d agent findings, %d prior findings, %d proposed fixes.",
+        "Single-pass analysis complete for scan %s: %d agent findings, %d prior findings, %d proposed fixes; "
+        "agent_calls=%d agent_failures=%d failed_file_tasks=%d",
         scan_id,
         len(all_scan_findings),
         len(prior_findings),
         len(all_proposed_fixes),
+        total_agent_calls,
+        total_agent_failures,
+        failed_file_tasks,
     )
+
+    # Stage-level validation: if every agent invocation that fired
+    # raised or returned None, the LLM analyze stage is broken
+    # (rate-limiter not initialised, LLM API key invalid, RAG outage,
+    # etc.). Fail the scan so the user sees `STATUS_FAILED` instead
+    # of a misleading "completed with 0 findings". A clean codebase
+    # with 0 findings reports total_agent_calls > 0 and 0 failures —
+    # that's still a successful scan.
+    if total_agent_calls > 0 and total_agent_failures == total_agent_calls:
+        logger.error(
+            "analyze: every agent invocation failed — marking scan FAILED",
+            extra={
+                "scan_id": str(scan_id),
+                "agent_calls": total_agent_calls,
+                "agent_failures": total_agent_failures,
+                "files_analyzed": len(file_results),
+            },
+        )
+        return {
+            "findings": prior_findings,
+            "proposed_fixes": [],
+            "error_message": (
+                f"Analyze stage failed: all {total_agent_calls} agent "
+                f"invocations errored across {len(file_results)} file(s). "
+                "Check worker logs for `agent: ainvoke raised` entries."
+            ),
+        }
 
     return {
         "findings": prior_findings + all_scan_findings,

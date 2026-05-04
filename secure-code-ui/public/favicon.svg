@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <!-- Matches the TopNav brand mark: indigo → plum gradient. The
+         primary tone (#4f46e5) is the SCCAP "Variation A · Indigo"
+         default; the secondary (#9333ea) is the same hue family used
+         for the brand mix-in. Rendered in raw SVG (no CSS vars) so
+         the favicon looks the same in browser tabs, OS taskbars, and
+         "add to home screen" launchers. -->
+    <linearGradient id="sccap-bg" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4f46e5"/>
+      <stop offset="1" stop-color="#9333ea"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="14" ry="14" fill="url(#sccap-bg)"/>
+  <!-- Shield path mirrors `Icon.Shield` (24×24 viewBox); scaled and
+       centered into the 64×64 face so the proportions match the
+       in-app brand mark. White stroke on a transparent fill keeps
+       contrast against the gradient at 16×16 down to 32×32. -->
+  <path
+    d="M32 14 L48 20 V32 C48 41 41.6 49.6 32 51 24.4 49.6 16 41 16 32 V20 Z"
+    fill="none"
+    stroke="#ffffff"
+    stroke-width="3.2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>

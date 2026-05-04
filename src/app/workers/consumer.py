@@ -36,6 +36,7 @@ from langgraph.types import Command
 
 from app.config.config import settings
 from app.config.logging_config import LOGGING_CONFIG, correlation_id_var
+from app.infrastructure.llm_client_rate_limiter import initialize_rate_limiters
 from app.infrastructure.observability import flush_langfuse, get_langchain_handler
 from app.infrastructure.workflows.worker_graph import (
     WorkerState,
@@ -575,6 +576,16 @@ class WorkerRunner:
 
 
 async def _async_main() -> None:
+    # Initialise the per-provider LLM rate limiters BEFORE we start
+    # consuming. The agent code calls `get_rate_limiter_for_provider`
+    # which raises RuntimeError if the registry hasn't been built —
+    # the API server does this in its lifespan but the worker process
+    # was missing the call, which is why every agent invocation in
+    # the analyze step blew up with `LLM rate limiters not initialized`
+    # and the silent gather upstream let the scan complete with 0
+    # findings. (2026-05-04)
+    initialize_rate_limiters()
+
     runner = WorkerRunner()
 
     loop = asyncio.get_running_loop()
