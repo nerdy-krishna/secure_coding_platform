@@ -339,9 +339,7 @@ async def pending_prescan_approval_node(state: WorkerState) -> Dict[str, Any]:
     # only; the prescan card on the UI already sees the persisted
     # findings via the standard scans/{id}/result endpoint.
     async with AsyncSessionLocal() as db:
-        await ScanRepository(db).update_status(
-            scan_id, STATUS_PENDING_PRESCAN_APPROVAL
-        )
+        await ScanRepository(db).update_status(scan_id, STATUS_PENDING_PRESCAN_APPROVAL)
 
     logger.info(
         "pending_prescan_approval: scan_id=%s findings=%d critical_secret=%s — pausing for operator",

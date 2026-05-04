@@ -16,11 +16,17 @@ aio-pika = ">=9.5.5,<10.0.0"
 alembic = ">=1.16.1,<2.0.0"
 anthropic = ">=0.96.0,<1.0.0"
 asyncpg = ">=0.30.0,<0.31.0"
-cryptography = "^45.0.4"
+cryptography = "^46.0.7"
 email-validator = ">=2.2.0,<3.0.0" # Useful for FastAPI Users
-fastapi = ">=0.115.9,<0.116.0"
+# Range widened from `<0.116.0` to allow starlette ≥ 0.47.2 (CVE
+# fixes — GHSA-2c2j-9gv5-cj73 / GHSA-7f5h-v6xp-fcq8). FastAPI 0.115
+# pinned starlette `<0.47.0`; 0.116+ relaxes that.
+fastapi = ">=0.115.9,<0.121.0"
 fastapi-mail = "^1.4.1"
-fastapi-users = {extras = ["sqlalchemy"], version = "^14.0.1"}
+# Bumped 14.x → 15.x for GHSA-5j53-63w8-8625 (the 14.x line pins
+# pyjwt = 2.10.1 and python-multipart = 0.0.20 as exact versions,
+# blocking three more transitive CVE fixes; 15.x relaxes both).
+fastapi-users = {extras = ["sqlalchemy"], version = "^15.0.2"}
 gitpython = "^3.1.44"
 google-api-core = "^2.24.2"
 google-genai = "^1.16.1"
@@ -74,7 +80,10 @@ python-dotenv = ">=1.1.0,<2.0.0"
 sqlalchemy = {extras = ["asyncio"], version = ">=2.0.41,<3.0.0"}
 tiktoken = "^0.12.0"  # bumped for pydantic-ai-slim[openai] compat
 uvicorn = {extras = ["standard"], version = ">=0.35.0,<0.40.0"}
-python-multipart = "^0.0.20"
+# Bumped from `^0.0.20` to pick up GHSA-wp53-j4wj-2cfg (0.0.22) and
+# GHSA-mj87-hwqh-73pj (0.0.26). fastapi-users 15.0.4+ requires the
+# same range; alignment avoids a resolver split.
+python-multipart = ">=0.0.22,<0.1.0"
 cvss = "^3.4"
 # bandit ships in both API + worker images so the deterministic SAST
 # pre-pass node (`infrastructure/scanners/bandit_runner.py`) can invoke
@@ -82,10 +91,12 @@ cvss = "^3.4"
 bandit = "^1.7"
 
 
-# Worker-only deps: AST parsing (tree-sitter). The embedder was migrated
-# off sentence-transformers / torch to ChromaDB's bundled ONNX default in
-# Phase H.1.1, so those packages aren't needed anymore. Keeping the group
-# structure for future worker-only additions.
+# Worker-only deps: AST parsing (tree-sitter). The embedder was
+# migrated off sentence-transformers / torch in Phase H.1.1, then
+# repointed at fastembed (bundled MiniLM-L6-v2 ONNX) when ADR-008
+# replaced ChromaDB with Qdrant — vectors are byte-equivalent, so
+# the worker still doesn't need those heavy packages. Keeping the
+# group structure for future worker-only additions.
 [tool.poetry.group.worker]
 optional = true
 

@@ -81,12 +81,13 @@ is refreshed whenever we bump the `litellm` pin.
 
 ### How does the bundled ONNX embedder work offline?
 
-ChromaDB ships `all-MiniLM-L6-v2` as its default ONNX embedder.
-On the first embed call after a fresh deploy, it downloads the
-model weights to `/home/appuser/.cache/chroma/`. Subsequent starts
-hit the cache, so the second+ boot works offline. We dropped the
-separate `sentence-transformers` stage in H.1.1 specifically to
-get rid of the huggingface-hub dependency churn.
+`infrastructure/rag/embedder.py` wraps
+`fastembed.TextEmbedding("sentence-transformers/all-MiniLM-L6-v2")`.
+On the first embed call after a fresh deploy, fastembed downloads
+the ONNX weights to its cache directory. Subsequent starts hit the
+cache, so the second+ boot works offline. Vectors are byte-equivalent
+to the prior chromadb-bundled embedder we used before ADR-008, so
+existing Qdrant collections remain valid across the migration.
 
 ### Why are my scans tagged with a framework that has no docs?
 

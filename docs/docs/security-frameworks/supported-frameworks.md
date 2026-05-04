@@ -75,7 +75,7 @@ selection goes into `Scan.frameworks` (JSONB array). The worker:
 ## Re-ingesting or removing a framework
 
 - **Re-ingest**: re-upload the CSV or re-paste the Git URL. The
-  existing framework documents are deleted from the Chroma
+  existing framework documents are deleted from the Qdrant
   collection before the new ones land — it's idempotent.
 - **Remove**: delete the framework row. Existing scans keep their
   tags (for historical rollup), but the framework disappears from

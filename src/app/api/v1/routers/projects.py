@@ -626,10 +626,7 @@ async def stream_scan_progress(
                     # into PENDING_COST_APPROVAL — the JSONB blob is
                     # otherwise an internal artifact (V15.3.1) and
                     # there's no UI reason to keep streaming it.
-                    if (
-                        scan.status == "PENDING_COST_APPROVAL"
-                        and scan.cost_details
-                    ):
+                    if scan.status == "PENDING_COST_APPROVAL" and scan.cost_details:
                         cd = scan.cost_details
                         payload["cost_details"] = {
                             "total_estimated_cost": cd.get("total_estimated_cost"),

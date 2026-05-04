@@ -57,9 +57,7 @@ async def save_results_node(state: WorkerState) -> Dict[str, Any]:
                 # scans came back with the deterministic 2 only,
                 # never the 20–30 the agents had actually produced.
                 fresh = [f for f in findings if getattr(f, "id", None) is None]
-                existing = [
-                    f for f in findings if getattr(f, "id", None) is not None
-                ]
+                existing = [f for f in findings if getattr(f, "id", None) is not None]
                 if fresh:
                     await repo.save_findings(scan_id, fresh)
                 if existing:
@@ -141,9 +139,7 @@ async def save_final_report_node(state: WorkerState) -> Dict[str, Any]:
                     },
                 )
             except Exception as _e:
-                logger.warning(
-                    "GENERATING_REPORTS event emit failed: %s", _e
-                )
+                logger.warning("GENERATING_REPORTS event emit failed: %s", _e)
     except Exception:
         logger.error(
             "save_final_report_failed", extra={"scan_id": str(scan_id)}, exc_info=True

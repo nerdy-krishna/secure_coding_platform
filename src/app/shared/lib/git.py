@@ -146,7 +146,12 @@ def _validate_repo_url(repo_url: str) -> None:
     host = (parsed.hostname or "").lower()
     if not host:
         raise HTTPException(status_code=400, detail="repo_url is missing a host")
-    if host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"}:
+    if host in {
+        "localhost",
+        "127.0.0.1",
+        "0.0.0.0",
+        "::1",
+    }:  # nosec B104 — SSRF denylist (rejecting bind-all literals in repo URLs), not a service binding
         raise HTTPException(
             status_code=400, detail="Repository URL must point to an external host."
         )

@@ -247,9 +247,7 @@ class ScanQueryService:
             fixed_code_map=fixed_code_map or None,
             source_counts=source_counts,
             cost_details=scan.cost_details,
-            events=[
-                api_models.ScanEventItem.from_orm(e) for e in (scan.events or [])
-            ],
+            events=[api_models.ScanEventItem.from_orm(e) for e in (scan.events or [])],
         )
 
     async def get_paginated_scans_for_project(

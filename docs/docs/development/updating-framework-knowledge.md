@@ -6,9 +6,10 @@ title: Updating Framework Knowledge
 # Updating Framework Knowledge
 
 Every framework's knowledge base lives in the `security_guidelines`
-Chroma collection, tagged with `framework_name` metadata. Admins
-can refresh a framework (replace its docs) or add new frameworks.
-Both paths go through the same ingestion pipeline.
+Qdrant collection (replaced ChromaDB per ADR-008), tagged with
+`framework_name` metadata. Admins can refresh a framework (replace
+its docs) or add new frameworks. Both paths go through the same
+ingestion pipeline.
 
 ## Ingest modes
 
@@ -23,7 +24,7 @@ Both paths go through the same ingestion pipeline.
    - `framework_name` (should match the framework's name)
 3. Hit **Start ingestion**. A `rag_jobs` row tracks progress.
 4. The pipeline chunks long `content` values, embeds each chunk,
-   and writes to Chroma with the framework metadata intact.
+   and writes to Qdrant with the framework metadata intact.
 
 ### Git URL (Proactive Controls, Cheatsheets, most custom)
 
@@ -38,7 +39,7 @@ Both paths go through the same ingestion pipeline.
 
 Re-ingesting a framework **replaces** its existing docs:
 
-1. Delete every Chroma row tagged with that `framework_name`.
+1. Delete every Qdrant point tagged with that `framework_name`.
 2. Insert the freshly ingested ones.
 3. Bump the framework's `updated_at` column.
 
@@ -75,7 +76,7 @@ Deleting a framework row from **Admin → Frameworks**:
 - Removes the framework from the submit picker + Compliance grid.
 - **Leaves** existing `scans.frameworks` tags in place (history
   survives).
-- **Leaves** the Chroma docs — the orphan `framework_name` rows get
-  filtered out of future retrievals since no session selects that
-  framework anymore. Run **Admin → RAG → Prune orphans** to fully
-  clean up.
+- **Leaves** the Qdrant docs — the orphan `framework_name` points
+  get filtered out of future retrievals since no session selects
+  that framework anymore. Run **Admin → RAG → Prune orphans** to
+  fully clean up.

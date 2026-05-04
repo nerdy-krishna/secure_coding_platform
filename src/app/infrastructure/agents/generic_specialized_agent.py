@@ -232,7 +232,7 @@ async def _get_cwe_from_description(
 
         prompt = f"""
         Based on the following vulnerability description, select the most appropriate CWE ID from the provided list of candidates.
-        
+
         VULNERABILITY:
         Title: {finding.title}
         Description: {finding.description}
@@ -241,7 +241,7 @@ async def _get_cwe_from_description(
         {candidates_text}
 
         Respond ONLY with a valid JSON object containing the single best 'cwe_id'.
-        """
+        """  # nosec B608 — LLM prompt template, not a SQL query; no DB execution path
         response = await llm_client.generate_structured_output(
             prompt, CweSelectionResponse
         )
@@ -594,7 +594,9 @@ async def analysis_node(
             "agent": agent_name,
             "has_description": bool(agent_description),
             "has_domain_query": bool(domain_query),
-            "domain_query_keys": list(domain_query.keys()) if isinstance(domain_query, dict) else None,
+            "domain_query_keys": (
+                list(domain_query.keys()) if isinstance(domain_query, dict) else None
+            ),
         },
     )
 
@@ -637,7 +639,9 @@ async def analysis_node(
                 "agent": agent_name,
                 "source_file_path": filename,
                 "code_bundle_type": type(code_bundle).__name__,
-                "code_bundle_len": len(code_bundle) if isinstance(code_bundle, str) else None,
+                "code_bundle_len": (
+                    len(code_bundle) if isinstance(code_bundle, str) else None
+                ),
             },
         )
         return {

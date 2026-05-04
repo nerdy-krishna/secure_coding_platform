@@ -67,10 +67,29 @@ class RedactionFilter(logging.Filter):
 # call site and is what we want to surface.
 _STANDARD_LOGRECORD_ATTRS: frozenset[str] = frozenset(
     {
-        "args", "asctime", "created", "exc_info", "exc_text", "filename",
-        "funcName", "levelname", "levelno", "lineno", "message", "module",
-        "msecs", "msg", "name", "pathname", "process", "processName",
-        "relativeCreated", "stack_info", "thread", "threadName", "taskName",
+        "args",
+        "asctime",
+        "created",
+        "exc_info",
+        "exc_text",
+        "filename",
+        "funcName",
+        "levelname",
+        "levelno",
+        "lineno",
+        "message",
+        "module",
+        "msecs",
+        "msg",
+        "name",
+        "pathname",
+        "process",
+        "processName",
+        "relativeCreated",
+        "stack_info",
+        "thread",
+        "threadName",
+        "taskName",
     }
 )
 
@@ -139,9 +158,7 @@ class JSONFormatter(logging.Formatter):
                 # (timestamp / level / correlation_id / etc.).
                 continue
             try:
-                serialised = json.dumps(
-                    _sanitise_log_value(val), default=str
-                )
+                serialised = json.dumps(_sanitise_log_value(val), default=str)
             except (TypeError, ValueError):
                 # Last-resort: stringify unknown objects rather than
                 # losing the whole log line to a serialisation error.

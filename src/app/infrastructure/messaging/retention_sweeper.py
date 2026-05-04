@@ -64,8 +64,14 @@ async def _delete_expired_in(table: str) -> int:
             # Postgres-only: ctid limit pattern keeps the delete bounded
             # and avoids holding row locks on rows we wouldn't have
             # touched.
+            # `table` is interpolated into the SQL because asyncpg /
+            # SQLAlchemy can't parameterise identifiers; the value
+            # comes exclusively from `_TABLE_ORDER` (a module-level
+            # tuple of hardcoded literals — not user input). The
+            # `expires_at` filter is parameterised; only the bound
+            # batch size flows in via the parameter binder.
             stmt = text(
-                f"DELETE FROM {table} "
+                f"DELETE FROM {table} "  # nosec B608 — table is from hardcoded allowlist (`_TABLE_ORDER`), not user input
                 f"WHERE ctid IN ("
                 f"  SELECT ctid FROM {table} "
                 f"  WHERE expires_at IS NOT NULL AND expires_at < NOW() "

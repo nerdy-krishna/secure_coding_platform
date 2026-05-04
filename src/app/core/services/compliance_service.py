@@ -275,7 +275,7 @@ class ComplianceService:
 
         ASVS ingestion stores `control_id` on the metadata; Proactive Controls
         / Cheatsheets use section-level titles instead. This method pulls
-        whatever is in ChromaDB for the framework and groups by the first
+        whatever is in the vector store for the framework and groups by the first
         available identifier key, falling back to a single "overview" bucket.
         """
         if not self.rag_service:

@@ -295,13 +295,9 @@ async def run_gitleaks(
             try:
                 raw = _GitleaksResult.model_validate(raw_dict)
             except ValidationError as exc:
-                logger.warning(
-                    "scanner=gitleaks dropped malformed result: %s", exc
-                )
+                logger.warning("scanner=gitleaks dropped malformed result: %s", exc)
                 continue
-            findings.append(
-                _gitleaks_finding_to_vulnerability(raw, original_paths)
-            )
+            findings.append(_gitleaks_finding_to_vulnerability(raw, original_paths))
         return findings
     finally:
         try:
