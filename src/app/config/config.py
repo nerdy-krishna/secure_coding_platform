@@ -161,6 +161,13 @@ class Settings(BaseSettings):
     # --- RAG vector store (Qdrant only; ADR-008 supersedes ADR-007) ---
     QDRANT_HOST: str = "qdrant"
     QDRANT_PORT: int = 6333
+    # The bundled docker-compose Qdrant has no TLS terminator — it
+    # serves plain HTTP on the operator network. Default False so
+    # local dev works out of the box. Set QDRANT_USE_TLS=true in .env
+    # when an operator puts a TLS reverse proxy in front of Qdrant.
+    # When True, qdrant_store.QdrantStore initialises the client with
+    # https=True so the API key is never sent in cleartext.
+    QDRANT_USE_TLS: bool = False
     # Mandatory. Validator below rejects empty + the .env.example
     # placeholder so a half-configured deploy fails fast at Settings
     # load time rather than 500-ing on the first scan.

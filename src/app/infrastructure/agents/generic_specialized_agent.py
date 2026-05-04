@@ -5,6 +5,7 @@ from typing import Dict, Any, Optional, cast, List
 
 from app.infrastructure.observability.mask import mask as _mask_secrets
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
 
@@ -407,7 +408,16 @@ def _build_rag_context(
     retrieved_guidelines = rag_service.query_guidelines(
         query_texts=[query_keywords], n_results=10, where=chroma_where_filter
     )
-    documents = retrieved_guidelines.get("documents", [[]])[0]
+    # The vector store's `documents` shape is `List[List[str]]` —
+    # outer list per query, inner list of hits. An empty collection
+    # (or a query with zero hits) returns an empty outer list, so
+    # naive `[0]` indexing IndexErrors and silently kills the agent.
+    # Per CLAUDE.md: "Scans against an empty RAG path still complete
+    # — agents produce findings without RAG citations until content
+    # is ingested." Treat missing/empty retrieval as "no documents"
+    # and let the agent run with the empty pattern strings.
+    raw_documents = retrieved_guidelines.get("documents") or []
+    documents = raw_documents[0] if raw_documents else []
     logger.info(
         "agent: RAG retrieval done",
         extra={"agent": agent_name, "doc_count": len(documents)},
@@ -514,12 +524,21 @@ def _redact_dict(d: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def analysis_node(
-    state: SpecializedAgentState, config: Dict[str, Any]
+    state: SpecializedAgentState,
+    config: RunnableConfig,
 ) -> Dict[str, Any]:
+    """A single, unified node that performs analysis, generates CVSS/CWE,
+    and suggests fixes.
+
+    The `config` parameter MUST be typed as `RunnableConfig` (not
+    `Dict[str, Any]`); LangGraph 1.x's auto-injection only fires for
+    that exact type, otherwise `config` arrives as a missing positional
+    arg and every invocation `TypeError`s. That failure was being
+    silently swallowed by the per-agent `asyncio.gather(...,
+    return_exceptions=True)` upstream — every scan completed with 0
+    LLM calls. (2026-05-04)
     """
-    A single, unified node that performs analysis, generates CVSS/CWE, and suggests fixes.
-    """
-    agent_config = config.get("configurable", {})
+    agent_config = (config or {}).get("configurable", {}) or {}
     agent_name = agent_config.get("name")
     agent_description = agent_config.get("description")
     domain_query = agent_config.get("domain_query", {})

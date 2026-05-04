@@ -222,9 +222,49 @@ async def analyze_files_parallel_node(state: WorkerState) -> Dict[str, Any]:
                 )
 
             agent_results = await asyncio.gather(*tasks, return_exceptions=True)
-            for r in agent_results:
-                if isinstance(r, BaseException) or r is None:
+            # Per-agent diagnostics — historically this loop swallowed
+            # every exception and None silently, which is why scans
+            # were completing with 0 findings even though 17 agent
+            # tasks were dispatched. Surface each outcome so we can
+            # see *what* came back from the LangGraph subagent calls.
+            for idx, r in enumerate(agent_results):
+                agent_name = (
+                    relevant_agents[idx].get("name", "?")
+                    if idx < len(relevant_agents)
+                    else "?"
+                )
+                if isinstance(r, BaseException):
+                    logger.error(
+                        "agent: ainvoke raised",
+                        extra={
+                            "scan_id": str(scan_id),
+                            "file_path": file_path,
+                            "agent": agent_name,
+                            "exception_class": r.__class__.__name__,
+                        },
+                        exc_info=r,
+                    )
                     continue
+                if r is None:
+                    logger.warning(
+                        "agent: ainvoke returned None",
+                        extra={
+                            "scan_id": str(scan_id),
+                            "file_path": file_path,
+                            "agent": agent_name,
+                        },
+                    )
+                    continue
+                if isinstance(r, dict) and r.get("error"):
+                    logger.warning(
+                        "agent: returned error",
+                        extra={
+                            "scan_id": str(scan_id),
+                            "file_path": file_path,
+                            "agent": agent_name,
+                            "error": str(r.get("error"))[:300],
+                        },
+                    )
                 file_findings.extend(r.get("findings", []))
                 # The agent returns `fixes` as a separate list of FixResult
                 # objects; collect them directly for the terminal consolidation.
