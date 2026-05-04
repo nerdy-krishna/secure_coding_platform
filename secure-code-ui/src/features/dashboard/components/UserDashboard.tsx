@@ -14,6 +14,7 @@ import { scanService } from "../../../shared/api/scanService";
 import type { ScanHistoryItem } from "../../../shared/types/api";
 import { useAuth } from "../../../shared/hooks/useAuth";
 import { scanRouteFor } from "../../../shared/lib/scanRoute";
+import { displayStatus, statusKind } from "../../../shared/lib/scanStatus";
 import { Icon } from "../../../shared/ui/Icon";
 import {
   MetricCard,
@@ -49,23 +50,32 @@ function relativeTime(iso: string | null | undefined): string {
 }
 
 function statusChip(status: string): React.ReactNode {
-  if (status === "COMPLETED" || status === "REMEDIATION_COMPLETED") {
+  // Mirror ProjectDetailPage / ScanRunningPage by routing through the
+  // shared `statusKind` taxonomy. Crucially: `stopped` (CANCELLED,
+  // BLOCKED_USER_DECLINE) and `expired` are neutral, NOT critical —
+  // a user pressing Stop is not a failure.
+  const kind = statusKind(status);
+  const label = displayStatus(status);
+  if (kind === "completed") {
     return (
       <span className="chip chip-success">
-        <Icon.Check size={10} /> completed
+        <Icon.Check size={10} /> {label}
       </span>
     );
   }
-  if (status === "FAILED") {
-    return <span className="chip chip-critical">failed</span>;
+  if (kind === "failed") {
+    return <span className="chip chip-critical">{label}</span>;
   }
-  if (status === "CANCELLED" || status === "EXPIRED") {
-    return <span className="chip">cancelled</span>;
+  if (kind === "blocked") {
+    return <span className="chip chip-warn">{label}</span>;
   }
-  if (status === "PENDING_COST_APPROVAL") {
+  if (kind === "stopped" || kind === "expired") {
+    return <span className="chip">{label}</span>;
+  }
+  if (kind === "needs-input") {
     return (
       <span className="chip chip-info">
-        <Icon.Clock size={10} /> awaiting approval
+        <Icon.Clock size={10} /> {label}
       </span>
     );
   }
@@ -75,7 +85,7 @@ function statusChip(status: string): React.ReactNode {
         className="pulse-dot dot"
         style={{ background: "currentColor" }}
       />{" "}
-      {status.toLowerCase().replace(/_/g, " ")}
+      {label}
     </span>
   );
 }

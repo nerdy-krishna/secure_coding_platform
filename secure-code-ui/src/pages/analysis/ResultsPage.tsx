@@ -20,6 +20,7 @@ import { scanService } from "../../shared/api/scanService";
 import { useAuth } from "../../shared/hooks/useAuth";
 import { isSafeHttpUrl } from "../../shared/lib/safeUrl";
 import { isTerminalStatus } from "../../shared/lib/scanRoute";
+import { displayStatus, statusKind } from "../../shared/lib/scanStatus";
 import { Icon } from "../../shared/ui/Icon";
 import { SevBar } from "../../shared/ui/DashboardPrimitives";
 import { Modal } from "../../shared/ui/Modal";
@@ -311,15 +312,33 @@ const ResultsPage: React.FC = () => {
                 flexWrap: "wrap",
               }}
             >
-              {data.status === "CANCELLED" || data.status === "EXPIRED" ? (
-                <span className="chip">{data.status.toLowerCase()}</span>
-              ) : data.status === "FAILED" ||
-                data.status === "BLOCKED_PRE_LLM" ||
-                data.status === "BLOCKED_USER_DECLINE" ? (
-                <span className="chip chip-critical">
-                  {data.status.toLowerCase().replace(/_/g, " ")}
-                </span>
-              ) : null}
+              {(() => {
+                // Single-source-of-truth status chip. `failed` (real
+                // error) is the only one that goes red; user stops
+                // (CANCELLED, BLOCKED_USER_DECLINE) and EXPIRED are
+                // neutral; BLOCKED_PRE_LLM is amber/warn.
+                const kind = statusKind(data.status);
+                if (kind === "failed") {
+                  return (
+                    <span className="chip chip-critical">
+                      {displayStatus(data.status)}
+                    </span>
+                  );
+                }
+                if (kind === "blocked") {
+                  return (
+                    <span className="chip chip-warn">
+                      {displayStatus(data.status)}
+                    </span>
+                  );
+                }
+                if (kind === "stopped" || kind === "expired") {
+                  return (
+                    <span className="chip">{displayStatus(data.status)}</span>
+                  );
+                }
+                return null;
+              })()}
               <span>
                 {allFindings.length} finding
                 {allFindings.length === 1 ? "" : "s"}

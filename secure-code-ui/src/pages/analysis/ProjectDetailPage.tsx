@@ -12,6 +12,7 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { scanService } from "../../shared/api/scanService";
 import { useAuth } from "../../shared/hooks/useAuth";
 import { scanRouteFor } from "../../shared/lib/scanRoute";
+import { displayStatus, statusKind } from "../../shared/lib/scanStatus";
 import type { ScanHistoryItem } from "../../shared/types/api";
 import { Icon } from "../../shared/ui/Icon";
 import { Modal } from "../../shared/ui/Modal";
@@ -36,37 +37,33 @@ function relativeTime(iso: string | null | undefined): string {
 }
 
 function statusChip(status: string): React.ReactNode {
-  if (status === "COMPLETED" || status === "REMEDIATION_COMPLETED") {
+  // Drives the chip from the shared `statusKind` taxonomy so wording
+  // and color stay consistent with ScanRunningPage and the dashboard.
+  // CRITICAL: only `failed` (real error) renders red; `stopped` and
+  // `expired` are neutral, `blocked` is amber/warn — those are not
+  // failures.
+  const kind = statusKind(status);
+  const label = displayStatus(status);
+  if (kind === "completed") {
     return (
       <span className="chip chip-success">
-        <Icon.Check size={10} /> completed
+        <Icon.Check size={10} /> {label}
       </span>
     );
   }
-  if (status === "FAILED") {
-    return <span className="chip chip-critical">failed</span>;
+  if (kind === "failed") {
+    return <span className="chip chip-critical">{label}</span>;
   }
-  if (
-    status === "CANCELLED" ||
-    status === "EXPIRED" ||
-    status === "BLOCKED_USER_DECLINE"
-  ) {
-    return <span className="chip">{status.toLowerCase().replace(/_/g, " ")}</span>;
+  if (kind === "blocked") {
+    return <span className="chip chip-warn">{label}</span>;
   }
-  if (status === "BLOCKED_PRE_LLM") {
-    return <span className="chip chip-critical">blocked pre llm</span>;
+  if (kind === "stopped" || kind === "expired") {
+    return <span className="chip">{label}</span>;
   }
-  if (status === "PENDING_COST_APPROVAL") {
+  if (kind === "needs-input") {
     return (
       <span className="chip chip-info">
-        <Icon.Clock size={10} /> awaiting approval
-      </span>
-    );
-  }
-  if (status === "PENDING_PRESCAN_APPROVAL") {
-    return (
-      <span className="chip chip-info">
-        <Icon.Clock size={10} /> prescan review
+        <Icon.Clock size={10} /> {label}
       </span>
     );
   }
@@ -76,7 +73,7 @@ function statusChip(status: string): React.ReactNode {
         className="pulse-dot dot"
         style={{ background: "currentColor" }}
       />{" "}
-      {status.toLowerCase().replace(/_/g, " ")}
+      {label}
     </span>
   );
 }

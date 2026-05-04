@@ -51,6 +51,11 @@
 .chip-low      { color: var(--low);      background: var(--low-weak);      border-color: transparent; }
 .chip-info     { color: var(--info);     background: var(--info-weak);     border-color: transparent; }
 .chip-success  { color: var(--success);  background: var(--success-weak);  border-color: transparent; }
+/* Amber/warn chip — for safety-guard states like BLOCKED_PRE_LLM that
+   are NOT failures (don't use chip-critical) but also not neutral.
+   Reuses the High-severity orange tokens since we don't have a
+   dedicated --warn token yet. */
+.chip-warn     { color: var(--high);     background: var(--high-weak);     border-color: transparent; }
 .chip-ai       { color: var(--primary);  background: var(--primary-weak);  border-color: transparent; }
 
 /* ============ buttons ============ */

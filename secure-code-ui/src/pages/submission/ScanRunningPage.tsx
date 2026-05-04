@@ -16,6 +16,13 @@ import { PrescanReviewCard } from "../../features/prescan-approval/PrescanReview
 import { scanService } from "../../shared/api/scanService";
 import { useAuth } from "../../shared/hooks/useAuth";
 import { useNotificationPermission } from "../../shared/hooks/useNotificationPermission";
+import {
+  displayStatus,
+  isBlockedStatus,
+  isErrorStatus,
+  isStoppedStatus,
+  isUnsuccessfulTerminal,
+} from "../../shared/lib/scanStatus";
 import type { PrescanReviewResponse } from "../../shared/types/api";
 import { Icon } from "../../shared/ui/Icon";
 import { SectionHead } from "../../shared/ui/DashboardPrimitives";
@@ -81,11 +88,16 @@ const TERMINAL_STATUSES = new Set([
   "BLOCKED_USER_DECLINE",
 ]);
 
-function progressFromStages(seenStages: Set<string>, currentStatus: string): number {
+function progressFromStages(
+  seenStages: Set<string>,
+  currentStatus: string | null,
+): number {
+  if (!currentStatus) return 0;
   if (currentStatus === "COMPLETED" || currentStatus === "REMEDIATION_COMPLETED") return 100;
   if (
     currentStatus === "FAILED" ||
     currentStatus === "CANCELLED" ||
+    currentStatus === "EXPIRED" ||
     currentStatus === "BLOCKED_PRE_LLM" ||
     currentStatus === "BLOCKED_USER_DECLINE"
   )
@@ -96,9 +108,12 @@ function progressFromStages(seenStages: Set<string>, currentStatus: string): num
   return Math.min(95, Math.round((known / KNOWN_STAGES.length) * 100));
 }
 
-function fmtStatus(status: string): string {
-  return status.replace(/_/g, " ").toLowerCase();
-}
+// `fmtStatus` was a raw `BLOCKED_USER_DECLINE → "blocked user decline"`
+// transform that surfaced the backend enum name in chips and the
+// status card. Replaced by `displayStatus()` from
+// `shared/lib/scanStatus` so wording is consistent across all pages
+// and statuses like "Stopped before LLM analysis" / "Blocked
+// (critical secret)" render properly.
 
 const ScanRunningPage: React.FC = () => {
   const { scanId } = useParams<{ scanId: string }>();
@@ -106,7 +121,11 @@ const ScanRunningPage: React.FC = () => {
   const queryClient = useQueryClient();
   const toast = useToast();
   const notificationPerm = useNotificationPermission();
-  const [status, setStatus] = useState<string>("QUEUED");
+  // Status starts `null` — NOT "QUEUED" — so the page doesn't flap
+  // from "Analyzing your code" / "queued" to the real terminal state
+  // for the few hundred ms before the one-shot getScanResult resolves.
+  // Renders a small loading skeleton until the first known status.
+  const [status, setStatus] = useState<string | null>(null);
   const [seenStages, setSeenStages] = useState<Set<string>>(new Set());
   const [events, setEvents] = useState<ScanEventMsg[]>([]);
   // §3.10b — per-file analysis progress, keyed by file_path so a file
@@ -407,7 +426,7 @@ const ScanRunningPage: React.FC = () => {
   //   N3 — `tag: scan_id` + `notifiedRef` dedupes per-scan
   useEffect(() => {
     if (!scanId) return;
-    if (!TERMINAL_STATUSES.has(status)) return;
+    if (!status || !TERMINAL_STATUSES.has(status)) return;
     if (notifiedRef.current[scanId]) return;
 
     if (
@@ -447,13 +466,22 @@ const ScanRunningPage: React.FC = () => {
 
   const isPendingApproval = status === "PENDING_COST_APPROVAL";
   const isPendingPrescan = status === "PENDING_PRESCAN_APPROVAL";
-  const isTerminal = TERMINAL_STATUSES.has(status);
-  const isFailed =
-    status === "FAILED" ||
-    status === "CANCELLED" ||
-    status === "EXPIRED" ||
-    status === "BLOCKED_PRE_LLM" ||
-    status === "BLOCKED_USER_DECLINE";
+  const isTerminal = status !== null && TERMINAL_STATUSES.has(status);
+  // Split the previous catch-all `isFailed` lump into the four kinds
+  // of unsuccessful terminals so the UI can stop labeling user stops
+  // and safety blocks as "Scan failed":
+  //   isError    → only FAILED (real error, red)
+  //   isStopped  → CANCELLED / BLOCKED_USER_DECLINE (user pressed Stop)
+  //   isBlocked  → BLOCKED_PRE_LLM (auto safety guard tripped)
+  //   isExpired  → EXPIRED (auto-aged out, neutral)
+  // Use `isUnsuccessful` for the "no-results" UI affordances (disabled
+  // View results, dimmed progress, etc.) — that grouping is fine; the
+  // failure-only banner is what matters.
+  const isError = isErrorStatus(status);
+  const isStopped = isStoppedStatus(status);
+  const isBlocked = isBlockedStatus(status);
+  const isExpired = status === "EXPIRED";
+  const isUnsuccessful = isUnsuccessfulTerminal(status);
 
   // Fetch the prescan review whenever the scan enters the prescan-
   // approval gate or one of its terminal states. Re-fetches on every
@@ -619,36 +647,50 @@ const ScanRunningPage: React.FC = () => {
           <Icon.ChevronL size={12} /> Back
         </button>
         <div
-          className={`chip ${isFailed ? "chip-critical" : "chip-info"}`}
+          // Critical (red) chip ONLY for genuine errors. User stops,
+          // safety blocks, and EXPIRED render as a neutral chip — they
+          // are not failures.
+          className={`chip ${
+            isError ? "chip-critical" : isBlocked ? "chip-warn" : "chip-info"
+          }`}
           style={{ marginBottom: 8 }}
         >
-          {!isTerminal && (
+          {/* Pulse dot only while genuinely running. Suppress while
+              status is still loading (null) — a pulsing chip there
+              would imply progress that hasn't been observed yet. */}
+          {status !== null && !isTerminal && (
             <span
               className="pulse-dot dot"
               style={{ background: "currentColor" }}
             />
           )}
-          {isFailed ? <Icon.Alert size={11} /> : null}
+          {isError ? <Icon.Alert size={11} /> : null}
           Scan{" "}
           <span style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>
             {scanId?.slice(0, 8)}
           </span>{" "}
-          · {fmtStatus(status)}
+          · {displayStatus(status)}
         </div>
         <h1 style={{ color: "var(--fg)" }}>
-          {isPendingPrescan
-            ? "Pre-LLM scan complete — review before continuing"
-            : isPendingApproval
-              ? "Ready to run — approve the estimated cost"
-              : status === "COMPLETED" || status === "REMEDIATION_COMPLETED"
-                ? "Scan complete — redirecting to results…"
-                : status === "BLOCKED_PRE_LLM"
-                  ? "Scan stopped — Critical secret detected"
-                  : status === "BLOCKED_USER_DECLINE"
-                    ? "Scan stopped at your request"
-                    : isFailed
-                      ? "Scan did not complete"
-                      : "Analyzing your code"}
+          {!status
+            ? "Loading scan…"
+            : isPendingPrescan
+              ? "Pre-LLM scan complete — review before continuing"
+              : isPendingApproval
+                ? "Ready to run — approve the estimated cost"
+                : status === "COMPLETED" || status === "REMEDIATION_COMPLETED"
+                  ? "Scan complete — redirecting to results…"
+                  : status === "BLOCKED_PRE_LLM"
+                    ? "Scan stopped — critical secret detected"
+                    : status === "BLOCKED_USER_DECLINE"
+                      ? "Scan stopped at your request"
+                      : status === "CANCELLED"
+                        ? "Scan stopped at your request"
+                        : isExpired
+                          ? "Scan expired"
+                          : isError
+                            ? "Scan did not complete"
+                            : "Analyzing your code"}
         </h1>
         <div style={{ color: "var(--fg-muted)", marginTop: 4 }}>
           You can leave this page — the scan continues in the background and
@@ -694,7 +736,10 @@ const ScanRunningPage: React.FC = () => {
             <span
               style={{
                 width: `${progress}%`,
-                background: isFailed ? "var(--critical)" : "var(--primary)",
+                // Red bar only for genuine errors; user stops / blocks
+                // / expired keep the primary color (the bar itself
+                // tops out at 100%, just neutrally completed).
+                background: isError ? "var(--critical)" : "var(--primary)",
               }}
             />
           </div>
@@ -878,7 +923,17 @@ const ScanRunningPage: React.FC = () => {
           </div>
         )}
 
-        {isFailed && (
+        {/* Outcome banner. Three flavors so we never label a user
+            stop or a safety-guard block as "Scan failed":
+              - Error  (FAILED): red, "check logs / retry" copy
+              - Stopped (CANCELLED, BLOCKED_USER_DECLINE): neutral,
+                "you stopped this — submit again when ready" copy
+              - Blocked (BLOCKED_PRE_LLM): amber/warn, "safety guard
+                tripped, review the prescan card" copy
+              - Expired: neutral, "auto-aged out" copy
+            EXPIRED isn't currently emitted by the worker but the
+            banner is here for completeness. */}
+        {isError && (
           <div
             className="sccap-card"
             style={{
@@ -889,11 +944,72 @@ const ScanRunningPage: React.FC = () => {
             <div
               style={{ fontWeight: 600, color: "var(--critical)", marginBottom: 4 }}
             >
-              {status === "CANCELLED" ? "Scan cancelled" : "Scan failed"}
+              Scan failed
             </div>
             <div style={{ color: "var(--fg)", fontSize: 13 }}>
               Check the worker logs for details, or try resubmitting the same
               source. The scan record is preserved under the Projects list.
+            </div>
+          </div>
+        )}
+        {isStopped && (
+          <div
+            className="sccap-card"
+            style={{
+              background: "var(--bg-soft)",
+              borderColor: "transparent",
+            }}
+          >
+            <div style={{ fontWeight: 600, color: "var(--fg)", marginBottom: 4 }}>
+              {status === "BLOCKED_USER_DECLINE"
+                ? "Scan stopped before LLM analysis"
+                : "Scan stopped"}
+            </div>
+            <div style={{ color: "var(--fg-muted)", fontSize: 13 }}>
+              You stopped this scan — no LLM credit was spent. Submit the
+              project again whenever you're ready to continue.
+            </div>
+          </div>
+        )}
+        {isBlocked && (
+          <div
+            className="sccap-card"
+            style={{
+              background: "var(--high-weak)",
+              borderColor: "transparent",
+            }}
+          >
+            <div
+              style={{
+                fontWeight: 600,
+                color: "var(--high)",
+                marginBottom: 4,
+              }}
+            >
+              Scan blocked — critical secret detected
+            </div>
+            <div style={{ color: "var(--fg)", fontSize: 13 }}>
+              The prescan found a high-confidence secret in your source. The
+              LLM phase was skipped to avoid sending the credential to a
+              provider. Rotate the secret, remove it from the codebase, and
+              resubmit.
+            </div>
+          </div>
+        )}
+        {isExpired && (
+          <div
+            className="sccap-card"
+            style={{
+              background: "var(--bg-soft)",
+              borderColor: "transparent",
+            }}
+          >
+            <div style={{ fontWeight: 600, color: "var(--fg)", marginBottom: 4 }}>
+              Scan expired
+            </div>
+            <div style={{ color: "var(--fg-muted)", fontSize: 13 }}>
+              This scan sat at an approval gate too long and was auto-aged
+              out. Resubmit the project to start fresh.
             </div>
           </div>
         )}
@@ -1034,15 +1150,16 @@ const ScanRunningPage: React.FC = () => {
               fontWeight: 600,
               letterSpacing: "-0.02em",
               marginTop: 4,
-              color: isFailed
+              // Red ONLY for genuine errors. Stops/blocks/expired stay
+              // neutral; completed stays green.
+              color: isError
                 ? "var(--critical)"
-                : isTerminal
+                : status === "COMPLETED" || status === "REMEDIATION_COMPLETED"
                   ? "var(--success)"
                   : "var(--fg)",
-              textTransform: "capitalize",
             }}
           >
-            {fmtStatus(status)}
+            {displayStatus(status)}
           </div>
           <div
             style={{ marginTop: 10, fontSize: 12, color: "var(--fg-muted)" }}
@@ -1054,14 +1171,17 @@ const ScanRunningPage: React.FC = () => {
         <button
           className="sccap-btn sccap-btn-primary"
           onClick={() => navigate(`/analysis/results/${scanId}`)}
-          disabled={!isTerminal || isFailed}
+          // Disable "View results" when there's nothing to view: still
+          // running, OR any unsuccessful terminal (failed / stopped /
+          // blocked / expired all leave summary_report empty).
+          disabled={!isTerminal || isUnsuccessful}
           style={{
-            opacity: !isTerminal || isFailed ? 0.6 : 1,
+            opacity: !isTerminal || isUnsuccessful ? 0.6 : 1,
           }}
         >
           {!isTerminal
             ? "Scanning…"
-            : isFailed
+            : isUnsuccessful
               ? "No results"
               : (
                   <>
