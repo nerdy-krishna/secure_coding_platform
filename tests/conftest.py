@@ -90,11 +90,25 @@ async def db_session(db_engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
 
     The outer transaction is rolled back on teardown so every test runs
     on a clean slate even when repository code commits.
+
+    `join_transaction_mode="create_savepoint"` is load-bearing: it tells
+    the session to wrap its work in a SAVEPOINT inside the outer
+    transaction, so a `session.commit()` from production code (e.g.
+    `framework_repo.create_framework`) releases the SAVEPOINT instead
+    of committing — and crucially, the outer transaction stays open so
+    subsequent operations like `session.refresh()` don't blow up with
+    `InvalidRequestError: Can't operate on closed transaction`. Without
+    this, any repo method that does the standard
+    `add → commit → refresh` SQLAlchemy 2.x pattern fails the moment
+    it's exercised under the `db_session` fixture.
     """
     async with db_engine.connect() as connection:
         trans = await connection.begin()
         Session = async_sessionmaker(
-            bind=connection, expire_on_commit=False, class_=AsyncSession
+            bind=connection,
+            expire_on_commit=False,
+            class_=AsyncSession,
+            join_transaction_mode="create_savepoint",
         )
         session = Session()
         try:

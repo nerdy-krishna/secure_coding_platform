@@ -520,167 +520,170 @@ async def seed_defaults(
     templates_added = 0
     mappings_refreshed = 0
 
+    # Per-call commits inside the repo methods (`framework_repo`,
+    # `agent_repo`, `prompt_repo`) make this seed inherently
+    # non-atomic — a wrapping `async with session.begin():` block
+    # used to claim atomicity but actually broke the session
+    # transaction state mid-flight (the inner commits release the
+    # SessionTransaction the wrapper was managing, leaving the
+    # subsequent `session.refresh()` calls operating on a closed
+    # transaction). Treat the seed as best-effort: each repo call
+    # is its own transaction, partial failures get logged below,
+    # and the seed is idempotent on re-run.
     try:
-        async with session.begin():
-            framework_repo = FrameworkRepository(session)
-            agent_repo = AgentRepository(session)
-            prompt_repo = PromptTemplateRepository(session)
+        framework_repo = FrameworkRepository(session)
+        agent_repo = AgentRepository(session)
+        prompt_repo = PromptTemplateRepository(session)
 
-            target_fw_names = [fw["name"] for fw in FRAMEWORKS_DATA]
-            target_agent_names = [a["name"] for a in AGENT_DEFINITIONS] + [
-                "SecurityAdvisorAgent"
-            ]
+        target_fw_names = [fw["name"] for fw in FRAMEWORKS_DATA]
+        target_agent_names = [a["name"] for a in AGENT_DEFINITIONS] + [
+            "SecurityAdvisorAgent"
+        ]
 
-            if force_reset:
-                logger.info(
-                    "seed: force_reset starting",
-                    extra={"actor_user_id": actor_user_id},
-                )
+        if force_reset:
+            logger.info(
+                "seed: force_reset starting",
+                extra={"actor_user_id": actor_user_id},
+            )
 
-                # 1. Clear framework-agent mappings for any target/legacy framework.
-                frameworks_to_clear = await session.execute(
-                    select(db_models.Framework)
-                    .options(selectinload(db_models.Framework.agents))
-                    .where(
-                        db_models.Framework.name.in_(
-                            target_fw_names + _LEGACY_FRAMEWORK_NAMES
-                        )
+            # 1. Clear framework-agent mappings for any target/legacy framework.
+            frameworks_to_clear = await session.execute(
+                select(db_models.Framework)
+                .options(selectinload(db_models.Framework.agents))
+                .where(
+                    db_models.Framework.name.in_(
+                        target_fw_names + _LEGACY_FRAMEWORK_NAMES
                     )
-                )
-                for fw in frameworks_to_clear.scalars().all():
-                    fw.agents = []
-                await session.flush()
-
-                # 2. Drop prompt templates + agents + frameworks managed here.
-                await session.execute(
-                    delete(db_models.PromptTemplate).where(
-                        db_models.PromptTemplate.agent_name.in_(target_agent_names)
-                    )
-                )
-                await session.execute(
-                    delete(db_models.Agent).where(
-                        db_models.Agent.name.in_(target_agent_names)
-                    )
-                )
-                await session.execute(
-                    delete(db_models.Framework).where(
-                        db_models.Framework.name.in_(
-                            target_fw_names + _LEGACY_FRAMEWORK_NAMES
-                        )
-                    )
-                )
-                await session.flush()
-
-                logger.info(
-                    "seed: force_reset cleared managed rows",
-                    extra={
-                        "actor_user_id": actor_user_id,
-                        "target_frameworks": target_fw_names,
-                        "target_agents": target_agent_names,
-                    },
-                )
-
-            # Existing-name lookup so we only insert missing rows.
-            existing_fws = await session.execute(
-                select(db_models.Framework.name).where(
-                    db_models.Framework.name.in_(target_fw_names)
                 )
             )
-            existing_fw_names = {row[0] for row in existing_fws.all()}
+            for fw in frameworks_to_clear.scalars().all():
+                fw.agents = []
+            await session.flush()
 
-            existing_agents = await session.execute(
-                select(db_models.Agent.name).where(
+            # 2. Drop prompt templates + agents + frameworks managed here.
+            await session.execute(
+                delete(db_models.PromptTemplate).where(
+                    db_models.PromptTemplate.agent_name.in_(target_agent_names)
+                )
+            )
+            await session.execute(
+                delete(db_models.Agent).where(
                     db_models.Agent.name.in_(target_agent_names)
                 )
             )
-            existing_agent_names = {row[0] for row in existing_agents.all()}
-
-            existing_tpls = await session.execute(
-                select(db_models.PromptTemplate.name).where(
-                    db_models.PromptTemplate.name.in_(
-                        [tpl["name"] for tpl in PROMPT_TEMPLATES]
+            await session.execute(
+                delete(db_models.Framework).where(
+                    db_models.Framework.name.in_(
+                        target_fw_names + _LEGACY_FRAMEWORK_NAMES
                     )
                 )
             )
-            existing_tpl_names = {row[0] for row in existing_tpls.all()}
+            await session.flush()
 
-            for fw_def in FRAMEWORKS_DATA:
-                if fw_def["name"] in existing_fw_names:
-                    continue
-                await framework_repo.create_framework(
-                    api_models.FrameworkCreate(**fw_def)
-                )
-                frameworks_added += 1
+            logger.info(
+                "seed: force_reset cleared managed rows",
+                extra={
+                    "actor_user_id": actor_user_id,
+                    "target_frameworks": target_fw_names,
+                    "target_agents": target_agent_names,
+                },
+            )
 
-            for agent_def in AGENT_DEFINITIONS:
-                if agent_def["name"] in existing_agent_names:
-                    continue
-                # `applicable_frameworks` is a seed-time concept consumed by the
-                # mapping-refresh block below — it's not a DB column, so strip
-                # it before passing the dict to `AgentCreate` (which would
-                # otherwise reject the unknown field).
-                agent_payload = {
-                    k: v for k, v in agent_def.items() if k != "applicable_frameworks"
-                }
-                await agent_repo.create_agent(api_models.AgentCreate(**agent_payload))
-                agents_added += 1
+        # Existing-name lookup so we only insert missing rows.
+        existing_fws = await session.execute(
+            select(db_models.Framework.name).where(
+                db_models.Framework.name.in_(target_fw_names)
+            )
+        )
+        existing_fw_names = {row[0] for row in existing_fws.all()}
 
-            for tpl_def in PROMPT_TEMPLATES:
-                if tpl_def["name"] in existing_tpl_names:
-                    continue
-                await prompt_repo.create_template(
-                    api_models.PromptTemplateCreate(**tpl_def)
-                )
-                templates_added += 1
+        existing_agents = await session.execute(
+            select(db_models.Agent.name).where(
+                db_models.Agent.name.in_(target_agent_names)
+            )
+        )
+        existing_agent_names = {row[0] for row in existing_agents.all()}
 
-            # Framework↔agent mapping refresh. Always re-applies — cheap and keeps
-            # the default roster consistent after this seed runs (including when
-            # force_reset wasn't needed).
-            #
-            # Selective mapping (added with §3.11): each agent's
-            # `applicable_frameworks` field declares which frameworks it
-            # belongs to. Legacy AppSec agents (no field set) attach to
-            # `_APPSEC_FRAMEWORK_NAMES`; the new `LLMSecurityAgent` /
-            # `AgenticSecurityAgent` attach only to their respective AI
-            # frameworks. Selecting `asvs` no longer pulls LLM-prompt-injection
-            # RAG context into a server-side scan and vice versa.
-            fw_rows = await session.execute(
-                select(db_models.Framework).where(
-                    db_models.Framework.name.in_(target_fw_names)
+        existing_tpls = await session.execute(
+            select(db_models.PromptTemplate.name).where(
+                db_models.PromptTemplate.name.in_(
+                    [tpl["name"] for tpl in PROMPT_TEMPLATES]
                 )
             )
-            agent_name_to_id = {
-                row[0]: row[1]
-                for row in (
-                    await session.execute(
-                        select(db_models.Agent.name, db_models.Agent.id).where(
-                            db_models.Agent.name.in_(
-                                [a["name"] for a in AGENT_DEFINITIONS]
-                            )
-                        )
+        )
+        existing_tpl_names = {row[0] for row in existing_tpls.all()}
+
+        for fw_def in FRAMEWORKS_DATA:
+            if fw_def["name"] in existing_fw_names:
+                continue
+            await framework_repo.create_framework(api_models.FrameworkCreate(**fw_def))
+            frameworks_added += 1
+
+        for agent_def in AGENT_DEFINITIONS:
+            if agent_def["name"] in existing_agent_names:
+                continue
+            # `applicable_frameworks` is a seed-time concept consumed by the
+            # mapping-refresh block below — it's not a DB column, so strip
+            # it before passing the dict to `AgentCreate` (which would
+            # otherwise reject the unknown field).
+            agent_payload = {
+                k: v for k, v in agent_def.items() if k != "applicable_frameworks"
+            }
+            await agent_repo.create_agent(api_models.AgentCreate(**agent_payload))
+            agents_added += 1
+
+        for tpl_def in PROMPT_TEMPLATES:
+            if tpl_def["name"] in existing_tpl_names:
+                continue
+            await prompt_repo.create_template(
+                api_models.PromptTemplateCreate(**tpl_def)
+            )
+            templates_added += 1
+
+        # Framework↔agent mapping refresh. Always re-applies — cheap and keeps
+        # the default roster consistent after this seed runs (including when
+        # force_reset wasn't needed).
+        #
+        # Selective mapping (added with §3.11): each agent's
+        # `applicable_frameworks` field declares which frameworks it
+        # belongs to. Legacy AppSec agents (no field set) attach to
+        # `_APPSEC_FRAMEWORK_NAMES`; the new `LLMSecurityAgent` /
+        # `AgenticSecurityAgent` attach only to their respective AI
+        # frameworks. Selecting `asvs` no longer pulls LLM-prompt-injection
+        # RAG context into a server-side scan and vice versa.
+        fw_rows = await session.execute(
+            select(db_models.Framework).where(
+                db_models.Framework.name.in_(target_fw_names)
+            )
+        )
+        agent_name_to_id = {
+            row[0]: row[1]
+            for row in (
+                await session.execute(
+                    select(db_models.Agent.name, db_models.Agent.id).where(
+                        db_models.Agent.name.in_([a["name"] for a in AGENT_DEFINITIONS])
                     )
-                ).all()
-            }
-            # Build {framework_name: [agent_id, ...]} from the seed declarations.
-            fw_to_agent_ids: Dict[str, List[int]] = {
-                fw["name"]: [] for fw in FRAMEWORKS_DATA
-            }
-            for agent_def in AGENT_DEFINITIONS:
-                applicable = (
-                    agent_def.get("applicable_frameworks") or _APPSEC_FRAMEWORK_NAMES
                 )
-                agent_id = agent_name_to_id.get(agent_def["name"])
-                if agent_id is None:
-                    continue
-                for fw_name in applicable:
-                    if fw_name in fw_to_agent_ids:
-                        fw_to_agent_ids[fw_name].append(agent_id)
-            for fw in fw_rows.scalars().all():
-                ids_for_fw = fw_to_agent_ids.get(fw.name, [])
-                await framework_repo.update_agent_mappings_for_framework(
-                    fw.id, ids_for_fw
-                )
-                mappings_refreshed += 1
+            ).all()
+        }
+        # Build {framework_name: [agent_id, ...]} from the seed declarations.
+        fw_to_agent_ids: Dict[str, List[int]] = {
+            fw["name"]: [] for fw in FRAMEWORKS_DATA
+        }
+        for agent_def in AGENT_DEFINITIONS:
+            applicable = (
+                agent_def.get("applicable_frameworks") or _APPSEC_FRAMEWORK_NAMES
+            )
+            agent_id = agent_name_to_id.get(agent_def["name"])
+            if agent_id is None:
+                continue
+            for fw_name in applicable:
+                if fw_name in fw_to_agent_ids:
+                    fw_to_agent_ids[fw_name].append(agent_id)
+        for fw in fw_rows.scalars().all():
+            ids_for_fw = fw_to_agent_ids.get(fw.name, [])
+            await framework_repo.update_agent_mappings_for_framework(fw.id, ids_for_fw)
+            mappings_refreshed += 1
     except Exception:
         logger.error(
             "seed: failed mid-execution",

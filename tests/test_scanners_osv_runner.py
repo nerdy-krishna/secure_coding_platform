@@ -53,13 +53,13 @@ def test_pydantic_allowlist_drops_extras() -> None:
     raw = {
         "id": "GHSA-xxxx",
         "summary": "test",
-        "aliases": ["CVE-2024-1"],
+        "aliases": ["CVE-2024-9999"],
         "_secret_field_added_in_some_future_osv_version": "<script>alert(1)</script>",
         "deeply": {"nested": {"junk": True}},
     }
     parsed = _OSVVulnerability.model_validate(raw)
     assert parsed.id == "GHSA-xxxx"
-    assert parsed.aliases == ["CVE-2024-1"]
+    assert parsed.aliases == ["CVE-2024-9999"]
     # Extras silently dropped — no attribute access on the parsed object.
     assert not hasattr(parsed, "_secret_field_added_in_some_future_osv_version")
 
@@ -144,7 +144,7 @@ async def test_run_osv_parses_findings_and_bom(tmp_path) -> None:
                             {
                                 "id": "GHSA-xxxx-yyyy",
                                 "summary": "test summary",
-                                "aliases": ["CVE-2024-1"],
+                                "aliases": ["CVE-2024-9999"],
                                 "database_specific": {"severity": "HIGH"},
                             }
                         ],
@@ -170,7 +170,7 @@ async def test_run_osv_parses_findings_and_bom(tmp_path) -> None:
     assert len(findings) == 1
     f = findings[0]
     assert f.source == "osv"
-    assert f.cve_id == "CVE-2024-1"
+    assert f.cve_id == "CVE-2024-9999"
     assert f.severity == "High"
     assert "requests" in f.title
     assert f.confidence == "High"
