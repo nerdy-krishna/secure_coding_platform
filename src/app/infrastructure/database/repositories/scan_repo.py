@@ -245,6 +245,16 @@ class ScanRepository:
                 selectinload(db_models.Scan.project),
                 selectinload(db_models.Scan.snapshots),
                 selectinload(db_models.Scan.findings),
+                # `events` was historically lazy because the legacy
+                # AnalysisResultDetailResponse didn't surface them.
+                # Now the response carries the stage-event audit
+                # trail so ScanRunningPage can seed the live-event-
+                # log on terminal scans (where SSE has already closed
+                # by the time the listener attaches). Eager-load to
+                # avoid a `MissingGreenlet` when the response model
+                # iterates the relationship after the async session
+                # has closed.
+                selectinload(db_models.Scan.events),
             )
             .filter(db_models.Scan.id == scan_id)
         )
