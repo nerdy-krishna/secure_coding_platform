@@ -160,6 +160,16 @@ async def retrieve_and_prepare_data_node(state: WorkerState) -> Dict[str, Any]:
             )
             # --- End of FIX ---
 
+            # Stage-event audit trail. The frontend's KNOWN_STAGES
+            # list expects an ANALYZING_CONTEXT row to mark this
+            # phase as complete; without it the timeline shows the
+            # stage as never-started even after the worker advanced.
+            await repo.create_scan_event(
+                scan_id=scan_id,
+                stage_name="ANALYZING_CONTEXT",
+                status="COMPLETED",
+            )
+
             return {
                 "scan_type": scan.scan_type,
                 "current_scan_status": current_status,

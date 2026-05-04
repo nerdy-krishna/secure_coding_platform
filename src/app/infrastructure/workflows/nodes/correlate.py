@@ -72,4 +72,28 @@ async def correlate_findings_node(state: WorkerState) -> Dict[str, Any]:
             # You could potentially merge descriptions or other fields here if needed
             correlated_findings.append(merged_finding)
 
+    # Stage-event audit trail — CORRELATING marker so the timeline
+    # shows this phase ran. Wrapped so a logging-side issue can't
+    # corrupt the workflow return value.
+    try:
+        from app.infrastructure.database import AsyncSessionLocal
+        from app.infrastructure.database.repositories.scan_repo import (
+            ScanRepository,
+        )
+
+        scan_id = state["scan_id"]
+        async with AsyncSessionLocal() as db:
+            await ScanRepository(db).create_scan_event(
+                scan_id=scan_id,
+                stage_name="CORRELATING",
+                status="COMPLETED",
+                details={"finding_count": len(correlated_findings)},
+            )
+    except Exception as _e:
+        import logging as _logging
+
+        _logging.getLogger(__name__).warning(
+            "CORRELATING event emit failed: %s", _e
+        )
+
     return {"findings": correlated_findings}

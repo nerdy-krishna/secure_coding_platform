@@ -55,6 +55,27 @@ async def analyze_files_parallel_node(state: WorkerState) -> Dict[str, Any]:
         "Starting single-pass analysis for scan %s in %r mode.", scan_id, scan_type
     )
 
+    # Stage-event audit trail — RUNNING_AGENTS marker emitted at the
+    # entry of the analyze phase so the timeline reflects "agents are
+    # running" before the per-file FILE_ANALYZED rows arrive. Wrapped
+    # in try/except so a logging-side error never aborts analysis.
+    try:
+        from app.infrastructure.database import (
+            AsyncSessionLocal as _AsyncSessionLocal_start,
+        )
+        from app.infrastructure.database.repositories.scan_repo import (
+            ScanRepository as _ScanRepository_start,
+        )
+
+        async with _AsyncSessionLocal_start() as _db_start:
+            await _ScanRepository_start(_db_start).create_scan_event(
+                scan_id=scan_id,
+                stage_name="RUNNING_AGENTS",
+                status="COMPLETED",
+            )
+    except Exception as _e:
+        logger.warning("RUNNING_AGENTS event emit failed: %s", _e)
+
     # --- REVISED GUARD CLAUSE BLOCK ---
     live_codebase = state.get("live_codebase")
     if not live_codebase:

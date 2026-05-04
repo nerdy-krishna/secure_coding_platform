@@ -97,12 +97,32 @@ async def save_final_report_node(state: WorkerState) -> Dict[str, Any]:
     )
     try:
         async with AsyncSessionLocal() as db:
-            await ScanRepository(db).save_final_reports_and_status(
+            repo = ScanRepository(db)
+            await repo.save_final_reports_and_status(
                 scan_id=scan_id,
                 status=final_status,
                 summary=summary_data,
                 risk_score=final_risk_score,
             )
+            # Stage-event audit trail — GENERATING_REPORTS marker so
+            # the timeline closes out the final stage. Wrapped in a
+            # nested try so a logging-side issue here doesn't roll
+            # back the just-persisted final-report transaction.
+            try:
+                await repo.create_scan_event(
+                    scan_id=scan_id,
+                    stage_name="GENERATING_REPORTS",
+                    status="COMPLETED",
+                    details={
+                        "findings_total": len(findings),
+                        "risk_score": final_risk_score,
+                        "severity_counts": severity_map,
+                    },
+                )
+            except Exception as _e:
+                logger.warning(
+                    "GENERATING_REPORTS event emit failed: %s", _e
+                )
     except Exception:
         logger.error(
             "save_final_report_failed", extra={"scan_id": str(scan_id)}, exc_info=True

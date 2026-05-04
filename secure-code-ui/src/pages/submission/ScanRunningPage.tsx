@@ -356,15 +356,27 @@ const ScanRunningPage: React.FC = () => {
     };
   }, [scanId]);
 
-  // When scan reaches a terminal status (success or BLOCKED_PRE_LLM
-  // short-circuit), auto-navigate to the results page so the user
-  // sees the outcome — including why a scan was blocked.
+  // When the scan TRANSITIONS to a terminal status (success or
+  // BLOCKED_PRE_LLM short-circuit) WHILE the user is watching, auto-
+  // navigate to the results page after 1.5s so they see the outcome.
+  //
+  // Crucially: the redirect must NOT fire when the user lands on this
+  // page with the scan already terminal (e.g. via the "Timeline"
+  // button on the results page) — otherwise it bounces them back to
+  // results immediately. Track whether we ever observed a non-
+  // terminal status during this page view; only redirect after a
+  // genuine transition.
+  const sawNonTerminalRef = useRef(false);
   useEffect(() => {
     if (!scanId) return;
+    if (status && !TERMINAL_STATUSES.has(status)) {
+      sawNonTerminalRef.current = true;
+    }
     if (
-      status === "COMPLETED" ||
-      status === "REMEDIATION_COMPLETED" ||
-      status === "BLOCKED_PRE_LLM"
+      sawNonTerminalRef.current &&
+      (status === "COMPLETED" ||
+        status === "REMEDIATION_COMPLETED" ||
+        status === "BLOCKED_PRE_LLM")
     ) {
       const t = setTimeout(() => navigate(`/analysis/results/${scanId}`), 1500);
       return () => clearTimeout(t);

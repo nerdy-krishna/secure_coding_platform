@@ -128,8 +128,19 @@ async def estimate_cost_node(state: WorkerState) -> Dict[str, Any]:
     )
 
     async with AsyncSessionLocal() as db:
-        await ScanRepository(db).update_cost_and_status(
+        repo = ScanRepository(db)
+        await repo.update_cost_and_status(
             scan_id, STATUS_PENDING_APPROVAL, cost_details
+        )
+        # Stage-event audit trail — surfaces ESTIMATING_COST as
+        # complete on the timeline. Prior to this the timeline went
+        # QUEUED → QUEUED_FOR_SCAN with no breadcrumb that the cost
+        # node had run.
+        await repo.create_scan_event(
+            scan_id=scan_id,
+            stage_name="ESTIMATING_COST",
+            status="COMPLETED",
+            details=cost_details,
         )
 
     # V02.3.5 — flag high-value scans so the lifecycle service can enforce

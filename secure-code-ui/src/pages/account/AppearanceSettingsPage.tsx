@@ -8,8 +8,10 @@
 
 import React from "react";
 import { useTheme } from "../../app/providers/ThemeProvider";
+import { useNotificationPermission } from "../../shared/hooks/useNotificationPermission";
 import { Icon } from "../../shared/ui/Icon";
 import { SectionHead } from "../../shared/ui/DashboardPrimitives";
+import { useToast } from "../../shared/ui/Toast";
 
 interface Accent {
   id: string;
@@ -62,6 +64,15 @@ const Hint: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 const AppearanceSettingsPage: React.FC = () => {
   const { theme, variant, accent, setTheme, setVariant, setAccent } =
     useTheme();
+  const notificationPerm = useNotificationPermission();
+  const toast = useToast();
+
+  const handleEnableNotifications = async () => {
+    const result = await notificationPerm.request();
+    if (result === "granted") toast.success("Desktop notifications on");
+    else if (result === "denied")
+      toast.warn("Notifications blocked — re-enable in browser site settings");
+  };
 
   const resetAll = () => {
     setTheme("light");
@@ -181,6 +192,45 @@ const AppearanceSettingsPage: React.FC = () => {
           Click an active swatch again to clear the override and fall back to the
           variation's default accent.
         </Hint>
+      </div>
+
+      <div className="sccap-card">
+        <SubLabel>Desktop notifications</SubLabel>
+        {!notificationPerm.supported ? (
+          <Hint>This browser doesn't support desktop notifications.</Hint>
+        ) : notificationPerm.permission === "granted" ? (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              color: "var(--success)",
+              fontSize: 13,
+            }}
+          >
+            <Icon.Check size={14} /> Desktop notifications are on. SCCAP will
+            ping you when long scans finish even if this tab isn't focused.
+          </div>
+        ) : notificationPerm.permission === "denied" ? (
+          <Hint>
+            Notifications are blocked at the browser level. Re-enable in your
+            browser's site-settings panel for this URL, then revisit this page.
+          </Hint>
+        ) : (
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <button
+              type="button"
+              className="sccap-btn sccap-btn-sm sccap-btn-primary"
+              onClick={handleEnableNotifications}
+            >
+              <Icon.Bell size={12} /> Enable notifications
+            </button>
+            <Hint>
+              You'll get a one-time browser prompt. SCCAP only fires a
+              notification when a scan reaches a terminal state.
+            </Hint>
+          </div>
+        )}
       </div>
     </div>
   );
