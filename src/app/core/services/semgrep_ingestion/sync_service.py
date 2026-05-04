@@ -13,7 +13,6 @@ from app.infrastructure.database.repositories.semgrep_rule_repo import (
 
 from .fetcher import clone_or_pull
 from .parser import parse_rule_file
-from .validator import validate_rule_file
 from .selector import _load_ingestion_settings
 
 logger = logging.getLogger(__name__)
@@ -64,16 +63,14 @@ async def _run_sync_inner(
     rules_invalid = 0
     seen_namespaced_ids: set[str] = set()
 
-    # Process files in batches of 100 to avoid holding the session open for too long
     for path in files:
-        # Validate first
-        is_valid = await validate_rule_file(path)
-        if not is_valid:
+        # parse_rule_file handles malformed YAML and missing required fields
+        # gracefully (returns []). Per-file semgrep --validate is too slow
+        # for large rule repos (O(n) subprocess spawns for thousands of files).
+        rule_dicts = parse_rule_file(path, source, repo_dir)
+        if not rule_dicts:
             rules_invalid += 1
             continue
-
-        # Parse
-        rule_dicts = parse_rule_file(path, source, repo_dir)
         for rd in rule_dicts:
             seen_namespaced_ids.add(rd["namespaced_id"])
             _, is_new = await repo.upsert_rule(source.id, rd)
