@@ -22,7 +22,7 @@ Upload policy (V05.1.1):
 import asyncio
 import logging
 import uuid
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import (
     APIRouter,
@@ -565,13 +565,35 @@ async def stream_scan_progress(
             )
             queue = None
 
+    # Resume position for reconnects. EventSource's built-in retry
+    # sets the `Last-Event-ID` header to the last `id:` line it saw,
+    # so honoring it suppresses the duplicate-event flood we'd
+    # otherwise emit on every reconnect (the live event log was
+    # rendering QUEUED · COMPLETED 3× because we kept replaying from
+    # id=0). Our manual reconnect path mints a fresh JWT on a brand-
+    # new EventSource, which doesn't replay the header — it passes
+    # the same value as `?last_event_id=…` instead.
+    resume_event_id = 0
+    header_resume = request.headers.get("last-event-id")
+    if header_resume:
+        try:
+            resume_event_id = max(resume_event_id, int(header_resume))
+        except ValueError:
+            pass
+    qp_resume = request.query_params.get("last_event_id")
+    if qp_resume:
+        try:
+            resume_event_id = max(resume_event_id, int(qp_resume))
+        except ValueError:
+            pass
+
     async def event_generator():
         import asyncio as _asyncio
         import json as _json
         import time as _time
 
         start = _time.monotonic()
-        last_event_id = 0
+        last_event_id = resume_event_id
         last_status: Optional[str] = None
 
         try:
@@ -594,10 +616,28 @@ async def stream_scan_progress(
                 # Emit on status change (including the first tick).
                 if scan.status != last_status:
                     last_status = scan.status
-                    payload = {
+                    payload: Dict[str, Any] = {
                         "scan_id": str(scan_id),
                         "status": scan.status,
                     }
+                    # Surface `cost_details` on the cost-approval flip so
+                    # the frontend can render the estimate live without
+                    # a manual refresh. Only sent at the moment we cross
+                    # into PENDING_COST_APPROVAL — the JSONB blob is
+                    # otherwise an internal artifact (V15.3.1) and
+                    # there's no UI reason to keep streaming it.
+                    if (
+                        scan.status == "PENDING_COST_APPROVAL"
+                        and scan.cost_details
+                    ):
+                        cd = scan.cost_details
+                        payload["cost_details"] = {
+                            "total_estimated_cost": cd.get("total_estimated_cost"),
+                            "total_input_tokens": cd.get("total_input_tokens"),
+                            "predicted_output_tokens": cd.get(
+                                "predicted_output_tokens"
+                            ),
+                        }
                     yield (f"event: scan_state\n" f"data: {_json.dumps(payload)}\n\n")
 
                 # Emit any ScanEvents with id > last_event_id.

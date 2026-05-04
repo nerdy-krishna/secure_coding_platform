@@ -207,7 +207,7 @@ If your build fails with disk space errors despite having plenty of free space o
     ```
     This command will:
     * `--build`: Build the Docker image for the application and worker services as defined in the `Dockerfile` (if they haven't been built before or if the `Dockerfile` has changed).
-    * Pull the official images for PostgreSQL, RabbitMQ, and ChromaDB if they are not already present locally.
+    * Pull the official images for PostgreSQL, RabbitMQ, and Qdrant if they are not already present locally.
     * Create and start all services (application, worker, database, message queue, vector database) in detached mode (`-d`), meaning they will run in the background.
     * The initial build process might take a few minutes depending on your internet connection and system resources.
 

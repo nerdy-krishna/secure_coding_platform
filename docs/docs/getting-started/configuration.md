@@ -80,13 +80,17 @@ defaults):
 
 ---
 
-## 🧠 ChromaDB Vector Database
+## 🧠 Qdrant Vector Database
+
+Replaced ChromaDB per ADR-008. The compose stack runs Qdrant in the
+`qdrant` container; the app talks to it through the `VectorStore`
+Protocol (`infrastructure/rag/qdrant_store.py`).
 
 | Variable | Description | Example |
 | -------- | ----------- | ------- |
-| `CHROMA_PORT_HOST` | Local port mapped to ChromaDB | `8001` |
-| `CHROMA_HOST` | Internal hostname | `vector_db` |
-| `CHROMA_PORT` | Internal container port | `8000` |
+| `QDRANT_HOST` | Internal hostname | `qdrant` |
+| `QDRANT_PORT` | Internal container port (HTTP `6333`, gRPC `6334`) | `6333` |
+| `QDRANT_API_KEY` | API key (required; matches `QDRANT__SERVICE__API_KEY` set on the container) | `change-me` |
 
 ---
 

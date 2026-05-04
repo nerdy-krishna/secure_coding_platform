@@ -76,15 +76,22 @@ the deep analysis. Remediation is a separate, opt-in step.
 
 1. **Submit** code (upload, Git URL, or archive) and pick frameworks +
    LLM slots.
-2. **Estimate** — a cheap audit pass builds a repo map + dependency
-   graph and produces a cost estimate. The scan pauses at
+2. **Pre-LLM scan** — deterministic SAST (Bandit · Semgrep · Gitleaks ·
+   OSV) builds a repo map + dependency graph and runs first. If it
+   finds anything the scan pauses at `PENDING_PRESCAN_APPROVAL` so you
+   can review the deterministic findings before any code is sent to an
+   LLM. Critical secrets need an explicit override to continue.
+3. **Estimate** — once you continue past the prescan gate, a dry run
+   produces an explicit cost estimate. The scan pauses at
    `PENDING_COST_APPROVAL`.
-3. **Approve** (or cancel) in the UI. The worker resumes the same
-   LangGraph thread from the checkpoint.
-4. **Analyze** — triaged specialized agents run in parallel (five at a
+4. **Approve** (or cancel) in the UI. Live SSE stream surfaces the
+   estimate and reconnects through token expiry; the worker resumes
+   the same LangGraph thread from the checkpoint.
+5. **Analyze** — triaged specialized agents run in parallel (five at a
    time under `CONCURRENT_LLM_LIMIT`) in topological dependency order.
-5. **Review** findings in the Results page.
-6. **Remediate** — select findings, apply fixes incrementally with a
+6. **Review** findings in the Results page — both deterministic and
+   LLM-emitted, tagged by source.
+7. **Remediate** — select findings, apply fixes incrementally with a
    merge agent to resolve conflicts, then download the patched tree.
 
 The full worker graph and state transitions live in
@@ -132,8 +139,8 @@ troubleshooting.
 
 Python 3.12 + FastAPI + Poetry · SQLAlchemy async + Alembic ·
 LangGraph 1.x + LangChain 1.x · LiteLLM · Pydantic AI · FastMCP ·
-fastapi-users (JWT Bearer) · Postgres 16 · RabbitMQ · ChromaDB
-(bundled ONNX embedder) · Fluentd → Loki → Grafana · React 18 + Vite
+fastapi-users (JWT Bearer) · Postgres 16 · RabbitMQ · Qdrant
+(fastembed `all-MiniLM-L6-v2`) · Fluentd → Loki → Grafana · React 18 + Vite
 + TypeScript · Ant Design · TanStack Query · React Router v7.
 
 Full breakdown in

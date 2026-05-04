@@ -44,9 +44,12 @@ LangGraph workflow with an `AsyncPostgresSaver` checkpointer. Queues:
   transactional-outbox table that guarantees RabbitMQ publication
   survives a crash between commit and publish.
 - **RabbitMQ** — message broker between API and worker.
-- **ChromaDB** — vector store for RAG. Uses the bundled ONNX
-  `all-MiniLM-L6-v2` embedder that lazy-downloads on first use; no
-  `sentence-transformers` dependency since H.1.1.
+- **Qdrant** — vector store for RAG (replaced ChromaDB per ADR-008).
+  Embedding via `fastembed.TextEmbedding("sentence-transformers/all-MiniLM-L6-v2")`
+  in `infrastructure/rag/embedder.py`; vectors are byte-equivalent
+  to the prior chromadb-bundled ONNX so existing collections stay
+  valid. Callers go through the `VectorStore` Protocol so the store
+  is swappable without touching call sites.
 - **Fluentd → Loki → Grafana** — log aggregation. Every request
   carries an `X-Correlation-ID` propagated via `correlation_id_var`
   so logs stitch across services.

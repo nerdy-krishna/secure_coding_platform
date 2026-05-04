@@ -197,10 +197,18 @@ class ScanRepository:
         bom_cyclonedx).  Service callers building user-facing responses
         should use get_scan_summary() instead to avoid accidental
         serialisation of internal data (V15.3.1).
+
+        Eager-loads `events` because the SSE stream re-reads the scan on
+        every NOTIFY (`stream_scan_progress`) and reads `scan.events` to
+        diff new stage rows. Without this, async lazy-loading of the
+        relationship is unreliable and the live event log silently
+        stops ticking forward mid-scan.
         """
         logger.debug("Fetching scan from DB.", extra={"scan_id": str(scan_id)})
         result = await self.db.execute(
-            select(db_models.Scan).filter(db_models.Scan.id == scan_id)
+            select(db_models.Scan)
+            .options(selectinload(db_models.Scan.events))
+            .filter(db_models.Scan.id == scan_id)
         )
         return result.scalars().first()
 
@@ -651,6 +659,14 @@ class ScanRepository:
         self, scan_id: uuid.UUID, status: str, estimated_cost: Dict[str, Any]
     ):
         """Atomically updates the status and the estimated cost of a scan."""
+        # Sibling of `update_status`: emit a NOTIFY in the same
+        # transaction so SSE subscribers wake on the cost-approval
+        # status flip instead of waiting on the heartbeat fallback.
+        from app.infrastructure.messaging.scan_progress_notifier import (
+            KIND_STATUS,
+            notify_scan_progress,
+        )
+
         logger.info(
             "Updating cost and status in DB.",
             extra={
@@ -665,6 +681,7 @@ class ScanRepository:
             .values(status=status, cost_details=estimated_cost)
         )
         await self.db.execute(stmt)
+        await notify_scan_progress(self.db, scan_id=str(scan_id), kind=KIND_STATUS)
         try:
             await self.db.commit()
         except SQLAlchemyError as e:

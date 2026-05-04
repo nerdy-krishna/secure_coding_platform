@@ -5,24 +5,25 @@ sidebar_position: 7
 
 # RAG System
 
-SCCAP's RAG layer is a single ChromaDB collection shared across
+SCCAP's RAG layer is a single Qdrant collection shared across
 every framework, with per-document metadata keyed on
-`framework_name`. Retrieval is done with a `where` filter so the
+`framework_name`. Retrieval is done with a metadata filter so the
 Advisor only pulls context from the frameworks the caller selected
 for the session.
 
-## ChromaDB + embedder
+## Qdrant + embedder
 
-- **Engine**: ChromaDB, run as a separate `vector_db` container in
-  the compose stack.
-- **Embedder**: the bundled **ONNX `all-MiniLM-L6-v2`** that ships
-  with ChromaDB. It lazy-downloads on first use to
-  `/home/appuser/.cache/chroma/`, which means:
-  - Zero `sentence-transformers` dependency (dropped in H.1.1).
-  - No `huggingface-hub` constraint — there's no dependency conflict
-    to resolve with the rest of the stack.
-  - First query after a fresh deploy takes a few seconds longer than
-    subsequent queries. Subsequent startups hit the cache.
+- **Engine**: Qdrant, run as a separate `qdrant` container in the
+  compose stack (replaced ChromaDB per ADR-008). The `VectorStore`
+  Protocol in `infrastructure/rag/base.py` keeps callers
+  store-agnostic; `qdrant_store.py` is the singleton impl, including
+  a Chroma-`where` → Qdrant-`Filter` translator so the historic
+  query shape still works.
+- **Embedder**: `fastembed.TextEmbedding("sentence-transformers/all-MiniLM-L6-v2")`
+  via `infrastructure/rag/embedder.py`. Vectors are byte-equivalent
+  to the prior chromadb-bundled ONNX embedder, so existing collections
+  remain valid. Lazy-downloads on first use; first query after a
+  fresh deploy takes a few seconds longer than subsequent ones.
 - **Collection**: one global collection called `security_guidelines`.
   Per-document metadata carries `framework_name`, `control_id` (when
   the source has one), and `title`.

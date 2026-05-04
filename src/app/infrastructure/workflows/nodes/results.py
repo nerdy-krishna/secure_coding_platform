@@ -38,28 +38,32 @@ async def save_results_node(state: WorkerState) -> Dict[str, Any]:
             repo = ScanRepository(db)
 
             if findings:
-                if scan_type in ("AUDIT", "SUGGEST"):
-                    # Findings flowing into this node are a mix of:
-                    #   (a) deterministic prescan rows already inserted
-                    #       by `deterministic_prescan_node` — they
-                    #       carry a populated `.id` — and
-                    #   (b) fresh LLM-agent findings produced by
-                    #       analyze_files_parallel — `.id is None`.
-                    # We must NOT re-insert (a); doing so was the
-                    # primary source of triple-duped bandit rows in
-                    # the DB. Insert only the fresh ones, and apply
-                    # any correlation/confidence updates the LLM
-                    # phase made to the existing rows.
-                    fresh = [f for f in findings if getattr(f, "id", None) is None]
-                    existing = [
-                        f for f in findings if getattr(f, "id", None) is not None
-                    ]
-                    if fresh:
-                        await repo.save_findings(scan_id, fresh)
-                    if existing:
-                        await repo.update_correlated_findings(existing)
-                else:  # For REMEDIATE, we update the existing findings with correlation data
-                    await repo.update_correlated_findings(findings)
+                # Findings flowing into this node are a mix of:
+                #   (a) deterministic prescan rows already inserted by
+                #       `deterministic_prescan_node` — they carry a
+                #       populated `.id` — and
+                #   (b) fresh LLM-agent findings produced by
+                #       analyze_files_parallel — `.id is None`.
+                # We must NOT re-insert (a); doing so was the primary
+                # source of triple-duped bandit rows in the DB. Insert
+                # only the fresh ones, and apply any correlation /
+                # confidence updates the LLM phase made to the
+                # existing rows.
+                #
+                # This applies to REMEDIATE too: the prior code only
+                # called `update_correlated_findings(findings)`, which
+                # silently drops any finding without an id. That was
+                # masking 100 % of the LLM-agent findings — REMEDIATE
+                # scans came back with the deterministic 2 only,
+                # never the 20–30 the agents had actually produced.
+                fresh = [f for f in findings if getattr(f, "id", None) is None]
+                existing = [
+                    f for f in findings if getattr(f, "id", None) is not None
+                ]
+                if fresh:
+                    await repo.save_findings(scan_id, fresh)
+                if existing:
+                    await repo.update_correlated_findings(existing)
 
             if scan_type == "REMEDIATE" and final_file_map:
                 logger.info("Saving POST_REMEDIATION snapshot for scan %s.", scan_id)

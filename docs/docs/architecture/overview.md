@@ -13,7 +13,7 @@ data stores the two share, and an observability pipeline.
 │   UI     │  ◄─►  │   API   │  ◄─►  │ Postgres│
 │ (Vite)   │       │(FastAPI)│       └─────────┘
 └──────────┘       └────┬────┘       ┌─────────┐
-                        │       ◄─►  │  Chroma │
+                        │       ◄─►  │ Qdrant  │
                         ▼            └─────────┘
                    ┌─────────┐
                    │RabbitMQ │
@@ -47,9 +47,9 @@ data stores the two share, and an observability pipeline.
   including the LangGraph checkpoint tables (`checkpoints`,
   `checkpoint_writes`, `checkpoint_blobs`, `checkpoint_migrations`)
   managed by the Postgres checkpointer.
-- **ChromaDB** — vector store for RAG. Uses the bundled ONNX
-  embedder (lazy-downloaded on first use); framework-scoped via
-  metadata filters.
+- **Qdrant** — vector store for RAG (replaced ChromaDB per ADR-008).
+  Uses `fastembed` with `sentence-transformers/all-MiniLM-L6-v2`
+  (lazy-downloaded on first use); framework-scoped via metadata filters.
 - **Fluentd → Loki → Grafana** — structured log aggregation.
 
 ## Code layout (backend)
@@ -105,22 +105,31 @@ for the canonical version.
 2. Worker picks up the message, builds a `WorkerState`, and calls the
    compiled LangGraph with the Postgres checkpointer.
 3. Audit pass: `retrieve_and_prepare_data` → `RepositoryMappingEngine`
-   + `ContextBundlingEngine` → `estimate_cost` → status
-   `PENDING_COST_APPROVAL` → native `interrupt()` (graph pauses,
-   state is checkpointed).
-4. User approves: API publishes to `analysis_approved_queue`; worker
+   + `ContextBundlingEngine` → `deterministic_prescan` (Bandit /
+   Semgrep / Gitleaks / OSV). If findings are non-empty, the scan
+   pauses at `PENDING_PRESCAN_APPROVAL` (ADR-009) for operator review;
+   Critical Gitleaks findings need an explicit override to continue.
+4. After prescan approval, `estimate_cost` runs a token-counting dry
+   run, persists `cost_details`, atomically flips status to
+   `PENDING_COST_APPROVAL` (firing a `pg_notify` so SSE wakes
+   immediately), then native `interrupt()` pauses the graph and
+   checkpoints state.
+5. User approves: API publishes to `analysis_approved_queue`; worker
    resumes the same thread with `Command(resume=payload)`.
-5. Single-pass parallel analysis: `analyze_files_parallel` runs every
+6. Single-pass parallel analysis: `analyze_files_parallel` runs every
    relevant agent against every file from the `ORIGINAL_SUBMISSION`
    snapshot in parallel, bounded by a single
    `asyncio.Semaphore(CONCURRENT_LLM_LIMIT=5)` over the union of
    file × chunk × agent calls. Per-file agent triage is inline
    (extension-based routing); per-file dependency context is still
    injected from the repository map.
-6. `correlate_findings` (group by file/CWE/line, merge agent
+7. `correlate_findings` (group by file/CWE/line, merge agent
    corroborations) → `consolidate_and_patch` (REMEDIATE-only:
    merges per-file fixes via the merge agent, tree-sitter
    syntax-verifies, builds the `POST_REMEDIATION` snapshot) →
-   `save_results` → `save_final_report` (writes the coarse 0–10
-   severity-bucket `risk_score` + the `summary` JSON, sets
-   `COMPLETED` / `REMEDIATION_COMPLETED`) → END.
+   `save_results` (splits findings into fresh / existing — fresh
+   LLM-agent rows are inserted, existing prescan rows get correlation
+   updates; applies to all scan types including REMEDIATE) →
+   `save_final_report` (writes the CVSS-weighted 0–10 `risk_score` +
+   the `summary` JSON, sets `COMPLETED` / `REMEDIATION_COMPLETED`)
+   → END.

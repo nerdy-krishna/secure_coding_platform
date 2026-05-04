@@ -464,6 +464,39 @@ def _build_finding_object(
             extra={"agent": agent_name, "vector": initial_finding.cvss_vector},
             exc_info=True,
         )
+    # Reconcile severity with the CVSS band before model construction.
+    # The schema validator (`validate_cross_fields`) hard-rejects any
+    # severity that doesn't match the score band — and LLMs routinely
+    # ship a "High" label with a vector that scores 9.8. That used to
+    # raise inside the model and abort the whole agent invocation, so
+    # remediate-mode scans came back with zero LLM findings/fixes. The
+    # score is computed deterministically from the vector, so it's the
+    # authoritative signal; align the qualitative label to its band
+    # rather than crashing.
+    severity = initial_finding.severity
+    if cvss_score is not None:
+        score_f = float(cvss_score)
+        if score_f >= 9.0:
+            band = "Critical"
+        elif score_f >= 7.0:
+            band = "High"
+        elif score_f >= 4.0:
+            band = "Medium"
+        elif score_f > 0.0:
+            band = "Low"
+        else:
+            band = "Informational"
+        if severity != band:
+            logger.warning(
+                "agent: severity/cvss-band mismatch — coercing to band",
+                extra={
+                    "agent": agent_name,
+                    "llm_severity": severity,
+                    "cvss_score": score_f,
+                    "coerced_severity": band,
+                },
+            )
+            severity = band
     return VulnerabilityFinding(
         # Fallback for an agent that returned a finding without a
         # mappable CWE. The model's `cwe` field is constrained to
@@ -475,7 +508,7 @@ def _build_finding_object(
         cwe=cwe or "CWE-0",
         title=initial_finding.title,
         description=initial_finding.description,
-        severity=initial_finding.severity,
+        severity=severity,
         line_number=initial_finding.line_number,
         remediation=initial_finding.remediation,
         confidence=initial_finding.confidence,

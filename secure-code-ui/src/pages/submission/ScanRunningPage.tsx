@@ -58,6 +58,15 @@ interface FileProgressItem {
 interface ScanStateMsg {
   scan_id: string;
   status: string;
+  // Carried only on the cost-approval flip — see SSE handler in
+  // routers/projects.py. Lets the frontend surface the estimate the
+  // moment status flips to PENDING_COST_APPROVAL without a manual
+  // page refresh.
+  cost_details?: {
+    total_estimated_cost?: number;
+    total_input_tokens?: number;
+    predicted_output_tokens?: number;
+  } | null;
 }
 
 // Known pipeline stages, in order. The backend emits stage_name values
@@ -68,15 +77,97 @@ interface Stage {
   icon: React.ReactNode;
 }
 
+// Pipeline stages, in display order. `PRESCAN_REVIEW` and `COST_REVIEW`
+// are *virtual* stages — the worker doesn't emit a matching stage_name,
+// they're derived from the live status (`PENDING_PRESCAN_APPROVAL` /
+// `PENDING_COST_APPROVAL`) plus the events that mark the gate as
+// crossed. They exist because the prior list left "Pre-LLM scan
+// review" out entirely (so during the prescan gate we'd misleadingly
+// show "Analyzing context" as the active step) and treated the stage
+// right after `ESTIMATING_COST` as active during the cost-approval
+// gate (so "Running security agents" spun even though the scan was
+// paused waiting for the user). Dropping the literal `QUEUED_FOR_SCAN`
+// row — it fires twice (after each gate) and isn't user-meaningful.
 const KNOWN_STAGES: Stage[] = [
   { key: "QUEUED", label: "Queued", icon: <Icon.Clock size={14} /> },
   { key: "ANALYZING_CONTEXT", label: "Analyzing context", icon: <Icon.Folder size={14} /> },
+  { key: "PRESCAN_REVIEW", label: "Pre-LLM scan review", icon: <Icon.Shield size={14} /> },
   { key: "ESTIMATING_COST", label: "Estimating cost", icon: <Icon.Dollar size={14} /> },
-  { key: "QUEUED_FOR_SCAN", label: "Queued for scan", icon: <Icon.Clock size={14} /> },
+  { key: "COST_REVIEW", label: "Cost review", icon: <Icon.Dollar size={14} /> },
   { key: "RUNNING_AGENTS", label: "Running security agents", icon: <Icon.Cpu size={14} /> },
   { key: "CORRELATING", label: "Correlating findings", icon: <Icon.Layers size={14} /> },
   { key: "GENERATING_REPORTS", label: "Generating reports", icon: <Icon.File size={14} /> },
 ];
+
+// Stage events whose presence in `seenStages` proves the corresponding
+// gate has been crossed (used to mark the virtual gate stages "done"
+// regardless of which decline/override path the user took).
+const POST_PRESCAN_EVENTS = [
+  "ESTIMATING_COST",
+  "PRESCAN_OVERRIDE_CRITICAL_SECRET",
+  "PRESCAN_USER_DECLINED",
+  "PRESCAN_AUTO_DECLINED",
+  "QUEUED_FOR_SCAN",
+];
+const POST_COST_EVENTS = [
+  "RUNNING_AGENTS",
+  "FILE_ANALYZED",
+  "CORRELATING",
+  "PATCH_VERIFICATION",
+  "GENERATING_REPORTS",
+];
+
+type StageState = "done" | "active" | "paused" | "pending";
+
+function computeStageStates(
+  stages: Stage[],
+  seenStages: Set<string>,
+  isTerminal: boolean,
+  isPendingPrescan: boolean,
+  isPendingApproval: boolean,
+  prescanSubmitted: boolean,
+  costSubmitted: boolean,
+): StageState[] {
+  const isPastPrescan = POST_PRESCAN_EVENTS.some((k) => seenStages.has(k));
+  const isPastCost = POST_COST_EVENTS.some((k) => seenStages.has(k));
+
+  // First pass: assign done/paused/pending without considering "active"
+  // — that's a one-shot promotion in pass 2. The `*Submitted` flags
+  // collapse the click → SSE round-trip: the moment the user dismisses
+  // a gate, mark it done (optimistic) so the next real stage takes
+  // over with its spinner instead of the gate flickering through
+  // pending → active before the post-gate event arrives.
+  const states: StageState[] = stages.map((s) => {
+    if (s.key === "PRESCAN_REVIEW") {
+      if (isPendingPrescan) return "paused";
+      if (prescanSubmitted || isPastPrescan) return "done";
+      return "pending";
+    }
+    if (s.key === "COST_REVIEW") {
+      if (isPendingApproval) return "paused";
+      if (costSubmitted || isPastCost) return "done";
+      return "pending";
+    }
+    return seenStages.has(s.key) ? "done" : "pending";
+  });
+
+  // Second pass: promote the first eligible "pending" to "active".
+  // Eligibility: every prior stage must already be "done" — so a
+  // "paused" gate (any earlier stage) blocks promotion, which is
+  // exactly the behaviour we want (no spinner anywhere while the
+  // user is on an approval card). Skip entirely on terminal scans.
+  if (!isTerminal) {
+    for (let i = 0; i < stages.length; i++) {
+      if (states[i] !== "pending") continue;
+      const priorsDone = states.slice(0, i).every((st) => st === "done");
+      if (priorsDone) {
+        states[i] = "active";
+        break;
+      }
+    }
+  }
+  return states;
+}
 
 const TERMINAL_STATUSES = new Set([
   "COMPLETED",
@@ -91,6 +182,10 @@ const TERMINAL_STATUSES = new Set([
 function progressFromStages(
   seenStages: Set<string>,
   currentStatus: string | null,
+  isPendingPrescan: boolean,
+  isPendingApproval: boolean,
+  prescanSubmitted: boolean,
+  costSubmitted: boolean,
 ): number {
   if (!currentStatus) return 0;
   if (currentStatus === "COMPLETED" || currentStatus === "REMEDIATION_COMPLETED") return 100;
@@ -102,10 +197,20 @@ function progressFromStages(
     currentStatus === "BLOCKED_USER_DECLINE"
   )
     return 100;
-  // Count how many known stages we've seen as a proportion of total.
-  const known = KNOWN_STAGES.filter((s) => seenStages.has(s.key)).length;
+  // Count "done" using the same state machine the stage list uses, so
+  // virtual gate stages (PRESCAN_REVIEW / COST_REVIEW) contribute too.
+  const states = computeStageStates(
+    KNOWN_STAGES,
+    seenStages,
+    false,
+    isPendingPrescan,
+    isPendingApproval,
+    prescanSubmitted,
+    costSubmitted,
+  );
+  const done = states.filter((s) => s === "done").length;
   // Ensure we don't show 100% while still running.
-  return Math.min(95, Math.round((known / KNOWN_STAGES.length) * 100));
+  return Math.min(95, Math.round((done / KNOWN_STAGES.length) * 100));
 }
 
 // `fmtStatus` was a raw `BLOCKED_USER_DECLINE → "blocked user decline"`
@@ -161,6 +266,17 @@ const ScanRunningPage: React.FC = () => {
   const [prescanLoading, setPrescanLoading] = useState(false);
   const [overrideOpen, setOverrideOpen] = useState(false);
   const [declining, setDeclining] = useState(false);
+  // Optimistic dismiss for the pending-* approval panels. Tracks the
+  // status the user submitted against (not just a boolean) — when the
+  // worker flips the scan from PENDING_PRESCAN_APPROVAL straight to
+  // PENDING_COST_APPROVAL, a plain boolean would still match
+  // "current status is pending" and the cost card would never render.
+  // The dismiss only applies while `submittedForStatus === status`;
+  // once status changes value, the flag naturally falls away and the
+  // next gate (if any) renders normally.
+  const [submittedForStatus, setSubmittedForStatus] = useState<string | null>(
+    null,
+  );
   const lastFetchedStatusRef = useRef<string | null>(null);
   const esRef = useRef<EventSource | null>(null);
   // N3: dedupe — only one notification per scan_id per page lifetime,
@@ -253,10 +369,33 @@ const ScanRunningPage: React.FC = () => {
   // ?access_token=… The token's narrow audience + scan-binding +
   // short lifetime mitigates the access-log exposure that disqualifies
   // raw access tokens from URLs (V16.2.5).
+  //
+  // Reconnect strategy: the JWT TTL is shorter than most scans, so a
+  // transient drop (idle proxy, network blip) past 60s sees the
+  // browser's auto-retry hit a 401 with the now-expired token and
+  // EventSource gives up forever. We override that by handling the
+  // CLOSED state ourselves — close, mint a fresh token, and re-open
+  // with exponential backoff. `last_event_id` is round-tripped to the
+  // backend so reconnects don't re-emit history we already rendered.
   useEffect(() => {
     if (!scanId) return;
     const apiBase = (import.meta.env.VITE_API_BASE_URL as string) || "/api/v1";
     let cancelled = false;
+    let retryAttempt = 0;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    // Highest SSE-issued event id we've rendered. Sent as
+    // ?last_event_id=… on reconnect so the backend skips the events
+    // we already ingested. Seeded events use synthesized negative
+    // ids so they don't pollute this counter.
+    let lastSeenEventId = 0;
+    // Dedupe across the seed-on-mount path and SSE replays. Native
+    // EventSource also sends Last-Event-ID on its internal retries
+    // and the backend honors it, but our manual reconnect creates a
+    // brand-new EventSource so we need a frontend safety net too.
+    const eventFingerprint = (e: {
+      stage_name?: string;
+      timestamp?: string | null;
+    }) => `${e.stage_name ?? ""}|${e.timestamp ?? ""}`;
 
     const attachListeners = (es: EventSource) => {
       es.addEventListener("scan_state", (ev) => {
@@ -268,7 +407,20 @@ const ScanRunningPage: React.FC = () => {
           ) {
             return;
           }
+          // First successful frame after (re)connect — reset backoff
+          // and clear any "Lost connection…" banner.
+          retryAttempt = 0;
+          setStreamError(null);
           setStatus(payload.status);
+          // Backend ships `cost_details` only on the cost-approval
+          // flip; merge so the estimate renders live without forcing
+          // a page refresh.
+          if (payload.cost_details) {
+            setCostDetails((prev) => ({
+              ...(prev ?? {}),
+              ...payload.cost_details,
+            }));
+          }
         } catch {
           // noop
         }
@@ -289,7 +441,22 @@ const ScanRunningPage: React.FC = () => {
           ) {
             return;
           }
-          setEvents((prev) => [...prev, payload].slice(-500));
+          retryAttempt = 0;
+          setStreamError(null);
+          if (
+            typeof payload.event_id === "number" &&
+            payload.event_id > lastSeenEventId
+          ) {
+            lastSeenEventId = payload.event_id;
+          }
+          const fp = eventFingerprint(payload);
+          setEvents((prev) => {
+            // Drop replays — backend re-emits from id=0 on connect
+            // unless Last-Event-ID was honored, and the seed-on-mount
+            // path may have already inserted this row.
+            if (prev.some((e) => eventFingerprint(e) === fp)) return prev;
+            return [...prev, payload].slice(-500);
+          });
           setSeenStages((prev) => {
             const next = new Set(prev);
             next.add(payload.stage_name);
@@ -348,35 +515,67 @@ const ScanRunningPage: React.FC = () => {
         } catch {
           // noop
         }
+        // Stream is intentionally closed by the server; suppress
+        // reconnect.
+        cancelled = true;
         es.close();
       });
 
       es.onerror = () => {
-        // Browsers fire onerror on transient disconnects; only surface an
-        // error when the readyState is actually closed.
+        // Native auto-retry has already failed (or the response was
+        // a hard error like 401 from an expired token). Take over:
+        // close cleanly, mint a fresh token, and re-open with backoff.
         if (es.readyState === EventSource.CLOSED) {
-          setStreamError("Lost connection to the scan stream.");
+          try {
+            es.close();
+          } catch {
+            // noop
+          }
+          if (esRef.current === es) esRef.current = null;
+          if (cancelled) return;
+          // Cap retry attempts so a permanently-broken stream
+          // doesn't busy-loop forever.
+          if (retryAttempt >= 8) {
+            setStreamError("Lost connection to the scan stream.");
+            return;
+          }
+          const delay = Math.min(15000, 500 * 2 ** retryAttempt);
+          retryAttempt += 1;
+          if (retryTimer) clearTimeout(retryTimer);
+          retryTimer = setTimeout(() => void connect(), delay);
         }
       };
     };
 
     const connect = async () => {
+      if (cancelled) return;
       let token: string;
       try {
         const issued = await scanService.getStreamToken(scanId);
         token = issued.access_token;
       } catch (err) {
         if (cancelled) return;
-        const e = err as { message?: string };
-        setStreamError(
-          e.message || "Could not authorize the live scan stream.",
-        );
+        if (retryAttempt >= 8) {
+          const e = err as { message?: string };
+          setStreamError(
+            e.message || "Could not authorize the live scan stream.",
+          );
+          return;
+        }
+        const delay = Math.min(15000, 500 * 2 ** retryAttempt);
+        retryAttempt += 1;
+        if (retryTimer) clearTimeout(retryTimer);
+        retryTimer = setTimeout(() => void connect(), delay);
         return;
       }
       if (cancelled) return;
+      const params = new URLSearchParams({ access_token: token });
+      if (lastSeenEventId > 0) {
+        params.set("last_event_id", String(lastSeenEventId));
+      }
       const url =
-        `${apiBase}/scans/${encodeURIComponent(scanId)}/stream` +
-        `?access_token=${encodeURIComponent(token)}`;
+        `${apiBase}/scans/${encodeURIComponent(scanId)}/stream?` +
+        params.toString();
       const es = new EventSource(url, { withCredentials: true });
       esRef.current = es;
       attachListeners(es);
@@ -386,6 +585,7 @@ const ScanRunningPage: React.FC = () => {
 
     return () => {
       cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
       esRef.current?.close();
       esRef.current = null;
     };
@@ -459,13 +659,41 @@ const ScanRunningPage: React.FC = () => {
     toast,
   ]);
 
-  const progress = useMemo(
-    () => progressFromStages(seenStages, status),
-    [seenStages, status],
-  );
+  // Which gate (if any) the user has just dismissed. Only counts as
+  // "submitted" while the live status still matches what was current
+  // at click time — so a worker that hops through gates back-to-back
+  // (e.g. PENDING_PRESCAN_APPROVAL → PENDING_COST_APPROVAL) doesn't
+  // hide the second gate's card under a stale flag.
+  const prescanSubmitted =
+    submittedForStatus === "PENDING_PRESCAN_APPROVAL" &&
+    status === "PENDING_PRESCAN_APPROVAL";
+  const costSubmitted =
+    submittedForStatus === "PENDING_COST_APPROVAL" &&
+    status === "PENDING_COST_APPROVAL";
+  const isPendingApproval =
+    status === "PENDING_COST_APPROVAL" && !costSubmitted;
+  const isPendingPrescan =
+    status === "PENDING_PRESCAN_APPROVAL" && !prescanSubmitted;
 
-  const isPendingApproval = status === "PENDING_COST_APPROVAL";
-  const isPendingPrescan = status === "PENDING_PRESCAN_APPROVAL";
+  const progress = useMemo(
+    () =>
+      progressFromStages(
+        seenStages,
+        status,
+        isPendingPrescan,
+        isPendingApproval,
+        prescanSubmitted,
+        costSubmitted,
+      ),
+    [
+      seenStages,
+      status,
+      isPendingPrescan,
+      isPendingApproval,
+      prescanSubmitted,
+      costSubmitted,
+    ],
+  );
   const isTerminal = status !== null && TERMINAL_STATUSES.has(status);
   // Split the previous catch-all `isFailed` lump into the four kinds
   // of unsuccessful terminals so the UI can stop labeling user stops
@@ -482,6 +710,43 @@ const ScanRunningPage: React.FC = () => {
   const isBlocked = isBlockedStatus(status);
   const isExpired = status === "EXPIRED";
   const isUnsuccessful = isUnsuccessfulTerminal(status);
+
+  // Reset the optimistic-dismiss tracker the moment the live status
+  // moves off the gate the user submitted against. Crucially fires on
+  // PENDING_PRESCAN_APPROVAL → PENDING_COST_APPROVAL too — a plain
+  // "is status still pending" check would miss that hop and trap the
+  // cost card behind a stale prescan submission.
+  useEffect(() => {
+    if (submittedForStatus !== null && submittedForStatus !== status) {
+      setSubmittedForStatus(null);
+    }
+  }, [status, submittedForStatus]);
+
+  // Defensive fallback: if the page lands on PENDING_COST_APPROVAL
+  // but we never received the SSE `cost_details` payload (e.g. SSE
+  // reconnect raced the status flip, or the user landed straight on
+  // a scan already past estimating), pull the estimate via the
+  // one-shot HTTP path so the approval card isn't stuck on
+  // "Approve to run the full analysis." with no numbers.
+  useEffect(() => {
+    if (!scanId) return;
+    if (status !== "PENDING_COST_APPROVAL") return;
+    if (costDetails && typeof costDetails.total_estimated_cost === "number")
+      return;
+    let cancelled = false;
+    scanService
+      .getScanResult(scanId)
+      .then((r) => {
+        if (cancelled) return;
+        if (r.cost_details) setCostDetails(r.cost_details);
+      })
+      .catch(() => {
+        // Best-effort — SSE will keep retrying anyway.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [scanId, status, costDetails]);
 
   // Fetch the prescan review whenever the scan enters the prescan-
   // approval gate or one of its terminal states. Re-fetches on every
@@ -518,6 +783,7 @@ const ScanRunningPage: React.FC = () => {
 
   const handleApprove = useCallback(async () => {
     if (!scanId) return;
+    setSubmittedForStatus("PENDING_COST_APPROVAL");
     setApproving(true);
     try {
       await scanService.approveScan(scanId);
@@ -525,6 +791,8 @@ const ScanRunningPage: React.FC = () => {
     } catch (err) {
       const e = err as { message?: string };
       toast.error(e.message || "Failed to approve scan");
+      // Re-show the panel so the user can retry.
+      setSubmittedForStatus(null);
     } finally {
       setApproving(false);
     }
@@ -533,6 +801,7 @@ const ScanRunningPage: React.FC = () => {
   const submitPrescanApproval = useCallback(
     async (override: boolean) => {
       if (!scanId) return;
+      setSubmittedForStatus("PENDING_PRESCAN_APPROVAL");
       setApproving(true);
       try {
         await scanService.approveScan(scanId, {
@@ -549,6 +818,7 @@ const ScanRunningPage: React.FC = () => {
       } catch (err) {
         const e = err as { message?: string };
         toast.error(e.message || "Failed to continue scan");
+        setSubmittedForStatus(null);
       } finally {
         setApproving(false);
       }
@@ -566,6 +836,7 @@ const ScanRunningPage: React.FC = () => {
 
   const handlePrescanStop = useCallback(async () => {
     if (!scanId) return;
+    setSubmittedForStatus("PENDING_PRESCAN_APPROVAL");
     setDeclining(true);
     try {
       await scanService.approveScan(scanId, {
@@ -577,6 +848,7 @@ const ScanRunningPage: React.FC = () => {
     } catch (err) {
       const e = err as { message?: string };
       toast.error(e.message || "Failed to stop scan");
+      setSubmittedForStatus(null);
     } finally {
       setDeclining(false);
     }
@@ -745,82 +1017,103 @@ const ScanRunningPage: React.FC = () => {
           </div>
 
           <div style={{ display: "grid", gap: 10, marginTop: 22 }}>
-            {KNOWN_STAGES.map((s, i) => {
-              const seen = seenStages.has(s.key);
-              // "Active" if we've seen the prior stage but not this one yet.
-              const priorDone = i === 0 || seenStages.has(KNOWN_STAGES[i - 1].key);
-              const active = !seen && priorDone && !isTerminal;
-              const state: "done" | "active" | "pending" = seen
-                ? "done"
-                : active
-                  ? "active"
-                  : "pending";
-
-              return (
-                <div
-                  key={s.key}
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "auto 1fr",
-                    gap: 12,
-                    alignItems: "center",
-                    padding: "10px 12px",
-                    borderRadius: 8,
-                    background: active ? "var(--primary-weak)" : "transparent",
-                    transition: "background .3s var(--ease)",
-                  }}
-                >
-                  <div
-                    style={{
-                      width: 26,
-                      height: 26,
-                      borderRadius: "50%",
-                      display: "grid",
-                      placeItems: "center",
-                      background:
-                        state === "done"
-                          ? "var(--success)"
-                          : state === "active"
-                            ? "var(--primary)"
-                            : "var(--bg-soft)",
-                      color: state === "pending" ? "var(--fg-subtle)" : "white",
-                      border:
-                        "1px solid " +
-                        (state === "pending" ? "var(--border)" : "transparent"),
-                    }}
-                  >
-                    {state === "done" ? (
-                      <Icon.Check size={12} />
-                    ) : state === "active" ? (
-                      <div
-                        className="sccap-spin"
-                        style={{
-                          width: 10,
-                          height: 10,
-                          border: "2px solid currentColor",
-                          borderTopColor: "transparent",
-                          borderRadius: "50%",
-                        }}
-                      />
-                    ) : (
-                      s.icon
-                    )}
-                  </div>
-                  <div
-                    style={{
-                      fontSize: 13.5,
-                      fontWeight: state === "active" ? 600 : 400,
-                      color:
-                        state === "pending"
-                          ? "var(--fg-subtle)"
-                          : "var(--fg)",
-                    }}
-                  >
-                    {s.label}
-                  </div>
-                </div>
+            {(() => {
+              const stageStates = computeStageStates(
+                KNOWN_STAGES,
+                seenStages,
+                isTerminal,
+                isPendingPrescan,
+                isPendingApproval,
+                prescanSubmitted,
+                costSubmitted,
               );
-            })}
+              return KNOWN_STAGES.map((s, i) => {
+                const state = stageStates[i];
+                const isHighlighted = state === "active" || state === "paused";
+                return (
+                  <div
+                    key={s.key}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "auto 1fr",
+                      gap: 12,
+                      alignItems: "center",
+                      padding: "10px 12px",
+                      borderRadius: 8,
+                      background: isHighlighted
+                        ? "var(--primary-weak)"
+                        : "transparent",
+                      transition: "background .3s var(--ease)",
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: 26,
+                        height: 26,
+                        borderRadius: "50%",
+                        display: "grid",
+                        placeItems: "center",
+                        background:
+                          state === "done"
+                            ? "var(--success)"
+                            : state === "active"
+                              ? "var(--primary)"
+                              : state === "paused"
+                                ? "var(--primary)"
+                                : "var(--bg-soft)",
+                        color: state === "pending" ? "var(--fg-subtle)" : "white",
+                        border:
+                          "1px solid " +
+                          (state === "pending" ? "var(--border)" : "transparent"),
+                      }}
+                    >
+                      {state === "done" ? (
+                        <Icon.Check size={12} />
+                      ) : state === "active" ? (
+                        <div
+                          className="sccap-spin"
+                          style={{
+                            width: 10,
+                            height: 10,
+                            border: "2px solid currentColor",
+                            borderTopColor: "transparent",
+                            borderRadius: "50%",
+                          }}
+                        />
+                      ) : state === "paused" ? (
+                        <Icon.Pause size={12} />
+                      ) : (
+                        s.icon
+                      )}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 13.5,
+                        fontWeight: isHighlighted ? 600 : 400,
+                        color:
+                          state === "pending"
+                            ? "var(--fg-subtle)"
+                            : "var(--fg)",
+                      }}
+                    >
+                      {s.label}
+                      {state === "paused" && (
+                        <span
+                          style={{
+                            marginLeft: 8,
+                            fontSize: 12,
+                            fontWeight: 400,
+                            color: "var(--fg-muted)",
+                          }}
+                        >
+                          · awaiting your approval
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              });
+            })()}
           </div>
         </div>
 
