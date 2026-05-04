@@ -176,28 +176,95 @@
 .diff {
   font-family: var(--font-mono);
   font-size: 12.5px;
-  line-height: 1.55;
+  line-height: 1.6;
   background: var(--bg-inset);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   overflow: hidden;
 }
-.diff-row { display: grid; grid-template-columns: 40px 40px 1fr; }
-.diff-row > span:nth-child(1),
-.diff-row > span:nth-child(2) {
-  padding: 0 10px;
+
+/* Four columns: old-line-num | new-line-num | sign | content */
+.diff-row {
+  display: grid;
+  grid-template-columns: 38px 38px 22px 1fr;
+  min-height: 22px;
+}
+
+/* Line-number gutter cells (cols 1 & 2) */
+.diff-row > .diff-ln {
+  padding: 0 8px;
   color: var(--fg-subtle);
   text-align: right;
   user-select: none;
   border-right: 1px solid var(--border);
   background: var(--bg-soft);
+  font-size: 11px;
+  line-height: 22px;
 }
-.diff-row > span:nth-child(3) { padding: 0 14px; white-space: pre; }
-.diff-row.add { background: var(--diff-add); }
-.diff-row.add > span:nth-child(3)::before { content: '+ '; color: var(--success); }
+
+/* Sign cell (col 3) */
+.diff-row > .diff-sign {
+  padding: 0 3px;
+  text-align: center;
+  font-weight: 700;
+  user-select: none;
+  line-height: 22px;
+  border-right: 1px solid var(--border);
+}
+
+/* Content cell (col 4) */
+.diff-row > .diff-code {
+  padding: 0 12px;
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 22px;
+  color: var(--fg);
+}
+
+/* Row backgrounds */
+.diff-row.ins { background: var(--diff-add); }
 .diff-row.del { background: var(--diff-del); }
-.diff-row.del > span:nth-child(3)::before { content: '− '; color: var(--critical); }
-.diff-row.ctx > span:nth-child(3)::before { content: '  '; }
+.diff-row.ctx { background: transparent; }
+
+/* Gutter tint matches row type */
+.diff-row.ins > .diff-ln { background: var(--diff-add); border-right-color: var(--diff-add-line); }
+.diff-row.del > .diff-ln { background: var(--diff-del); border-right-color: var(--diff-del-line); }
+
+/* Sign colors */
+.diff-row.ins > .diff-sign { color: var(--success); background: var(--diff-add); border-right-color: var(--diff-add-line); }
+.diff-row.del > .diff-sign { color: var(--critical); background: var(--diff-del); border-right-color: var(--diff-del-line); }
+.diff-row.ctx > .diff-sign { color: var(--fg-subtle); }
+
+/* Character-level highlight within changed lines (VSCode inner-line diff) */
+mark.diff-hl {
+  background: transparent;
+  color: inherit;
+  border-radius: 2px;
+  padding: 1px 0;
+}
+.diff-row.del mark.diff-hl { background: var(--diff-del-line); }
+.diff-row.ins mark.diff-hl { background: var(--diff-add-line); }
+
+/* Collapse hunk separator */
+.diff-hunk {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 12px;
+  background: var(--bg-soft);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  color: var(--fg-subtle);
+  font-size: 11px;
+  user-select: none;
+}
+.diff-hunk::before, .diff-hunk::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
 
 /* ============ transitions ============ */
 .fade-in { animation: sccap-fade-in .3s var(--ease); }

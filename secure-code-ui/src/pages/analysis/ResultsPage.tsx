@@ -918,6 +918,202 @@ const ResultsPage: React.FC = () => {
 };
 
 // ============================================================================
+// Diff engine
+// ============================================================================
+
+type DiffType = "ctx" | "del" | "ins";
+interface RawDiffLine {
+  type: DiffType;
+  oldNum: number | null;
+  newNum: number | null;
+  text: string;
+}
+
+function computeLineDiff(before: string[], after: string[]): RawDiffLine[] {
+  const m = before.length, n = after.length;
+  // Build LCS table bottom-up (O(mn) — fine for typical fix sizes)
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = m - 1; i >= 0; i--)
+    for (let j = n - 1; j >= 0; j--)
+      dp[i][j] = before[i] === after[j]
+        ? 1 + dp[i + 1][j + 1]
+        : Math.max(dp[i + 1][j], dp[i][j + 1]);
+
+  const out: RawDiffLine[] = [];
+  let i = 0, j = 0, o = 1, nv = 1;
+  while (i < m || j < n) {
+    if (i < m && j < n && before[i] === after[j]) {
+      out.push({ type: "ctx", oldNum: o++, newNum: nv++, text: before[i] });
+      i++; j++;
+    } else if (j < n && (i >= m || dp[i + 1][j] <= dp[i][j + 1])) {
+      out.push({ type: "ins", oldNum: null, newNum: nv++, text: after[j++] });
+    } else {
+      out.push({ type: "del", oldNum: o++, newNum: null, text: before[i++] });
+    }
+  }
+  return out;
+}
+
+type CharChunk = { text: string; changed: boolean };
+
+// Find the common prefix/suffix to isolate the changed middle span
+function charDiff(a: string, b: string): { aChunks: CharChunk[]; bChunks: CharChunk[] } {
+  const aT = a.trimStart(), bT = b.trimStart();
+  let pre = 0;
+  while (pre < aT.length && pre < bT.length && aT[pre] === bT[pre]) pre++;
+  let suf = 0;
+  while (
+    suf < aT.length - pre && suf < bT.length - pre &&
+    aT[aT.length - 1 - suf] === bT[bT.length - 1 - suf]
+  ) suf++;
+  const split = (_s: string, src: string): CharChunk[] => {
+    const indent = src.length - src.trimStart().length;
+    return ([
+      { text: src.slice(0, indent + pre), changed: false },
+      { text: suf > 0 ? src.slice(indent + pre, -suf) : src.slice(indent + pre), changed: true },
+      { text: suf > 0 ? src.slice(-suf) : "", changed: false },
+    ] as CharChunk[]).filter(c => c.text.length > 0);
+  };
+  return { aChunks: split(aT, a), bChunks: split(bT, b) };
+}
+
+interface AnnotatedLine extends RawDiffLine {
+  chunks: CharChunk[] | null;
+}
+
+function annotateDiff(raw: RawDiffLine[]): AnnotatedLine[] {
+  const lines: AnnotatedLine[] = raw.map(l => ({ ...l, chunks: null }));
+  for (let k = 0; k < lines.length - 1; k++) {
+    if (lines[k].type === "del" && lines[k + 1].type === "ins") {
+      const { aChunks, bChunks } = charDiff(lines[k].text, lines[k + 1].text);
+      // Only highlight if at least some text is shared (otherwise the whole line changed)
+      const hasContext = aChunks.some(c => !c.changed && c.text.trim().length > 0) ||
+                         bChunks.some(c => !c.changed && c.text.trim().length > 0);
+      if (hasContext) {
+        lines[k]     = { ...lines[k],     chunks: aChunks };
+        lines[k + 1] = { ...lines[k + 1], chunks: bChunks };
+      }
+    }
+  }
+  return lines;
+}
+
+// ============================================================================
+// DiffViewer component
+// ============================================================================
+
+const CONTEXT_LINES = 3; // unchanged lines to show around each change hunk
+
+function buildViewLines(lines: AnnotatedLine[]): Array<AnnotatedLine | { type: "hunk"; count: number }> {
+  // Mark which lines are "near" a change (within CONTEXT_LINES of a del/ins)
+  const near = new Set<number>();
+  for (let k = 0; k < lines.length; k++) {
+    if (lines[k].type !== "ctx") {
+      for (let d = -CONTEXT_LINES; d <= CONTEXT_LINES; d++) {
+        if (k + d >= 0 && k + d < lines.length) near.add(k + d);
+      }
+    }
+  }
+
+  const result: Array<AnnotatedLine | { type: "hunk"; count: number }> = [];
+  let skipping = 0;
+  for (let k = 0; k < lines.length; k++) {
+    if (near.has(k)) {
+      if (skipping > 0) {
+        result.push({ type: "hunk", count: skipping });
+        skipping = 0;
+      }
+      result.push(lines[k]);
+    } else {
+      skipping++;
+    }
+  }
+  if (skipping > 0) result.push({ type: "hunk", count: skipping });
+  return result;
+}
+
+const DiffViewer: React.FC<{
+  original: string;
+  fixed: string;
+  startLine: number;
+  filePath: string;
+}> = ({ original, fixed, startLine, filePath }) => {
+  const trimLines = (s: string) => {
+    const ls = s.split("\n");
+    if (ls[ls.length - 1] === "") ls.pop();
+    return ls;
+  };
+  const before = trimLines(original || "");
+  const after  = trimLines(fixed   || "");
+
+  const viewLines = useMemo(() => {
+    const raw = computeLineDiff(before, after);
+    const annotated = annotateDiff(raw);
+    return buildViewLines(annotated);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [original, fixed]);
+
+  const renderContent = (line: AnnotatedLine) => {
+    if (!line.chunks) return line.text || " ";
+    return line.chunks.map((c, i) =>
+      c.changed
+        ? <mark key={i} className="diff-hl">{c.text}</mark>
+        : <React.Fragment key={i}>{c.text}</React.Fragment>
+    );
+  };
+
+  const sign = (t: DiffType) => t === "del" ? "−" : t === "ins" ? "+" : " ";
+
+  return (
+    <div className="diff" style={{ maxHeight: 480, overflowY: "auto" }}>
+      {/* Header bar */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1px 1fr",
+          background: "var(--bg-soft)",
+          borderBottom: "1px solid var(--border)",
+          fontSize: 11,
+          fontFamily: "var(--font-mono)",
+          color: "var(--fg-muted)",
+        }}
+      >
+        <div style={{ padding: "7px 12px", display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ color: "var(--critical)", fontWeight: 700 }}>−</span>
+          <span>before · <span style={{ color: "var(--fg)" }}>{filePath}</span></span>
+        </div>
+        <div style={{ background: "var(--border)" }} />
+        <div style={{ padding: "7px 12px", display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ color: "var(--success)", fontWeight: 700 }}>+</span>
+          <span>after · <span style={{ color: "var(--fg)" }}>{filePath}</span></span>
+        </div>
+      </div>
+
+      {/* Diff rows */}
+      {viewLines.map((entry, idx) => {
+        if ("count" in entry) {
+          return (
+            <div key={idx} className="diff-hunk">
+              ···  {entry.count} unchanged line{entry.count === 1 ? "" : "s"}  ···
+            </div>
+          );
+        }
+        const line = entry as AnnotatedLine;
+        const base = startLine - 1;
+        return (
+          <div key={idx} className={`diff-row ${line.type}`}>
+            <span className="diff-ln">{line.oldNum != null ? base + line.oldNum : ""}</span>
+            <span className="diff-ln">{line.newNum != null ? base + line.newNum : ""}</span>
+            <span className="diff-sign">{sign(line.type)}</span>
+            <span className="diff-code">{renderContent(line)}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+// ============================================================================
 // Detail pane
 // ============================================================================
 
@@ -929,8 +1125,6 @@ const FindingDetail: React.FC<{
   const sev = (f.severity || "").toUpperCase();
   const sevColor = SEV_COLOR[sev] ?? "var(--fg-muted)";
   const hasFix = !!f.fixes?.code;
-  const beforeLines = (f.fixes?.original_snippet || "").split("\n");
-  const afterLines = (f.fixes?.code || "").split("\n");
   const alreadyApplied = f.is_applied_in_remediation;
 
   return (
@@ -1143,68 +1337,12 @@ const FindingDetail: React.FC<{
               </div>
             )}
 
-            <div className="diff">
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  background: "var(--bg-soft)",
-                  fontSize: 11,
-                  color: "var(--fg-muted)",
-                  borderBottom: "1px solid var(--border)",
-                }}
-              >
-                <div
-                  style={{
-                    padding: "8px 14px",
-                    borderRight: "1px solid var(--border)",
-                  }}
-                >
-                  <span className="mono" style={{ color: "var(--critical)" }}>
-                    −
-                  </span>{" "}
-                  before · {f.file_path}
-                </div>
-                <div style={{ padding: "8px 14px" }}>
-                  <span className="mono" style={{ color: "var(--success)" }}>
-                    +
-                  </span>{" "}
-                  after · {f.file_path}
-                </div>
-              </div>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  borderTop: "1px solid var(--border)",
-                }}
-              >
-                <div style={{ borderRight: "1px solid var(--border)" }}>
-                  {beforeLines.map((l, i) => (
-                    <div
-                      key={i}
-                      className="diff-row del"
-                      style={{ gridTemplateColumns: "40px 1fr" }}
-                    >
-                      <span>{(f.line_number ?? 1) + i}</span>
-                      <span>{l}</span>
-                    </div>
-                  ))}
-                </div>
-                <div>
-                  {afterLines.map((l, i) => (
-                    <div
-                      key={i}
-                      className="diff-row add"
-                      style={{ gridTemplateColumns: "40px 1fr" }}
-                    >
-                      <span>{(f.line_number ?? 1) + i}</span>
-                      <span>{l}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
+            <DiffViewer
+              original={f.fixes?.original_snippet ?? ""}
+              fixed={f.fixes?.code ?? ""}
+              startLine={f.line_number ?? 1}
+              filePath={f.file_path}
+            />
           </div>
         )}
 
