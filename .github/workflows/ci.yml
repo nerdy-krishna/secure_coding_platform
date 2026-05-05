@@ -93,15 +93,21 @@ jobs:
       - name: Export dependency requirements
         run: poetry export --without-hashes --format=requirements.txt --output=requirements-audit.txt
       - name: pip-audit
-        # GHSA-xqmj-j6mv-4862 (litellm) is ignored: the fix is gated on
-        # python-dotenv 1.0.1, but litellm 1.83.7+ exact-pins that
-        # version while our app requires python-dotenv >=1.1.0 (which
-        # itself carries CVE fixes — GHSA-mf9w-mj56-hr94). The
-        # advisory only applies to litellm's optional `proxy` extra
-        # (the admin/UI server we don't expose); we use litellm as a
-        # library for token-counting + the offline price map only.
-        # Re-evaluate once litellm relaxes the python-dotenv pin.
-        run: pip-audit --strict --requirement requirements-audit.txt --ignore-vuln GHSA-xqmj-j6mv-4862
+        # Three litellm advisories are suppressed — all share the same root
+        # cause: litellm >=1.83.7 exact-pins either openai==2.24.0 (clashes
+        # with langchain-openai >=1.2.0 requiring openai>=2.26.0) or
+        # python-dotenv==1.0.1 (clashes with our python-dotenv>=1.1.0 which
+        # itself carries GHSA-mf9w-mj56-hr94). Upgrading is structurally
+        # blocked until litellm relaxes those transitive pins.
+        # All three advisories affect litellm's optional `proxy` extra only
+        # (the admin/UI server we do not expose); our usage is limited to
+        # token-counting and the offline price map.
+        # Re-evaluate on the next litellm minor that loosens these constraints.
+        run: |
+          pip-audit --strict --requirement requirements-audit.txt \
+            --ignore-vuln GHSA-xqmj-j6mv-4862 \
+            --ignore-vuln GHSA-r75f-5x8p-qvmc \
+            --ignore-vuln GHSA-v4p8-mg3p-g94g
 
   gitleaks:
     name: Gitleaks (secret scan)
