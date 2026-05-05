@@ -116,6 +116,8 @@ const ResultsPage: React.FC = () => {
   const [filePathFilter, setFilePathFilter] = useState<string | null>(null);
   const [diffTab, setDiffTab] = useState<"findings" | "full-diff">("findings");
   const [diffSelectedFile, setDiffSelectedFile] = useState<string | null>(null);
+  const [treeCollapsed, setTreeCollapsed] = useState(false);
+  const [listCollapsed, setListCollapsed] = useState(false);
   const { user } = useAuth();
   const isSuperuser = !!user?.is_superuser;
 
@@ -748,20 +750,48 @@ const ResultsPage: React.FC = () => {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: allFiles.length > 0 ? "220px 360px 1fr" : "360px 1fr",
+          gridTemplateColumns: [
+            allFiles.length > 0 ? (treeCollapsed ? "32px" : "220px") : null,
+            listCollapsed ? "32px" : "360px",
+            "1fr",
+          ].filter(Boolean).join(" "),
           gap: 16,
           minHeight: 640,
+          alignItems: "start",
         }}
       >
+        {/* File tree — collapsible */}
         {allFiles.length > 0 && (
-          <FileTree
-            files={allFiles}
-            allFindings={allFindings}
-            selected={filePathFilter}
-            onSelect={setFilePathFilter}
-          />
+          treeCollapsed ? (
+            <div
+              className="surface"
+              style={{ padding: 0, display: "flex", flexDirection: "column", alignItems: "center", overflow: "hidden", position: "sticky", top: 16 }}
+            >
+              <button
+                className="sccap-btn sccap-btn-ghost sccap-btn-icon"
+                onClick={() => setTreeCollapsed(false)}
+                title="Expand file tree"
+                style={{ width: "100%", borderRadius: 0, borderBottom: "1px solid var(--border)", padding: "8px 0" }}
+              >
+                <Icon.ChevronR size={13} />
+              </button>
+              <div style={{ writingMode: "vertical-rl", fontSize: 10.5, color: "var(--fg-subtle)", padding: "10px 0", letterSpacing: ".06em", textTransform: "uppercase", userSelect: "none" }}>
+                Files
+              </div>
+            </div>
+          ) : (
+            <div style={{ position: "relative" }}>
+              <FileTree
+                files={allFiles}
+                allFindings={allFindings}
+                selected={filePathFilter}
+                onSelect={setFilePathFilter}
+                onCollapse={() => setTreeCollapsed(true)}
+              />
+            </div>
+          )
         )}
-        {/* findings list */}
+        {/* Findings list — collapsible */}
         <div
           className="surface"
           style={{
@@ -771,6 +801,22 @@ const ResultsPage: React.FC = () => {
             overflow: "hidden",
           }}
         >
+        {listCollapsed ? (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", height: "100%", minHeight: 320 }}>
+            <button
+              className="sccap-btn sccap-btn-ghost sccap-btn-icon"
+              onClick={() => setListCollapsed(false)}
+              title="Expand findings list"
+              style={{ width: "100%", borderRadius: 0, borderBottom: "1px solid var(--border)", padding: "8px 0" }}
+            >
+              <Icon.ChevronR size={13} />
+            </button>
+            <div style={{ writingMode: "vertical-rl", fontSize: 10.5, color: "var(--fg-subtle)", padding: "10px 0", letterSpacing: ".06em", textTransform: "uppercase", userSelect: "none" }}>
+              Findings ({filtered.length})
+            </div>
+          </div>
+        ) : (
+        <>
           <div
             style={{
               padding: 12,
@@ -779,6 +825,20 @@ const ResultsPage: React.FC = () => {
               gap: 8,
             }}
           >
+            {/* Collapse button row */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+              <span style={{ fontSize: 11, color: "var(--fg-muted)", fontWeight: 500 }}>
+                {filtered.length} finding{filtered.length === 1 ? "" : "s"}
+              </span>
+              <button
+                className="sccap-btn sccap-btn-ghost sccap-btn-icon"
+                onClick={() => setListCollapsed(true)}
+                title="Collapse findings list"
+                style={{ padding: "3px 5px" }}
+              >
+                <Icon.ChevronL size={12} />
+              </button>
+            </div>
             <div className="input-with-icon">
               <Icon.Search size={14} />
               <input
@@ -927,6 +987,8 @@ const ResultsPage: React.FC = () => {
               })
             )}
           </div>
+        </>
+        )}
         </div>
 
         {/* detail */}
@@ -1147,19 +1209,19 @@ const DiffViewer: React.FC<{
     <div className="diff" style={{ maxHeight, overflowY: "auto" }}>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1px 1fr", background: "var(--bg-soft)", borderBottom: "1px solid var(--border)", fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--fg-muted)" }}>
         <div style={{ padding: "7px 12px", display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ color: "var(--critical)", fontWeight: 700 }}>\u2212</span>
-          <span>before \u00b7 <span style={{ color: "var(--fg)" }}>{filePath}</span></span>
+          <span style={{ color: "var(--critical)", fontWeight: 700 }}>−</span>
+          <span>before · <span style={{ color: "var(--fg)" }}>{filePath}</span></span>
         </div>
         <div style={{ background: "var(--border)" }} />
         <div style={{ padding: "7px 12px", display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ color: "var(--success)", fontWeight: 700 }}>+</span>
-          <span>after \u00b7 <span style={{ color: "var(--fg)" }}>{filePath}</span></span>
+          <span>after · <span style={{ color: "var(--fg)" }}>{filePath}</span></span>
         </div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1px 1fr" }}>
         {splitRows.map((row, idx) => {
           if (row.type === "hunk") {
-            return <div key={idx} className="diff-hunk" style={{ gridColumn: "1 / -1" }}>\u00b7\u00b7\u00b7  {row.hunkCount} unchanged line{row.hunkCount === 1 ? "" : "s"}  \u00b7\u00b7\u00b7</div>;
+            return <div key={idx} className="diff-hunk" style={{ gridColumn: "1 / -1" }}>···  {row.hunkCount} unchanged line{row.hunkCount === 1 ? "" : "s"}  ···</div>;
           }
           const isCtx = row.type === "ctx";
           return (
@@ -1557,7 +1619,8 @@ const FileTree: React.FC<{
   allFindings: Finding[];
   selected: string | null;
   onSelect: (path: string | null) => void;
-}> = ({ files, allFindings, selected, onSelect }) => {
+  onCollapse?: () => void;
+}> = ({ files, allFindings, selected, onSelect, onCollapse }) => {
   const root = useMemo(() => buildFileTree(files, allFindings), [files, allFindings]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
@@ -1685,6 +1748,19 @@ const FileTree: React.FC<{
           <span style={{ fontSize: 10, background: "var(--bg-soft)", color: "var(--fg-muted)", borderRadius: 99, padding: "1px 5px", border: "1px solid var(--border)" }}>
             {totalFindings}
           </span>
+        )}
+        {onCollapse && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onCollapse(); }}
+            title="Collapse panel"
+            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-subtle)", padding: "2px 4px", display: "flex", alignItems: "center", borderRadius: "var(--r-sm)", flexShrink: 0 }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = "var(--fg-muted)"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = "var(--fg-subtle)"; }}
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <path d="M8 2L4 6l4 4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
         )}
       </div>
       <div style={{ padding: "4px 0" }}>
