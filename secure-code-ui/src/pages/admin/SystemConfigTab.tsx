@@ -342,9 +342,7 @@ const SystemConfigTab: React.FC = () => {
   return (
     <div className="fade-in" style={{ display: "grid", gap: 20 }}>
       <div>
-        <h1 style={{ color: "var(--fg)" }}>
-          <Icon.Settings size={18} /> Platform settings
-        </h1>
+        <h1 style={{ color: "var(--fg)" }}>Platform settings</h1>
         <div style={{ color: "var(--fg-muted)", marginTop: 4 }}>
           Core system behavior, LLM mode, CORS, and raw config key/values.
         </div>

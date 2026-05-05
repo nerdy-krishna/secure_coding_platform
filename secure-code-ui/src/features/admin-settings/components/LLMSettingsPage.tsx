@@ -234,9 +234,7 @@ const LLMSettingsPage: React.FC = () => {
   return (
     <div className="fade-in" style={{ display: "grid", gap: 16 }}>
       <div>
-        <h1 style={{ color: "var(--fg)" }}>
-          <Icon.Sparkle size={18} /> LLM configurations
-        </h1>
+        <h1 style={{ color: "var(--fg)" }}>LLM configurations</h1>
         <div style={{ color: "var(--fg-muted)", marginTop: 4 }}>
           Models and API keys consumed by the scan and advisor workflows.
         </div>

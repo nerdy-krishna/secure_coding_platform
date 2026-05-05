@@ -174,9 +174,7 @@ const UserGroupsPage: React.FC = () => {
         }}
       >
         <div>
-          <h1 style={{ color: "var(--fg)" }}>
-            <Icon.Users size={18} /> User groups
-          </h1>
+          <h1 style={{ color: "var(--fg)" }}>User groups</h1>
           <div style={{ color: "var(--fg-muted)", marginTop: 4 }}>
             Members of a group can see each other's scans. Admins see
             everything.

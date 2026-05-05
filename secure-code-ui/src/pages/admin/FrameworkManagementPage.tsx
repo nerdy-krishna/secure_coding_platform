@@ -223,9 +223,7 @@ const FrameworkManagementPage: React.FC = () => {
         }}
       >
         <div>
-          <h1 style={{ color: "var(--fg)" }}>
-            <Icon.Shield size={18} /> Frameworks &amp; Rules
-          </h1>
+          <h1 style={{ color: "var(--fg)" }}>Frameworks &amp; Rules</h1>
           <div style={{ color: "var(--fg-muted)", marginTop: 4 }}>
             Security frameworks, agent mappings, and Semgrep rule sources.
           </div>

@@ -168,9 +168,7 @@ const PromptManagementPage: React.FC = () => {
         }}
       >
         <div>
-          <h1 style={{ color: "var(--fg)" }}>
-            <Icon.BookOpen size={18} /> Prompt templates
-          </h1>
+          <h1 style={{ color: "var(--fg)" }}>Prompt templates</h1>
           <div style={{ color: "var(--fg-muted)", marginTop: 4 }}>
             Per-agent prompts; generic and Anthropic-tuned variants with
             automatic fallback.

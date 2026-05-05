@@ -65,39 +65,40 @@ const ProjectsPage: React.FC = () => {
 
   return (
     <div className="fade-in" style={{ display: "grid", gap: 16 }}>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "flex-end",
-          gap: 20,
-        }}
-      >
-        <div>
-          <h1 style={{ color: "var(--fg)" }}>Projects</h1>
-          <div style={{ color: "var(--fg-muted)", marginTop: 4 }}>
+      <div>
+        <h1 style={{ color: "var(--fg)" }}>Projects</h1>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 12,
+            marginTop: 8,
+          }}
+        >
+          <span style={{ color: "var(--fg-muted)", fontSize: 13 }}>
             {isLoading
               ? "Loading…"
               : `${data?.total ?? 0} project${data?.total === 1 ? "" : "s"}`}
+          </span>
+          <div style={{ display: "flex", gap: 8 }}>
+            <div className="input-with-icon" style={{ width: 240 }}>
+              <Icon.Search size={14} />
+              <input
+                className="sccap-input"
+                placeholder="Search projects…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                style={{ paddingLeft: 32 }}
+              />
+            </div>
+            <button
+              className="sccap-btn sccap-btn-primary"
+              onClick={() => navigate("/submission/submit")}
+            >
+              <Icon.Plus size={13} /> New scan
+            </button>
           </div>
-        </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <div className="input-with-icon" style={{ width: 240 }}>
-            <Icon.Search size={14} />
-            <input
-              className="sccap-input"
-              placeholder="Search projects…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              style={{ paddingLeft: 32 }}
-            />
-          </div>
-          <button
-            className="sccap-btn sccap-btn-primary"
-            onClick={() => navigate("/submission/submit")}
-          >
-            <Icon.Plus size={13} /> New scan
-          </button>
         </div>
       </div>
 

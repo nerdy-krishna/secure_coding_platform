@@ -1084,23 +1084,34 @@ const CompliancePage: React.FC = () => {
             ))}
           </div>
 
-          <SectionHead
-            title={
-              <>
-                <Icon.Layers size={16} /> Custom frameworks
-              </>
-            }
-            right={
-              isAdmin && (
-                <button
-                  className="sccap-btn sccap-btn-primary sccap-btn-sm"
-                  onClick={() => handleOpenIngestionModal()}
-                >
-                  <Icon.Plus size={12} /> Add framework
-                </button>
-              )
-            }
-          />
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              marginBottom: 14,
+            }}
+          >
+            <h3
+              style={{
+                margin: 0,
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                color: "var(--fg)",
+              }}
+            >
+              <Icon.Layers size={16} /> Custom frameworks
+            </h3>
+            {isAdmin && (
+              <button
+                className="sccap-btn sccap-btn-primary sccap-btn-sm"
+                onClick={() => handleOpenIngestionModal()}
+              >
+                <Icon.Plus size={12} /> Add framework
+              </button>
+            )}
+          </div>
           {customs.length === 0 ? (
             <div
               className="sccap-card"

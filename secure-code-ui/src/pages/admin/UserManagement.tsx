@@ -132,9 +132,7 @@ const UserManagementTab: React.FC = () => {
   return (
     <div className="fade-in" style={{ display: "grid", gap: 16 }}>
       <div>
-        <h1 style={{ color: "var(--fg)" }}>
-          <Icon.Users size={18} /> Users
-        </h1>
+        <h1 style={{ color: "var(--fg)" }}>Users</h1>
         <div style={{ color: "var(--fg-muted)", marginTop: 4 }}>
           Manage accounts, superuser roles, and verification status.
         </div>

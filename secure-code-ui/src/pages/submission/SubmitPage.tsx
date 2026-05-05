@@ -435,7 +435,14 @@ const SubmitPage: React.FC = () => {
 
       const response = await scanService.createScan(payload);
       toast.success("Scan submitted. Tracking progress…");
-      navigate(`/analysis/scanning/${response.scan_id}`);
+      navigate(`/analysis/scanning/${response.scan_id}`, {
+        state: {
+          fromLabel: projectName.trim() || "Projects",
+          fromPath: selectedProjectId
+            ? `/analysis/projects/${selectedProjectId}`
+            : "/analysis/results",
+        },
+      });
     } catch (err) {
       const e = err as {
         response?: { data?: { detail?: string | unknown[] } };
@@ -490,20 +497,20 @@ const SubmitPage: React.FC = () => {
   };
 
   return (
-    <div
-      className="fade-in"
-      style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 20 }}
-    >
-      <div style={{ display: "grid", gap: 16 }}>
-        <div>
-          <h1 style={{ color: "var(--fg)" }}>New scan</h1>
-          <div style={{ color: "var(--fg-muted)", marginTop: 4 }}>
-            Submit code via upload, git repo, or archive. SCCAP runs SAST + AI
-            triage and (optionally) applies fixes.
-          </div>
+    <div className="fade-in" style={{ display: "grid", gap: 20 }}>
+      <div>
+        <h1 style={{ color: "var(--fg)" }}>New scan</h1>
+        <div style={{ color: "var(--fg-muted)", marginTop: 4 }}>
+          Submit code via upload, git repo, or archive. SCCAP runs SAST + AI
+          triage and (optionally) applies fixes.
         </div>
+      </div>
 
-        <div className="surface" style={{ padding: 20 }}>
+      <div
+        style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 20 }}
+      >
+        <div style={{ display: "grid", gap: 16 }}>
+          <div className="surface" style={{ padding: 20 }}>
           <label
             style={{
               display: "block",
@@ -1140,6 +1147,7 @@ const SubmitPage: React.FC = () => {
           </div>
         </div>
       </aside>
+      </div>
 
       <ScanCoverageWizard
         open={coverageWizardOpen}

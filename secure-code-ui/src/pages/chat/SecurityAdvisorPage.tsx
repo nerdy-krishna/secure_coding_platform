@@ -244,15 +244,21 @@ const SecurityAdvisorPage: React.FC = () => {
   };
 
   return (
-    <div
-      className="fade-in"
-      style={{
-        display: "grid",
-        gridTemplateColumns: "240px 1fr 280px",
-        gap: 16,
-        height: "calc(100vh - 110px)",
-      }}
-    >
+    <div className="fade-in" style={{ display: "grid", gap: 12 }}>
+      <div>
+        <h1 style={{ color: "var(--fg)" }}>Security Advisor</h1>
+        <div style={{ color: "var(--fg-muted)", marginTop: 4, fontSize: 13 }}>
+          AI-powered security assistant with framework context.
+        </div>
+      </div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "240px 1fr 280px",
+          gap: 16,
+          height: "calc(100vh - 170px)",
+        }}
+      >
       {/* Sessions rail */}
       <div
         className="surface"
@@ -882,6 +888,7 @@ const SecurityAdvisorPage: React.FC = () => {
           </div>
         </div>
       </Modal>
+      </div>
     </div>
   );
 };

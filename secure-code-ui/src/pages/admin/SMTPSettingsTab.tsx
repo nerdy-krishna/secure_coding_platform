@@ -155,9 +155,7 @@ const SMTPSettingsTab: React.FC = () => {
   return (
     <div className="fade-in" style={{ display: "grid", gap: 16 }}>
       <div>
-        <h1 style={{ color: "var(--fg)" }}>
-          <Icon.Mail size={18} /> SMTP settings
-        </h1>
+        <h1 style={{ color: "var(--fg)" }}>SMTP settings</h1>
         <div style={{ color: "var(--fg-muted)", marginTop: 4 }}>
           Outgoing mail server for password reset and user invitations.
         </div>

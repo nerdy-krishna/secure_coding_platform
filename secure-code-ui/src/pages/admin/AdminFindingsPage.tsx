@@ -77,7 +77,10 @@ const AdminFindingsPage: React.FC = () => {
   const hasPrev = pageHistory.length > 1;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+    <div className="fade-in" style={{ display: "grid", gap: 16 }}>
+      <div>
+        <h1 style={{ color: "var(--fg)" }}>Findings</h1>
+      </div>
       <div
         style={{
           display: "flex",
@@ -86,7 +89,6 @@ const AdminFindingsPage: React.FC = () => {
           flexWrap: "wrap",
         }}
       >
-        <h2 style={{ margin: 0 }}>Findings (admin)</h2>
         <div style={{ marginLeft: "auto" }}>
           <label style={{ fontSize: 12.5, color: "var(--fg-muted)" }}>
             Source:&nbsp;

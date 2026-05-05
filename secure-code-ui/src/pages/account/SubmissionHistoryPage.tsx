@@ -113,9 +113,7 @@ const SubmissionHistoryPage: React.FC = () => {
   return (
     <div className="fade-in" style={{ display: "grid", gap: 18 }}>
       <div>
-        <h1 style={{ color: "var(--fg)" }}>
-          <Icon.History size={20} /> Submission history
-        </h1>
+        <h1 style={{ color: "var(--fg)" }}>Submission history</h1>
         <div style={{ color: "var(--fg-muted)", marginTop: 4 }}>
           Every scan you've submitted, newest first.
         </div>
@@ -245,7 +243,12 @@ const SubmissionHistoryPage: React.FC = () => {
                     <div
                       key={scan.id}
                       onClick={() =>
-                        navigate(scanRouteFor(scan.id, scan.status))
+                        navigate(scanRouteFor(scan.id, scan.status), {
+                          state: {
+                            fromLabel: "History",
+                            fromPath: "/account/history",
+                          },
+                        })
                       }
                       style={{
                         display: "grid",

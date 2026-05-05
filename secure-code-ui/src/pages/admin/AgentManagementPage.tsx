@@ -157,9 +157,7 @@ const AgentManagementPage: React.FC = () => {
         }}
       >
         <div>
-          <h1 style={{ color: "var(--fg)" }}>
-            <Icon.Cpu size={18} /> AI agents
-          </h1>
+          <h1 style={{ color: "var(--fg)" }}>AI agents</h1>
           <div style={{ color: "var(--fg-muted)", marginTop: 4 }}>
             Specialized analysis agents and their RAG retrieval queries.
           </div>
