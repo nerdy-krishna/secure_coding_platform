@@ -49,16 +49,16 @@
   --accent: #0ea5a4;           /* teal */
   --accent-weak: #e0f4f3;
 
-  --critical: #dc2626;       /* red-600   — stop/danger */
-  --critical-weak: #fee2e2;
-  --high: #f97316;           /* orange-500 — serious warning */
-  --high-weak: #fff7ed;
-  --medium: #eab308;         /* yellow-500 — caution */
-  --medium-weak: #fefce8;
-  --low: #16a34a;            /* green-600  — manageable */
-  --low-weak: #dcfce7;
-  --info: #0284c7;           /* sky-600    — informational */
-  --info-weak: #e0f2fe;
+  --critical: #c94040;       /* pastel dusty-red    hsl(0,52%,52%) */
+  --critical-weak: #fce8e8;
+  --high: #c87838;           /* pastel burnt-sienna hsl(26,57%,50%) */
+  --high-weak: #fdeee3;
+  --medium: #b89620;         /* pastel ochre        hsl(44,71%,42%) */
+  --medium-weak: #fdf5d9;
+  --low: #3a9e68;            /* pastel sage-green   hsl(148,46%,42%) */
+  --low-weak: #e0f5ea;
+  --info: #3b7fc4;           /* pastel cornflower   hsl(210,54%,50%) */
+  --info-weak: #deedf8;
   --success: #15803d;
   --success-weak: #dcfce7;
 
@@ -93,16 +93,16 @@
   --accent: #2563eb;            /* blue */
   --accent-weak: #dbeafe;
 
-  --critical: #dc2626;           /* red-600 */
-  --critical-weak: #fee2e2;
-  --high: #f97316;               /* orange-500 */
-  --high-weak: #fff7ed;
-  --medium: #eab308;             /* yellow-500 */
-  --medium-weak: #fefce8;
-  --low: #16a34a;                /* green-600 */
-  --low-weak: #dcfce7;
-  --info: #0284c7;               /* sky-600 */
-  --info-weak: #e0f2fe;
+  --critical: #c94040;           /* pastel dusty-red */
+  --critical-weak: #fce8e8;
+  --high: #c87838;               /* pastel burnt-sienna */
+  --high-weak: #fdeee3;
+  --medium: #b89620;             /* pastel ochre */
+  --medium-weak: #fdf5d9;
+  --low: #3a9e68;                /* pastel sage-green */
+  --low-weak: #e0f5ea;
+  --info: #3b7fc4;               /* pastel cornflower */
+  --info-weak: #deedf8;
   --success: #059669;
   --success-weak: #d1fae5;
 
