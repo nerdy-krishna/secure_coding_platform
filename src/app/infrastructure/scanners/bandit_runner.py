@@ -75,7 +75,7 @@ def _bandit_binary() -> str:
 
 
 BANDIT_TIMEOUT_SECONDS = 120
-DESCRIPTION_MAX_CHARS = 200
+DESCRIPTION_MAX_CHARS = 2000
 
 # Bandit severity strings (LOW / MEDIUM / HIGH) → SCCAP severity bucket
 # (Title-cased, matching what LLM agents emit). Bandit has no CRITICAL.

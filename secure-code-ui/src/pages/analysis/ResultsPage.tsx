@@ -15,7 +15,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { scanService } from "../../shared/api/scanService";
 import { useAuth } from "../../shared/hooks/useAuth";
 import { isSafeHttpUrl } from "../../shared/lib/safeUrl";
@@ -24,6 +24,7 @@ import { displayStatus, statusKind } from "../../shared/lib/scanStatus";
 import { Icon } from "../../shared/ui/Icon";
 import { SevBar } from "../../shared/ui/DashboardPrimitives";
 import { Modal } from "../../shared/ui/Modal";
+import { PageHeader } from "../../shared/ui/PageHeader";
 import { useToast } from "../../shared/ui/Toast";
 import type {
   Finding,
@@ -100,6 +101,7 @@ function severityRank(s: string): number {
 const ResultsPage: React.FC = () => {
   const { scanId } = useParams<{ scanId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const toast = useToast();
 
@@ -332,129 +334,93 @@ const ResultsPage: React.FC = () => {
   return (
     <div className="fade-in" style={{ display: "grid", gap: 16 }}>
       {/* header */}
-      <div>
-        {/* Back button — prominent so users coming from the project page
-            see an obvious way home. Falls through to the projects grid
-            if the project pointer is somehow missing. */}
-        <button
-          className="sccap-btn sccap-btn-sm sccap-btn-ghost"
-          onClick={goToProject}
-          style={{ marginBottom: 10 }}
-        >
-          <Icon.ChevronL size={12} />{" "}
-          {displayProjectName
-            ? `Back to ${displayProjectName}`
-            : "Back to projects"}
-        </button>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            color: "var(--fg-muted)",
-            fontSize: 12,
-            marginBottom: 8,
-          }}
-        >
-          <button
-            className="sccap-btn sccap-btn-sm sccap-btn-ghost"
-            onClick={() => navigate("/analysis/results")}
-          >
-            Projects
-          </button>
-          <span>/</span>
-          {projectId ? (
-            <button
-              className="sccap-btn sccap-btn-sm sccap-btn-ghost"
-              onClick={goToProject}
-            >
-              {displayProjectName ?? "…"}
-            </button>
-          ) : (
-            <span>{displayProjectName ?? "…"}</span>
-          )}
-          <span>/</span>
-          <span style={{ color: "var(--fg)", fontFamily: "var(--font-mono)" }}>
-            {scanId?.slice(0, 8)}
-          </span>
-        </div>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "flex-end",
-            gap: 20,
-          }}
-        >
-          <div>
-            <h1 style={{ color: "var(--fg)" }}>
-              {displayProjectName ?? "Scan"}{" "}
-              <span
-                style={{
-                  color: "var(--fg-subtle)",
-                  fontWeight: 400,
-                  fontSize: 20,
-                }}
-              >
-                / {report?.scan_type ?? data.status}
-              </span>
-            </h1>
-            <div
+      <PageHeader
+        crumbs={(() => {
+          const fromLabel = (location.state as Record<string, unknown>)
+            ?.fromLabel as string | undefined;
+          const fromPath = (location.state as Record<string, unknown>)
+            ?.fromPath as string | undefined;
+          if (fromLabel) {
+            return [
+              {
+                label: fromLabel,
+                to: fromPath,
+                onClick: !fromPath ? () => navigate(-1) : undefined,
+              },
+              { label: scanId?.slice(0, 8) ?? "…" },
+            ];
+          }
+          return [
+            { label: "Projects", to: "/analysis/results" },
+            {
+              label: displayProjectName ?? "…",
+              onClick: goToProject,
+            },
+            { label: scanId?.slice(0, 8) ?? "…" },
+          ];
+        })()}
+        title={
+          <>
+            {displayProjectName ?? "Scan"}{" "}
+            <span
               style={{
-                color: "var(--fg-muted)",
-                marginTop: 4,
-                fontSize: 13,
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                flexWrap: "wrap",
+                color: "var(--fg-subtle)",
+                fontWeight: 400,
+                fontSize: 20,
               }}
             >
-              {(() => {
-                // Single-source-of-truth status chip. `failed` (real
-                // error) is the only one that goes red; user stops
-                // (CANCELLED, BLOCKED_USER_DECLINE) and EXPIRED are
-                // neutral; BLOCKED_PRE_LLM is amber/warn.
-                const kind = statusKind(data.status);
-                if (kind === "failed") {
-                  return (
-                    <span className="chip chip-critical">
-                      {displayStatus(data.status)}
-                    </span>
-                  );
-                }
-                if (kind === "blocked") {
-                  return (
-                    <span className="chip chip-warn">
-                      {displayStatus(data.status)}
-                    </span>
-                  );
-                }
-                if (kind === "stopped" || kind === "expired") {
-                  return (
-                    <span className="chip">{displayStatus(data.status)}</span>
-                  );
-                }
-                return null;
-              })()}
-              <span>
-                {allFindings.length} finding
-                {allFindings.length === 1 ? "" : "s"}
+              / {report?.scan_type ?? data.status}
+            </span>
+          </>
+        }
+        subtitle={
+          <>
+            {(() => {
+              // Single-source-of-truth status chip. `failed` (real
+              // error) is the only one that goes red; user stops
+              // (CANCELLED, BLOCKED_USER_DECLINE) and EXPIRED are
+              // neutral; BLOCKED_PRE_LLM is amber/warn.
+              const kind = statusKind(data.status);
+              if (kind === "failed") {
+                return (
+                  <span className="chip chip-critical">
+                    {displayStatus(data.status)}
+                  </span>
+                );
+              }
+              if (kind === "blocked") {
+                return (
+                  <span className="chip chip-warn">
+                    {displayStatus(data.status)}
+                  </span>
+                );
+              }
+              if (kind === "stopped" || kind === "expired") {
+                return (
+                  <span className="chip">{displayStatus(data.status)}</span>
+                );
+              }
+              return null;
+            })()}
+            <span>
+              {allFindings.length} finding
+              {allFindings.length === 1 ? "" : "s"}
+            </span>
+            {fixesReady > 0 && (
+              <span className="chip chip-ai">
+                <Icon.Sparkle size={10} /> {fixesReady} AI fix
+                {fixesReady === 1 ? "" : "es"} ready
               </span>
-              {fixesReady > 0 && (
-                <span className="chip chip-ai">
-                  <Icon.Sparkle size={10} /> {fixesReady} AI fix
-                  {fixesReady === 1 ? "" : "es"} ready
-                </span>
-              )}
-              {report?.selected_frameworks?.length ? (
-                <span style={{ color: "var(--fg-subtle)" }}>
-                  · {report.selected_frameworks.join(", ")}
-                </span>
-              ) : null}
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: 8 }}>
+            )}
+            {report?.selected_frameworks?.length ? (
+              <span style={{ color: "var(--fg-subtle)" }}>
+                · {report.selected_frameworks.join(", ")}
+              </span>
+            ) : null}
+          </>
+        }
+        actions={
+          <>
             <button
               className="sccap-btn sccap-btn-sm"
               onClick={() => navigate(`/analysis/scanning/${scanId}`)}
@@ -478,9 +444,9 @@ const ResultsPage: React.FC = () => {
                 <Icon.Alert size={13} /> {deleting ? "Deleting…" : "Delete"}
               </button>
             )}
-          </div>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       {/* summary strip */}
       <div

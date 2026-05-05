@@ -6,7 +6,7 @@
 // `project.stats`, which scan_service populates by aggregating findings
 // from the latest terminal scan (H.4).
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import React, { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useDebounce } from "../../shared/hooks/useDebounce";
@@ -17,6 +17,8 @@ import type {
 } from "../../shared/types/api";
 import { SevBar } from "../../shared/ui/DashboardPrimitives";
 import { Icon } from "../../shared/ui/Icon";
+import { Modal } from "../../shared/ui/Modal";
+import { useToast } from "../../shared/ui/Toast";
 
 const TERMINAL_OK = new Set(["COMPLETED", "REMEDIATION_COMPLETED"]);
 
@@ -53,13 +55,39 @@ function latestScan(p: ProjectHistoryItem): ScanHistoryItem | null {
 
 const ProjectsPage: React.FC = () => {
   const navigate = useNavigate();
+  const toast = useToast();
+  const qc = useQueryClient();
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search, 300);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [creating, setCreating] = useState(false);
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ["projects", debouncedSearch],
     queryFn: () => scanService.getProjectHistory(1, 100, debouncedSearch || undefined),
   });
+
+  const handleCreateProject = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const name = newName.trim();
+    if (!name) return;
+    setCreating(true);
+    try {
+      const project = await scanService.createProject(name);
+      toast.success(`Project "${project.name}" created.`);
+      setCreateOpen(false);
+      setNewName("");
+      qc.invalidateQueries({ queryKey: ["projects"] });
+      navigate(`/analysis/projects/${project.id}`, {
+        state: { projectName: project.name, repoUrl: null },
+      });
+    } catch {
+      toast.error("Failed to create project.");
+    } finally {
+      setCreating(false);
+    }
+  };
 
   const projects = useMemo(() => data?.items ?? [], [data]);
 
@@ -94,9 +122,9 @@ const ProjectsPage: React.FC = () => {
             </div>
             <button
               className="sccap-btn sccap-btn-primary"
-              onClick={() => navigate("/submission/submit")}
+              onClick={() => { setNewName(""); setCreateOpen(true); }}
             >
-              <Icon.Plus size={13} /> New scan
+              <Icon.Plus size={13} /> New project
             </button>
           </div>
         </div>
@@ -292,6 +320,49 @@ const ProjectsPage: React.FC = () => {
           })}
         </div>
       )}
+
+      <Modal
+        open={createOpen}
+        onClose={() => !creating && setCreateOpen(false)}
+        title="New project"
+        width={420}
+        footer={
+          <>
+            <button
+              className="sccap-btn sccap-btn-sm"
+              onClick={() => setCreateOpen(false)}
+              disabled={creating}
+            >
+              Cancel
+            </button>
+            <button
+              className="sccap-btn sccap-btn-primary sccap-btn-sm"
+              onClick={handleCreateProject}
+              disabled={creating || !newName.trim()}
+            >
+              {creating ? "Creating…" : "Create project"}
+            </button>
+          </>
+        }
+      >
+        <form onSubmit={handleCreateProject} style={{ display: "grid", gap: 14 }}>
+          <label style={{ display: "grid", gap: 6 }}>
+            <span style={{ fontSize: 12, color: "var(--fg-muted)" }}>
+              Project name
+            </span>
+            <input
+              className="sccap-input"
+              placeholder="e.g. My API Service"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              maxLength={128}
+              autoFocus
+              required
+            />
+          </label>
+          <button type="submit" style={{ display: "none" }} />
+        </form>
+      </Modal>
     </div>
   );
 };

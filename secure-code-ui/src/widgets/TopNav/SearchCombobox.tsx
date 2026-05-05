@@ -95,10 +95,14 @@ export const SearchCombobox: React.FC = () => {
       navigate(`/analysis/results`);
     } else if (row.kind === "scan") {
       // V1.2.2: encode backend-supplied id to keep the route well-formed.
-      navigate(`/analysis/results/${encodeURIComponent(row.hit.id)}`);
+      navigate(`/analysis/results/${encodeURIComponent(row.hit.id)}`, {
+        state: { fromLabel: "Search" },
+      });
     } else {
       // V1.2.2: encode backend-supplied scan_id to keep the route well-formed.
-      navigate(`/analysis/results/${encodeURIComponent(row.hit.scan_id)}`);
+      navigate(`/analysis/results/${encodeURIComponent(row.hit.scan_id)}`, {
+        state: { fromLabel: "Search" },
+      });
     }
   };
 

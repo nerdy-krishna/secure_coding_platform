@@ -16,6 +16,7 @@ import { displayStatus, statusKind } from "../../shared/lib/scanStatus";
 import type { ScanHistoryItem } from "../../shared/types/api";
 import { Icon } from "../../shared/ui/Icon";
 import { Modal } from "../../shared/ui/Modal";
+import { PageHeader } from "../../shared/ui/PageHeader";
 import { useToast } from "../../shared/ui/Toast";
 
 interface NavState {
@@ -134,47 +135,27 @@ const ProjectDetailPage: React.FC = () => {
 
   return (
     <div className="fade-in" style={{ display: "grid", gap: 16 }}>
-      <div>
-        <button
-          className="sccap-btn sccap-btn-sm sccap-btn-ghost"
-          onClick={() => navigate("/analysis/results")}
-          style={{ marginBottom: 10 }}
-        >
-          <Icon.ChevronL size={12} /> Projects
-        </button>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "flex-end",
-            gap: 20,
-          }}
-        >
-          <div>
-            <h1 style={{ color: "var(--fg)" }}>{projectName}</h1>
-            <div
-              style={{
-                color: "var(--fg-muted)",
-                marginTop: 4,
-                fontSize: 13,
-                display: "flex",
-                gap: 10,
-                alignItems: "center",
-                flexWrap: "wrap",
-              }}
-            >
-              <span>
-                {data?.total ?? scans.length} scan
-                {(data?.total ?? scans.length) === 1 ? "" : "s"}
+      <PageHeader
+        crumbs={[
+          { label: "Projects", to: "/analysis/results" },
+          { label: projectName },
+        ]}
+        title={projectName}
+        subtitle={
+          <>
+            <span>
+              {data?.total ?? scans.length} scan
+              {(data?.total ?? scans.length) === 1 ? "" : "s"}
+            </span>
+            {repoUrl && (
+              <span style={{ color: "var(--fg-subtle)" }}>
+                · {repoUrl.replace(/^https?:\/\//, "")}
               </span>
-              {repoUrl && (
-                <span style={{ color: "var(--fg-subtle)" }}>
-                  · {repoUrl.replace(/^https?:\/\//, "")}
-                </span>
-              )}
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            )}
+          </>
+        }
+        actions={
+          <>
             {isSuperuser && (
               <button
                 className="sccap-btn"
@@ -190,19 +171,15 @@ const ProjectDetailPage: React.FC = () => {
               className="sccap-btn sccap-btn-primary"
               onClick={() =>
                 navigate("/submission/submit", {
-                  state: {
-                    projectId,
-                    projectName,
-                    repoUrl,
-                  },
+                  state: { projectId, projectName, repoUrl },
                 })
               }
             >
               <Icon.Plus size={13} /> New scan
             </button>
-          </div>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       {isError ? (
         <div
@@ -276,7 +253,14 @@ const ProjectDetailPage: React.FC = () => {
               {scans.map((s) => (
                 <tr
                   key={s.id}
-                  onClick={() => navigate(scanRouteFor(s.id, s.status))}
+                  onClick={() =>
+                    navigate(scanRouteFor(s.id, s.status), {
+                      state: {
+                        fromLabel: projectName,
+                        fromPath: `/analysis/projects/${projectId}`,
+                      },
+                    })
+                  }
                   style={{ cursor: "pointer" }}
                 >
                   <td>

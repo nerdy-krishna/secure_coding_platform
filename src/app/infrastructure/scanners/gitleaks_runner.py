@@ -75,7 +75,7 @@ def _gitleaks_binary() -> str:
 
 GITLEAKS_TIMEOUT_SECONDS = 120
 GITLEAKS_CONFIG_PATH = "/app/scanners/configs/gitleaks.toml"
-DESCRIPTION_MAX_CHARS = 200
+DESCRIPTION_MAX_CHARS = 2000
 
 
 class _GitleaksResult(BaseModel):

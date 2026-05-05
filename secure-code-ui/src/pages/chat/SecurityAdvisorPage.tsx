@@ -523,6 +523,8 @@ const SecurityAdvisorPage: React.FC = () => {
                         fontSize: 13.5,
                         lineHeight: 1.55,
                         whiteSpace: "pre-wrap",
+                        overflowWrap: "break-word",
+                        wordBreak: "break-word",
                       }}
                     >
                       {m.content}

@@ -10,12 +10,13 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { CriticalSecretOverrideModal } from "../../features/prescan-approval/CriticalSecretOverrideModal";
 import { PrescanReviewCard } from "../../features/prescan-approval/PrescanReviewCard";
 import { scanService } from "../../shared/api/scanService";
 import { useAuth } from "../../shared/hooks/useAuth";
 import { useNotificationPermission } from "../../shared/hooks/useNotificationPermission";
+import { pushNotification } from "../../shared/hooks/useNotifications";
 import {
   displayStatus,
   isBlockedStatus,
@@ -27,6 +28,7 @@ import type { PrescanReviewResponse } from "../../shared/types/api";
 import { Icon } from "../../shared/ui/Icon";
 import { SectionHead } from "../../shared/ui/DashboardPrimitives";
 import { Modal } from "../../shared/ui/Modal";
+import { PageHeader } from "../../shared/ui/PageHeader";
 import { useToast } from "../../shared/ui/Toast";
 
 interface ScanEventMsg {
@@ -223,6 +225,7 @@ function progressFromStages(
 const ScanRunningPage: React.FC = () => {
   const { scanId } = useParams<{ scanId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const toast = useToast();
   const notificationPerm = useNotificationPermission();
@@ -613,12 +616,23 @@ const ScanRunningPage: React.FC = () => {
         status === "REMEDIATION_COMPLETED" ||
         status === "BLOCKED_PRE_LLM")
     ) {
-      const t = setTimeout(() => navigate(`/analysis/results/${scanId}`), 1500);
+      const t = setTimeout(
+        () =>
+          navigate(`/analysis/results/${scanId}`, {
+            state: projectInfo
+              ? {
+                  fromLabel: projectInfo.name,
+                  fromPath: `/analysis/projects/${projectInfo.id}`,
+                }
+              : undefined,
+          }),
+        1500,
+      );
       return () => clearTimeout(t);
     }
   }, [status, scanId, navigate]);
 
-  // §6 desktop notification on terminal status. Lives in its own
+  // §6 desktop + in-app notification on terminal status. Lives in its own
   // effect so it picks up the latest `notificationPerm` state (the
   // SSE listener captures stale values at registration time).
   // Threat-model mitigations:
@@ -628,6 +642,21 @@ const ScanRunningPage: React.FC = () => {
     if (!scanId) return;
     if (!status || !TERMINAL_STATUSES.has(status)) return;
     if (notifiedRef.current[scanId]) return;
+    notifiedRef.current[scanId] = true;
+
+    const isSuccess = status === "COMPLETED" || status === "REMEDIATION_COMPLETED";
+    const isBlocked = status === "BLOCKED_PRE_LLM" || status === "BLOCKED_USER_DECLINE";
+    const notifType = isSuccess ? "success" : isBlocked ? "warning" : "error";
+    const notifTitle = projectInfo
+      ? `${projectInfo.name} — scan ${isSuccess ? "completed" : isBlocked ? "blocked" : "failed"}`
+      : `Scan ${scanId.slice(0, 8)} — ${isSuccess ? "completed" : isBlocked ? "blocked" : "failed"}`;
+
+    // Always push an in-app notification.
+    pushNotification({
+      type: notifType,
+      title: notifTitle,
+      href: `/analysis/results/${scanId}`,
+    });
 
     if (
       notificationPerm.supported &&
@@ -642,17 +671,11 @@ const ScanRunningPage: React.FC = () => {
         // Notification constructor can throw on iOS Safari etc.
         // Fail silently — the in-app redirect still happens.
       }
-      notifiedRef.current[scanId] = true;
-    } else if (notificationPerm.supported && !notificationPerm.dismissed) {
-      // Fallback nudge — once per scan only.
-      toast.info(
-        "Scan finished — turn on desktop notifications from the top bar to get pings next time.",
-      );
-      notifiedRef.current[scanId] = true;
     }
   }, [
     status,
     scanId,
+    projectInfo,
     notificationPerm.supported,
     notificationPerm.permission,
     notificationPerm.dismissed,
@@ -910,41 +933,63 @@ const ScanRunningPage: React.FC = () => {
     <div className="fade-in" style={{ display: "grid", gap: 16 }}>
       {/* Header — full width above the 2-col body so the Status card on
           the right aligns with the Overall progress card on the left. */}
-      <div>
-        <button
-          className="sccap-btn sccap-btn-sm sccap-btn-ghost"
-          onClick={() => navigate(-1)}
-          style={{ marginBottom: 10 }}
-        >
-          <Icon.ChevronL size={12} /> Back
-        </button>
-        <div
+      <PageHeader
+        crumbs={(() => {
+          const fromLabel = (location.state as Record<string, unknown>)
+            ?.fromLabel as string | undefined;
+          const fromPath = (location.state as Record<string, unknown>)
+            ?.fromPath as string | undefined;
+          if (fromLabel) {
+            return [
+              {
+                label: fromLabel,
+                to: fromPath,
+                onClick: !fromPath ? () => navigate(-1) : undefined,
+              },
+              { label: `Scan ${scanId?.slice(0, 8) ?? "…"}` },
+            ];
+          }
+          return [
+            { label: "Projects", to: "/analysis/results" },
+            ...(projectInfo
+              ? [
+                  {
+                    label: projectInfo.name,
+                    to: `/analysis/projects/${projectInfo.id}`,
+                  },
+                ]
+              : []),
+            { label: `Scan ${scanId?.slice(0, 8) ?? "…"}` },
+          ];
+        })()}
+        chip={
           // Critical (red) chip ONLY for genuine errors. User stops,
           // safety blocks, and EXPIRED render as a neutral chip — they
           // are not failures.
-          className={`chip ${
-            isError ? "chip-critical" : isBlocked ? "chip-warn" : "chip-info"
-          }`}
-          style={{ marginBottom: 8 }}
-        >
-          {/* Pulse dot only while genuinely running. Suppress while
-              status is still loading (null) — a pulsing chip there
-              would imply progress that hasn't been observed yet. */}
-          {status !== null && !isTerminal && (
-            <span
-              className="pulse-dot dot"
-              style={{ background: "currentColor" }}
-            />
-          )}
-          {isError ? <Icon.Alert size={11} /> : null}
-          Scan{" "}
-          <span style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>
-            {scanId?.slice(0, 8)}
-          </span>{" "}
-          · {displayStatus(status)}
-        </div>
-        <h1 style={{ color: "var(--fg)" }}>
-          {!status
+          <div
+            className={`chip ${
+              isError ? "chip-critical" : isBlocked ? "chip-warn" : "chip-info"
+            }`}
+          >
+            {/* Pulse dot only while genuinely running. Suppress while
+                status is still loading (null) — a pulsing chip there
+                would imply progress that hasn't been observed yet. */}
+            {status !== null && !isTerminal && (
+              <span
+                className="pulse-dot dot"
+                style={{ background: "currentColor" }}
+              />
+            )}
+            {isError ? <Icon.Alert size={11} /> : null}
+            Scan{" "}
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>
+              {scanId?.slice(0, 8)}
+            </span>{" "}
+            · {displayStatus(status)}
+          </div>
+        }
+        title={
+          !status
             ? "Loading scan…"
             : isPendingPrescan
               ? "Pre-LLM scan complete — review before continuing"
@@ -962,13 +1007,10 @@ const ScanRunningPage: React.FC = () => {
                           ? "Scan expired"
                           : isError
                             ? "Scan did not complete"
-                            : "Analyzing your code"}
-        </h1>
-        <div style={{ color: "var(--fg-muted)", marginTop: 4 }}>
-          You can leave this page — the scan continues in the background and
-          results appear on the Projects list when done.
-        </div>
-      </div>
+                            : "Analyzing your code"
+        }
+        subtitle="You can leave this page — the scan continues in the background and results appear on the Projects list when done."
+      />
 
       {/* Body — 2-col grid, content + sidebar. */}
       <div

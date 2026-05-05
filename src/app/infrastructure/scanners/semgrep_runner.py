@@ -56,7 +56,7 @@ def _semgrep_binary() -> str:
 
 
 SEMGREP_TIMEOUT_SECONDS = 120
-DESCRIPTION_MAX_CHARS = 200
+DESCRIPTION_MAX_CHARS = 2000
 
 # Semgrep severity strings → SCCAP severity bucket (Title-cased,
 # matching what LLM agents emit).

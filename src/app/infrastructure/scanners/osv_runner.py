@@ -51,7 +51,7 @@ def _osv_binary() -> str:
 
 
 OSV_TIMEOUT_SECONDS = 180
-DESCRIPTION_MAX_CHARS = 200
+DESCRIPTION_MAX_CHARS = 2000
 
 # BOM size policy — see threat-model G2 / M3.
 BOM_HARD_CAP_BYTES = 5 * 1024 * 1024  # 5 MB

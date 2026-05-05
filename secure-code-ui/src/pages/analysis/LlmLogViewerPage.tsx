@@ -5,12 +5,13 @@
 
 import { useQuery } from "@tanstack/react-query";
 import React, { useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { scanService } from "../../shared/api/scanService";
 import type { LLMInteractionResponse } from "../../shared/types/api";
 import { useAuth } from "../../shared/hooks/useAuth";
 import { redactSensitive } from "../../shared/lib/redact";
 import { Icon } from "../../shared/ui/Icon";
+import { PageHeader } from "../../shared/ui/PageHeader";
 
 const INTERNAL_ERROR_INDICATORS = [
   "traceback",
@@ -41,7 +42,6 @@ function sanitizeErrorMessage(raw: string): string | null {
 
 const LlmLogViewerPage: React.FC = () => {
   const { scanId } = useParams<{ scanId: string }>();
-  const navigate = useNavigate();
   const { user } = useAuth();
   const isSuperuser = user?.is_superuser === true;
   const [selectedFilePath, setSelectedFilePath] = useState<string>("All Files");
@@ -139,35 +139,28 @@ const LlmLogViewerPage: React.FC = () => {
 
   return (
     <div className="fade-in" style={{ display: "grid", gap: 16 }}>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "flex-end",
-          gap: 12,
-        }}
-      >
-        <div>
-          <h1 style={{ color: "var(--fg)" }}>
+      <PageHeader
+        crumbs={[
+          {
+            label: `Scan ${scanId?.slice(0, 8) ?? "…"}`,
+            to: `/analysis/results/${scanId}`,
+          },
+          { label: "LLM cost & interactions" },
+        ]}
+        title={
+          <>
             <Icon.Dollar size={18} /> LLM cost & interactions
-          </h1>
-          <div
-            style={{
-              color: "var(--fg-muted)",
-              marginTop: 4,
-              fontSize: 12.5,
-            }}
-          >
+          </>
+        }
+        subtitle={
+          <>
             Scan{" "}
             <span className="mono" style={{ fontSize: 11 }}>
               {scanId}
             </span>
-          </div>
-        </div>
-        <button className="sccap-btn" onClick={() => navigate(-1)}>
-          <Icon.ChevronL size={12} /> Back
-        </button>
-      </div>
+          </>
+        }
+      />
 
       <div
         className="surface"
