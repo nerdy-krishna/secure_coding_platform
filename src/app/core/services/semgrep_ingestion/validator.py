@@ -66,7 +66,9 @@ def _sync_validate(file_path: str) -> tuple[bool, str]:
     except subprocess.TimeoutExpired:
         return False, "validation timed out"
     except FileNotFoundError:
-        logger.warning("semgrep.validator.binary_not_executable", extra={"binary": binary})
+        logger.warning(
+            "semgrep.validator.binary_not_executable", extra={"binary": binary}
+        )
         return _structural_validate(file_path)
     except Exception as exc:
         return False, str(exc)
