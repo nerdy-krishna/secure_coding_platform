@@ -1051,58 +1051,63 @@ function charDiff(a: string, b: string): { aChunks: CharChunk[]; bChunks: CharCh
   return { aChunks: split(aT, a), bChunks: split(bT, b) };
 }
 
-interface AnnotatedLine extends RawDiffLine {
+// ============================================================================
+// DiffViewer — side-by-side split view
+// ============================================================================
+
+const CONTEXT_LINES = 3;
+
+interface SplitSide {
+  lineNum: number;
+  text: string;
   chunks: CharChunk[] | null;
 }
-
-function annotateDiff(raw: RawDiffLine[]): AnnotatedLine[] {
-  const lines: AnnotatedLine[] = raw.map(l => ({ ...l, chunks: null }));
-  for (let k = 0; k < lines.length - 1; k++) {
-    if (lines[k].type === "del" && lines[k + 1].type === "ins") {
-      const { aChunks, bChunks } = charDiff(lines[k].text, lines[k + 1].text);
-      // Only highlight if at least some text is shared (otherwise the whole line changed)
-      const hasContext = aChunks.some(c => !c.changed && c.text.trim().length > 0) ||
-                         bChunks.some(c => !c.changed && c.text.trim().length > 0);
-      if (hasContext) {
-        lines[k]     = { ...lines[k],     chunks: aChunks };
-        lines[k + 1] = { ...lines[k + 1], chunks: bChunks };
-      }
-    }
-  }
-  return lines;
+interface SplitRow {
+  type: "ctx" | "change" | "hunk";
+  left: SplitSide | null;
+  right: SplitSide | null;
+  hunkCount?: number;
 }
 
-// ============================================================================
-// DiffViewer component
-// ============================================================================
-
-const CONTEXT_LINES = 3; // unchanged lines to show around each change hunk
-
-function buildViewLines(lines: AnnotatedLine[]): Array<AnnotatedLine | { type: "hunk"; count: number }> {
-  // Mark which lines are "near" a change (within CONTEXT_LINES of a del/ins)
-  const near = new Set<number>();
-  for (let k = 0; k < lines.length; k++) {
-    if (lines[k].type !== "ctx") {
-      for (let d = -CONTEXT_LINES; d <= CONTEXT_LINES; d++) {
-        if (k + d >= 0 && k + d < lines.length) near.add(k + d);
-      }
-    }
-  }
-
-  const result: Array<AnnotatedLine | { type: "hunk"; count: number }> = [];
-  let skipping = 0;
-  for (let k = 0; k < lines.length; k++) {
-    if (near.has(k)) {
-      if (skipping > 0) {
-        result.push({ type: "hunk", count: skipping });
-        skipping = 0;
-      }
-      result.push(lines[k]);
+function buildSplitView(before: string[], after: string[]): SplitRow[] {
+  const raw = computeLineDiff(before, after);
+  const allRows: SplitRow[] = [];
+  let i = 0;
+  while (i < raw.length) {
+    if (raw[i].type === "ctx") {
+      const l = raw[i];
+      allRows.push({ type: "ctx", left: { lineNum: l.oldNum!, text: l.text, chunks: null }, right: { lineNum: l.newNum!, text: l.text, chunks: null } });
+      i++;
     } else {
-      skipping++;
+      const dels: RawDiffLine[] = [], ins: RawDiffLine[] = [];
+      while (i < raw.length && raw[i].type !== "ctx") {
+        if (raw[i].type === "del") dels.push(raw[i]); else ins.push(raw[i]);
+        i++;
+      }
+      const count = Math.max(dels.length, ins.length);
+      for (let k = 0; k < count; k++) {
+        const d = dels[k] ?? null, n = ins[k] ?? null;
+        let dChunks: CharChunk[] | null = null, nChunks: CharChunk[] | null = null;
+        if (d && n) {
+          const { aChunks, bChunks } = charDiff(d.text, n.text);
+          if (aChunks.some(c => !c.changed && c.text.trim().length > 0)) { dChunks = aChunks; nChunks = bChunks; }
+        }
+        allRows.push({ type: "change", left: d ? { lineNum: d.oldNum!, text: d.text, chunks: dChunks } : null, right: n ? { lineNum: n.newNum!, text: n.text, chunks: nChunks } : null });
+      }
     }
   }
-  if (skipping > 0) result.push({ type: "hunk", count: skipping });
+  const near = new Set<number>();
+  for (let k = 0; k < allRows.length; k++)
+    if (allRows[k].type === "change")
+      for (let d = -CONTEXT_LINES; d <= CONTEXT_LINES; d++)
+        if (k + d >= 0 && k + d < allRows.length) near.add(k + d);
+  const result: SplitRow[] = [];
+  let skipping = 0;
+  for (let k = 0; k < allRows.length; k++) {
+    if (near.has(k)) { if (skipping > 0) { result.push({ type: "hunk", left: null, right: null, hunkCount: skipping }); skipping = 0; } result.push(allRows[k]); }
+    else skipping++;
+  }
+  if (skipping > 0) result.push({ type: "hunk", left: null, right: null, hunkCount: skipping });
   return result;
 }
 
@@ -1111,81 +1116,65 @@ const DiffViewer: React.FC<{
   fixed: string;
   startLine: number;
   filePath: string;
-}> = ({ original, fixed, startLine, filePath }) => {
-  const trimLines = (s: string) => {
-    const ls = s.split("\n");
-    if (ls[ls.length - 1] === "") ls.pop();
-    return ls;
-  };
+  maxHeight?: number | string;
+}> = ({ original, fixed, startLine, filePath, maxHeight = 480 }) => {
+  const trimLines = (s: string) => { const ls = s.split("\n"); if (ls[ls.length - 1] === "") ls.pop(); return ls; };
   const before = trimLines(original || "");
   const after  = trimLines(fixed   || "");
 
-  const viewLines = useMemo(() => {
-    const raw = computeLineDiff(before, after);
-    const annotated = annotateDiff(raw);
-    return buildViewLines(annotated);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [original, fixed]);
+  const splitRows = useMemo(() => buildSplitView(before, after), [original, fixed]);
+  const base = startLine - 1;
 
-  const renderContent = (line: AnnotatedLine) => {
-    if (!line.chunks) return line.text || " ";
-    return line.chunks.map((c, i) =>
-      c.changed
-        ? <mark key={i} className="diff-hl">{c.text}</mark>
-        : <React.Fragment key={i}>{c.text}</React.Fragment>
+  const renderChunks = (side: SplitSide) => {
+    if (!side.chunks) return side.text || " ";
+    return side.chunks.map((c, i) =>
+      c.changed ? <mark key={i} className="diff-hl">{c.text}</mark> : <React.Fragment key={i}>{c.text}</React.Fragment>
     );
   };
 
-  const sign = (t: DiffType) => t === "del" ? "−" : t === "ins" ? "+" : " ";
+  const renderCell = (side: SplitSide | null, cls: "del" | "ins" | "ctx" | "empty") => {
+    if (cls === "empty" || !side) return <div className="diff-cell empty" />;
+    return (
+      <div className={`diff-cell ${cls}`}>
+        <span className="diff-ln">{base + side.lineNum}</span>
+        <span className="diff-code">{renderChunks(side)}</span>
+      </div>
+    );
+  };
 
   return (
-    <div className="diff" style={{ maxHeight: 480, overflowY: "auto" }}>
-      {/* Header bar */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 1px 1fr",
-          background: "var(--bg-soft)",
-          borderBottom: "1px solid var(--border)",
-          fontSize: 11,
-          fontFamily: "var(--font-mono)",
-          color: "var(--fg-muted)",
-        }}
-      >
+    <div className="diff" style={{ maxHeight, overflowY: "auto" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1px 1fr", background: "var(--bg-soft)", borderBottom: "1px solid var(--border)", fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--fg-muted)" }}>
         <div style={{ padding: "7px 12px", display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ color: "var(--critical)", fontWeight: 700 }}>−</span>
-          <span>before · <span style={{ color: "var(--fg)" }}>{filePath}</span></span>
+          <span style={{ color: "var(--critical)", fontWeight: 700 }}>\u2212</span>
+          <span>before \u00b7 <span style={{ color: "var(--fg)" }}>{filePath}</span></span>
         </div>
         <div style={{ background: "var(--border)" }} />
         <div style={{ padding: "7px 12px", display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ color: "var(--success)", fontWeight: 700 }}>+</span>
-          <span>after · <span style={{ color: "var(--fg)" }}>{filePath}</span></span>
+          <span>after \u00b7 <span style={{ color: "var(--fg)" }}>{filePath}</span></span>
         </div>
       </div>
-
-      {/* Diff rows */}
-      {viewLines.map((entry, idx) => {
-        if ("count" in entry) {
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1px 1fr" }}>
+        {splitRows.map((row, idx) => {
+          if (row.type === "hunk") {
+            return <div key={idx} className="diff-hunk" style={{ gridColumn: "1 / -1" }}>\u00b7\u00b7\u00b7  {row.hunkCount} unchanged line{row.hunkCount === 1 ? "" : "s"}  \u00b7\u00b7\u00b7</div>;
+          }
+          const isCtx = row.type === "ctx";
           return (
-            <div key={idx} className="diff-hunk">
-              ···  {entry.count} unchanged line{entry.count === 1 ? "" : "s"}  ···
-            </div>
+            <React.Fragment key={idx}>
+              {renderCell(row.left,  isCtx ? "ctx" : row.left  ? "del" : "empty")}
+              <div style={{ background: "var(--border)" }} />
+              {renderCell(row.right, isCtx ? "ctx" : row.right ? "ins" : "empty")}
+            </React.Fragment>
           );
-        }
-        const line = entry as AnnotatedLine;
-        const base = startLine - 1;
-        return (
-          <div key={idx} className={`diff-row ${line.type}`}>
-            <span className="diff-ln">{line.oldNum != null ? base + line.oldNum : ""}</span>
-            <span className="diff-ln">{line.newNum != null ? base + line.newNum : ""}</span>
-            <span className="diff-sign">{sign(line.type)}</span>
-            <span className="diff-code">{renderContent(line)}</span>
-          </div>
-        );
-      })}
+        })}
+      </div>
     </div>
   );
 };
+
 
 // ============================================================================
 // Detail pane

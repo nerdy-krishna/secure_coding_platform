@@ -246,6 +246,19 @@ mark.diff-hl {
 .diff-row.del mark.diff-hl { background: var(--diff-del-line); }
 .diff-row.ins mark.diff-hl { background: var(--diff-add-line); }
 
+/* Split (side-by-side) diff cells — 2-col layout: line-num | content */
+.diff-cell { display: grid; grid-template-columns: 38px 1fr; min-height: 22px; }
+.diff-cell.del { background: var(--diff-del); }
+.diff-cell.ins { background: var(--diff-add); }
+.diff-cell.ctx { background: transparent; }
+.diff-cell.empty { background: var(--bg-inset); }
+.diff-cell > .diff-ln { padding: 0 8px; color: var(--fg-subtle); text-align: right; user-select: none; border-right: 1px solid var(--border); background: var(--bg-soft); font-size: 11px; line-height: 22px; }
+.diff-cell.del > .diff-ln { background: var(--diff-del); border-right-color: var(--diff-del-line); }
+.diff-cell.ins > .diff-ln { background: var(--diff-add); border-right-color: var(--diff-add-line); }
+.diff-cell > .diff-code { padding: 0 12px; white-space: pre; overflow: hidden; text-overflow: ellipsis; line-height: 22px; color: var(--fg); }
+.diff-cell.del mark.diff-hl { background: var(--diff-del-line); }
+.diff-cell.ins mark.diff-hl { background: var(--diff-add-line); }
+
 /* Collapse hunk separator */
 .diff-hunk {
   display: flex;
