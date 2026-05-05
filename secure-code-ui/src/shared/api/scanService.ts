@@ -116,7 +116,7 @@ export const scanService = {
    * V01.2.2: scanId is encoded to prevent URL path injection.
    */
   getScanResult: async (scanId: string): Promise<ScanResultResponse> => {
-    const response = await apiClient.get<ScanResultResponse>(`/scans/${encodeURIComponent(scanId)}/result`);
+    const response = await apiClient.get<ScanResultResponse>(`/scans/${encodeURIComponent(scanId)}/result?include_source=true`);
     return response.data;
   },
 

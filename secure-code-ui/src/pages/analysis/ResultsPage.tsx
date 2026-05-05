@@ -113,6 +113,9 @@ const ResultsPage: React.FC = () => {
   const [applyingId, setApplyingId] = useState<number | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [filePathFilter, setFilePathFilter] = useState<string | null>(null);
+  const [diffTab, setDiffTab] = useState<"findings" | "full-diff">("findings");
+  const [diffSelectedFile, setDiffSelectedFile] = useState<string | null>(null);
   const { user } = useAuth();
   const isSuperuser = !!user?.is_superuser;
 
@@ -177,6 +180,29 @@ const ResultsPage: React.FC = () => {
     [allFindings],
   );
 
+  // All submitted files — used by FileTree and the full-diff panel.
+  const allFiles = useMemo<SubmittedFile[]>(() => {
+    if (data?.summary_report?.files_analyzed?.length) {
+      return data.summary_report.files_analyzed;
+    }
+    // Fallback for prescan-blocked scans: derive synthetic file list from findings
+    if (isPrescanBlocked && prescanData?.findings) {
+      const seen = new Set<string>();
+      return prescanData.findings
+        .filter((f) => f.file_path && !seen.has(f.file_path) && seen.add(f.file_path))
+        .map((f) => ({ file_path: f.file_path, findings: [] }));
+    }
+    return [];
+  }, [data, isPrescanBlocked, prescanData]);
+
+  // Changed files between original and fixed code maps — for Full Diff tab.
+  const changedFiles = useMemo<string[]>(() => {
+    if (!data?.original_code_map || !data?.fixed_code_map) return [];
+    return Object.keys(data.fixed_code_map).filter(
+      (p) => data.fixed_code_map![p] !== (data.original_code_map?.[p] ?? ""),
+    );
+  }, [data]);
+
   const filtered = useMemo(
     () =>
       allFindings.filter((f) => {
@@ -190,6 +216,14 @@ const ResultsPage: React.FC = () => {
           const fSource = f.source ?? "agent";
           if (fSource !== sourceFilter) return false;
         }
+        if (filePathFilter) {
+          // Folder filter: prefix match; file filter: exact match
+          if (
+            f.file_path !== filePathFilter &&
+            !f.file_path.startsWith(filePathFilter)
+          )
+            return false;
+        }
         if (
           search &&
           !(
@@ -201,7 +235,7 @@ const ResultsPage: React.FC = () => {
           return false;
         return true;
       }),
-    [allFindings, sevFilter, sourceFilter, search],
+    [allFindings, sevFilter, sourceFilter, filePathFilter, search],
   );
 
   const selected =
@@ -680,15 +714,53 @@ const ResultsPage: React.FC = () => {
         </div>
       )}
 
-      {/* body */}
+      {/* Tab bar — only shown for REMEDIATE scans that have a full diff */}
+      {data.summary_report?.scan_type === "REMEDIATE" && changedFiles.length > 0 && (
+        <div className="sccap-tabs" style={{ marginBottom: -1 }}>
+          <button
+            className={`sccap-tab${diffTab === "findings" ? " active" : ""}`}
+            onClick={() => setDiffTab("findings")}
+          >
+            Findings
+          </button>
+          <button
+            className={`sccap-tab${diffTab === "full-diff" ? " active" : ""}`}
+            onClick={() => setDiffTab("full-diff")}
+          >
+            Full Remediation Diff
+            <span className="count">{changedFiles.length}</span>
+          </button>
+        </div>
+      )}
+
+      {diffTab === "full-diff" && changedFiles.length > 0 ? (
+        <RemediationDiffPanel
+          changedFiles={changedFiles}
+          originalCodeMap={data.original_code_map ?? {}}
+          fixedCodeMap={data.fixed_code_map ?? {}}
+          findingsByFile={Object.fromEntries(
+            allFiles.map((f) => [f.file_path, f.findings ?? []])
+          )}
+          selectedFile={diffSelectedFile}
+          onSelectFile={setDiffSelectedFile}
+        />
+      ) : (
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "380px 1fr",
+          gridTemplateColumns: allFiles.length > 0 ? "220px 360px 1fr" : "360px 1fr",
           gap: 16,
           minHeight: 640,
         }}
       >
+        {allFiles.length > 0 && (
+          <FileTree
+            files={allFiles}
+            allFindings={allFindings}
+            selected={filePathFilter}
+            onSelect={setFilePathFilter}
+          />
+        )}
         {/* findings list */}
         <div
           className="surface"
@@ -866,6 +938,7 @@ const ResultsPage: React.FC = () => {
               setApplyingId(selected.id);
               applyFix.mutate(selected.id);
             }}
+            originalCodeMap={data?.original_code_map ?? undefined}
           />
         ) : (
           <div
@@ -883,6 +956,7 @@ const ResultsPage: React.FC = () => {
           </div>
         )}
       </div>
+      )}
 
       <Modal
         open={deleteConfirmOpen}
@@ -1121,11 +1195,13 @@ const FindingDetail: React.FC<{
   f: Finding;
   applying: boolean;
   onApply: () => void;
-}> = ({ f, applying, onApply }) => {
+  originalCodeMap?: Record<string, string>;
+}> = ({ f, applying, onApply, originalCodeMap }) => {
   const sev = (f.severity || "").toUpperCase();
   const sevColor = SEV_COLOR[sev] ?? "var(--fg-muted)";
   const hasFix = !!f.fixes?.code;
   const alreadyApplied = f.is_applied_in_remediation;
+  const fileContent = originalCodeMap?.[f.file_path] ?? null;
 
   return (
     <div
@@ -1205,6 +1281,19 @@ const FindingDetail: React.FC<{
       </div>
 
       <div className="sccap-divider" />
+
+      {/* Code snippet — shown for all findings that have source code available */}
+      {(fileContent || f.fixes?.original_snippet) && (
+        <div style={{ marginBottom: 18 }}>
+          <CodeSnippet
+            fileContent={fileContent}
+            snippet={f.fixes?.original_snippet ?? null}
+            lineNumber={f.line_number ?? 0}
+            filePath={f.file_path}
+            severityColor={sevColor}
+          />
+        </div>
+      )}
 
       <div style={{ display: "grid", gap: 18 }}>
         {f.description && (
@@ -1393,6 +1482,495 @@ const FindingDetail: React.FC<{
                 ),
               )}
             </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ============================================================================
+// File tree
+// ============================================================================
+
+interface FileTreeNode {
+  name: string;
+  fullPath: string;
+  isLeaf: boolean;
+  maxSeverity: string; // "" = no findings
+  findingCount: number;
+  children: FileTreeNode[];
+}
+
+function buildFileTree(files: SubmittedFile[], allFindings: Finding[]): FileTreeNode {
+  // Count findings per file path
+  const countByPath: Record<string, number> = {};
+  const sevByPath: Record<string, string> = {};
+  for (const f of allFindings) {
+    countByPath[f.file_path] = (countByPath[f.file_path] ?? 0) + 1;
+    const cur = sevByPath[f.file_path];
+    if (!cur || severityRank(f.severity) > severityRank(cur)) {
+      sevByPath[f.file_path] = f.severity?.toUpperCase() ?? "";
+    }
+  }
+
+  const root: FileTreeNode = { name: "", fullPath: "", isLeaf: false, maxSeverity: "", findingCount: 0, children: [] };
+
+  for (const file of files) {
+    const parts = file.file_path.split("/").filter(Boolean);
+    let node = root;
+    let prefix = "";
+    for (let i = 0; i < parts.length; i++) {
+      prefix = prefix ? `${prefix}/${parts[i]}` : parts[i];
+      const isLeaf = i === parts.length - 1;
+      let child = node.children.find((c) => c.name === parts[i]);
+      if (!child) {
+        child = { name: parts[i], fullPath: prefix, isLeaf, maxSeverity: "", findingCount: 0, children: [] };
+        node.children.push(child);
+      }
+      if (isLeaf) {
+        child.findingCount = countByPath[file.file_path] ?? 0;
+        child.maxSeverity = sevByPath[file.file_path] ?? "";
+      }
+      node = child;
+    }
+  }
+
+  // Propagate severity and counts upward
+  function propagate(n: FileTreeNode): void {
+    for (const c of n.children) propagate(c);
+    if (!n.isLeaf) {
+      n.findingCount = n.children.reduce((s, c) => s + c.findingCount, 0);
+      let best = "";
+      for (const c of n.children) {
+        if (severityRank(c.maxSeverity) > severityRank(best)) best = c.maxSeverity;
+      }
+      n.maxSeverity = best;
+    }
+  }
+  propagate(root);
+
+  // Sort: folders first, then files; within each group alphabetically
+  function sortNode(n: FileTreeNode): void {
+    n.children.sort((a, b) => {
+      if (a.isLeaf !== b.isLeaf) return a.isLeaf ? 1 : -1;
+      return a.name.localeCompare(b.name);
+    });
+    for (const c of n.children) sortNode(c);
+  }
+  sortNode(root);
+
+  return root;
+}
+
+const FileTree: React.FC<{
+  files: SubmittedFile[];
+  allFindings: Finding[];
+  selected: string | null;
+  onSelect: (path: string | null) => void;
+}> = ({ files, allFindings, selected, onSelect }) => {
+  const root = useMemo(() => buildFileTree(files, allFindings), [files, allFindings]);
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+
+  const toggleCollapse = (path: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      next.has(path) ? next.delete(path) : next.add(path);
+      return next;
+    });
+  };
+
+  const totalFindings = root.findingCount;
+
+  const renderNode = (node: FileTreeNode, depth: number): React.ReactNode => {
+    const sevColor = node.maxSeverity ? (SEV_COLOR[node.maxSeverity] ?? "var(--fg-muted)") : "var(--fg-subtle)";
+    const isSelected = selected === node.fullPath || selected === node.fullPath + "/";
+    const isCollapsed = collapsed.has(node.fullPath);
+
+    if (node.isLeaf) {
+      return (
+        <div
+          key={node.fullPath}
+          onClick={() => onSelect(isSelected ? null : node.fullPath)}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 5,
+            padding: "4px 8px 4px 0",
+            paddingLeft: depth * 16 + 8,
+            cursor: "pointer",
+            borderLeft: isSelected ? "2px solid var(--primary)" : "2px solid transparent",
+            background: isSelected ? "var(--bg-soft)" : "transparent",
+            borderRadius: "0 var(--r-sm) var(--r-sm) 0",
+            transition: "background .1s",
+          }}
+          onMouseEnter={(e) => { if (!isSelected) (e.currentTarget as HTMLElement).style.background = "var(--bg-soft)"; }}
+          onMouseLeave={(e) => { if (!isSelected) (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+        >
+          {/* file icon */}
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style={{ flexShrink: 0, color: sevColor }}>
+            <rect x="1.5" y="0.5" width="7" height="11" rx="1" stroke="currentColor" strokeWidth="1" />
+            <path d="M3.5 4h5M3.5 6h5M3.5 8h3" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+          </svg>
+          <span style={{ flex: 1, fontSize: 11.5, color: sevColor, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {node.name}
+          </span>
+          {node.findingCount > 0 && (
+            <span style={{ fontSize: 10, background: sevColor + "22", color: sevColor, borderRadius: 99, padding: "1px 5px", flexShrink: 0, fontWeight: 600 }}>
+              {node.findingCount}
+            </span>
+          )}
+        </div>
+      );
+    }
+
+    return (
+      <div key={node.fullPath}>
+        <div
+          onClick={() => {
+            toggleCollapse(node.fullPath);
+            onSelect(isSelected ? null : node.fullPath + "/");
+          }}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 5,
+            padding: "4px 8px 4px 0",
+            paddingLeft: depth * 16 + 8,
+            cursor: "pointer",
+            borderLeft: isSelected ? "2px solid var(--primary)" : "2px solid transparent",
+            background: isSelected ? "var(--bg-soft)" : "transparent",
+            borderRadius: "0 var(--r-sm) var(--r-sm) 0",
+            transition: "background .1s",
+          }}
+          onMouseEnter={(e) => { if (!isSelected) (e.currentTarget as HTMLElement).style.background = "var(--bg-soft)"; }}
+          onMouseLeave={(e) => { if (!isSelected) (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+        >
+          {/* chevron */}
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" style={{ flexShrink: 0, color: "var(--fg-subtle)", transform: isCollapsed ? "rotate(-90deg)" : "none", transition: "transform .15s" }}>
+            <path d="M2 3.5l3 3 3-3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          {/* folder icon */}
+          <svg width="13" height="12" viewBox="0 0 13 12" fill="none" style={{ flexShrink: 0, color: sevColor }}>
+            <path d="M1 3.5C1 2.67 1.67 2 2.5 2H5l1 1.5h4.5C11.33 3.5 12 4.17 12 5v4.5C12 10.33 11.33 11 10.5 11h-8C1.67 11 1 10.33 1 9.5V3.5z" stroke="currentColor" strokeWidth="1" fill={sevColor + "18"} />
+          </svg>
+          <span style={{ flex: 1, fontSize: 11.5, fontWeight: 500, color: sevColor, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {node.name}
+          </span>
+          {node.findingCount > 0 && (
+            <span style={{ fontSize: 10, background: sevColor + "22", color: sevColor, borderRadius: 99, padding: "1px 5px", flexShrink: 0, fontWeight: 600 }}>
+              {node.findingCount}
+            </span>
+          )}
+        </div>
+        {!isCollapsed && node.children.map((c) => renderNode(c, depth + 1))}
+      </div>
+    );
+  };
+
+  return (
+    <div
+      className="surface"
+      style={{ padding: 0, overflow: "auto", alignSelf: "start", position: "sticky", top: 16 }}
+    >
+      {/* All files row */}
+      <div
+        onClick={() => onSelect(null)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "8px 10px",
+          cursor: "pointer",
+          borderBottom: "1px solid var(--border)",
+          borderLeft: selected === null ? "2px solid var(--primary)" : "2px solid transparent",
+          background: selected === null ? "var(--bg-soft)" : "transparent",
+        }}
+      >
+        <svg width="13" height="12" viewBox="0 0 13 12" fill="none" style={{ color: "var(--fg-muted)", flexShrink: 0 }}>
+          <rect x="1" y="1" width="11" height="10" rx="1.5" stroke="currentColor" strokeWidth="1" />
+          <path d="M3.5 4.5h6M3.5 6.5h6M3.5 8.5h4" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+        </svg>
+        <span style={{ flex: 1, fontSize: 11.5, fontWeight: 500, color: "var(--fg-muted)" }}>All files</span>
+        {totalFindings > 0 && (
+          <span style={{ fontSize: 10, background: "var(--bg-soft)", color: "var(--fg-muted)", borderRadius: 99, padding: "1px 5px", border: "1px solid var(--border)" }}>
+            {totalFindings}
+          </span>
+        )}
+      </div>
+      <div style={{ padding: "4px 0" }}>
+        {root.children.map((c) => renderNode(c, 0))}
+      </div>
+    </div>
+  );
+};
+
+// ============================================================================
+// Code snippet viewer
+// ============================================================================
+
+const CodeSnippet: React.FC<{
+  fileContent: string | null;
+  snippet: string | null;
+  lineNumber: number;
+  filePath: string;
+  severityColor: string;
+  contextLines?: number;
+}> = ({ fileContent, snippet, lineNumber, filePath, severityColor, contextLines = 5 }) => {
+  // Prefer full file content (from original_code_map) over snippet-only
+  const source = useMemo(() => {
+    if (fileContent) return fileContent;
+    if (snippet) return snippet;
+    return null;
+  }, [fileContent, snippet]);
+
+  if (!source || lineNumber <= 0) return null;
+
+  const allLines = source.split("\n");
+  // When using full file, extract context window; when using snippet, show as-is
+  let displayLines: string[];
+  let startLineNum: number;
+
+  if (fileContent) {
+    const start = Math.max(0, lineNumber - contextLines - 1);
+    const end = Math.min(allLines.length, lineNumber + contextLines);
+    displayLines = allLines.slice(start, end);
+    startLineNum = start + 1;
+  } else {
+    // Snippet — show all, treat first line as the flagged one
+    displayLines = allLines;
+    if (displayLines[displayLines.length - 1] === "") displayLines.pop();
+    startLineNum = lineNumber;
+  }
+
+  const flaggedLine = fileContent ? lineNumber : startLineNum;
+
+  return (
+    <div>
+      {/* Header */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          marginBottom: 6,
+          fontSize: 11,
+          color: "var(--fg-muted)",
+          fontFamily: "var(--font-mono)",
+        }}
+      >
+        <svg width="11" height="11" viewBox="0 0 11 11" fill="none" style={{ color: "var(--fg-subtle)", flexShrink: 0 }}>
+          <rect x="1" y="0.5" width="7" height="10" rx="1" stroke="currentColor" strokeWidth="1" />
+          <path d="M2.5 3.5h5M2.5 5.5h5M2.5 7.5h3" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+        </svg>
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 240 }}>{filePath}</span>
+        <span style={{ color: "var(--fg-subtle)" }}>·</span>
+        <span style={{ color: severityColor, fontWeight: 600 }}>line {lineNumber}</span>
+      </div>
+      {/* Code block — reuses .diff container for consistent look */}
+      <div className="diff" style={{ maxHeight: 220, overflowY: "auto" }}>
+        {displayLines.map((line, i) => {
+          const lineNum = startLineNum + i;
+          const isFlagged = lineNum === flaggedLine;
+          return (
+            <div
+              key={i}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "38px 1fr",
+                minHeight: 22,
+                background: isFlagged ? "var(--diff-del)" : "transparent",
+                borderLeft: isFlagged ? `2px solid ${severityColor}` : "2px solid transparent",
+              }}
+            >
+              <span
+                className="diff-ln"
+                style={{
+                  padding: "0 8px",
+                  color: isFlagged ? severityColor : "var(--fg-subtle)",
+                  textAlign: "right",
+                  userSelect: "none",
+                  background: isFlagged ? "var(--diff-del)" : "var(--bg-soft)",
+                  borderRight: "1px solid var(--border)",
+                  fontSize: 11,
+                  lineHeight: "22px",
+                  fontWeight: isFlagged ? 700 : 400,
+                }}
+              >
+                {lineNum}
+              </span>
+              <span
+                className="diff-code"
+                style={{
+                  padding: "0 12px",
+                  whiteSpace: "pre",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  lineHeight: "22px",
+                  color: isFlagged ? "var(--fg)" : "var(--fg-muted)",
+                  fontWeight: isFlagged ? 500 : 400,
+                }}
+              >
+                {line || " "}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+// ============================================================================
+// Remediation diff panel (Full Diff tab)
+// ============================================================================
+
+const RemediationDiffPanel: React.FC<{
+  changedFiles: string[];
+  originalCodeMap: Record<string, string>;
+  fixedCodeMap: Record<string, string>;
+  findingsByFile: Record<string, Finding[]>;
+  selectedFile: string | null;
+  onSelectFile: (path: string) => void;
+}> = ({ changedFiles, originalCodeMap, fixedCodeMap, findingsByFile, selectedFile, onSelectFile }) => {
+  const effectiveSelected = selectedFile ?? (changedFiles.length > 0 ? changedFiles[0] : null);
+
+  // Stats for the selected file diff
+  const diffStats = useMemo(() => {
+    if (!effectiveSelected) return { added: 0, removed: 0 };
+    const orig = (originalCodeMap[effectiveSelected] ?? "").split("\n");
+    const fixed = (fixedCodeMap[effectiveSelected] ?? "").split("\n");
+    const raw = computeLineDiff(orig, fixed);
+    return {
+      added: raw.filter((l) => l.type === "ins").length,
+      removed: raw.filter((l) => l.type === "del").length,
+    };
+  }, [effectiveSelected, originalCodeMap, fixedCodeMap]);
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "200px 1fr",
+        gap: 0,
+        maxHeight: "calc(100vh - 280px)",
+        overflow: "hidden",
+        border: "1px solid var(--border)",
+        borderRadius: "var(--r-lg)",
+        background: "var(--bg-elev)",
+      }}
+    >
+      {/* Left: file list */}
+      <div
+        style={{
+          borderRight: "1px solid var(--border)",
+          overflowY: "auto",
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        {/* Header */}
+        <div
+          style={{
+            padding: "10px 12px",
+            borderBottom: "1px solid var(--border)",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            background: "var(--bg-soft)",
+          }}
+        >
+          <span style={{ fontSize: 11, color: "var(--fg-muted)", fontWeight: 500 }}>Changed files</span>
+          <span className="chip" style={{ fontSize: 10, padding: "1px 6px" }}>{changedFiles.length}</span>
+        </div>
+        {changedFiles.map((path) => {
+          const isActive = path === effectiveSelected;
+          const filefindings = findingsByFile[path] ?? [];
+          const maxSev = filefindings.reduce<string>((best, f) => {
+            return severityRank((f.severity ?? "").toUpperCase()) > severityRank(best)
+              ? (f.severity ?? "").toUpperCase()
+              : best;
+          }, "");
+          const dotColor = maxSev ? (SEV_COLOR[maxSev] ?? "var(--fg-subtle)") : "var(--fg-subtle)";
+          const shortName = path.split("/").pop() ?? path;
+          const dir = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+          return (
+            <div
+              key={path}
+              onClick={() => onSelectFile(path)}
+              style={{
+                padding: "8px 12px",
+                cursor: "pointer",
+                borderLeft: isActive ? "2px solid var(--primary)" : "2px solid transparent",
+                background: isActive ? "var(--bg-soft)" : "transparent",
+                transition: "background .1s",
+              }}
+              onMouseEnter={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.background = "color-mix(in oklch, var(--bg-soft) 60%, transparent)"; }}
+              onMouseLeave={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ width: 6, height: 6, borderRadius: 99, background: dotColor, flexShrink: 0 }} />
+                <span
+                  className="mono"
+                  style={{ fontSize: 11, color: "var(--fg)", fontWeight: isActive ? 500 : 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                  title={path}
+                >
+                  {shortName}
+                </span>
+              </div>
+              {dir && (
+                <div className="mono" style={{ fontSize: 10, color: "var(--fg-subtle)", marginTop: 1, paddingLeft: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {dir}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Right: diff viewer */}
+      <div style={{ overflow: "hidden", display: "flex", flexDirection: "column" }}>
+        {effectiveSelected ? (
+          <>
+            {/* File header */}
+            <div
+              style={{
+                padding: "10px 14px",
+                borderBottom: "1px solid var(--border)",
+                background: "var(--bg-soft)",
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                flexWrap: "wrap",
+              }}
+            >
+              <span className="mono" style={{ fontSize: 12, color: "var(--fg)", fontWeight: 500 }}>{effectiveSelected}</span>
+              <div style={{ display: "flex", gap: 6, marginLeft: "auto" }}>
+                {diffStats.removed > 0 && (
+                  <span className="chip" style={{ background: "var(--diff-del)", borderColor: "var(--diff-del-line)", color: "var(--critical)", fontSize: 10.5 }}>
+                    −{diffStats.removed}
+                  </span>
+                )}
+                {diffStats.added > 0 && (
+                  <span className="chip" style={{ background: "var(--diff-add)", borderColor: "var(--diff-add-line)", color: "var(--success)", fontSize: 10.5 }}>
+                    +{diffStats.added}
+                  </span>
+                )}
+              </div>
+            </div>
+            {/* Scrollable diff */}
+            <div style={{ flex: 1, overflowY: "auto" }}>
+              <DiffViewer
+                original={originalCodeMap[effectiveSelected] ?? ""}
+                fixed={fixedCodeMap[effectiveSelected] ?? ""}
+                startLine={1}
+                filePath={effectiveSelected}
+              />
+            </div>
+          </>
+        ) : (
+          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--fg-muted)", fontSize: 13 }}>
+            Select a file to view its diff
           </div>
         )}
       </div>

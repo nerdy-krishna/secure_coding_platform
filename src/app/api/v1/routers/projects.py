@@ -737,11 +737,12 @@ async def apply_fixes(
 )
 async def get_scan_result_details(
     scan_id: uuid.UUID,
+    include_source: bool = Query(False),
     user: db_models.User = Depends(current_active_user),
     service: ScanQueryService = Depends(get_scan_query_service),
 ):
     """Retrieves the full, detailed result of a completed scan."""
-    result = await service.get_scan_result(scan_id, user)
+    result = await service.get_scan_result(scan_id, user, include_source=include_source)
 
     return result
 
