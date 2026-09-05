@@ -142,3 +142,33 @@ Current tool surface:
 
 External agentic clients (Claude Code, Cursor, etc.) authenticate with
 an ordinary user JWT; all visibility-scope rules apply.
+
+## Pentesting (opt-in)
+
+A separately gated bounded context (disabled by default; enabled through the
+local development profile) that sits alongside — and never mutates — the Code
+Scan flow:
+
+- **Pentest Projects** — project-scoped credentials (KMS-envelope encrypted,
+  never returned by read APIs) and white-box selection of an immutable
+  completed Code Scan snapshot.
+- **Engagements** — black-box, gray-box, or white-box engagements; each
+  Attempt pins its contract, policy, catalog, adapter, evidence, prompt,
+  model, report, and runner versions.
+- **Attempts & deltas** — immutable Attempt identity with digest-chained
+  `DecisionDelta` projections; the adaptive controller consumes only
+  committed deltas, never in-flight tool output.
+- **Execution** — bounded actions with generation-fenced leases; an atomic
+  Execution commit makes results, evidence manifests, facts, coverage,
+  budgets, and events visible in one transaction.
+- **Tool pack** — deterministic Web/API adapters (nmap, nuclei, ZAP,
+  Playwright) brokered through relay grants and pinned egress.
+- **Finding truth** — evidence-backed Observations → CandidateFinding →
+  ConfirmedFinding only via a configured predicate or independent
+  reproduction.
+- **Cockpit & governance** — engagement/attempt/delta cockpit, immutable
+  reports, redacted exports, retesting, and a governance overlay
+  (Capability 13).
+
+See the pentesting operations runbooks under
+`docs/docs/operations/pentesting-*.md`.

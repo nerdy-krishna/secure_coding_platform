@@ -123,6 +123,38 @@ separate, opt-in step.
 - **Encrypted secrets** — every LLM API key and SMTP password is
   Fernet-encrypted at rest with the installation's `ENCRYPTION_KEY`.
 
+### Pentesting (opt-in, feature-gated)
+
+A separately gated **Pentesting** bounded context adds authorized black-box,
+gray-box, and white-box engagements alongside Code Scan, without ever
+mutating the Code Scan aggregate:
+
+- **Project-linked engagements** — pentest projects own their scope,
+  KMS-envelope-encrypted credentials, and an immutable Code Scan snapshot
+  selected through a read-only white-box bridge. Read APIs never return
+  credential material.
+- **Deterministic safety model** — every target interaction requires
+  authorization, tenant/attempt identity, and a pinned deterministic
+  scope-policy decision. A generation-fenced lease fences stale workers and
+  an atomic Execution commit makes results authoritative; RabbitMQ is
+  notification-only.
+- **Exact-origin tracer → isolated gateway → bounded controller** — from a
+  harmless public-only HTTP/TLS tracer through a pinned-egress,
+  credential-minimal runner to an adaptive controller that consumes only
+  committed `DecisionDelta` projections.
+- **Deterministic Web/API tool pack** — a Tool Broker and relay grants drive
+  nmap, nuclei, ZAP, and Playwright adapters with pinned egress, connection
+  permits, and typed proposals/results.
+- **Finding truth** — evidence-backed Observations become ConfirmedFindings
+  only through a configured evidence predicate or independent reproduction;
+  a scanner, adapter, specialist, or model can never confirm directly.
+- **Cockpit, reports, and governance** — engagement/attempt/delta cockpit,
+  immutable reports, redacted exports, retesting, and a governance overlay.
+
+Pentesting is off by default and enabled through the local development
+profile (`docker-compose.pentesting-local.yml`). See
+`docs/docs/operations/pentesting-adaptive-controller.md`.
+
 ### Integrations and automation
 - **MCP server** — the scan + advisor workflow is exposed as MCP tools
   (`sccap_submit_scan`, `sccap_get_scan_status`,
@@ -289,7 +321,7 @@ LangGraph 1.x + LangChain 1.x · LiteLLM · Pydantic AI · FastMCP ·
 WeasyPrint (PDF reports) · fastapi-users (JWT Bearer) · Postgres 16 ·
 RabbitMQ · Qdrant (fastembed `all-MiniLM-L6-v2`) · Fluentd → Loki →
 Grafana · React 18 + Vite + TypeScript · custom SCCAP UI primitives · TanStack Query ·
-React Router v7.
+React Router v7 · nmap / nuclei / ZAP / Playwright (pentesting tool pack).
 
 Full breakdown in
 [`docs/docs/overview/technology-stack.md`](docs/docs/overview/technology-stack.md).

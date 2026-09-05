@@ -37,6 +37,22 @@ LangGraph workflow with an `AsyncPostgresSaver` checkpointer. Queues:
 `code_submission_queue`, `analysis_approved_queue` (names live in
 `src/app/config/config.py`).
 
+## Pentesting tooling (opt-in)
+
+The separately gated Pentesting bounded context adds its own execution plane
+on top of the same RabbitMQ/Postgres spine:
+
+- **Dedicated runners** — credential-minimal `runner_v3` with a read-only root,
+  bounded workspace, explicit resolver, and pinned Host/SNI-preserving egress.
+- **Tool pack** — nmap, nuclei, ZAP, and Playwright adapters run in isolated
+  tool workers behind a Tool Broker, relay grants, and connection permits.
+- **Queues** — `pentest_execution_queue`, `pentest_execution_v2_queue`,
+  `pentest_execution_v3_queue`, `pentest_controller_queue`,
+  `pentest_tool_queue_v1`, `pentest_verification_queue_v1` (RabbitMQ is
+  notification-only; PostgreSQL stays authoritative).
+- **Isolation** — seccomp profiles and per-profile deployment manifests
+  (`deploy/helm/sccap/templates/pentest-tool-pack.yaml`, `deploy/seccomp/`).
+
 ## Data + infra
 
 - **PostgreSQL 16** — primary store for users, scans, findings,

@@ -176,9 +176,7 @@ specialist, or model cannot directly confirm a finding.
   v2 dispatch/result envelopes, generation-fenced leases, an interaction journal, raw/redacted/
   normalized evidence lineage, exact-version staging, manifest generations, orphan reconciliation,
   atomic Execution commits, cancellation fencing, and resume/restart semantics. Runner v1 remains
-  readable while v2 production is feature-gated. Coverage is characterization-only and zero
-  findings are asserted. Gray-box, white-box, credentials, active scanners, target mutations,
-  adaptive orchestration, Code Scan invocation, and full reporting remain unimplemented.
+  readable while v2 production is feature-gated.
 - Pentesting Foundation 3 retains that harmless tracer but moves all target/DNS traffic into a
   dedicated default-off runner-v3. Each v3 Execution is bound to an immutable policy snapshot,
   signed complete DNS observation, deterministic signed Scope Decision, generation-fenced runner
@@ -187,5 +185,14 @@ specialist, or model cannot directly confirm a finding.
   connection, receives no database/object-store/cloud/LLM/operator credentials, and runs with a
   read-only root plus bounded workspace and network envelope. Cancellation durably revokes grants
   and independently closes network activity; v3 effects join the Foundation 2 atomic commit.
-  Private-network access, authenticated sessions, browsers/scanners, mutations, adaptive
-  orchestration, Code Scan invocation, and external qualification targets remain unimplemented.
+- Pentesting Capabilities 4–13 build the product on the foundations: a bounded adaptive controller
+  with committed `DecisionDelta` authority (C4); a deterministic Web/API tool pack with the Tool
+  Broker, relay grants, and pinned egress (C5); identity-aware finding truth and gray-box
+  verification (C6–C7); white-box Code Scan integration through an owner-issued read-only adapter
+  (C8); canonical test/operation/coverage authority (C9); reversible mutations with locks, prior
+  state, and durable cleanup (C10); asynchronous callback correlation (C11); and the cockpit,
+  reports, exports, governance, and fresh-retest surface (C13). Capability 12 (private runners)
+  and Capability 14 (expansion) are explicitly out of scope. A development-only, target-agnostic
+  local assessment loop drives project-scoped, exact-origin allowlisted fixtures. External vault
+  providers, blind-callback receivers, recipient-encrypted evidence packages, SIEM delivery, and
+  arbitrary target expansion remain out of scope.

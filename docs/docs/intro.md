@@ -38,6 +38,19 @@ knowledge bases. The platform is organized around three surfaces:
 * **Unified Admin console** — LLM configurations, user groups, users, frameworks (with CSV / git-URL RAG ingestion), agents, prompt templates, SMTP, system config, and runtime logs. A shared sub-nav keeps every surface one click apart.
 * **Encrypted secrets** — every LLM API key and SMTP password is Fernet-encrypted at rest with the installation's `ENCRYPTION_KEY`.
 
+### Pentesting (opt-in, feature-gated)
+
+A separately gated **Pentesting** bounded context (disabled by default; enabled
+through the local development profile) adds authorized black-box, gray-box, and
+white-box engagements alongside Code Scan:
+
+* **Project-linked engagements** — pentest projects own their scope and KMS-envelope-encrypted credentials; white-box runs select an immutable Code Scan snapshot through a read-only bridge. Read APIs never return credentials.
+* **Deterministic safety model** — every target interaction requires authorization, tenant/attempt identity, and a pinned deterministic scope-policy decision; generation-fenced leases and atomic Execution commits keep results authoritative.
+* **Bounded adaptive controller** — a model may suggest next authorized capabilities, but only committed `DecisionDelta` projections are consumed; scope, execution, budget, and finding authority stay deterministic.
+* **Deterministic Web/API tool pack** — a Tool Broker and relay grants drive nmap, nuclei, ZAP, and Playwright adapters behind pinned egress and connection permits.
+* **Finding truth** — Observations become ConfirmedFindings only through a configured evidence predicate or independent reproduction; tool/model output never directly confirms.
+* **Cockpit, reports, and governance** — engagement/attempt/delta cockpit, immutable reports, redacted exports, retesting, and a governance overlay.
+
 ### Integrations and automation
 
 * **MCP server** — the scan + advisor workflow is exposed as MCP tools at `/mcp`, reusing JWT auth so Claude Code, Cursor, or other agentic clients can drive the platform remotely.
