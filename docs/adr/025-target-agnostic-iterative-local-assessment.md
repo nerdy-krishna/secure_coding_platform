@@ -58,6 +58,25 @@ optional fields remain inert. See
 [local read-only authorization operations](../docs/operations/pentesting-readonly-authorization.md)
 for supported inputs, evidence semantics, deployment order, and limitations.
 
+## Additive browser/discovery qualification
+
+Credential-bearing Playwright runs retain their anonymous crawl and DOM canary,
+then add bounded isolated browser sessions. Protected per-role baselines, native
+cookie expiry, hash-only response/DOM observations and fixed-role HTML/JSON/OpenAPI
+provenance are recorded without exporting sessions. Discovered privacy remains
+unknown; documented operations are not live tests or finding authority.
+
+Worker and C6 readers share the legacy/current local execution-options validator.
+Postcommit reconciliation preserves its original scope-checked audit on broker
+redelivery, without skipping C6 authority validation. Historical C6 catalog replay
+seeds only its pinned release entries and still rejects changed/missing digests.
+
+The disposable paired tracer exercises real broker delivery, worker/Chromium,
+encrypted/versioned evidence, C6 candidates, scoped summaries and postcommit
+redelivery. This does not qualify product HTTP authentication/UI, precommit crash
+recovery, non-owner RLS, SSO or C7 verification. Existing live feature flags remain
+unchanged; pending qualification is not permission to disable a feature.
+
 ## Consequences
 
 - The runner works against any explicitly configured local fixture origin; no
