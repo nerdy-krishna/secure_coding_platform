@@ -119,6 +119,52 @@ The deterministic progression from evidence-backed Observation to CandidateFindi
 a configured evidence predicate or independent reproduction, ConfirmedFinding. A scanner, adapter,
 specialist, or model cannot directly confirm a finding.
 
+### Pentest SQLi payload bundle
+
+The reviewed, versioned, digest-pinned source of SQL injection payloads. Adapters render a fresh
+nonce into frozen templates; a model may select a technique ID, operation, identity, and objective
+but never a payload value.
+
+### Pentest SQLi differential analysis
+
+The deterministic error / boolean true-false / bounded timing differential analyzer. It records a
+per-mode verdict, a control-baseline consistency decision, and a coverage outcome (candidate
+eligible, passed, inconclusive, or blocked) so no SQLi run is silently dropped and only internally
+consistent baselines can promote an observation to a candidate.
+
+### Pentest XSS canary bundle
+
+The reviewed, versioned, digest-pinned source of reflected and DOM XSS canaries. Canaries are inert
+markers (never executable script); a model may select a technique ID, operation, identity, and
+objective but never a canary value.
+
+### Pentest XSS sink reach
+
+The deterministic requirement that a reflected canary reach an element, attribute, or URL sink, or
+that a DOM canary appear in the live DOM after the page's own script runs. Absent sink reach, an
+XSS observation remains an observation and never becomes a candidate.
+
+### Pentest work ledger
+
+The durable cross-product of canonical test x operation x identity x technique x payload-bundle
+version, each unit in a six-state lifecycle (untried, running, completed, blocked, inconclusive,
+inapplicable). The ledger — never the model — is the completion authority: an attempt may report
+complete only when no applicable, permitted, untried work remains.
+
+### Pentest auth differential
+
+The deterministic authentication-bypass (credential-free, non-destructive) and
+anonymous-vs-authenticated / role-vs-role authorization comparison. Identities, objects, and owners
+are opaque handles; no credential or session secret is representable. Detected differentials
+produce candidates for verification, never confirmed findings.
+
+### Pentest OAST technique
+
+The reviewed, platform-callback-bound payload bundle for SSRF, blind XXE, blind OS-command, and
+blind template injection. A correlated callback is a candidate lead, never a confirmed finding;
+expiry without a callback is inconclusive, never passed. Tokens, causality, and expiry are owned
+by the C11 callback infrastructure.
+
 ## Invariants
 
 - PostgreSQL status, events, tasks, artifacts, and snapshots are authoritative; UI state is derived.
