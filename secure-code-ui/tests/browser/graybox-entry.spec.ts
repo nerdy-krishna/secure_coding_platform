@@ -57,12 +57,68 @@ test("gray-box submits two opaque identities and explicit owner-only read contex
   expect(JSON.stringify(submissions[0])).not.toContain("secret");
 });
 
+test("one assessment declares private resources for both account owners", async ({ page }) => {
+  const submissions = await entry(page);
+  await page.getByLabel("Second identity (optional)").selectOption(secondary);
+  await page.getByText("Read-only authorization context (optional)", { exact: true }).click();
+  await expect(page.getByLabel("Secondary account owner-only resources")).toBeVisible({ timeout: 3000 });
+  await page.getByLabel("Primary account owner-only resources").fill("/records/report-7");
+  await page.getByLabel("Secondary account owner-only resources").fill("/documents/ledger-42");
+  await page.getByRole("button", { name: "Authorize and start" }).click();
+  await expect.poll(() => submissions.length).toBe(1);
+  expect(submissions[0]).toMatchObject({ execution_options: { readonly_access: { owner_only_resources: [
+    { path: "/records/report-7", owner: "primary" },
+    { path: "/documents/ledger-42", owner: "secondary" },
+  ] } } });
+});
+
 test("changing the primary account clears the second selection and excludes duplicates", async ({ page }) => {
   await entry(page);
   await page.getByLabel("Second identity (optional)").selectOption(secondary);
   await page.getByLabel("Primary project credential").selectOption(secondary);
   await expect(page.getByLabel("Second identity (optional)")).toHaveValue("");
   await expect(page.getByLabel("Second identity (optional)").locator(`option[value="${secondary}"]`)).toHaveCount(0);
+});
+
+test("changing account authority clears stale ownership declarations", async ({ page }) => {
+  await entry(page);
+  await page.getByLabel("Second identity (optional)").selectOption(secondary);
+  await page.getByText("Read-only authorization context (optional)", { exact: true }).click();
+  await page.getByLabel("Primary account owner-only resources").fill("/records/report-7");
+  await page.getByLabel("Secondary account owner-only resources").fill("/documents/ledger-42");
+  await page.getByLabel("Primary project credential").selectOption(secondary);
+  await expect(page.getByLabel("Primary account owner-only resources")).toHaveValue("", { timeout: 3000 });
+  await expect(page.getByLabel("Secondary account owner-only resources")).toHaveValue("");
+  await expect(page.getByLabel("Secondary account owner-only resources")).toBeDisabled();
+});
+
+test("clearing and reselecting the secondary account never restores stale private paths", async ({ page }) => {
+  const submissions = await entry(page);
+  await page.getByLabel("Second identity (optional)").selectOption(secondary);
+  await page.getByText("Read-only authorization context (optional)", { exact: true }).click();
+  await page.getByLabel("Primary account owner-only resources").fill("/records/report-7");
+  await page.getByLabel("Secondary account owner-only resources").fill("/documents/ledger-42");
+  await page.getByLabel("Second identity (optional)").selectOption("");
+  await expect(page.getByLabel("Secondary account owner-only resources")).toBeDisabled();
+  await page.getByLabel("Second identity (optional)").selectOption(secondary);
+  await expect(page.getByLabel("Secondary account owner-only resources")).toHaveValue("");
+  await expect(page.getByLabel("Primary account owner-only resources")).toHaveValue("/records/report-7");
+  await page.getByRole("button", { name: "Authorize and start" }).click();
+  await expect.poll(() => submissions.length).toBe(1);
+  expect(submissions[0]).toMatchObject({ execution_options: { readonly_access: { owner_only_resources: [{ path: "/records/report-7", owner: "primary" }] } } });
+});
+
+test("changing project clears both credentials and private resource declarations", async ({ page }) => {
+  await entry(page);
+  await page.getByLabel("Second identity (optional)").selectOption(secondary);
+  await page.getByText("Read-only authorization context (optional)", { exact: true }).click();
+  await page.getByLabel("Primary account owner-only resources").fill("/records/report-7");
+  await page.getByLabel("Secondary account owner-only resources").fill("/documents/ledger-42");
+  await page.getByRole("combobox", { name: "Pentesting project", exact: true }).selectOption("");
+  for (const label of ["Primary account owner-only resources", "Secondary account owner-only resources"]) {
+    await expect(page.getByLabel(label)).toHaveValue("");
+    await expect(page.getByLabel(label)).toBeDisabled();
+  }
 });
 
 test("one-account gray-box remains launchable on mobile without ownership declarations", async ({ page }) => {
