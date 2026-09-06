@@ -160,10 +160,10 @@ produce candidates for verification, never confirmed findings.
 
 ### Pentest OAST technique
 
-The reviewed, platform-callback-bound payload bundle for SSRF, blind XXE, blind OS-command, and
-blind template injection. A correlated callback is a candidate lead, never a confirmed finding;
-expiry without a callback is inconclusive, never passed. Tokens, causality, and expiry are owned
-by the C11 callback infrastructure.
+The reviewed, platform-callback-bound payload bundle for SSRF, blind XXE, blind OS-command, blind
+template injection, webhook, email, and delayed-job observation. A correlated callback is a
+candidate lead, never a confirmed finding; expiry without a callback is inconclusive, never passed.
+Tokens, causality, and expiry are owned by the C11 callback infrastructure.
 
 ### Pentest realtime authorization technique
 
