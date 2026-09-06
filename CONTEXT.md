@@ -165,6 +165,15 @@ blind template injection. A correlated callback is a candidate lead, never a con
 expiry without a callback is inconclusive, never passed. Tokens, causality, and expiry are owned
 by the C11 callback infrastructure.
 
+### Pentest realtime authorization technique
+
+The reviewed, versioned WebSocket/SSE realtime probe-shape bundle and the deterministic
+handshake-authentication / origin-enforcement / channel-subscription / per-message authorization
+differential. A candidate lead is produced only when a valid same-origin/authorized control
+baseline is paired with an accepted anonymous, cross-origin, or cross-channel probe; a single
+accepted request can never self-confirm. Realtime operations carry a `realtime` test category in
+the operation inventory so they join the same canonical operation graph as REST and GraphQL.
+
 ## Invariants
 
 - PostgreSQL status, events, tasks, artifacts, and snapshots are authoritative; UI state is derived.
