@@ -182,6 +182,15 @@ canary writes, deletes, or executes anything. A candidate is produced only when 
 baseline is valid and a probe returns a distinct successful read; a failed baseline is inconclusive
 and an incomplete probe is blocked, never silently omitted.
 
+### Pentest indicator technique families
+
+The reviewed, versioned injection-indicator and behavioral technique families (NoSQL, LDAP,
+deserialization, request-smuggling, rate-limit/abuse, upload validation, and API fuzzing) behind the
+same adapter contract. A model selects a technique ID, operation, identity, and objective; the
+adapter selects indicators from a reviewed bundle. An indicator is a bounded signal — an error
+signature, a status anomaly, a timing delta, or a distinct body digest — never a confirmed finding,
+and a candidate requires a valid control baseline plus a family-specific observed signal.
+
 ## Invariants
 
 - PostgreSQL status, events, tasks, artifacts, and snapshots are authoritative; UI state is derived.
