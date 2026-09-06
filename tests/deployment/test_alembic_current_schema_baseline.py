@@ -17,7 +17,7 @@ MIGRATION_PATH = (
 BASELINE_PATH = ROOT / "alembic" / "baselines" / "2026_08_28_current_schema.sql"
 BASELINE_ROOT = "4d5e6f708192"
 FOUNDATION1_HEAD = "92a3b4c5d6e7"
-CURRENT_HEAD = "c13product0003"
+CURRENT_HEAD = "workledger0001"
 PENTEST_REFERENCE_MIGRATION_PATH = (
     ROOT
     / "alembic"
@@ -25,6 +25,7 @@ PENTEST_REFERENCE_MIGRATION_PATH = (
     / "2026_08_30_0500_harden_pentest_reference_integrity.py"
 )
 ACTIVE_CHAIN = (
+    ("workledger0001", "c13product0003"),
     ("c13product0003", "c13product0002"),
     ("c13product0002", "c13product0001"),
     ("c13product0001", "c13a1b2c3d4e5"),
