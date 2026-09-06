@@ -31,3 +31,5 @@ leaving a completed plan as the only explanation of the system.
 - [ADR-023: Pentesting Capability 11 asynchronous callback correlation](023-pentesting-capability11-asynchronous-callback-correlation.md)
 - [ADR-024: Pentesting Capability 13 cockpit, reports, governance, and retesting](024-pentesting-capability13-cockpit-reports-governance-retesting.md)
 - [ADR-025: Target-agnostic iterative local assessment loop](025-target-agnostic-iterative-local-assessment.md)
+- [ADR-026: Pentesting threat model, business invariants, and workflow state machines](026-pentesting-threat-model-business-invariants-workflow.md)
+- [ADR-027: Pentesting Capability 12 private-network execution runner](027-pentesting-capability12-private-network-runner.md)
