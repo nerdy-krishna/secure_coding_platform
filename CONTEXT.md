@@ -174,6 +174,14 @@ baseline is paired with an accepted anonymous, cross-origin, or cross-channel pr
 accepted request can never self-confirm. Realtime operations carry a `realtime` test category in
 the operation inventory so they join the same canonical operation graph as REST and GraphQL.
 
+### Pentest path traversal canary
+
+The reviewed, versioned, non-destructive path/file traversal canary bundle and the deterministic
+control/probe read differential. Every canary is a read attempt at a fixed well-known file; no
+canary writes, deletes, or executes anything. A candidate is produced only when the control read
+baseline is valid and a probe returns a distinct successful read; a failed baseline is inconclusive
+and an incomplete probe is blocked, never silently omitted.
+
 ## Invariants
 
 - PostgreSQL status, events, tasks, artifacts, and snapshots are authoritative; UI state is derived.
