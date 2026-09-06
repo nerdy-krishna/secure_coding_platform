@@ -22,6 +22,7 @@ import type {
   SourcePin,
   SourceCutoff,
   StopEngagementReceipt,
+  ThreatModelView,
 } from "../lib/capability13/types";
 
 const apiRoot = `${import.meta.env.VITE_API_BASE_URL || "/api/v1"}/pentesting`;
@@ -282,6 +283,9 @@ export const capability13Service = {
 
   getToolObservations: async (engagementId: string, attemptId: string, signal?: AbortSignal) =>
     (await apiClient.get<AttemptToolObservations>(`${attemptPath(engagementId, attemptId)}/tool-observations`, { signal })).data,
+
+  getThreatModel: async (engagementId: string, attemptId: string, signal?: AbortSignal) =>
+    (await apiClient.get<ThreatModelView>(`${attemptPath(engagementId, attemptId)}/threat-model`, { signal })).data,
 
   getFindingLifecycle: async (engagementId: string, attemptId: string, signal?: AbortSignal): Promise<FindingLifecycle> => {
     const path = attemptPath(engagementId, attemptId);

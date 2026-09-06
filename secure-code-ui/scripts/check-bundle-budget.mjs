@@ -7,10 +7,10 @@ const KIB = 1024;
 const LIMITS = Object.freeze({
   entryJavaScript: 360 * KIB,
   asyncJavaScript: 315 * KIB,
-  // Pentesting adds lazy cockpit, report, governance, tool-observation, and
-  // finding-lifecycle views. Keep the per-entry and per-async caps unchanged
-  // while reserving their measured aggregate footprint.
-  totalJavaScript: 1_260 * KIB,
+  // Pentesting adds lazy cockpit, report, governance, tool-observation,
+  // finding-lifecycle, and threat-model views. Keep the per-entry and
+  // per-async caps unchanged while reserving their measured aggregate footprint.
+  totalJavaScript: 1_266 * KIB,
   stylesheet: 64 * KIB,
 });
 

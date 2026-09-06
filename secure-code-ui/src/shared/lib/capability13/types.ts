@@ -493,3 +493,59 @@ export interface FreshRetestReceipt {
   canonical_digest: string;
   duplicate: boolean;
 }
+
+export interface ThreatModelNode {
+  node_key: string;
+  kind: string;
+  digest: string;
+}
+
+export interface ThreatModelEdge {
+  source_node_key: string;
+  relationship: string;
+  target_node_key: string;
+  digest: string;
+}
+
+export interface ThreatModelTrustBoundary {
+  boundary_key: string;
+  name: string;
+  node_key: string;
+  classification: "asset" | "integration";
+}
+
+export interface ThreatModelEntryPoint {
+  entry_key: string;
+  node_key: string;
+  source: "operation" | "source" | "browser" | "evidence";
+}
+
+export interface ThreatModelInvariant {
+  invariant_key: string;
+  statement: string;
+  subject: string;
+  kind: "ownership" | "cardinality" | "workflow" | "price_quantity" | "uniqueness" | "tenant_scope";
+  state: "proposed" | "active" | "refuted";
+}
+
+export interface ThreatModelHypothesis {
+  hypothesis_key: string;
+  asset: string;
+  actor: string;
+  boundary: string;
+  operation: string;
+  invariant: string;
+  workflow_state: string;
+  rank_score: number;
+  state: "proposed" | "approved" | "testing" | "supported" | "refuted";
+}
+
+export interface ThreatModelView {
+  schema_version: "sccap.pentest.threat-model-view.v1";
+  nodes: ThreatModelNode[];
+  edges: ThreatModelEdge[];
+  boundaries: ThreatModelTrustBoundary[];
+  entries: ThreatModelEntryPoint[];
+  invariants: ThreatModelInvariant[];
+  hypotheses: ThreatModelHypothesis[];
+}
