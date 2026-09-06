@@ -40,6 +40,24 @@ promote them. Missing headers and generic HTTP metadata remain independent of
 fixture-specific paths. The local execution profile remains development-only
 and exact-origin allowlisted.
 
+## Additive read-only gray-box path
+
+The product may bind a second project-owned encrypted credential. Both exact
+revision/fingerprint references participate in the signed task and create
+idempotency digest. The local `authorization_readonly` tool uses separate HTTP
+sessions, bounded form/API authentication, and exact-origin GET comparisons.
+Optional owner-only path declarations supply operator expectations; discovered
+links alone do not prove privacy. Matching stable representations may become
+C6 candidates, never automatically confirmed findings. Independent verification
+still requires the qualified broker/verification path, not local session slots.
+This adds no production C7 readiness, new queue, or database migration.
+
+The local options parser accepts current browser policy fields. Unsupported
+nonempty engagement constraints fail closed before local admission; empty
+optional fields remain inert. See
+[local read-only authorization operations](../docs/operations/pentesting-readonly-authorization.md)
+for supported inputs, evidence semantics, deployment order, and limitations.
+
 ## Consequences
 
 - The runner works against any explicitly configured local fixture origin; no

@@ -970,6 +970,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/pentesting/model-options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Pentest Model Options
+         * @description List only non-secret model metadata eligible for scan submission.
+         */
+        get: operations["list_pentest_model_options_api_v1_pentesting_model_options_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pentesting/readiness": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Pentest Readiness
+         * @description Return truthful pre-launch capability-profile readiness.
+         */
+        get: operations["get_pentest_readiness_api_v1_pentesting_readiness_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/pentesting/projects/{pentest_project_id}/credentials": {
         parameters: {
             query?: never;
@@ -1056,6 +1096,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/pentesting/projects/{pentest_project_id}/gray-box-engagements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Product Gray Box Engagement */
+        post: operations["create_product_gray_box_engagement_api_v1_pentesting_projects__pentest_project_id__gray_box_engagements_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/pentesting/projects/{pentest_project_id}/white-box-engagements": {
         parameters: {
             query?: never;
@@ -1136,6 +1193,40 @@ export interface paths {
         };
         /** Get Attempt Summary */
         get: operations["get_attempt_summary_api_v1_pentesting_engagements__engagement_id__attempts__attempt_id__summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pentesting/engagements/{engagement_id}/attempts/{attempt_id}/activity-feed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Attempt Activity Feed */
+        get: operations["get_attempt_activity_feed_api_v1_pentesting_engagements__engagement_id__attempts__attempt_id__activity_feed_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pentesting/engagements/{engagement_id}/attempts/{attempt_id}/tool-observations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Attempt Tool Observations */
+        get: operations["get_attempt_tool_observations_api_v1_pentesting_engagements__engagement_id__attempts__attempt_id__tool_observations_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1272,6 +1363,23 @@ export interface paths {
         };
         /** Get Capability9 Coverage */
         get: operations["get_capability9_coverage_api_v1_pentesting_engagements__engagement_id__attempts__attempt_id__coverage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pentesting/engagements/{engagement_id}/attempts/{attempt_id}/operation-inventory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Operation Inventory */
+        get: operations["get_operation_inventory_api_v1_pentesting_engagements__engagement_id__attempts__attempt_id__operation_inventory_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1647,6 +1755,23 @@ export interface paths {
         };
         /** List Capability13 Projection */
         get: operations["list_capability13_projection_api_v1_pentesting_engagements__engagement_id__attempts__attempt_id__c13_projections__resource__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pentesting/engagements/{engagement_id}/attempts/{attempt_id}/threat-model": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Threat Model */
+        get: operations["get_threat_model_api_v1_pentesting_engagements__engagement_id__attempts__attempt_id__threat_model_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -6555,6 +6680,69 @@ export interface components {
              */
             question: string;
         };
+        /** AttemptActivityFeedV1 */
+        AttemptActivityFeedV1: {
+            /**
+             * Schema Version
+             * @default sccap.pentest.activity-feed.v1
+             * @constant
+             */
+            schema_version: "sccap.pentest.activity-feed.v1";
+            /**
+             * Engagement Id
+             * Format: uuid
+             */
+            engagement_id: string;
+            /**
+             * Attempt Id
+             * Format: uuid
+             */
+            attempt_id: string;
+            /** Attempt State */
+            attempt_state: string;
+            /** Is Terminal */
+            is_terminal: boolean;
+            /** Items */
+            items?: components["schemas"]["AttemptActivityItemV1"][];
+        };
+        /**
+         * AttemptActivityItemV1
+         * @description Human-readable, secret-safe progress item for the browser timeline.
+         */
+        AttemptActivityItemV1: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "assessment" | "workflow" | "orchestrator" | "findings";
+            /** Sequence */
+            sequence: number;
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /** Title */
+            title: string;
+            /** Detail */
+            detail: string;
+            /** Status */
+            status: string;
+            /** Command */
+            command?: string | null;
+            /** Result */
+            result?: string | null;
+            /**
+             * Is Current
+             * @default false
+             */
+            is_current: boolean;
+        };
         /** AttemptCommandRequestV2 */
         AttemptCommandRequestV2: {
             /**
@@ -6792,12 +6980,92 @@ export interface components {
             /**
              * Findings Confirmed
              * @default 0
-             * @constant
              */
-            findings_confirmed: 0;
+            findings_confirmed: number;
             /** Limitations */
             limitations: string[];
             adaptive_progress?: components["schemas"]["AdaptiveProgressV1"] | null;
+        };
+        /** AttemptToolCommandV1 */
+        AttemptToolCommandV1: {
+            /**
+             * Tool
+             * @enum {string}
+             */
+            tool: "Controller" | "Nmap" | "Nuclei" | "HTTP surface probe" | "DNS discovery" | "TLS characterization" | "Technology fingerprint" | "Content discovery" | "Playwright browser" | "OWASP ZAP passive scan" | "Adaptive web validation" | "Read-only authorization comparison";
+            /** Command */
+            command: string;
+            /** Result */
+            result: string;
+            /** Status */
+            status: string;
+        };
+        /** AttemptToolObservationFieldV1 */
+        AttemptToolObservationFieldV1: {
+            /** Label */
+            label: string;
+            /** Value */
+            value: string;
+        };
+        /**
+         * AttemptToolObservationV1
+         * @description A bounded display projection of scanner evidence, never finding truth.
+         */
+        AttemptToolObservationV1: {
+            /** Id */
+            id: string;
+            /**
+             * Tool
+             * @enum {string}
+             */
+            tool: "Nmap" | "Nuclei" | "HTTP surface probe" | "DNS discovery" | "TLS characterization" | "Technology fingerprint" | "Content discovery" | "Playwright browser" | "OWASP ZAP passive scan" | "Adaptive web validation" | "Read-only authorization comparison";
+            /**
+             * Category
+             * @enum {string}
+             */
+            category: "network_service" | "template_match" | "http_surface" | "form_interaction" | "dns_resolution" | "tls_configuration" | "technology_fingerprint" | "content_discovery" | "browser_surface" | "passive_alert" | "differential_web_validation" | "identity_baseline" | "authorization_comparison";
+            /** Title */
+            title: string;
+            /** Detail */
+            detail: string;
+            /** Severity */
+            severity?: string | null;
+            /** Status */
+            status?: string | null;
+            /** Fields */
+            fields?: components["schemas"]["AttemptToolObservationFieldV1"][];
+        };
+        /** AttemptToolObservationsV1 */
+        AttemptToolObservationsV1: {
+            /**
+             * Schema Version
+             * @default sccap.pentest.tool-observations.v1
+             * @constant
+             */
+            schema_version: "sccap.pentest.tool-observations.v1";
+            /**
+             * Engagement Id
+             * Format: uuid
+             */
+            engagement_id: string;
+            /**
+             * Attempt Id
+             * Format: uuid
+             */
+            attempt_id: string;
+            /** Total Observations */
+            total_observations: number;
+            /**
+             * Detail Status
+             * @enum {string}
+             */
+            detail_status: "available" | "partial" | "unavailable";
+            /** Commands */
+            commands?: components["schemas"]["AttemptToolCommandV1"][];
+            /** Items */
+            items?: components["schemas"]["AttemptToolObservationV1"][];
+            /** Limitation */
+            limitation: string;
         };
         /** AttemptV1 */
         AttemptV1: {
@@ -8323,6 +8591,91 @@ export interface components {
              */
             updated_at: string;
         };
+        /** C10CleanupObligationV1 */
+        C10CleanupObligationV1: {
+            /**
+             * Schema Version
+             * @default sccap.pentest.cleanup-obligation.c10.v1
+             * @constant
+             */
+            schema_version: "sccap.pentest.cleanup-obligation.c10.v1";
+            /**
+             * Cleanup Obligation Id
+             * Format: uuid
+             */
+            cleanup_obligation_id: string;
+            aggregate: components["schemas"]["AggregateBindingV1"];
+            /**
+             * Mutation Id
+             * Format: uuid
+             */
+            mutation_id: string;
+            /**
+             * Resource Record Id
+             * Format: uuid
+             */
+            resource_record_id: string;
+            /**
+             * Obligation Type
+             * @enum {string}
+             */
+            obligation_type: "object" | "workflow" | "session" | "credential" | "file" | "external_effect";
+            /**
+             * Trigger Policy
+             * @enum {string}
+             */
+            trigger_policy: "resource_no_longer_needed" | "verification_dependency_released" | "operation_terminal" | "cancellation" | "recovery";
+            /**
+             * Cleanup Recipe Ref
+             * Format: uuid
+             */
+            cleanup_recipe_ref: string;
+            /** Cleanup Recipe Version */
+            cleanup_recipe_version: string;
+            /** Cleanup Recipe Digest */
+            cleanup_recipe_digest: string;
+            /**
+             * Restoration Predicate
+             * @enum {string}
+             */
+            restoration_predicate: "object_absent" | "exact_prior_digest" | "typed_field_equivalence" | "workflow_state_equals" | "session_invalid" | "credential_revoked" | "marker_absent";
+            /** Restoration Predicate Digest */
+            restoration_predicate_digest: string;
+            /** Identity */
+            identity: components["schemas"]["IdentityDimensionV1"] | components["schemas"]["NotApplicableDimensionV1"];
+            /** Object */
+            object: components["schemas"]["ObjectDimensionV1"] | components["schemas"]["NotApplicableDimensionV1"];
+            /** Workflow */
+            workflow: components["schemas"]["WorkflowDimensionV1"] | components["schemas"]["NotApplicableDimensionV1"];
+            /** Required Lock Descriptor Digests */
+            required_lock_descriptor_digests: string[];
+            /** Priority */
+            priority: number;
+            /**
+             * Deadline
+             * Format: date-time
+             */
+            deadline: string;
+            /** Maximum Attempts */
+            maximum_attempts: number;
+            backoff: components["schemas"]["CleanupBackoffPolicyV1"];
+            /** Verification Dependency */
+            verification_dependency: components["schemas"]["VerificationDependencyV1"] | components["schemas"]["NotApplicableDimensionV1"];
+            /** Manual Cleanup Template Ref */
+            manual_cleanup_template_ref: string;
+            /**
+             * Evidence Retention Class
+             * @enum {string}
+             */
+            evidence_retention_class: "ordinary" | "protected_restoration";
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Canonical Digest */
+            canonical_digest: string;
+        };
         /** C10CleanupRetryRequestV1 */
         C10CleanupRetryRequestV1: {
             /** Expected State Version */
@@ -9765,7 +10118,7 @@ export interface components {
              * Assessment Mode
              * @enum {string}
              */
-            assessment_mode: "black_box" | "white_box";
+            assessment_mode: "black_box" | "gray_box" | "white_box";
             /** State */
             state: string;
             /** Owner Ref */
@@ -13381,6 +13734,73 @@ export interface components {
             /** Unresolved */
             unresolved: number;
         };
+        /** CleanupObligationV1 */
+        CleanupObligationV1: {
+            /**
+             * Schema Version
+             * @default sccap.pentest.v1
+             * @constant
+             */
+            schema_version: "sccap.pentest.v1";
+            /** Extensions */
+            extensions?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Cleanup Obligation Id
+             * Format: uuid
+             */
+            cleanup_obligation_id: string;
+            /**
+             * Tenant Id
+             * Format: uuid
+             */
+            tenant_id: string;
+            /**
+             * Engagement Id
+             * Format: uuid
+             */
+            engagement_id: string;
+            /**
+             * Attempt Id
+             * Format: uuid
+             */
+            attempt_id: string;
+            /** Mutation Id */
+            mutation_id?: string | null;
+            /** Execution Id */
+            execution_id?: string | null;
+            /** Resource Kind */
+            resource_kind: string;
+            /** Resource Ref */
+            resource_ref: string;
+            /** Cleanup Action Ref */
+            cleanup_action_ref: string;
+            /** Verification Requirement */
+            verification_requirement: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "pending" | "running" | "resolved" | "failed" | "manual_action_required" | "waived";
+            /** Attempts */
+            attempts: number;
+            /** Last Error */
+            last_error?: string | null;
+            /** Evidence Refs */
+            evidence_refs?: string[];
+            /** Blocks Resolved Completion */
+            blocks_resolved_completion: boolean;
+            /** Due At */
+            due_at?: string | null;
+            /** Resolved At */
+            resolved_at?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
         /** CodeScanAdapterRequestV2 */
         CodeScanAdapterRequestV2: {
             /**
@@ -16283,7 +16703,7 @@ export interface components {
             confirmed_finding?: components["schemas"]["ConfirmedFindingV1"] | null;
             coverage_effect?: components["schemas"]["CoverageEffectV1"] | null;
             mutation?: components["schemas"]["MutationV1"] | null;
-            cleanup_obligation?: components["schemas"]["app__pentesting__contracts__findings__CleanupObligationV1"] | null;
+            cleanup_obligation?: components["schemas"]["CleanupObligationV1"] | null;
             retest_link?: components["schemas"]["RetestLinkV1"] | null;
             event?: components["schemas"]["PentestEventEnvelopeV1"] | null;
             error?: components["schemas"]["PentestErrorV1"] | null;
@@ -16335,7 +16755,7 @@ export interface components {
             confirmed_finding?: components["schemas"]["ConfirmedFindingV1"] | null;
             coverage_effect?: components["schemas"]["CoverageEffectV1"] | null;
             mutation?: components["schemas"]["MutationV1"] | null;
-            cleanup_obligation?: components["schemas"]["app__pentesting__contracts__findings__CleanupObligationV1"] | null;
+            cleanup_obligation?: components["schemas"]["CleanupObligationV1"] | null;
             retest_link?: components["schemas"]["RetestLinkV1"] | null;
             event?: components["schemas"]["PentestEventEnvelopeV1"] | null;
             error?: components["schemas"]["PentestErrorV1"] | null;
@@ -16427,7 +16847,7 @@ export interface components {
             confirmed_finding?: components["schemas"]["ConfirmedFindingV1"] | null;
             coverage_effect?: components["schemas"]["CoverageEffectV1"] | null;
             mutation?: components["schemas"]["MutationV1"] | null;
-            cleanup_obligation?: components["schemas"]["app__pentesting__contracts__findings__CleanupObligationV1"] | null;
+            cleanup_obligation?: components["schemas"]["CleanupObligationV1"] | null;
             retest_link?: components["schemas"]["RetestLinkV1"] | null;
             event?: components["schemas"]["PentestEventEnvelopeV1"] | null;
             error?: components["schemas"]["PentestErrorV1"] | null;
@@ -16530,7 +16950,7 @@ export interface components {
             confirmed_finding?: components["schemas"]["ConfirmedFindingV1"] | null;
             coverage_effect?: components["schemas"]["CoverageEffectV1"] | null;
             mutation?: components["schemas"]["MutationV1"] | null;
-            cleanup_obligation?: components["schemas"]["app__pentesting__contracts__findings__CleanupObligationV1"] | null;
+            cleanup_obligation?: components["schemas"]["CleanupObligationV1"] | null;
             retest_link?: components["schemas"]["RetestLinkV1"] | null;
             event?: components["schemas"]["PentestEventEnvelopeV1"] | null;
             error?: components["schemas"]["PentestErrorV1"] | null;
@@ -16645,7 +17065,7 @@ export interface components {
             confirmed_finding?: components["schemas"]["ConfirmedFindingV1"] | null;
             coverage_effect?: components["schemas"]["CoverageEffectV1"] | null;
             mutation?: components["schemas"]["MutationV1"] | null;
-            cleanup_obligation?: components["schemas"]["app__pentesting__contracts__findings__CleanupObligationV1"] | null;
+            cleanup_obligation?: components["schemas"]["CleanupObligationV1"] | null;
             retest_link?: components["schemas"]["RetestLinkV1"] | null;
             event?: components["schemas"]["PentestEventEnvelopeV1"] | null;
             error?: components["schemas"]["PentestErrorV1"] | null;
@@ -16746,7 +17166,7 @@ export interface components {
             c10_restoration_phase_result_v1?: components["schemas"]["C10RestorationPhaseResultV1"] | null;
             scan_marker_record_v1?: components["schemas"]["ScanMarkerRecordV1"] | null;
             resource_lock_fence_set_v1?: components["schemas"]["ResourceLockFenceSetV1"] | null;
-            c10_cleanup_obligation_v1?: components["schemas"]["app__pentesting__contracts__capability10_mutation_v1__CleanupObligationV1"] | null;
+            c10_cleanup_obligation_v1?: components["schemas"]["C10CleanupObligationV1"] | null;
             cleanup_action_attempt_v1?: components["schemas"]["CleanupActionAttemptV1"] | null;
             restoration_verification_v1?: components["schemas"]["RestorationVerificationV1"] | null;
             manual_cleanup_obligation_v1?: components["schemas"]["ManualCleanupObligationV1"] | null;
@@ -16782,7 +17202,7 @@ export interface components {
             confirmed_finding?: components["schemas"]["ConfirmedFindingV1"] | null;
             coverage_effect?: components["schemas"]["CoverageEffectV1"] | null;
             mutation?: components["schemas"]["MutationV1"] | null;
-            cleanup_obligation?: components["schemas"]["app__pentesting__contracts__findings__CleanupObligationV1"] | null;
+            cleanup_obligation?: components["schemas"]["CleanupObligationV1"] | null;
             retest_link?: components["schemas"]["RetestLinkV1"] | null;
             event?: components["schemas"]["PentestEventEnvelopeV1"] | null;
             error?: components["schemas"]["PentestErrorV1"] | null;
@@ -16883,7 +17303,7 @@ export interface components {
             c10_restoration_phase_result_v1?: components["schemas"]["C10RestorationPhaseResultV1"] | null;
             scan_marker_record_v1?: components["schemas"]["ScanMarkerRecordV1"] | null;
             resource_lock_fence_set_v1?: components["schemas"]["ResourceLockFenceSetV1"] | null;
-            c10_cleanup_obligation_v1?: components["schemas"]["app__pentesting__contracts__capability10_mutation_v1__CleanupObligationV1"] | null;
+            c10_cleanup_obligation_v1?: components["schemas"]["C10CleanupObligationV1"] | null;
             cleanup_action_attempt_v1?: components["schemas"]["CleanupActionAttemptV1"] | null;
             restoration_verification_v1?: components["schemas"]["RestorationVerificationV1"] | null;
             manual_cleanup_obligation_v1?: components["schemas"]["ManualCleanupObligationV1"] | null;
@@ -16925,7 +17345,7 @@ export interface components {
             confirmed_finding?: components["schemas"]["ConfirmedFindingV1"] | null;
             coverage_effect?: components["schemas"]["CoverageEffectV1"] | null;
             mutation?: components["schemas"]["MutationV1"] | null;
-            cleanup_obligation?: components["schemas"]["app__pentesting__contracts__findings__CleanupObligationV1"] | null;
+            cleanup_obligation?: components["schemas"]["CleanupObligationV1"] | null;
             retest_link?: components["schemas"]["RetestLinkV1"] | null;
             event?: components["schemas"]["PentestEventEnvelopeV1"] | null;
             error?: components["schemas"]["PentestErrorV1"] | null;
@@ -17026,7 +17446,7 @@ export interface components {
             c10_restoration_phase_result_v1?: components["schemas"]["C10RestorationPhaseResultV1"] | null;
             scan_marker_record_v1?: components["schemas"]["ScanMarkerRecordV1"] | null;
             resource_lock_fence_set_v1?: components["schemas"]["ResourceLockFenceSetV1"] | null;
-            c10_cleanup_obligation_v1?: components["schemas"]["app__pentesting__contracts__capability10_mutation_v1__CleanupObligationV1"] | null;
+            c10_cleanup_obligation_v1?: components["schemas"]["C10CleanupObligationV1"] | null;
             cleanup_action_attempt_v1?: components["schemas"]["CleanupActionAttemptV1"] | null;
             restoration_verification_v1?: components["schemas"]["RestorationVerificationV1"] | null;
             manual_cleanup_obligation_v1?: components["schemas"]["ManualCleanupObligationV1"] | null;
@@ -24812,6 +25232,74 @@ export interface components {
             result_digest: string;
             reason: components["schemas"]["C9ReasonCode"];
         };
+        /**
+         * OperationInventoryItemReadV1
+         * @description One discovered operation in the attack-surface inventory.
+         */
+        OperationInventoryItemReadV1: {
+            /** Origin */
+            origin: string;
+            /** Method */
+            method: string;
+            /** Path */
+            path: string;
+            /** Parameters */
+            parameters: string[];
+            /** Content Type */
+            content_type: string | null;
+            /** Auth Context */
+            auth_context: string;
+            /** Side Effect Class */
+            side_effect_class: string;
+            /** Applicable Test Categories */
+            applicable_test_categories: string[];
+            /** Source */
+            source: string;
+        };
+        /**
+         * OperationInventoryListReadV1
+         * @description Read projection of the attack-surface operation inventory.
+         */
+        OperationInventoryListReadV1: {
+            /**
+             * Schema Version
+             * @default sccap.pentest.operation-inventory-read.v1
+             * @constant
+             */
+            schema_version: "sccap.pentest.operation-inventory-read.v1";
+            /**
+             * Engagement Id
+             * Format: uuid
+             */
+            engagement_id: string;
+            /**
+             * Attempt Id
+             * Format: uuid
+             */
+            attempt_id: string;
+            /** Items */
+            items: components["schemas"]["OperationInventoryRecordReadV1"][];
+            /** Coverage */
+            coverage: {
+                [key: string]: number;
+            };
+        };
+        /**
+         * OperationInventoryRecordReadV1
+         * @description One operation plus its truthful operation-level coverage outcome.
+         */
+        OperationInventoryRecordReadV1: {
+            operation: components["schemas"]["OperationInventoryItemReadV1"];
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "applicable" | "passed" | "failed" | "blocked" | "inapplicable";
+            /** Reason Code */
+            reason_code: string | null;
+            /** Digest */
+            digest: string;
+        };
         /** OperationMappingCommittedEventPayloadV4 */
         OperationMappingCommittedEventPayloadV4: {
             /**
@@ -25103,6 +25591,16 @@ export interface components {
              * @default N/A
              */
             severity: string;
+        };
+        /** OwnedReadResource */
+        OwnedReadResource: {
+            /** Path */
+            path: string;
+            /**
+             * Owner
+             * @enum {string}
+             */
+            owner: "primary" | "secondary";
         };
         /** PaginatedProjectHistoryResponse */
         PaginatedProjectHistoryResponse: {
@@ -25761,6 +26259,53 @@ export interface components {
             /** Canonical Digest */
             canonical_digest: string;
         };
+        /** PentestModelOptionListV1 */
+        PentestModelOptionListV1: {
+            /** Items */
+            items: components["schemas"]["PentestModelOptionV1"][];
+        };
+        /**
+         * PentestModelOptionV1
+         * @description Secret-free model metadata available to Pentesting submitters.
+         */
+        PentestModelOptionV1: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Provider */
+            provider: string;
+            /** Model Name */
+            model_name: string;
+        };
+        /**
+         * PentestProfileReadinessV1
+         * @description Truthful pre-launch readiness for one capability profile.
+         */
+        PentestProfileReadinessV1: {
+            /** Profile Id */
+            profile_id: string;
+            /** Family Id */
+            family_id: string;
+            /** Description */
+            description: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "ready" | "degraded" | "unavailable";
+            /** Reason Code */
+            reason_code: string;
+            /** Requires Credentials */
+            requires_credentials: boolean;
+            /** Requires Mutation Authority */
+            requires_mutation_authority: boolean;
+            /** Adapter Ids */
+            adapter_ids: string[];
+        };
         /** PentestProjectCreateRequest */
         PentestProjectCreateRequest: {
             /** Name */
@@ -25792,6 +26337,29 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /**
+         * PentestReadinessV1
+         * @description Pre-launch readiness projection surfaced to the submitter.
+         */
+        PentestReadinessV1: {
+            /**
+             * Schema Version
+             * @default sccap.pentest.product-readiness.v1
+             * @constant
+             */
+            schema_version: "sccap.pentest.product-readiness.v1";
+            /**
+             * Testing Intensities
+             * @default [
+             *       "discovery_only",
+             *       "safe_active_validation",
+             *       "reversible_state_change"
+             *     ]
+             */
+            testing_intensities: string[];
+            /** Profiles */
+            profiles: components["schemas"]["PentestProfileReadinessV1"][];
         };
         /** PinnedVersionsV1 */
         PinnedVersionsV1: {
@@ -26123,7 +26691,166 @@ export interface components {
              * @enum {string}
              */
             assessment_profile: "single_root_probe" | "safe_black_box_benchmark";
+            /** Llm Configuration Id */
+            llm_configuration_id?: string | null;
             rules?: components["schemas"]["ProductAssessmentRulesRequest"] | null;
+            execution_options?: components["schemas"]["ProductExecutionOptionsRequest"];
+        };
+        /**
+         * ProductExecutionOptionsRequest
+         * @description Explicit browser choices for one product-managed assessment.
+         */
+        ProductExecutionOptionsRequest: {
+            /**
+             * Enabled Scanners
+             * @default [
+             *       "http_probe",
+             *       "nmap",
+             *       "nuclei",
+             *       "playwright",
+             *       "zap",
+             *       "dns",
+             *       "tls",
+             *       "technology",
+             *       "content_discovery",
+             *       "web_validation"
+             *     ]
+             */
+            enabled_scanners: ("http_probe" | "nmap" | "nuclei" | "playwright" | "zap" | "dns" | "tls" | "technology" | "content_discovery" | "web_validation" | "authorization_readonly")[];
+            /**
+             * Follow Redirects
+             * @default false
+             */
+            follow_redirects: boolean;
+            /**
+             * Additional Authorized Origins
+             * @default []
+             */
+            additional_authorized_origins: string[];
+            /**
+             * Form Submission Enabled
+             * @default false
+             */
+            form_submission_enabled: boolean;
+            /**
+             * State Changing Tests Enabled
+             * @default false
+             */
+            state_changing_tests_enabled: boolean;
+            /**
+             * Automatic Finding Promotion
+             * @default false
+             */
+            automatic_finding_promotion: boolean;
+            /**
+             * Testing Intensity
+             * @default discovery_only
+             * @enum {string}
+             */
+            testing_intensity: "discovery_only" | "safe_active_validation" | "reversible_state_change";
+            /**
+             * High Impact Authorized
+             * @default false
+             */
+            high_impact_authorized: boolean;
+            rules_of_engagement?: components["schemas"]["ProductRulesOfEngagementRequest"] | null;
+            readonly_access?: components["schemas"]["ReadOnlyAuthorizationContext"] | null;
+        };
+        /** ProductGrayBoxCreateRequest */
+        ProductGrayBoxCreateRequest: {
+            /** Name */
+            name: string;
+            /**
+             * Target Url
+             * Format: uri
+             */
+            target_url: string;
+            /**
+             * Authorization Confirmed
+             * @constant
+             */
+            authorization_confirmed: true;
+            /** Authorization Statement Version */
+            authorization_statement_version: string;
+            /** Client Idempotency Key */
+            client_idempotency_key: string;
+            /**
+             * Assessment Profile
+             * @default safe_black_box_benchmark
+             * @constant
+             */
+            assessment_profile: "safe_black_box_benchmark";
+            /** Llm Configuration Id */
+            llm_configuration_id?: string | null;
+            rules?: components["schemas"]["ProductAssessmentRulesRequest"] | null;
+            execution_options?: components["schemas"]["ProductExecutionOptionsRequest"];
+            /**
+             * Credential Id
+             * Format: uuid
+             */
+            credential_id: string;
+            /** Second Credential Id */
+            second_credential_id?: string | null;
+        };
+        /** ProductGrayBoxEngagementCreatedV1 */
+        ProductGrayBoxEngagementCreatedV1: {
+            /**
+             * Schema Version
+             * @default sccap.pentest.product-gray-box.v1
+             * @constant
+             */
+            schema_version: "sccap.pentest.product-gray-box.v1";
+            /**
+             * Engagement Id
+             * Format: uuid
+             */
+            engagement_id: string;
+            /**
+             * Attempt Id
+             * Format: uuid
+             */
+            attempt_id: string;
+            /** State */
+            state: string;
+            /**
+             * Mode
+             * @default gray_box
+             * @constant
+             */
+            mode: "gray_box";
+            /** Normalized Origin */
+            normalized_origin: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /**
+         * ProductRulesOfEngagementRequest
+         * @description Optional advanced rules of engagement.
+         *
+         *     Empty by default.  Once supplied, each field becomes a versioned constraint
+         *     in the engagement authorization snapshot and is never silently widened.
+         */
+        ProductRulesOfEngagementRequest: {
+            /**
+             * Maintenance Windows
+             * @default []
+             */
+            maintenance_windows: string[];
+            /**
+             * Escalation Contacts
+             * @default []
+             */
+            escalation_contacts: string[];
+            /**
+             * Custom Limits
+             * @default []
+             */
+            custom_limits: string[];
+            /** Retention Days */
+            retention_days?: number | null;
         };
         /** ProductWhiteBoxCreateRequest */
         ProductWhiteBoxCreateRequest: {
@@ -26149,7 +26876,10 @@ export interface components {
              * @constant
              */
             assessment_profile: "single_root_probe";
+            /** Llm Configuration Id */
+            llm_configuration_id?: string | null;
             rules?: components["schemas"]["ProductAssessmentRulesRequest"] | null;
+            execution_options?: components["schemas"]["ProductExecutionOptionsRequest"];
             /**
              * Source Review Authorized
              * @constant
@@ -26515,6 +27245,15 @@ export interface components {
             processed_documents?: components["schemas"]["EnrichedDocument"][] | null;
             /** Error Message */
             error_message?: string | null;
+        };
+        /** ReadOnlyAuthorizationContext */
+        ReadOnlyAuthorizationContext: {
+            /** Login Path */
+            login_path?: string | null;
+            /** Authentication Check Path */
+            authentication_check_path?: string | null;
+            /** Owner Only Resources */
+            owner_only_resources?: components["schemas"]["OwnedReadResource"][];
         };
         /** ReconciliationEvidenceRead */
         ReconciliationEvidenceRead: {
@@ -30865,6 +31604,119 @@ export interface components {
             /** Session Concurrency Mode */
             session_concurrency_mode?: string | null;
         };
+        /** ThreatModelAbuseHypothesisV1 */
+        ThreatModelAbuseHypothesisV1: {
+            /** Hypothesis Key */
+            hypothesis_key: string;
+            /** Asset */
+            asset: string;
+            /** Actor */
+            actor: string;
+            /** Boundary */
+            boundary: string;
+            /** Operation */
+            operation: string;
+            /** Invariant */
+            invariant: string;
+            /** Workflow State */
+            workflow_state: string;
+            /** Rank Score */
+            rank_score: number;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "proposed" | "approved" | "testing" | "supported" | "refuted";
+        };
+        /** ThreatModelBusinessInvariantV1 */
+        ThreatModelBusinessInvariantV1: {
+            /** Invariant Key */
+            invariant_key: string;
+            /** Statement */
+            statement: string;
+            /** Subject */
+            subject: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "ownership" | "cardinality" | "workflow" | "price_quantity" | "uniqueness" | "tenant_scope";
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "proposed" | "active" | "refuted";
+        };
+        /** ThreatModelEdgeV1 */
+        ThreatModelEdgeV1: {
+            /** Source Node Key */
+            source_node_key: string;
+            /** Relationship */
+            relationship: string;
+            /** Target Node Key */
+            target_node_key: string;
+            /** Digest */
+            digest: string;
+        };
+        /** ThreatModelEntryPointV1 */
+        ThreatModelEntryPointV1: {
+            /** Entry Key */
+            entry_key: string;
+            /** Node Key */
+            node_key: string;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "operation" | "source" | "browser" | "evidence";
+        };
+        /** ThreatModelNodeV1 */
+        ThreatModelNodeV1: {
+            /** Node Key */
+            node_key: string;
+            /** Kind */
+            kind: string;
+            /** Digest */
+            digest: string;
+        };
+        /** ThreatModelTrustBoundaryV1 */
+        ThreatModelTrustBoundaryV1: {
+            /** Boundary Key */
+            boundary_key: string;
+            /** Name */
+            name: string;
+            /** Node Key */
+            node_key: string;
+            /**
+             * Classification
+             * @enum {string}
+             */
+            classification: "asset" | "integration";
+        };
+        /**
+         * ThreatModelViewV1
+         * @description Derived, advisory threat-model projection (Decision 14 / ADR-026).
+         */
+        ThreatModelViewV1: {
+            /**
+             * Schema Version
+             * @default sccap.pentest.threat-model-view.v1
+             * @constant
+             */
+            schema_version: "sccap.pentest.threat-model-view.v1";
+            /** Nodes */
+            nodes?: components["schemas"]["ThreatModelNodeV1"][];
+            /** Edges */
+            edges?: components["schemas"]["ThreatModelEdgeV1"][];
+            /** Boundaries */
+            boundaries?: components["schemas"]["ThreatModelTrustBoundaryV1"][];
+            /** Entries */
+            entries?: components["schemas"]["ThreatModelEntryPointV1"][];
+            /** Invariants */
+            invariants?: components["schemas"]["ThreatModelBusinessInvariantV1"][];
+            /** Hypotheses */
+            hypotheses?: components["schemas"]["ThreatModelAbuseHypothesisV1"][];
+        };
         /** TicketSyncRequest */
         TicketSyncRequest: {
             /** Canonical Root Id */
@@ -33802,158 +34654,6 @@ export interface components {
             /** Auth */
             auth: string;
         };
-        /** CleanupObligationV1 */
-        app__pentesting__contracts__capability10_mutation_v1__CleanupObligationV1: {
-            /**
-             * Schema Version
-             * @default sccap.pentest.cleanup-obligation.c10.v1
-             * @constant
-             */
-            schema_version: "sccap.pentest.cleanup-obligation.c10.v1";
-            /**
-             * Cleanup Obligation Id
-             * Format: uuid
-             */
-            cleanup_obligation_id: string;
-            aggregate: components["schemas"]["AggregateBindingV1"];
-            /**
-             * Mutation Id
-             * Format: uuid
-             */
-            mutation_id: string;
-            /**
-             * Resource Record Id
-             * Format: uuid
-             */
-            resource_record_id: string;
-            /**
-             * Obligation Type
-             * @enum {string}
-             */
-            obligation_type: "object" | "workflow" | "session" | "credential" | "file" | "external_effect";
-            /**
-             * Trigger Policy
-             * @enum {string}
-             */
-            trigger_policy: "resource_no_longer_needed" | "verification_dependency_released" | "operation_terminal" | "cancellation" | "recovery";
-            /**
-             * Cleanup Recipe Ref
-             * Format: uuid
-             */
-            cleanup_recipe_ref: string;
-            /** Cleanup Recipe Version */
-            cleanup_recipe_version: string;
-            /** Cleanup Recipe Digest */
-            cleanup_recipe_digest: string;
-            /**
-             * Restoration Predicate
-             * @enum {string}
-             */
-            restoration_predicate: "object_absent" | "exact_prior_digest" | "typed_field_equivalence" | "workflow_state_equals" | "session_invalid" | "credential_revoked" | "marker_absent";
-            /** Restoration Predicate Digest */
-            restoration_predicate_digest: string;
-            /** Identity */
-            identity: components["schemas"]["IdentityDimensionV1"] | components["schemas"]["NotApplicableDimensionV1"];
-            /** Object */
-            object: components["schemas"]["ObjectDimensionV1"] | components["schemas"]["NotApplicableDimensionV1"];
-            /** Workflow */
-            workflow: components["schemas"]["WorkflowDimensionV1"] | components["schemas"]["NotApplicableDimensionV1"];
-            /** Required Lock Descriptor Digests */
-            required_lock_descriptor_digests: string[];
-            /** Priority */
-            priority: number;
-            /**
-             * Deadline
-             * Format: date-time
-             */
-            deadline: string;
-            /** Maximum Attempts */
-            maximum_attempts: number;
-            backoff: components["schemas"]["CleanupBackoffPolicyV1"];
-            /** Verification Dependency */
-            verification_dependency: components["schemas"]["VerificationDependencyV1"] | components["schemas"]["NotApplicableDimensionV1"];
-            /** Manual Cleanup Template Ref */
-            manual_cleanup_template_ref: string;
-            /**
-             * Evidence Retention Class
-             * @enum {string}
-             */
-            evidence_retention_class: "ordinary" | "protected_restoration";
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /** Canonical Digest */
-            canonical_digest: string;
-        };
-        /** CleanupObligationV1 */
-        app__pentesting__contracts__findings__CleanupObligationV1: {
-            /**
-             * Schema Version
-             * @default sccap.pentest.v1
-             * @constant
-             */
-            schema_version: "sccap.pentest.v1";
-            /** Extensions */
-            extensions?: {
-                [key: string]: unknown;
-            };
-            /**
-             * Cleanup Obligation Id
-             * Format: uuid
-             */
-            cleanup_obligation_id: string;
-            /**
-             * Tenant Id
-             * Format: uuid
-             */
-            tenant_id: string;
-            /**
-             * Engagement Id
-             * Format: uuid
-             */
-            engagement_id: string;
-            /**
-             * Attempt Id
-             * Format: uuid
-             */
-            attempt_id: string;
-            /** Mutation Id */
-            mutation_id?: string | null;
-            /** Execution Id */
-            execution_id?: string | null;
-            /** Resource Kind */
-            resource_kind: string;
-            /** Resource Ref */
-            resource_ref: string;
-            /** Cleanup Action Ref */
-            cleanup_action_ref: string;
-            /** Verification Requirement */
-            verification_requirement: string;
-            /**
-             * State
-             * @enum {string}
-             */
-            state: "pending" | "running" | "resolved" | "failed" | "manual_action_required" | "waived";
-            /** Attempts */
-            attempts: number;
-            /** Last Error */
-            last_error?: string | null;
-            /** Evidence Refs */
-            evidence_refs?: string[];
-            /** Blocks Resolved Completion */
-            blocks_resolved_completion: boolean;
-            /** Due At */
-            due_at?: string | null;
-            /** Resolved At */
-            resolved_at?: string | null;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-        };
     };
     responses: never;
     parameters: never;
@@ -35617,6 +36317,46 @@ export interface operations {
             };
         };
     };
+    list_pentest_model_options_api_v1_pentesting_model_options_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PentestModelOptionListV1"];
+                };
+            };
+        };
+    };
+    get_pentest_readiness_api_v1_pentesting_readiness_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PentestReadinessV1"];
+                };
+            };
+        };
+    };
     list_pentest_credentials_api_v1_pentesting_projects__pentest_project_id__credentials_get: {
         parameters: {
             query?: never;
@@ -35806,6 +36546,41 @@ export interface operations {
             };
         };
     };
+    create_product_gray_box_engagement_api_v1_pentesting_projects__pentest_project_id__gray_box_engagements_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pentest_project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProductGrayBoxCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProductGrayBoxEngagementCreatedV1"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     create_product_white_box_engagement_api_v1_pentesting_projects__pentest_project_id__white_box_engagements_post: {
         parameters: {
             query?: never;
@@ -35960,6 +36735,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AttemptSummaryV1"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_attempt_activity_feed_api_v1_pentesting_engagements__engagement_id__attempts__attempt_id__activity_feed_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                engagement_id: string;
+                attempt_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttemptActivityFeedV1"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_attempt_tool_observations_api_v1_pentesting_engagements__engagement_id__attempts__attempt_id__tool_observations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                engagement_id: string;
+                attempt_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttemptToolObservationsV1"];
                 };
             };
             /** @description Validation Error */
@@ -36229,6 +37068,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["C9CoverageListReadV1"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_operation_inventory_api_v1_pentesting_engagements__engagement_id__attempts__attempt_id__operation_inventory_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                engagement_id: string;
+                attempt_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationInventoryListReadV1"];
                 };
             };
             /** @description Validation Error */
@@ -37041,6 +37912,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["C13CursorPageV1_C13SafeItemV1_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_threat_model_api_v1_pentesting_engagements__engagement_id__attempts__attempt_id__threat_model_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                engagement_id: string;
+                attempt_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThreatModelViewV1"];
                 };
             };
             /** @description Validation Error */

@@ -1,4 +1,5 @@
 import apiClient from "./apiClient";
+import type { components } from "../types/api-generated";
 import type {
   AttemptSummary,
   C13CockpitSnapshot,
@@ -66,6 +67,33 @@ export interface AttemptRuntimeSummary {
   local_blackbox_tools: AttemptToolRun[];
 }
 
+export interface OperationInventoryItemView {
+  origin: string;
+  method: string;
+  path: string;
+  parameters: string[];
+  content_type: string | null;
+  auth_context: string;
+  side_effect_class: string;
+  applicable_test_categories: string[];
+  source: string;
+}
+
+export interface OperationInventoryRecordView {
+  operation: OperationInventoryItemView;
+  outcome: "applicable" | "passed" | "failed" | "blocked" | "inapplicable";
+  reason_code: string | null;
+  digest: string;
+}
+
+export interface OperationInventoryView {
+  schema_version: string;
+  engagement_id: string;
+  attempt_id: string;
+  items: OperationInventoryRecordView[];
+  coverage: Record<string, number>;
+}
+
 export interface AttemptActivityItem {
   id: string;
   source: "assessment" | "workflow" | "orchestrator" | "findings";
@@ -90,8 +118,8 @@ export interface AttemptActivityFeed {
 
 export interface AttemptToolObservation {
   id: string;
-  tool: "Nmap" | "Nuclei" | "HTTP surface probe" | "DNS discovery" | "TLS characterization" | "Technology fingerprint" | "Content discovery" | "Playwright browser" | "OWASP ZAP passive scan";
-  category: "network_service" | "template_match" | "http_surface" | "form_interaction" | "dns_resolution" | "tls_configuration" | "technology_fingerprint" | "content_discovery" | "browser_surface" | "passive_alert";
+  tool: components["schemas"]["AttemptToolObservationV1"]["tool"];
+  category: components["schemas"]["AttemptToolObservationV1"]["category"];
   title: string;
   detail: string;
   severity: string | null;
@@ -100,7 +128,7 @@ export interface AttemptToolObservation {
 }
 
 export interface AttemptToolCommand {
-  tool: "Controller" | "Nmap" | "Nuclei" | "HTTP surface probe" | "DNS discovery" | "TLS characterization" | "Technology fingerprint" | "Content discovery" | "Playwright browser" | "OWASP ZAP passive scan";
+  tool: components["schemas"]["AttemptToolCommandV1"]["tool"];
   command: string;
   result: string;
   status: string;
@@ -286,6 +314,9 @@ export const capability13Service = {
 
   getThreatModel: async (engagementId: string, attemptId: string, signal?: AbortSignal) =>
     (await apiClient.get<ThreatModelView>(`${attemptPath(engagementId, attemptId)}/threat-model`, { signal })).data,
+
+  getOperationInventory: async (engagementId: string, attemptId: string, signal?: AbortSignal) =>
+    (await apiClient.get<OperationInventoryView>(`${attemptPath(engagementId, attemptId)}/operation-inventory`, { signal })).data,
 
   getFindingLifecycle: async (engagementId: string, attemptId: string, signal?: AbortSignal): Promise<FindingLifecycle> => {
     const path = attemptPath(engagementId, attemptId);

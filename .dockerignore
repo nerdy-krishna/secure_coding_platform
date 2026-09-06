@@ -36,3 +36,4 @@ site/
 docs/_build/
 # Agent + planning docs (not shipped to runtime images)
 .agent/
+.scratch/
