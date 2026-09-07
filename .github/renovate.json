@@ -5,7 +5,7 @@
     ":disableDependencyDashboard",
     ":maintainLockFilesWeekly"
   ],
-  "description": "Renovate complements Dependabot (which already handles pip / npm / github-actions ecosystems via .github/dependabot.yml). This config focuses on what Dependabot can't see: SHA-pinned scanner binaries downloaded into the Dockerfile via `curl | sha256sum --check`. See `.agent/devsecops_playbook.md` § 'Bumping the bundled Semgrep rule pack' for the manual review procedure once a Renovate PR lands.",
+  "description": "Renovate complements Dependabot (which already handles pip / npm / github-actions ecosystems via .github/dependabot.yml). This config focuses on what Dependabot can't see: SHA-pinned scanner binaries downloaded into the Dockerfile via `curl | sha256sum --check`. See docs/docs/development/rule-source-ingestion.md and the worker scanner-toolchain smoke check for provenance review. Semgrep rules are database-managed, not a bundled fallback.",
   "enabled": true,
   "schedule": ["before 4am on Monday"],
   "prHourlyLimit": 2,
@@ -26,7 +26,7 @@
   ],
   "packageRules": [
     {
-      "description": "Group all scanner-binary updates into one PR per release cadence so reviewers can sanity-check the SHA bump procedure (devsecops_playbook.md F4) once per cycle.",
+      "description": "Group scanner-binary updates for review of upstream versions, pinned digests, and the actual worker scanner-toolchain smoke check.",
       "matchManagers": ["custom.regex"],
       "groupName": "scanner binaries",
       "schedule": ["before 4am on Monday"]

@@ -60,11 +60,24 @@ export interface AttemptToolRun {
   authority: "observation_only";
 }
 
+export interface WorkLedgerSummary {
+  pending_untried: number;
+  running_units: number;
+  blocked_units: number;
+  inconclusive_units: number;
+  completed_units: number;
+  terminal_reason: string;
+  may_complete: boolean;
+  outcome: string;
+  truth: "execution_work_not_security_coverage";
+}
+
 export interface AttemptRuntimeSummary {
   state: string;
   outcome: string | null;
   bootstrap: { status?: string };
   local_blackbox_tools: AttemptToolRun[];
+  work_ledger?: WorkLedgerSummary | null;
 }
 
 export interface OperationInventoryItemView {
@@ -77,6 +90,11 @@ export interface OperationInventoryItemView {
   side_effect_class: string;
   applicable_test_categories: string[];
   source: string;
+  discovery_metadata?: {
+    parameter_hints?: { name: string; location: string; type: string; required: boolean }[];
+    protocol_selector?: string;
+    state_refs?: string[];
+  };
 }
 
 export interface OperationInventoryRecordView {

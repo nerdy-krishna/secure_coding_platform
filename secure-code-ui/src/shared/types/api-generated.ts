@@ -6967,6 +6967,7 @@ export interface components {
             local_blackbox_tools?: {
                 [key: string]: unknown;
             }[];
+            work_ledger?: components["schemas"]["WorkLedgerSummaryV1"] | null;
             /** Coverage */
             coverage: {
                 [key: string]: unknown;
@@ -7733,6 +7734,24 @@ export interface components {
             restoration_recipe_family_refs: string[];
             /** Manual Escalation Role */
             manual_escalation_role: string;
+        };
+        /** BrowserExplorationOptions */
+        BrowserExplorationOptions: {
+            /**
+             * Maximum States
+             * @default 6
+             */
+            maximum_states: number;
+            /**
+             * Maximum Depth
+             * @default 2
+             */
+            maximum_depth: number;
+            /**
+             * Maximum Actions Per State
+             * @default 4
+             */
+            maximum_actions_per_state: number;
         };
         /** BrowserInvocationMaterialV1 */
         BrowserInvocationMaterialV1: {
@@ -25255,6 +25274,10 @@ export interface components {
             applicable_test_categories: string[];
             /** Source */
             source: string;
+            /** Discovery Metadata */
+            discovery_metadata?: {
+                [key: string]: unknown;
+            };
         };
         /**
          * OperationInventoryListReadV1
@@ -26755,6 +26778,13 @@ export interface components {
             high_impact_authorized: boolean;
             rules_of_engagement?: components["schemas"]["ProductRulesOfEngagementRequest"] | null;
             readonly_access?: components["schemas"]["ReadOnlyAuthorizationContext"] | null;
+            browser_exploration?: components["schemas"]["BrowserExplorationOptions"] | null;
+            /**
+             * Work Scheduler Version
+             * @default v2
+             * @constant
+             */
+            work_scheduler_version: "v2";
         };
         /** ProductGrayBoxCreateRequest */
         ProductGrayBoxCreateRequest: {
@@ -34508,6 +34538,33 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+        };
+        /**
+         * WorkLedgerSummaryV1
+         * @description Execution accounting only; never a security-coverage verdict.
+         */
+        WorkLedgerSummaryV1: {
+            /** Pending Untried */
+            pending_untried: number;
+            /** Running Units */
+            running_units: number;
+            /** Blocked Units */
+            blocked_units: number;
+            /** Inconclusive Units */
+            inconclusive_units: number;
+            /** Completed Units */
+            completed_units: number;
+            /** Terminal Reason */
+            terminal_reason: string;
+            /** May Complete */
+            may_complete: boolean;
+            /** Outcome */
+            outcome: string;
+            /**
+             * Truth
+             * @constant
+             */
+            truth: "execution_work_not_security_coverage";
         };
         /** WorkflowDimensionV1 */
         WorkflowDimensionV1: {

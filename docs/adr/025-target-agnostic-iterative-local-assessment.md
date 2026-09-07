@@ -27,9 +27,10 @@ only bounded response metadata, digests, and closed signal families.
 After baseline discovery, a pinned model receives an allowlisted secret-free
 projection and selects up to two still-untried authorized capabilities. The
 same process repeats after each completed selection. The loop ends when the
-model explicitly returns no tools and a completion reason, when deterministic
-fallback completes the inventory after invalid/unavailable output, or when the
-fixed round/duration policy terminates it. Every model call is idempotently
+model explicitly returns no tools and a completion reason, when invalid or
+unavailable model output leaves remaining work untried, or when the fixed
+round/duration policy terminates it. A model outage no longer silently selects
+a deterministic baseline. Every model call is idempotently
 audited and every decision is policy-validated. With no model, deterministic
 completion remains available.
 
@@ -76,6 +77,28 @@ encrypted/versioned evidence, C6 candidates, scoped summaries and postcommit
 redelivery. This does not qualify product HTTP authentication/UI, precommit crash
 recovery, non-owner RLS, SSO or C7 verification. Existing live feature flags remain
 unchanged; pending qualification is not permission to disable a feature.
+
+## Additive durable local work accounting
+
+The V2 worker persists untried tool work before benchmark execution, then admits
+running units under its active lease fence before target interaction. Discovered
+GET-parameter SQLi/XSS tests have separate operation/technique/bundle keys.
+Already-admitted work cannot automatically replay. Model planning reads durable
+pending admission; local scheduling still operates in bounded tool batches.
+
+Terminal ledger effects are part of the digest-bound staged execution commit,
+not a postcommit projection. Recovery preserves this payload across JSON staging;
+legacy empty payloads retain their original digest. Ledger effects, evidence,
+DecisionDelta and terminal projections commit atomically. Unresolved work cannot
+be reported as a successful result, but does not discard collected evidence.
+Recovery settles uncertain running work as inconclusive while preserving untried
+work. A prerequisite check can establish inapplicability after admission.
+
+The scoped summary API and cockpit expose work counts as execution accounting,
+not security coverage. This is not yet a unified operation-level C4 execution
+loop: tools still batch operations and intermediate observations are staged
+until the final execution commit. C10/C11 execution and safety gates are unchanged;
+rendering OAST payloads is explicitly inconclusive.
 
 ## Consequences
 

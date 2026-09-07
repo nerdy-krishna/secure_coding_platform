@@ -577,7 +577,7 @@ services:
   # Port hygiene (threat-model G3): only langfuse-web is exposed on the
   # host (3001 — Grafana already owns 3000); Postgres/ClickHouse/Redis/
   # MinIO are scpnetwork-internal. All six images are sha256-pinned (G4).
-  # See `.agent/work/langfuse-otel-observability-{plan,threat-model}.md`.
+  # See docs/adr/005-llm-observability.md for the accepted boundaries.
   # ------------------------------------------------------------------
   langfuse-postgres:
     image: postgres@sha256:4e6e670bb069649261c9c18031f0aded7bb249a5b6664ddec29c013a89310d50
