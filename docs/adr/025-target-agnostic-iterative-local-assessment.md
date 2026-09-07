@@ -100,6 +100,41 @@ loop: tools still batch operations and intermediate observations are staged
 until the final execution commit. C10/C11 execution and safety gates are unchanged;
 rendering OAST payloads is explicitly inconclusive.
 
+## Audit remediation: discovery evidence, coverage and request accounting
+
+C6 accepts the historical HTTP-probe v1 shapes and the explicit additive shape
+with `validation_candidates` plus `operation_inventory`. The latter is checked
+against a closed, bounded, value-free discovery contract and the committed
+origin; unknown fields and malformed metadata remain errors. Single and merged
+web-validation v4 artifacts retain SQLi, XSS and traversal, while historical v3
+remains separately readable. Exact aggregate duplicates are idempotent;
+conflicting rows and overflow are errors, not silently discarded evidence.
+
+New operation keys use `sccap.pentest.operation-inventory-key.v3`: auth context,
+transport, content type, parameter shape and prerequisite state participate.
+Historical v1/v2 keys remain integrity-checked on reads; stored rows and evidence
+are not rewritten. Anonymous stateless GET/query evidence cannot cover an
+unknown/authenticated, protocol-specific or state-bound operation. A pass
+requires evidence for every applicable category × parameter. Missing checks stay
+applicable; blocked/inconclusive siblings remain blocked; a candidate maps to
+`failed` inventory coverage, **not** a confirmed vulnerability. An auth-context
+kind is not a brokered identity handle; complete identity-specific scheduling
+is still pending.
+
+The local Nmap profile is connect-only (`-sT`, without service detection or NSE).
+Port-table service labels are hints, not verified versions. Nuclei reserves the
+three-request upper bound of the digest-pinned single-GET template pack before
+launch; redirects, retries, updates and Interactsh are disabled. Failed/uncertain
+native sends retain the reservation. Its count is explicitly labeled a reserved
+upper bound, not measured traffic. V2 summaries/commit budgets use pre-egress
+allowance debits, including redirects and uncertain sends; the root bootstrap is
+counted once separately. Python-proxied ZAP has no extra blanket debit.
+
+See [local audit qualification](../docs/operations/pentesting-local-audit-qualification.md)
+for real producer/worker/persistence checks and the remaining qualification
+boundaries. These fixes do not complete canonical-operation scheduling, OAST
+execution, workflow cleanup, or production readiness.
+
 ## Consequences
 
 - The runner works against any explicitly configured local fixture origin; no
