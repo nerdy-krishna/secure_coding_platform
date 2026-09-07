@@ -26781,10 +26781,10 @@ export interface components {
             browser_exploration?: components["schemas"]["BrowserExplorationOptions"] | null;
             /**
              * Work Scheduler Version
-             * @default v2
-             * @constant
+             * @default v3
+             * @enum {string}
              */
-            work_scheduler_version: "v2";
+            work_scheduler_version: "v2" | "v3";
         };
         /** ProductGrayBoxCreateRequest */
         ProductGrayBoxCreateRequest: {

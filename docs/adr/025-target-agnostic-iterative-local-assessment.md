@@ -15,7 +15,7 @@ working against another explicitly allowlisted local application.
 
 ## Decision
 
-The local runner now performs target-agnostic discovery of exact-origin GET
+The original local runner performs target-agnostic discovery of exact-origin GET
 form and query parameter names from bounded HTTP and browser observations. A
 reviewed differential adapter may apply fixed control, quote-bearing, and inert
 custom-element probes to those parameters. The model can select only the
@@ -119,7 +119,7 @@ requires evidence for every applicable category × parameter. Missing checks sta
 applicable; blocked/inconclusive siblings remain blocked; a candidate maps to
 `failed` inventory coverage, **not** a confirmed vulnerability. An auth-context
 kind is not a brokered identity handle; complete identity-specific scheduling
-is still pending.
+is still pending; the bounded anonymous v3 extension below does not grant it.
 
 The local Nmap profile is connect-only (`-sT`, without service detection or NSE).
 Port-table service labels are hints, not verified versions. Nuclei reserves the
@@ -134,6 +134,52 @@ See [local audit qualification](../docs/operations/pentesting-local-audit-qualif
 for real producer/worker/persistence checks and the remaining qualification
 boundaries. These fixes do not complete canonical-operation scheduling, OAST
 execution, workflow cleanup, or production readiness.
+
+## Versioned canonical-operation scheduling and fresh-document DOM checks
+
+New product submissions default to local `work_scheduler_version="v3"`; explicit
+v2 and historical task readers remain available. This is a local scheduler
+version, not Foundation 3 runner authority. V3 derives requirements from the
+canonical discovery inventory, including OpenAPI operations without legacy URL
+candidates. Work keys bind the canonical operation, parameter/test, anonymous
+identity (or unresolved identity), technique and reviewed bundle. Each step is
+admitted and evidence-committed under the worker lease before successor work is
+considered; C6 still reads only the final canonical aggregate.
+
+Only anonymous, stateless, single-query-parameter GET operations use the existing
+SQLi, reflected-XSS and traversal adapters. Required or malformed OpenAPI security
+and credential-bearing HTTP discovery do not establish an anonymous identity.
+Authenticated, state-bound, non-GET, typed/protocol and unsupported technique
+requirements are recorded as blocked, not omitted. Expansion is bounded to 64
+requirements with an explicit overflow blocker. Missing checks cannot become a
+coverage pass. Inventory categories are local requirements, not a claim of full
+C9 catalog execution.
+
+The v3 advisory model selects exactly one matching work ID/tool pair from a
+bounded window of up to 16 admitted choices. It cannot invent a work ID, supply
+payloads or change authority. Invalid/unavailable output leaves work unresolved;
+deterministic scheduling is available only when no model is configured. New
+web-validation v5 evidence binds each candidate to its canonical operation and
+input. C6 validates those bindings and the existing technique/bundle predicates;
+v3/v4 evidence readers retain their separate contracts. Coverage does not borrow
+v5 evidence across same-path operations with different keys.
+
+A fresh in-memory v3 run refuses prior advanced work until verified receipt and
+budget rehydration exists. This is fail-closed recovery, not resume qualification.
+It does not replace the formal C4 controller or enable C7, C10 or C11 execution.
+
+DOM fragment canaries now start a fresh document at the discovered URL, retaining
+path and query, through the existing request gate. Navigating via `about:blank`
+avoids an extra target request while ensuring startup scripts run. The original
+digest-pinned vulnerable/clean fixture and a redirected-document fixture both
+exercise the real Chromium sink without weakening the assertions. This does not
+qualify authenticated or prerequisite-state replay.
+
+Revision `d1312690dfa1` expands Engagement `completion_reason` from 32 to 64
+characters: the existing deterministic blocked/inconclusive reason otherwise
+rolls back the atomic result. It does not rewrite history; narrowing downgrade
+is refused. Deploy the migration and v3-capable worker/C6 readers before admitting
+new v3 product tasks. Old application code can read the widened column.
 
 ## Consequences
 
